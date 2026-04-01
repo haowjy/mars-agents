@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LockError, MarsError};
-use crate::types::{CommitHash, ContentHash, DestPath, ItemName, SourceName, SourceUrl};
+use crate::types::{CommitHash, ContentHash, DestPath, ItemName, SourceId, SourceName, SourceUrl};
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -137,39 +137,9 @@ pub fn build(
     let mut sources = IndexMap::new();
     let mut items = IndexMap::new();
 
-    // Build source entries from graph
+    // Build source entries directly from resolved graph provenance.
     for (name, node) in &graph.nodes {
-        let resolved = &node.resolved_ref;
-        let url = graph
-            .nodes
-            .get(name)
-            .and_then(|n| {
-                // If we have a version, it was a git source
-                n.resolved_ref.commit.as_ref().map(|_| ())
-            })
-            .and_then(|_| {
-                // Try to get URL from somewhere — it's not directly on ResolvedRef
-                // We'll fill this from the old lock or leave it None
-                old_lock.sources.get(name).and_then(|s| s.url.clone())
-            });
-
-        let path = if resolved.commit.is_none() && resolved.version.is_none() {
-            // Path source
-            Some(resolved.tree_path.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-        sources.insert(
-            name.clone(),
-            LockedSource {
-                url,
-                path,
-                version: resolved.version_tag.clone(),
-                commit: resolved.commit.clone(),
-                tree_hash: None, // Could compute, but not critical for v1
-            },
-        );
+        sources.insert(name.clone(), to_locked_source(node));
     }
 
     // Build item entries from apply outcomes
@@ -240,7 +210,8 @@ pub fn build(
         }
     }
 
-    // Sort items by key for deterministic output
+    // Sort keys for deterministic output.
+    sources.sort_keys();
     items.sort_keys();
 
     Ok(LockFile {
@@ -250,9 +221,31 @@ pub fn build(
     })
 }
 
+fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
+    let (url, path) = match &node.source_id {
+        SourceId::Git { url } => (Some(url.clone()), None),
+        SourceId::Path { canonical } => (None, Some(canonical.to_string_lossy().to_string())),
+    };
+
+    LockedSource {
+        url,
+        path,
+        version: node.resolved_ref.version_tag.clone(),
+        commit: node.resolved_ref.commit.clone(),
+        tree_hash: None, // Could compute, but not critical for v1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use crate::resolve::{ResolvedGraph, ResolvedNode};
+    use crate::source::ResolvedRef;
+    use crate::sync::apply::ApplyResult;
+    use crate::types::{SourceId, SourceUrl};
     use tempfile::TempDir;
 
     fn sample_lock() -> LockFile {
@@ -443,5 +436,87 @@ dest_path = "agents/helper.md"
     fn item_kind_display() {
         assert_eq!(ItemKind::Agent.to_string(), "agent");
         assert_eq!(ItemKind::Skill.to_string(), "skill");
+    }
+
+    #[test]
+    fn build_uses_graph_provenance_for_sources() {
+        let git_name: SourceName = "base".into();
+        let path_name: SourceName = "local".into();
+        let git_url: SourceUrl = "https://example.com/new.git".into();
+        let path_canonical = PathBuf::from("/tmp/mars-agents-local-source");
+
+        let mut nodes = IndexMap::new();
+        nodes.insert(
+            git_name.clone(),
+            ResolvedNode {
+                source_name: git_name.clone(),
+                source_id: SourceId::git(git_url.clone()),
+                resolved_ref: ResolvedRef {
+                    source_name: git_name.clone(),
+                    version: Some(semver::Version::new(1, 2, 3)),
+                    version_tag: Some("v1.2.3".into()),
+                    commit: Some("abc123".into()),
+                    tree_path: PathBuf::from("/tmp/cache/base"),
+                },
+                manifest: None,
+                deps: vec![],
+            },
+        );
+        nodes.insert(
+            path_name.clone(),
+            ResolvedNode {
+                source_name: path_name.clone(),
+                source_id: SourceId::Path {
+                    canonical: path_canonical.clone(),
+                },
+                resolved_ref: ResolvedRef {
+                    source_name: path_name.clone(),
+                    version: None,
+                    version_tag: None,
+                    commit: None,
+                    tree_path: PathBuf::from("/tmp/cache/local"),
+                },
+                manifest: None,
+                deps: vec![],
+            },
+        );
+
+        let graph = ResolvedGraph {
+            nodes,
+            order: vec![git_name.clone(), path_name.clone()],
+            id_index: HashMap::new(),
+        };
+        let applied = ApplyResult { outcomes: vec![] };
+
+        let mut old_sources = IndexMap::new();
+        old_sources.insert(
+            git_name.clone(),
+            LockedSource {
+                url: Some("https://example.com/old.git".into()),
+                path: None,
+                version: Some("v0.0.1".into()),
+                commit: Some("deadbeef".into()),
+                tree_hash: None,
+            },
+        );
+        let old_lock = LockFile {
+            version: 1,
+            sources: old_sources,
+            items: IndexMap::new(),
+        };
+
+        let new_lock = build(&graph, &applied, &old_lock).unwrap();
+
+        let base = &new_lock.sources["base"];
+        assert_eq!(base.url.as_ref(), Some(&git_url));
+        assert_eq!(base.version.as_deref(), Some("v1.2.3"));
+        assert_eq!(base.commit.as_deref(), Some("abc123"));
+
+        let local = &new_lock.sources["local"];
+        assert!(local.url.is_none());
+        assert_eq!(
+            local.path.as_deref(),
+            Some(path_canonical.to_string_lossy().as_ref())
+        );
     }
 }

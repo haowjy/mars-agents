@@ -44,37 +44,6 @@ pub struct AvailableVersion {
     pub commit_id: git2::Oid,
 }
 
-/// Trait for source fetching — git and path implement this.
-///
-/// Separates version resolution (listing tags, matching constraints) from
-/// content fetching (cloning, updating cache).
-pub trait SourceFetcher {
-    /// Resolve version constraints to a concrete ref/version.
-    fn resolve(&self, spec: &SourceSpec, cache: &CacheDir) -> Result<ResolvedRef, MarsError>;
-
-    /// Fetch/update source content to cache, return path to source tree.
-    fn fetch(&self, resolved: &ResolvedRef, cache: &CacheDir) -> Result<PathBuf, MarsError>;
-}
-
-/// Collection of available fetchers (git, path).
-#[derive(Debug)]
-pub struct Fetchers {
-    _private: (),
-}
-
-impl Default for Fetchers {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Fetchers {
-    /// Create the default set of fetchers.
-    pub fn new() -> Self {
-        Fetchers { _private: () }
-    }
-}
-
 /// Dispatch to the right fetcher based on source spec.
 pub fn fetch_source(
     spec: &SourceSpec,

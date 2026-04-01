@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, OverrideEntry, Settings, SourceEntry};
 use crate::error::{ConfigError, MarsError};
-use crate::resolve::{ResolveOptions, SourceProvider};
+use crate::resolve::{ManifestReader, ResolveOptions, SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, CacheDir, ResolvedRef};
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
@@ -335,14 +335,16 @@ struct RealSourceProvider<'a> {
     project_root: &'a Path,
 }
 
-impl SourceProvider for RealSourceProvider<'_> {
+impl VersionLister for RealSourceProvider<'_> {
     fn list_versions(
         &self,
         url: &crate::types::SourceUrl,
     ) -> Result<Vec<AvailableVersion>, MarsError> {
         source::list_versions(url, self.cache_dir)
     }
+}
 
+impl SourceFetcher for RealSourceProvider<'_> {
     fn fetch_git_version(
         &self,
         url: &crate::types::SourceUrl,
@@ -380,7 +382,9 @@ impl SourceProvider for RealSourceProvider<'_> {
     fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
         source::path::fetch_path(path, self.project_root, source_name)
     }
+}
 
+impl ManifestReader for RealSourceProvider<'_> {
     fn read_manifest(
         &self,
         source_tree: &Path,

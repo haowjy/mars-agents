@@ -68,15 +68,14 @@ pub struct ResolveOptions {
     pub frozen: bool,
 }
 
-/// Abstraction over source operations needed by the resolver.
-///
-/// This trait exists so the resolver can be unit-tested with mocks
-/// while the real source module provides git/path implementations.
-pub trait SourceProvider {
-    /// List available semver-tagged versions for a git URL.
+/// Lists semver-tagged versions available for a git source.
+pub trait VersionLister {
     fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError>;
+}
 
-    /// Fetch a git source at a specific version tag, returning a ResolvedRef.
+/// Fetches concrete source trees after the resolver has picked a strategy.
+pub trait SourceFetcher {
+    /// Fetch a git source at a specific version tag.
     fn fetch_git_version(
         &self,
         url: &SourceUrl,
@@ -85,7 +84,7 @@ pub trait SourceProvider {
         preferred_commit: Option<&str>,
     ) -> Result<ResolvedRef, MarsError>;
 
-    /// Fetch a git source at a branch or commit ref (non-semver).
+    /// Fetch a git source at a branch/commit ref (non-semver path).
     fn fetch_git_ref(
         &self,
         url: &SourceUrl,
@@ -93,12 +92,19 @@ pub trait SourceProvider {
         source_name: &str,
     ) -> Result<ResolvedRef, MarsError>;
 
-    /// Use a local path source directly.
+    /// Resolve a local path source into a concrete tree reference.
     fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError>;
+}
 
-    /// Read mars.toml from a source tree. Returns None if absent.
+/// Reads source manifests for transitive dependency discovery.
+pub trait ManifestReader {
     fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError>;
 }
+
+/// Composite trait used by `resolve()`.
+pub trait SourceProvider: VersionLister + SourceFetcher + ManifestReader {}
+
+impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestReader {}
 
 /// Parse a version string into a constraint.
 ///
@@ -683,11 +689,13 @@ mod tests {
         }
     }
 
-    impl SourceProvider for MockProvider {
+    impl VersionLister for MockProvider {
         fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError> {
             Ok(self.versions.get(url.as_ref()).cloned().unwrap_or_default())
         }
+    }
 
+    impl SourceFetcher for MockProvider {
         fn fetch_git_version(
             &self,
             url: &SourceUrl,
@@ -747,7 +755,9 @@ mod tests {
                 tree_path: path.to_path_buf(),
             })
         }
+    }
 
+    impl ManifestReader for MockProvider {
         fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError> {
             Ok(self.manifests.get(source_tree).cloned().unwrap_or(None))
         }

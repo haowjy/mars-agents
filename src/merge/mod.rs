@@ -4,9 +4,9 @@
 //! that IDEs (VS Code, JetBrains) recognize and provide "Accept Current/
 //! Incoming/Both" UI for.
 //!
-//! Uses `git merge-file` via subprocess because git2 0.19 does not expose
-//! `git_merge_file()` at the Rust level. Since mars is inherently a git-based
-//! tool, `git` being in PATH is a safe assumption.
+//! Uses `git merge-file` via subprocess for consistent merge behavior.
+//! Since mars is inherently a git-based tool, `git` being in PATH is a safe
+//! assumption.
 
 use std::io::Write;
 use std::process::Command;

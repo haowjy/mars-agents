@@ -663,7 +663,7 @@ mod tests {
                 .map(|(major, minor, patch)| AvailableVersion {
                     tag: format!("v{major}.{minor}.{patch}"),
                     version: Version::new(major, minor, patch),
-                    commit_id: git2::Oid::zero(),
+                    commit_id: "0000000000000000000000000000000000000000".to_string(),
                 })
                 .collect();
             self.versions.insert(url.to_string(), avs);

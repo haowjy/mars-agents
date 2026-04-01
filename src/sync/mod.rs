@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use crate::config::{Config, EffectiveConfig, LocalConfig, OverrideEntry, Settings, SourceEntry};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{ManifestReader, ResolveOptions, SourceFetcher, VersionLister};
-use crate::source::{self, AvailableVersion, CacheDir, ResolvedRef};
+use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
 use crate::types::{CommitHash, ItemName, SourceName};
@@ -124,9 +124,9 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
     let old_lock = crate::lock::load(root)?;
 
     // Step 7: Resolve dependency graph.
-    let cache = CacheDir::new(root)?;
+    let cache = GlobalCache::new()?;
     let provider = RealSourceProvider {
-        cache_dir: &cache.path,
+        cache: &cache,
         project_root: root,
     };
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
@@ -334,7 +334,7 @@ fn to_resolve_options(mode: &ResolutionMode, frozen: bool) -> ResolveOptions {
 /// Implements the SourceProvider trait so the resolver can fetch sources
 /// and read manifests through a uniform interface.
 struct RealSourceProvider<'a> {
-    cache_dir: &'a Path,
+    cache: &'a GlobalCache,
     project_root: &'a Path,
 }
 
@@ -343,7 +343,7 @@ impl VersionLister for RealSourceProvider<'_> {
         &self,
         url: &crate::types::SourceUrl,
     ) -> Result<Vec<AvailableVersion>, MarsError> {
-        source::list_versions(url, self.cache_dir)
+        source::list_versions(url, self.cache)
     }
 }
 
@@ -362,7 +362,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
             url.as_ref(),
             Some(&version.tag),
             source_name,
-            self.cache_dir,
+            self.cache,
             &fetch_options,
         )
     }
@@ -377,7 +377,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
             url.as_ref(),
             Some(ref_name),
             source_name,
-            self.cache_dir,
+            self.cache,
             &source::git::FetchOptions::default(),
         )
     }

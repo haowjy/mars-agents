@@ -8,20 +8,43 @@ use crate::config::SourceSpec;
 use crate::error::MarsError;
 use crate::types::{CommitHash, SourceName, SourceUrl};
 
-/// Cache directory for fetched sources.
-///
-/// Layout: `{root}/.mars/cache/{url_to_dirname}/`
+/// Global source cache under `~/.mars/cache` (or `MARS_CACHE_DIR`).
 #[derive(Debug, Clone)]
-pub struct CacheDir {
-    pub path: PathBuf,
+pub struct GlobalCache {
+    pub root: PathBuf,
 }
 
-impl CacheDir {
-    /// Create a new cache directory reference, ensuring it exists.
-    pub fn new(root: &Path) -> Result<Self, MarsError> {
-        let path = root.join(".mars").join("cache");
-        std::fs::create_dir_all(&path)?;
-        Ok(CacheDir { path })
+impl GlobalCache {
+    /// Create a new cache directory, ensuring required subdirs exist.
+    ///
+    /// Resolution order:
+    /// 1. `MARS_CACHE_DIR`
+    /// 2. `dirs::home_dir()/.mars/cache`
+    /// 3. `{current_working_dir}/.mars/cache` fallback
+    pub fn new() -> Result<Self, MarsError> {
+        let root = if let Some(cache_dir) = std::env::var_os("MARS_CACHE_DIR") {
+            PathBuf::from(cache_dir)
+        } else if let Some(home) = dirs::home_dir() {
+            home.join(".mars").join("cache")
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".mars")
+                .join("cache")
+        };
+
+        let cache = Self { root };
+        std::fs::create_dir_all(cache.archives_dir())?;
+        std::fs::create_dir_all(cache.git_dir())?;
+        Ok(cache)
+    }
+
+    pub fn archives_dir(&self) -> PathBuf {
+        self.root.join("archives")
+    }
+
+    pub fn git_dir(&self) -> PathBuf {
+        self.root.join("git")
     }
 }
 
@@ -41,14 +64,14 @@ pub struct ResolvedRef {
 pub struct AvailableVersion {
     pub tag: String,
     pub version: semver::Version,
-    pub commit_id: git2::Oid,
+    pub commit_id: String,
 }
 
 /// Dispatch to the right fetcher based on source spec.
 pub fn fetch_source(
     spec: &SourceSpec,
     source_name: &str,
-    cache_dir: &Path,
+    cache: &GlobalCache,
     project_root: &Path,
 ) -> Result<ResolvedRef, MarsError> {
     match spec {
@@ -56,7 +79,7 @@ pub fn fetch_source(
             git_spec.url.as_ref(),
             git_spec.version.as_deref(),
             source_name,
-            cache_dir,
+            cache,
             &git::FetchOptions::default(),
         ),
         SourceSpec::Path(p) => path::fetch_path(p, project_root, source_name),
@@ -66,30 +89,33 @@ pub fn fetch_source(
 /// List available versions from a git remote (for resolution).
 pub fn list_versions(
     url: &SourceUrl,
-    cache_dir: &Path,
+    cache: &GlobalCache,
 ) -> Result<Vec<AvailableVersion>, MarsError> {
-    git::list_versions(url.as_ref(), cache_dir)
+    git::list_versions(url.as_ref(), cache)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
-    fn cache_dir_creates_directory() {
-        let dir = TempDir::new().unwrap();
-        let cache = CacheDir::new(dir.path()).unwrap();
-        assert!(cache.path.exists());
-        assert!(cache.path.ends_with(".mars/cache"));
+    fn global_cache_creates_directory() {
+        let cache = GlobalCache::new().unwrap();
+        assert!(cache.root.exists());
+        if let Some(from_env) = std::env::var_os("MARS_CACHE_DIR") {
+            assert_eq!(cache.root, PathBuf::from(from_env));
+        } else {
+            assert!(cache.root.ends_with(".mars/cache"));
+        }
+        assert!(cache.archives_dir().exists());
+        assert!(cache.git_dir().exists());
     }
 
     #[test]
-    fn cache_dir_idempotent() {
-        let dir = TempDir::new().unwrap();
-        let cache1 = CacheDir::new(dir.path()).unwrap();
-        let cache2 = CacheDir::new(dir.path()).unwrap();
-        assert_eq!(cache1.path, cache2.path);
-        assert!(cache1.path.exists());
+    fn global_cache_idempotent() {
+        let cache1 = GlobalCache::new().unwrap();
+        let cache2 = GlobalCache::new().unwrap();
+        assert_eq!(cache1.root, cache2.root);
+        assert!(cache1.root.exists());
     }
 }

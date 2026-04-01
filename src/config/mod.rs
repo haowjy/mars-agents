@@ -17,7 +17,7 @@ pub struct Config {
 
 /// User-declared source entry in agents.toml.
 ///
-/// Sources are either git URLs (versioned, fetched via git2) or local paths
+/// Sources are either git URLs (versioned, fetched via source adapters) or local paths
 /// (unversioned, always syncs current state). Uses `url` XOR `path` to
 /// determine type — validation happens in `merge()`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

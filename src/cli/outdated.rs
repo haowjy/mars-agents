@@ -26,6 +26,7 @@ struct OutdatedEntry {
 pub fn run(_args: &OutdatedArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     let lock = crate::lock::load(root)?;
     let config = crate::config::load(root)?;
+    let cache = crate::source::GlobalCache::new()?;
 
     let mut entries = Vec::new();
 
@@ -48,8 +49,7 @@ pub fn run(_args: &OutdatedArgs, root: &Path, json: bool) -> Result<i32, MarsErr
             .unwrap_or_else(|| "latest".to_string());
 
         // Try to list versions (may fail for non-git sources)
-        let cache_dir = root.join(".mars").join("cache");
-        let versions = match crate::source::list_versions(url, &cache_dir) {
+        let versions = match crate::source::list_versions(url, &cache) {
             Ok(v) => v,
             Err(_) => continue,
         };

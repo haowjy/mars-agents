@@ -115,8 +115,15 @@ pub enum MarsError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("git error: {0}")]
-    Git(#[from] git2::Error),
+    #[error("HTTP error: {url} — {status}: {message}")]
+    Http {
+        url: String,
+        status: u16,
+        message: String,
+    },
+
+    #[error("git command failed: `{command}` — {message}")]
+    GitCli { command: String, message: String },
 }
 
 impl MarsError {
@@ -124,7 +131,7 @@ impl MarsError {
     ///
     /// - 1: sync completed with unresolved conflicts
     /// - 2: resolution/validation/config error
-    /// - 3: I/O or git error
+    /// - 3: source, I/O, HTTP, or git CLI error
     pub fn exit_code(&self) -> i32 {
         match self {
             MarsError::Conflict { .. } => 1,
@@ -136,7 +143,10 @@ impl MarsError {
             | MarsError::InvalidRequest { .. }
             | MarsError::FrozenViolation { .. }
             | MarsError::LockedCommitUnreachable { .. } => 2,
-            MarsError::Source { .. } | MarsError::Io(_) | MarsError::Git(_) => 3,
+            MarsError::Source { .. }
+            | MarsError::Io(_)
+            | MarsError::Http { .. }
+            | MarsError::GitCli { .. } => 3,
         }
     }
 }
@@ -327,7 +337,21 @@ mod tests {
                 )),
                 3,
             ),
-            (MarsError::Git(git2::Error::from_str("git failed")), 3),
+            (
+                MarsError::Http {
+                    url: "https://example.com/archive.tar.gz".to_string(),
+                    status: 503,
+                    message: "service unavailable".to_string(),
+                },
+                3,
+            ),
+            (
+                MarsError::GitCli {
+                    command: "git ls-remote --tags https://example.com/repo".to_string(),
+                    message: "fatal: repository not found".to_string(),
+                },
+                3,
+            ),
         ];
 
         for (err, expected) in cases {

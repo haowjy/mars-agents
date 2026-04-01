@@ -12,7 +12,10 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 serde_yaml = "0.9"
-git2 = { version = "0.19", features = ["vendored-openssl"] }
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
+dirs = "6"
 sha2 = "0.10"
 semver = { version = "1", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }

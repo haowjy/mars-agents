@@ -6,6 +6,7 @@ use crate::config::SourceEntry;
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
+use crate::types::{ItemName, SourceName};
 
 use super::output;
 
@@ -30,7 +31,7 @@ pub struct AddArgs {
 
 /// Parsed source specifier.
 struct ParsedSource {
-    name: String,
+    name: SourceName,
     entry: SourceEntry,
 }
 
@@ -47,17 +48,17 @@ pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         agents: if args.agents.is_empty() {
             None
         } else {
-            Some(args.agents.clone())
+            Some(args.agents.iter().map(|v| ItemName::from(v.as_str())).collect())
         },
         skills: if args.skills.is_empty() {
             None
         } else {
-            Some(args.skills.clone())
+            Some(args.skills.iter().map(|v| ItemName::from(v.as_str())).collect())
         },
         exclude: if args.exclude.is_empty() {
             None
         } else {
-            Some(args.exclude.clone())
+            Some(args.exclude.iter().map(|v| ItemName::from(v.as_str())).collect())
         },
         rename: None,
     };
@@ -98,7 +99,7 @@ fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
     })?;
 
     Ok(ParsedSource {
-        name: parsed.name,
+        name: SourceName::from(parsed.name),
         entry: SourceEntry {
             url: parsed.url,
             path: parsed.path,

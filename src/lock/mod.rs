@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LockError, MarsError};
+use crate::types::{CommitHash, ContentHash, ItemName, SourceName};
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -14,7 +15,7 @@ pub struct LockFile {
     /// Schema version, currently 1.
     pub version: u32,
     #[serde(default)]
-    pub sources: IndexMap<String, LockedSource>,
+    pub sources: IndexMap<SourceName, LockedSource>,
     #[serde(default)]
     pub items: IndexMap<String, LockedItem>,
 }
@@ -40,7 +41,7 @@ pub struct LockedSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<String>,
+    pub commit: Option<CommitHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_hash: Option<String>,
 }
@@ -48,12 +49,12 @@ pub struct LockedSource {
 /// One installed item tracked by the lock.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItem {
-    pub source: String,
+    pub source: SourceName,
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    pub source_checksum: String,
-    pub installed_checksum: String,
+    pub source_checksum: ContentHash,
+    pub installed_checksum: ContentHash,
     pub dest_path: String,
 }
 
@@ -64,7 +65,7 @@ pub struct LockedItem {
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ItemId {
     pub kind: ItemKind,
-    pub name: String,
+    pub name: ItemName,
 }
 
 impl std::fmt::Display for ItemId {
@@ -201,7 +202,7 @@ pub fn build(
                 }
 
                 // Use source_name from outcome (propagated from TargetItem)
-                let source_name = if outcome.source_name.is_empty() {
+                let source_name = if outcome.source_name.as_ref().is_empty() {
                     None
                 } else {
                     Some(outcome.source_name.clone())
@@ -215,7 +216,10 @@ pub fn build(
                         .and_then(|n| n.resolved_ref.version_tag.clone())
                 });
 
-                let source_checksum = outcome.source_checksum.clone().unwrap_or_default();
+                let source_checksum = outcome
+                    .source_checksum
+                    .clone()
+                    .unwrap_or_else(|| ContentHash::from(""));
                 let installed_checksum = outcome
                     .installed_checksum
                     .clone()
@@ -224,7 +228,7 @@ pub fn build(
                 items.insert(
                     dest_str.clone(),
                     LockedItem {
-                        source: source_name.unwrap_or_default(),
+                        source: source_name.unwrap_or_else(|| SourceName::from("")),
                         kind: outcome.item_id.kind,
                         version,
                         source_checksum,
@@ -254,37 +258,37 @@ mod tests {
     fn sample_lock() -> LockFile {
         let mut sources = IndexMap::new();
         sources.insert(
-            "base".to_string(),
+            "base".into(),
             LockedSource {
-                url: Some("https://github.com/org/base.git".to_string()),
+                url: Some("https://github.com/org/base.git".into()),
                 path: None,
-                version: Some("v1.0.0".to_string()),
-                commit: Some("abc123".to_string()),
-                tree_hash: Some("def456".to_string()),
+                version: Some("v1.0.0".into()),
+                commit: Some("abc123".into()),
+                tree_hash: Some("def456".into()),
             },
         );
 
         let mut items = IndexMap::new();
         items.insert(
-            "agents/coder.md".to_string(),
+            "agents/coder.md".into(),
             LockedItem {
-                source: "base".to_string(),
+                source: "base".into(),
                 kind: ItemKind::Agent,
-                version: Some("v1.0.0".to_string()),
-                source_checksum: "sha256:aaa".to_string(),
-                installed_checksum: "sha256:bbb".to_string(),
-                dest_path: "agents/coder.md".to_string(),
+                version: Some("v1.0.0".into()),
+                source_checksum: "sha256:aaa".into(),
+                installed_checksum: "sha256:bbb".into(),
+                dest_path: "agents/coder.md".into(),
             },
         );
         items.insert(
-            "skills/review".to_string(),
+            "skills/review".into(),
             LockedItem {
-                source: "base".to_string(),
+                source: "base".into(),
                 kind: ItemKind::Skill,
-                version: Some("v1.0.0".to_string()),
-                source_checksum: "sha256:ccc".to_string(),
-                installed_checksum: "sha256:ddd".to_string(),
-                dest_path: "skills/review".to_string(),
+                version: Some("v1.0.0".into()),
+                source_checksum: "sha256:ccc".into(),
+                installed_checksum: "sha256:ddd".into(),
+                dest_path: "skills/review".into(),
             },
         );
 
@@ -415,12 +419,12 @@ dest_path = "agents/helper.md"
     #[test]
     fn item_kind_serializes_lowercase() {
         let item = LockedItem {
-            source: "base".to_string(),
+            source: "base".into(),
             kind: ItemKind::Skill,
             version: None,
-            source_checksum: "sha256:aaa".to_string(),
-            installed_checksum: "sha256:bbb".to_string(),
-            dest_path: "skills/review".to_string(),
+            source_checksum: "sha256:aaa".into(),
+            installed_checksum: "sha256:bbb".into(),
+            dest_path: "skills/review".into(),
         };
         let serialized = toml::to_string(&item).unwrap();
         assert!(serialized.contains("kind = \"skill\""));
@@ -430,7 +434,7 @@ dest_path = "agents/helper.md"
     fn item_id_display() {
         let id = ItemId {
             kind: ItemKind::Agent,
-            name: "coder".to_string(),
+            name: "coder".into(),
         };
         assert_eq!(id.to_string(), "agent/coder");
     }

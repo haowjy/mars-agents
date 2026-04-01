@@ -80,7 +80,7 @@ pub fn run(_args: &OutdatedArgs, root: &Path, json: bool) -> Result<i32, MarsErr
         };
 
         entries.push(OutdatedEntry {
-            source: name.clone(),
+            source: name.to_string(),
             locked: locked_version,
             constraint,
             updateable,

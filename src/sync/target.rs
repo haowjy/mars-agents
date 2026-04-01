@@ -10,6 +10,7 @@ use crate::frontmatter;
 use crate::hash;
 use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::resolve::ResolvedGraph;
+use crate::types::{ContentHash, ItemName, SourceName};
 use crate::validate;
 
 /// What `.agents/` should look like after sync.
@@ -25,7 +26,7 @@ pub struct TargetState {
 #[derive(Debug, Clone)]
 pub struct TargetItem {
     pub id: ItemId,
-    pub source_name: String,
+    pub source_name: SourceName,
     /// Source URL for auto-rename `{owner}_{repo}` extraction.
     pub source_url: Option<String>,
     /// Path to content in fetched source tree.
@@ -33,7 +34,7 @@ pub struct TargetItem {
     /// Relative path under `.agents/` (reflects rename if any).
     pub dest_path: PathBuf,
     /// SHA-256 of source content.
-    pub source_hash: String,
+    pub source_hash: ContentHash,
     /// Optional in-memory content override after frontmatter rewrites.
     pub rewritten_content: Option<String>,
 }
@@ -41,9 +42,9 @@ pub struct TargetItem {
 /// Rename action produced by collision detection.
 #[derive(Debug, Clone)]
 pub struct RenameAction {
-    pub original_name: String,
-    pub new_name: String,
-    pub source_name: String,
+    pub original_name: ItemName,
+    pub new_name: ItemName,
+    pub source_name: SourceName,
 }
 
 /// Build target state: discover items per source, apply agents/skills/exclude
@@ -85,7 +86,7 @@ pub fn build(graph: &ResolvedGraph, config: &EffectiveConfig) -> Result<TargetSt
             let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
 
             // Compute source hash
-            let source_hash = hash::compute_hash(&source_content_path, item.id.kind)?;
+            let source_hash = ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?);
 
             // Determine destination path, honoring path-based and name-based rename maps.
             let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
@@ -126,7 +127,7 @@ pub fn check_collisions(
     // When two sources produce the same dest_path, we rename both.
 
     // First pass: find which dest_paths have multiple items wanting the same slot
-    let mut dest_to_sources: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut dest_to_sources: HashMap<String, Vec<(SourceName, ItemName)>> = HashMap::new();
 
     for (dest_key, item) in &target.items {
         dest_to_sources
@@ -194,7 +195,7 @@ pub fn build_with_collisions(
 
         for item in filtered {
             let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
-            let source_hash = hash::compute_hash(&source_content_path, item.id.kind)?;
+            let source_hash = ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?);
 
             let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
 
@@ -236,6 +237,7 @@ pub fn build_with_collisions(
             // Extract owner_repo suffix from source URL or source name
             let suffix = extract_owner_repo(item.source_url.as_deref(), &item.source_name);
             let new_name = format!("{original_name}__{suffix}");
+            let new_item_name = ItemName::from(new_name.clone());
 
             let new_dest_path = match item.id.kind {
                 ItemKind::Agent => PathBuf::from("agents").join(format!("{new_name}.md")),
@@ -244,13 +246,13 @@ pub fn build_with_collisions(
 
             rename_actions.push(RenameAction {
                 original_name: original_name.clone(),
-                new_name: new_name.clone(),
+                new_name: new_item_name.clone(),
                 source_name: item.source_name.clone(),
             });
 
             // Apply rename in-place
             let item_mut = &mut all_items[idx];
-            item_mut.id.name = new_name;
+            item_mut.id.name = new_item_name;
             item_mut.dest_path = new_dest_path;
         }
     }
@@ -281,7 +283,7 @@ pub fn rewrite_skill_refs(
 
     // Build rename map for skills only:
     // original skill name -> [(renamed skill name, source name)].
-    let mut skill_renames: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut skill_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>> = HashMap::new();
     for ra in renames {
         let is_skill = target
             .items
@@ -317,14 +319,14 @@ pub fn rewrite_skill_refs(
             Err(_) => continue,
         };
 
-        let mut renames_for_agent = IndexMap::new();
+        let mut renames_for_agent: IndexMap<String, String> = IndexMap::new();
         for (original_name, entries) in &skill_renames {
             let selected = entries
                 .iter()
                 .find(|(_, source)| source == &source_name)
                 .or_else(|| entries.first());
             if let Some((new_name, _)) = selected {
-                renames_for_agent.insert(original_name.clone(), new_name.clone());
+                renames_for_agent.insert(original_name.to_string(), new_name.to_string());
             }
         }
         if renames_for_agent.is_empty() {
@@ -362,7 +364,7 @@ pub fn check_unmanaged_collisions(
         let disk_path = install_target.join(&target_item.dest_path);
         if disk_path.exists() {
             return Err(MarsError::Source {
-                source_name: target_item.source_name.clone(),
+                source_name: target_item.source_name.to_string(),
                 message: format!(
                     "refusing to overwrite unmanaged path `{}`",
                     target_item.dest_path.display()
@@ -378,7 +380,7 @@ fn apply_item_rename(
     kind: ItemKind,
     item_name: &str,
     renames: &IndexMap<String, String>,
-) -> (String, PathBuf) {
+) -> (ItemName, PathBuf) {
     let default_dest = default_dest_path(kind, item_name);
     let default_key = default_dest.to_string_lossy().to_string();
 
@@ -390,7 +392,7 @@ fn apply_item_rename(
     };
     let dest_name = dest_name_from_path(kind, &dest_path);
 
-    (dest_name, dest_path)
+    (ItemName::from(dest_name), dest_path)
 }
 
 fn default_dest_path(kind: ItemKind, name: &str) -> PathBuf {
@@ -453,7 +455,7 @@ fn apply_filter(
                     let path_str = item.source_path.to_string_lossy();
                     !excluded.iter().any(|e| {
                         // Match against full source path or just the name
-                        path_str == *e || item.id.name == *e
+                        path_str == e.as_ref() || item.id.name == *e
                     })
                 })
                 .cloned()
@@ -462,7 +464,7 @@ fn apply_filter(
 
         FilterMode::Include { agents, skills } => {
             // Start with explicitly requested items
-            let mut include_set: std::collections::HashSet<String> =
+            let mut include_set: std::collections::HashSet<ItemName> =
                 std::collections::HashSet::new();
 
             // Add explicitly requested agents and skills
@@ -483,7 +485,7 @@ fn apply_filter(
                     let agent_path = tree_path.join(&agent_item.source_path);
                     let skill_deps = validate::parse_agent_skills(&agent_path).unwrap_or_default();
                     for skill in skill_deps {
-                        include_set.insert(skill);
+                        include_set.insert(ItemName::from(skill));
                     }
                 }
             }
@@ -578,11 +580,11 @@ mod tests {
         for (name, tree, url, filter) in sources {
             let url_str = url.map(|u| u.to_string());
             nodes.insert(
-                name.to_string(),
+                name.into(),
                 ResolvedNode {
-                    source_name: name.to_string(),
+                    source_name: name.into(),
                     resolved_ref: ResolvedRef {
-                        source_name: name.to_string(),
+                        source_name: name.into(),
                         version: None,
                         version_tag: None,
                         commit: None,
@@ -592,7 +594,7 @@ mod tests {
                     deps: vec![],
                 },
             );
-            order.push(name.to_string());
+            order.push(name.into());
 
             let spec = if let Some(u) = url {
                 SourceSpec::Git(GitSpec {
@@ -604,9 +606,9 @@ mod tests {
             };
 
             config_sources.insert(
-                name.to_string(),
+                name.into(),
                 EffectiveSource {
-                    name: name.to_string(),
+                    name: name.into(),
                     spec,
                     filter,
                     rename: IndexMap::new(),
@@ -688,7 +690,7 @@ mod tests {
         let discovered = discover::discover_source(tree.path()).unwrap();
         let filtered = apply_filter(
             &discovered,
-            &FilterMode::Exclude(vec!["reviewer".to_string()]),
+            &FilterMode::Exclude(vec!["reviewer".into()]),
             tree.path(),
         )
         .unwrap();
@@ -706,7 +708,7 @@ mod tests {
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
-                agents: vec!["coder".to_string()],
+                agents: vec!["coder".into()],
                 skills: vec![],
             },
             tree.path(),
@@ -732,7 +734,7 @@ mod tests {
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
-                agents: vec!["coder".to_string()],
+                agents: vec!["coder".into()],
                 skills: vec![],
             },
             tree.path(),
@@ -776,8 +778,8 @@ mod tests {
 
         // Add rename mapping
         config.sources.get_mut("base").unwrap().rename.insert(
-            "agents/old-name.md".to_string(),
-            "agents/new-name.md".to_string(),
+            "agents/old-name.md".into(),
+            "agents/new-name.md".into(),
         );
 
         let target = build(&graph, &config).unwrap();
@@ -862,41 +864,41 @@ mod tests {
 
         let mut items = IndexMap::new();
         items.insert(
-            "agents/coder.md".to_string(),
+            "agents/coder.md".into(),
             TargetItem {
                 id: ItemId {
                     kind: ItemKind::Agent,
-                    name: "coder".to_string(),
+                    name: "coder".into(),
                 },
-                source_name: "source-a".to_string(),
+                source_name: "source-a".into(),
                 source_url: None,
                 source_path: agent_path.clone(),
                 dest_path: PathBuf::from("agents/coder.md"),
-                source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()),
+                source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
                 rewritten_content: None,
             },
         );
         items.insert(
-            "skills/plan__org_base".to_string(),
+            "skills/plan__org_base".into(),
             TargetItem {
                 id: ItemId {
                     kind: ItemKind::Skill,
-                    name: "plan__org_base".to_string(),
+                    name: "plan__org_base".into(),
                 },
-                source_name: "source-a".to_string(),
+                source_name: "source-a".into(),
                 source_url: None,
                 source_path: skill_path.clone(),
                 dest_path: PathBuf::from("skills/plan__org_base"),
-                source_hash: hash::compute_hash(&skill_path, ItemKind::Skill).unwrap(),
+                source_hash: hash::compute_hash(&skill_path, ItemKind::Skill).unwrap().into(),
                 rewritten_content: None,
             },
         );
 
         let mut target = TargetState { items };
         let renames = vec![RenameAction {
-            original_name: "plan".to_string(),
-            new_name: "plan__org_base".to_string(),
-            source_name: "source-a".to_string(),
+            original_name: "plan".into(),
+            new_name: "plan__org_base".into(),
+            source_name: "source-a".into(),
         }];
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
@@ -922,26 +924,26 @@ mod tests {
 
         let mut items = IndexMap::new();
         items.insert(
-            "agents/coder.md".to_string(),
+            "agents/coder.md".into(),
             TargetItem {
                 id: ItemId {
                     kind: ItemKind::Agent,
-                    name: "coder".to_string(),
+                    name: "coder".into(),
                 },
-                source_name: "source-a".to_string(),
+                source_name: "source-a".into(),
                 source_url: None,
                 source_path: agent_path.clone(),
                 dest_path: PathBuf::from("agents/coder.md"),
-                source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()),
+                source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
                 rewritten_content: None,
             },
         );
 
         let mut target = TargetState { items };
         let renames = vec![RenameAction {
-            original_name: "plan".to_string(),
-            new_name: "plan__org_base".to_string(),
-            source_name: "source-a".to_string(),
+            original_name: "plan".into(),
+            new_name: "plan__org_base".into(),
+            source_name: "source-a".into(),
         }];
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
@@ -966,7 +968,7 @@ mod tests {
             &tree,
             None,
             FilterMode::Include {
-                agents: vec!["coder".to_string()],
+                agents: vec!["coder".into()],
                 skills: vec![],
             },
         )]);
@@ -987,7 +989,7 @@ mod tests {
             "base",
             &tree,
             None,
-            FilterMode::Exclude(vec!["deprecated".to_string()]),
+            FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
         let target = build(&graph, &config).unwrap();

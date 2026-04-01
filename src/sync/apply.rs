@@ -4,6 +4,7 @@ use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
+use crate::types::{ContentHash, ItemName, SourceName};
 
 /// Options controlling sync behavior.
 #[derive(Debug, Clone, Default)]
@@ -29,11 +30,11 @@ pub struct ActionOutcome {
     pub action: ActionTaken,
     pub dest_path: PathBuf,
     /// Which source this item came from.
-    pub source_name: String,
+    pub source_name: SourceName,
     /// Source checksum (pre-rewrite hash of source content).
-    pub source_checksum: Option<String>,
+    pub source_checksum: Option<ContentHash>,
     /// Installed checksum (post-rewrite hash of what was written to disk).
-    pub installed_checksum: Option<String>,
+    pub installed_checksum: Option<ContentHash>,
 }
 
 /// The specific action taken.
@@ -142,8 +143,8 @@ fn execute_action(
 
             // Perform three-way merge
             let labels = crate::merge::MergeLabels {
-                base: "base (last sync)".to_string(),
-                local: "local".to_string(),
+                base: "base (last sync)".into(),
+                local: "local".into(),
                 theirs: format!("{}@{}", target.source_name, "upstream"),
             };
 
@@ -157,7 +158,7 @@ fn execute_action(
             // Write merged content
             crate::fs::atomic_write(&dest, &merge_result.content)?;
 
-            let installed_checksum = crate::hash::hash_bytes(&merge_result.content);
+            let installed_checksum = ContentHash::from(crate::hash::hash_bytes(&merge_result.content));
 
             // Cache the merged content as new base
             cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
@@ -186,7 +187,7 @@ fn execute_action(
 
             let item_id = ItemId {
                 kind: locked.kind,
-                name: extract_name_from_dest(&locked.dest_path, locked.kind),
+                name: ItemName::from(extract_name_from_dest(&locked.dest_path, locked.kind)),
             };
 
             Ok(ActionOutcome {
@@ -258,7 +259,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
         PlannedAction::Remove { locked } => {
             let item_id = ItemId {
                 kind: locked.kind,
-                name: extract_name_from_dest(&locked.dest_path, locked.kind),
+                name: ItemName::from(extract_name_from_dest(&locked.dest_path, locked.kind)),
             };
             ActionOutcome {
                 item_id,
@@ -300,16 +301,16 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
 /// Install an item (file or directory) to the destination.
 ///
 /// Returns the installed checksum (hash of what was written to disk).
-fn install_item(target: &TargetItem, dest: &Path) -> Result<String, MarsError> {
+fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
         ItemKind::Agent => {
             let content = content_to_install(target)?;
             crate::fs::atomic_write(dest, &content)?;
-            Ok(crate::hash::hash_bytes(&content))
+            Ok(ContentHash::from(crate::hash::hash_bytes(&content)))
         }
         ItemKind::Skill => {
             crate::fs::atomic_install_dir(&target.source_path, dest)?;
-            crate::hash::compute_hash(dest, ItemKind::Skill)
+            crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
         }
     }
 }
@@ -356,12 +357,12 @@ fn read_item_content(path: &Path, kind: ItemKind) -> Result<Vec<u8>, MarsError> 
 /// Missing cache = degrade to two-way diff (more conflict markers), not crash.
 fn cache_base_content(
     cache_bases_dir: &Path,
-    installed_checksum: &str,
+    installed_checksum: &ContentHash,
     dest: &Path,
     kind: ItemKind,
 ) -> Result<(), MarsError> {
     std::fs::create_dir_all(cache_bases_dir)?;
-    let cache_path = cache_bases_dir.join(installed_checksum);
+    let cache_path = cache_bases_dir.join(installed_checksum.as_ref());
 
     // Only cache if not already present (content-addressed = immutable)
     if cache_path.exists() {
@@ -421,7 +422,7 @@ pub fn prune_orphans(
             outcomes.push(ActionOutcome {
                 item_id: ItemId {
                     kind: locked_item.kind,
-                    name: extract_name_from_dest(dest_path_str, locked_item.kind),
+                    name: ItemName::from(extract_name_from_dest(dest_path_str, locked_item.kind)),
                 },
                 action: ActionTaken::Removed,
                 dest_path: PathBuf::from(dest_path_str),
@@ -449,13 +450,13 @@ mod tests {
         TargetItem {
             id: ItemId {
                 kind: ItemKind::Agent,
-                name: name.to_string(),
+                name: name.into(),
             },
-            source_name: "test-source".to_string(),
+            source_name: "test-source".into(),
             source_url: None,
             source_path,
             dest_path: PathBuf::from(format!("agents/{name}.md")),
-            source_hash: hash::hash_bytes(content),
+            source_hash: hash::hash_bytes(content).into(),
             rewritten_content: None,
         }
     }
@@ -537,7 +538,7 @@ mod tests {
         let installed_checksum = result.outcomes[0].installed_checksum.as_ref().unwrap();
 
         // Verify base content was cached
-        let cached = bases_dir.join(installed_checksum);
+        let cached = bases_dir.join(installed_checksum.as_ref());
         assert!(cached.exists(), "base content should be cached");
         assert_eq!(fs::read(&cached).unwrap(), content);
     }
@@ -591,12 +592,12 @@ mod tests {
         fs::write(agents_dir.join("orphan.md"), b"# orphan").unwrap();
 
         let locked = LockedItem {
-            source: "old-source".to_string(),
+            source: "old-source".into(),
             kind: ItemKind::Agent,
             version: None,
-            source_checksum: "sha256:aaa".to_string(),
-            installed_checksum: "sha256:bbb".to_string(),
-            dest_path: "agents/orphan.md".to_string(),
+            source_checksum: "sha256:aaa".into(),
+            installed_checksum: "sha256:bbb".into(),
+            dest_path: "agents/orphan.md".into(),
         };
 
         let plan = SyncPlan {
@@ -626,12 +627,12 @@ mod tests {
         fs::write(skill_dir.join("SKILL.md"), b"# old skill").unwrap();
 
         let locked = LockedItem {
-            source: "old-source".to_string(),
+            source: "old-source".into(),
             kind: ItemKind::Skill,
             version: None,
-            source_checksum: "sha256:aaa".to_string(),
-            installed_checksum: "sha256:bbb".to_string(),
-            dest_path: "skills/old-skill".to_string(),
+            source_checksum: "sha256:aaa".into(),
+            installed_checksum: "sha256:bbb".into(),
+            dest_path: "skills/old-skill".into(),
         };
 
         let plan = SyncPlan {
@@ -692,10 +693,10 @@ mod tests {
             actions: vec![PlannedAction::Skip {
                 item_id: ItemId {
                     kind: ItemKind::Agent,
-                    name: "stable".to_string(),
+                    name: "stable".into(),
                 },
                 dest_path: PathBuf::from("agents/stable.md"),
-                source_name: "base".to_string(),
+                source_name: "base".into(),
                 reason: "unchanged",
             }],
         };
@@ -725,10 +726,10 @@ mod tests {
             actions: vec![PlannedAction::KeepLocal {
                 item_id: ItemId {
                     kind: ItemKind::Agent,
-                    name: "modified".to_string(),
+                    name: "modified".into(),
                 },
                 dest_path: PathBuf::from("agents/modified.md"),
-                source_name: "base".to_string(),
+                source_name: "base".into(),
             }],
         };
 
@@ -767,13 +768,13 @@ mod tests {
         let target = TargetItem {
             id: ItemId {
                 kind: ItemKind::Skill,
-                name: "planning".to_string(),
+                name: "planning".into(),
             },
-            source_name: "test".to_string(),
+            source_name: "test".into(),
             source_url: None,
             source_path: source_skill,
             dest_path: PathBuf::from("skills/planning"),
-            source_hash: skill_hash,
+            source_hash: skill_hash.into(),
             rewritten_content: None,
         };
 
@@ -813,14 +814,14 @@ mod tests {
 
         let mut lock_items = indexmap::IndexMap::new();
         lock_items.insert(
-            "agents/old.md".to_string(),
+            "agents/old.md".into(),
             LockedItem {
-                source: "old-source".to_string(),
+                source: "old-source".into(),
                 kind: ItemKind::Agent,
                 version: None,
-                source_checksum: "sha256:aaa".to_string(),
-                installed_checksum: "sha256:bbb".to_string(),
-                dest_path: "agents/old.md".to_string(),
+                source_checksum: "sha256:aaa".into(),
+                installed_checksum: "sha256:bbb".into(),
+                dest_path: "agents/old.md".into(),
             },
         );
         let lock = crate::lock::LockFile {

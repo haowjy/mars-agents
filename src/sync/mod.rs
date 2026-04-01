@@ -13,6 +13,7 @@ use crate::error::{ConfigError, MarsError};
 use crate::resolve::{ResolveOptions, SourceProvider};
 use crate::source::{self, AvailableVersion, CacheDir, ResolvedRef};
 use crate::sync::apply::ApplyResult;
+use crate::types::{CommitHash, SourceName};
 pub use crate::sync::apply::SyncOptions;
 use crate::validate::ValidationWarning;
 
@@ -51,26 +52,26 @@ pub enum ResolutionMode {
     /// Normal sync behavior.
     Normal,
     /// Upgrade behavior (maximize versions), optionally scoped to specific sources.
-    Maximize { targets: HashSet<String> },
+    Maximize { targets: HashSet<SourceName> },
 }
 
 /// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]
 pub enum ConfigMutation {
     /// Add or update a source in agents.toml.
-    UpsertSource { name: String, entry: SourceEntry },
+    UpsertSource { name: SourceName, entry: SourceEntry },
     /// Remove a source from agents.toml.
-    RemoveSource { name: String },
+    RemoveSource { name: SourceName },
     /// Add or update an override in agents.local.toml.
     SetOverride {
-        source_name: String,
+        source_name: SourceName,
         local_path: PathBuf,
     },
     /// Remove an override from agents.local.toml.
-    ClearOverride { source_name: String },
+    ClearOverride { source_name: SourceName },
     /// Set or update a rename mapping for one managed item.
     SetRename {
-        source_name: String,
+        source_name: SourceName,
         from: String,
         to: String,
     },
@@ -157,7 +158,7 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
         });
         if has_changes {
             return Err(MarsError::FrozenViolation {
-                message: "lock file would change but --frozen is set".to_string(),
+                message: "lock file would change but --frozen is set".into(),
             });
         }
     }
@@ -229,7 +230,7 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
         ConfigMutation::RemoveSource { name } => {
             if !config.sources.contains_key(name) {
                 return Err(MarsError::Source {
-                    source_name: name.clone(),
+                    source_name: name.to_string(),
                     message: format!("source `{name}` not found in agents.toml"),
                 });
             }
@@ -239,7 +240,7 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
         ConfigMutation::SetOverride { source_name, .. } => {
             if !config.sources.contains_key(source_name) {
                 return Err(MarsError::Source {
-                    source_name: source_name.clone(),
+                    source_name: source_name.to_string(),
                     message: format!("source `{source_name}` not found in agents.toml"),
                 });
             }
@@ -254,7 +255,7 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
                 .sources
                 .get_mut(source_name)
                 .ok_or_else(|| MarsError::Source {
-                    source_name: source_name.clone(),
+                    source_name: source_name.to_string(),
                     message: format!("source `{source_name}` not found in agents.toml"),
                 })?;
             let rename_map = source.rename.get_or_insert_with(indexmap::IndexMap::new);
@@ -295,7 +296,7 @@ fn validate_targets(
         for name in targets {
             if !effective.sources.contains_key(name) {
                 return Err(MarsError::Source {
-                    source_name: name.clone(),
+                    source_name: name.to_string(),
                     message: format!("source `{name}` not found in agents.toml"),
                 });
             }
@@ -341,7 +342,7 @@ impl SourceProvider for RealSourceProvider<'_> {
         preferred_commit: Option<&str>,
     ) -> Result<ResolvedRef, MarsError> {
         let fetch_options = source::git::FetchOptions {
-            preferred_commit: preferred_commit.map(str::to_string),
+            preferred_commit: preferred_commit.map(CommitHash::from),
         };
         source::git::fetch(
             url,
@@ -392,7 +393,7 @@ fn validate_skill_refs(
         .items
         .values()
         .filter(|item| item.id.kind == ItemKind::Skill)
-        .map(|item| item.id.name.clone())
+        .map(|item| item.id.name.to_string())
         .collect();
 
     // Collect agents with their paths
@@ -409,7 +410,7 @@ fn validate_skill_refs(
             } else {
                 item.source_path.clone()
             };
-            (item.id.name.clone(), path)
+            (item.id.name.to_string(), path)
         })
         .collect();
 
@@ -486,11 +487,11 @@ mod tests {
         for (name, tree_idx, filter) in sources {
             let tree_path = fixture.tree_path(tree_idx);
             nodes.insert(
-                name.to_string(),
+                name.into(),
                 ResolvedNode {
-                    source_name: name.to_string(),
+                    source_name: name.into(),
                     resolved_ref: ResolvedRef {
-                        source_name: name.to_string(),
+                        source_name: name.into(),
                         version: None,
                         version_tag: None,
                         commit: None,
@@ -500,12 +501,12 @@ mod tests {
                     deps: vec![],
                 },
             );
-            order.push(name.to_string());
+            order.push(name.into());
 
             config_sources.insert(
-                name.to_string(),
+                name.into(),
                 EffectiveSource {
-                    name: name.to_string(),
+                    name: name.into(),
                     spec: SourceSpec::Path(tree_path),
                     filter,
                     rename: IndexMap::new(),
@@ -560,7 +561,7 @@ mod tests {
         let request = SyncRequest {
             resolution: ResolutionMode::Normal,
             mutation: Some(ConfigMutation::RemoveSource {
-                name: "base".to_string(),
+                name: "base".into(),
             }),
             options: SyncOptions {
                 force: false,
@@ -584,7 +585,7 @@ mod tests {
         let request = SyncRequest {
             resolution: ResolutionMode::Normal,
             mutation: Some(ConfigMutation::UpsertSource {
-                name: "base".to_string(),
+                name: "base".into(),
                 entry: path_source_entry(source.path()),
             }),
             options: SyncOptions::default(),
@@ -617,7 +618,7 @@ mod tests {
         let request = SyncRequest {
             resolution: ResolutionMode::Normal,
             mutation: Some(ConfigMutation::UpsertSource {
-                name: "base".to_string(),
+                name: "base".into(),
                 entry: path_source_entry(source.path()),
             }),
             options: SyncOptions {

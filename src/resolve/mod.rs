@@ -20,6 +20,7 @@ use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::manifest::Manifest;
 use crate::source::{AvailableVersion, ResolvedRef};
+use crate::types::SourceName;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
@@ -27,20 +28,20 @@ use crate::source::{AvailableVersion, ResolvedRef};
 /// intersecting version constraints, and topological sorting.
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
-    pub nodes: IndexMap<String, ResolvedNode>,
+    pub nodes: IndexMap<SourceName, ResolvedNode>,
     /// Topological order (deps before dependents).
-    pub order: Vec<String>,
+    pub order: Vec<SourceName>,
 }
 
 /// A single node in the resolved graph.
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {
-    pub source_name: String,
+    pub source_name: SourceName,
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
-    pub deps: Vec<String>,
+    pub deps: Vec<SourceName>,
 }
 
 /// How a version constraint was specified.
@@ -60,7 +61,7 @@ pub struct ResolveOptions {
     /// If true, prefer newest version instead of minimum (for `mars upgrade`).
     pub maximize: bool,
     /// Source names to upgrade (empty = all, when maximize=true).
-    pub upgrade_targets: HashSet<String>,
+    pub upgrade_targets: HashSet<SourceName>,
     /// If true, locked commit replay failures become hard errors.
     pub frozen: bool,
 }
@@ -165,13 +166,13 @@ pub fn resolve(
     locked: Option<&LockFile>,
     options: &ResolveOptions,
 ) -> Result<ResolvedGraph, MarsError> {
-    let mut nodes: IndexMap<String, ResolvedNode> = IndexMap::new();
+    let mut nodes: IndexMap<SourceName, ResolvedNode> = IndexMap::new();
 
     // Pending sources to process: (name, url_or_path, version_constraint, required_by)
     let mut pending: VecDeque<PendingSource> = VecDeque::new();
 
     // Track constraints per source name for intersection
-    let mut constraints: HashMap<String, Vec<(String, VersionConstraint)>> = HashMap::new();
+    let mut constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>> = HashMap::new();
 
     // Seed with direct dependencies from config
     for (name, source) in &config.sources {
@@ -183,7 +184,7 @@ pub fn resolve(
             name: name.clone(),
             spec: source.spec.clone(),
             constraint,
-            required_by: "agents.toml".to_string(),
+            required_by: "agents.toml".into(),
             is_direct: true,
         });
     }
@@ -219,28 +220,28 @@ pub fn resolve(
         let mut deps = Vec::new();
         if let Some(ref manifest) = manifest {
             for (dep_name, dep_spec) in &manifest.dependencies {
-                deps.push(dep_name.clone());
+                deps.push(SourceName::from(dep_name.clone()));
 
                 // Only add as pending if not already resolved
-                if !nodes.contains_key(dep_name) {
+                if !nodes.contains_key(dep_name.as_str()) {
                     let dep_constraint = parse_version_constraint(Some(&dep_spec.version));
                     pending.push_back(PendingSource {
-                        name: dep_name.clone(),
+                        name: SourceName::from(dep_name.clone()),
                         spec: SourceSpec::Git(GitSpec {
                             url: dep_spec.url.clone(),
                             version: Some(dep_spec.version.clone()),
                         }),
                         constraint: dep_constraint,
-                        required_by: pending_src.name.clone(),
+                        required_by: pending_src.name.to_string(),
                         is_direct: false,
                     });
                 } else {
                     // Already resolved — record additional constraint for later validation
                     let dep_constraint = parse_version_constraint(Some(&dep_spec.version));
                     constraints
-                        .entry(dep_name.clone())
+                        .entry(SourceName::from(dep_name.clone()))
                         .or_default()
-                        .push((pending_src.name.clone(), dep_constraint));
+                        .push((pending_src.name.to_string(), dep_constraint));
                 }
             }
         }
@@ -267,7 +268,7 @@ pub fn resolve(
 
 /// Internal: a source waiting to be resolved.
 struct PendingSource {
-    name: String,
+    name: SourceName,
     spec: SourceSpec,
     constraint: VersionConstraint,
     required_by: String,
@@ -281,12 +282,12 @@ fn resolve_single_source(
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
-    constraints: &HashMap<String, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
 ) -> Result<ResolvedRef, MarsError> {
     match &pending.spec {
         SourceSpec::Path(path) => {
             // Path sources: no version resolution, just use the path
-            provider.fetch_path(path, &pending.name)
+            provider.fetch_path(path, pending.name.as_ref())
         }
         SourceSpec::Git(git) => resolve_git_source(
             &pending.name,
@@ -304,7 +305,7 @@ fn resolve_single_source(
 
 /// Resolve a git source: list versions, intersect constraints, select version.
 fn resolve_git_source(
-    name: &str,
+    name: &SourceName,
     url: &str,
     constraints: &[(String, VersionConstraint)],
     provider: &dyn SourceProvider,
@@ -319,7 +320,7 @@ fn resolve_git_source(
     if has_ref_pin {
         for (_, constraint) in constraints {
             if let VersionConstraint::RefPin(ref_name) = constraint {
-                return provider.fetch_git_ref(url, ref_name, name);
+                return provider.fetch_git_ref(url, ref_name, name.as_ref());
             }
         }
     }
@@ -329,7 +330,7 @@ fn resolve_git_source(
 
     if available.is_empty() {
         // No semver tags → treat as "latest commit"
-        return provider.fetch_git_ref(url, "HEAD", name);
+        return provider.fetch_git_ref(url, "HEAD", name.as_ref());
     }
 
     // Collect all semver constraints
@@ -386,14 +387,14 @@ fn resolve_git_source(
         None
     };
 
-    match provider.fetch_git_version(url, selected, name, preferred_commit) {
+    match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit) {
         Ok(resolved) => Ok(resolved),
         Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => Err(err),
         Err(MarsError::LockedCommitUnreachable { commit, url }) => {
             eprintln!(
                 "warning: locked commit {commit} for {url} is unreachable; re-resolving from tag"
             );
-            provider.fetch_git_version(url.as_str(), selected, name, None)
+            provider.fetch_git_version(url.as_str(), selected, name.as_ref(), None)
         }
         Err(err) => Err(err),
     }
@@ -405,7 +406,7 @@ fn resolve_git_source(
 /// - Maximize mode: pick the newest version satisfying all constraints.
 /// - Locked version preference: if a locked version satisfies all constraints, use it.
 fn select_version<'a>(
-    source_name: &str,
+    source_name: &SourceName,
     available: &'a [AvailableVersion],
     constraints: &[(&str, &VersionReq)],
     locked: Option<&Version>,
@@ -466,8 +467,8 @@ fn select_version<'a>(
 /// were known (e.g., a later transitive dep adds a new constraint on an
 /// already-resolved source).
 fn validate_all_constraints(
-    nodes: &IndexMap<String, ResolvedNode>,
-    constraints: &HashMap<String, Vec<(String, VersionConstraint)>>,
+    nodes: &IndexMap<SourceName, ResolvedNode>,
+    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
 ) -> Result<(), MarsError> {
     for (name, constraint_list) in constraints {
         let node = match nodes.get(name) {
@@ -482,7 +483,7 @@ fn validate_all_constraints(
                     && !req.matches(resolved_ver)
                 {
                     return Err(ResolutionError::VersionConflict {
-                        name: name.clone(),
+                        name: name.to_string(),
                         message: format!(
                             "resolved version {resolved_ver} does not satisfy \
                              constraint {req} (required by `{requester}`)"
@@ -500,57 +501,54 @@ fn validate_all_constraints(
 ///
 /// Returns source names in dependency order (deps before dependents).
 /// Errors if a cycle is detected.
-fn topological_sort(nodes: &IndexMap<String, ResolvedNode>) -> Result<Vec<String>, MarsError> {
+fn topological_sort(nodes: &IndexMap<SourceName, ResolvedNode>) -> Result<Vec<SourceName>, MarsError> {
     // Build in-degree map
-    let mut in_degree: HashMap<&str, usize> = HashMap::new();
-    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut in_degree: HashMap<SourceName, usize> = HashMap::new();
+    let mut adjacency: HashMap<SourceName, Vec<SourceName>> = HashMap::new();
 
     for (name, _) in nodes {
-        in_degree.entry(name.as_str()).or_insert(0);
-        adjacency.entry(name.as_str()).or_default();
+        in_degree.entry(name.clone()).or_insert(0);
+        adjacency.entry(name.clone()).or_default();
     }
 
     for (name, node) in nodes {
         for dep in &node.deps {
             if nodes.contains_key(dep) {
-                adjacency.entry(name.as_str()).or_default();
-                *in_degree.entry(dep.as_str()).or_insert(0) += 0; // ensure dep exists
+                adjacency.entry(name.clone()).or_default();
+                *in_degree.entry(dep.clone()).or_insert(0) += 0; // ensure dep exists
                 // dep → name edge means name depends on dep
                 // In Kahn's: in_degree[name] += 1 (name has an incoming dep edge)
-                *in_degree.entry(name.as_str()).or_insert(0) += 1;
-                adjacency
-                    .entry(dep.as_str())
-                    .or_default()
-                    .push(name.as_str());
+                *in_degree.entry(name.clone()).or_insert(0) += 1;
+                adjacency.entry(dep.clone()).or_default().push(name.clone());
             }
         }
     }
 
     // Start with nodes that have no dependencies (in_degree == 0)
-    let mut queue: VecDeque<&str> = VecDeque::new();
+    let mut queue: VecDeque<SourceName> = VecDeque::new();
     for (name, &degree) in &in_degree {
         if degree == 0 {
-            queue.push_back(name);
+            queue.push_back(name.clone());
         }
     }
 
     // Sort the initial queue for deterministic output
-    let mut sorted_queue: Vec<&str> = queue.drain(..).collect();
+    let mut sorted_queue: Vec<SourceName> = queue.drain(..).collect();
     sorted_queue.sort();
     queue.extend(sorted_queue);
 
-    let mut order: Vec<String> = Vec::new();
+    let mut order: Vec<SourceName> = Vec::new();
 
     while let Some(current) = queue.pop_front() {
-        order.push(current.to_string());
+        order.push(current.clone());
 
         // Collect and sort dependents for determinism
-        if let Some(dependents) = adjacency.get(current) {
-            let mut sorted_dependents: Vec<&str> = dependents.clone();
+        if let Some(dependents) = adjacency.get(&current) {
+            let mut sorted_dependents: Vec<SourceName> = dependents.clone();
             sorted_dependents.sort();
 
             for dependent in sorted_dependents {
-                if let Some(degree) = in_degree.get_mut(dependent) {
+                if let Some(degree) = in_degree.get_mut(&dependent) {
                     *degree -= 1;
                     if *degree == 0 {
                         queue.push_back(dependent);
@@ -674,13 +672,13 @@ mod tests {
 
             let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
             Ok(ResolvedRef {
-                source_name: source_name.to_string(),
+                source_name: source_name.into(),
                 version: Some(version.version.clone()),
                 version_tag: Some(version.tag.clone()),
                 commit: Some(
                     preferred_commit
-                        .map(str::to_string)
-                        .unwrap_or_else(|| "mock-commit".to_string()),
+                        .map(|c| c.into())
+                        .unwrap_or_else(|| "mock-commit".into()),
                 ),
                 tree_path,
             })
@@ -694,17 +692,17 @@ mod tests {
         ) -> Result<ResolvedRef, MarsError> {
             let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
             Ok(ResolvedRef {
-                source_name: source_name.to_string(),
+                source_name: source_name.into(),
                 version: None,
                 version_tag: None,
-                commit: Some(format!("ref:{ref_name}")),
+                commit: Some(format!("ref:{ref_name}").into()),
                 tree_path,
             })
         }
 
         fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
             Ok(ResolvedRef {
-                source_name: source_name.to_string(),
+                source_name: source_name.into(),
                 version: None,
                 version_tag: None,
                 commit: None,
@@ -723,9 +721,9 @@ mod tests {
         let mut map = IndexMap::new();
         for (name, spec) in sources {
             map.insert(
-                name.to_string(),
+                name.into(),
                 EffectiveSource {
-                    name: name.to_string(),
+                    name: name.into(),
                     spec,
                     filter: FilterMode::All,
                     rename: IndexMap::new(),
@@ -949,8 +947,8 @@ mod tests {
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.order.len(), 2);
         // Both should be in the order (either order is valid since no deps)
-        assert!(graph.order.contains(&"a".to_string()));
-        assert!(graph.order.contains(&"b".to_string()));
+        assert!(graph.order.contains(&"a".into()));
+        assert!(graph.order.contains(&"b".into()));
     }
 
     #[test]
@@ -1209,12 +1207,12 @@ mod tests {
         // Lock file says v1.1.0
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.1.0".to_string()),
-                commit: Some("abc".to_string()),
+                version: Some("v1.1.0".into()),
+                commit: Some("abc".into()),
                 tree_hash: None,
             },
         );
@@ -1247,12 +1245,12 @@ mod tests {
         // Lock file says v1.0.0 — no longer satisfies ^2.0
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.0.0".to_string()),
-                commit: Some("abc".to_string()),
+                version: Some("v1.0.0".into()),
+                commit: Some("abc".into()),
                 tree_hash: None,
             },
         );
@@ -1281,12 +1279,12 @@ mod tests {
         let locked_commit = "locked-sha-123";
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.1.0".to_string()),
-                commit: Some(locked_commit.to_string()),
+                version: Some("v1.1.0".into()),
+                commit: Some(locked_commit.into()),
                 tree_hash: None,
             },
         );
@@ -1322,12 +1320,12 @@ mod tests {
 
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.1.0".to_string()),
-                commit: Some(unreachable_commit.to_string()),
+                version: Some("v1.1.0".into()),
+                commit: Some(unreachable_commit.into()),
                 tree_hash: None,
             },
         );
@@ -1367,12 +1365,12 @@ mod tests {
 
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.1.0".to_string()),
-                commit: Some(unreachable_commit.to_string()),
+                version: Some("v1.1.0".into()),
+                commit: Some(unreachable_commit.into()),
                 tree_hash: None,
             },
         );
@@ -1415,12 +1413,12 @@ mod tests {
 
         let mut lock = LockFile::empty();
         lock.sources.insert(
-            "a".to_string(),
+            "a".into(),
             crate::lock::LockedSource {
-                url: Some("https://example.com/a.git".to_string()),
+                url: Some("https://example.com/a.git".into()),
                 path: None,
-                version: Some("v1.0.0".to_string()),
-                commit: Some(unreachable_commit.to_string()),
+                version: Some("v1.0.0".into()),
+                commit: Some(unreachable_commit.into()),
                 tree_hash: None,
             },
         );
@@ -1507,7 +1505,7 @@ mod tests {
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
         assert!(node.resolved_ref.version.is_none());
-        assert_eq!(node.resolved_ref.commit, Some("ref:main".to_string()));
+        assert_eq!(node.resolved_ref.commit, Some("ref:main".into()));
     }
 
     #[test]
@@ -1598,7 +1596,7 @@ mod tests {
         // Only upgrade "a", not "b"
         let options = ResolveOptions {
             maximize: true,
-            upgrade_targets: HashSet::from(["a".to_string()]),
+            upgrade_targets: HashSet::from(["a".into()]),
             frozen: false,
         };
 
@@ -1630,7 +1628,7 @@ mod tests {
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
         assert!(node.resolved_ref.version.is_none());
-        assert_eq!(node.resolved_ref.commit, Some("ref:HEAD".to_string()));
+        assert_eq!(node.resolved_ref.commit, Some("ref:HEAD".into()));
     }
 
     // ========== Topological sort tests ==========
@@ -1639,27 +1637,27 @@ mod tests {
     fn topo_sort_linear_chain() {
         let mut nodes = IndexMap::new();
         nodes.insert(
-            "c".to_string(),
+            "c".into(),
             ResolvedNode {
-                source_name: "c".to_string(),
+                source_name: "c".into(),
                 resolved_ref: dummy_ref("c"),
                 manifest: None,
-                deps: vec!["b".to_string()],
+                deps: vec!["b".into()],
             },
         );
         nodes.insert(
-            "b".to_string(),
+            "b".into(),
             ResolvedNode {
-                source_name: "b".to_string(),
+                source_name: "b".into(),
                 resolved_ref: dummy_ref("b"),
                 manifest: None,
-                deps: vec!["a".to_string()],
+                deps: vec!["a".into()],
             },
         );
         nodes.insert(
-            "a".to_string(),
+            "a".into(),
             ResolvedNode {
-                source_name: "a".to_string(),
+                source_name: "a".into(),
                 resolved_ref: dummy_ref("a"),
                 manifest: None,
                 deps: vec![],
@@ -1675,36 +1673,36 @@ mod tests {
         // a depends on b and c, both depend on d
         let mut nodes = IndexMap::new();
         nodes.insert(
-            "a".to_string(),
+            "a".into(),
             ResolvedNode {
-                source_name: "a".to_string(),
+                source_name: "a".into(),
                 resolved_ref: dummy_ref("a"),
                 manifest: None,
-                deps: vec!["b".to_string(), "c".to_string()],
+                deps: vec!["b".into(), "c".into()],
             },
         );
         nodes.insert(
-            "b".to_string(),
+            "b".into(),
             ResolvedNode {
-                source_name: "b".to_string(),
+                source_name: "b".into(),
                 resolved_ref: dummy_ref("b"),
                 manifest: None,
-                deps: vec!["d".to_string()],
+                deps: vec!["d".into()],
             },
         );
         nodes.insert(
-            "c".to_string(),
+            "c".into(),
             ResolvedNode {
-                source_name: "c".to_string(),
+                source_name: "c".into(),
                 resolved_ref: dummy_ref("c"),
                 manifest: None,
-                deps: vec!["d".to_string()],
+                deps: vec!["d".into()],
             },
         );
         nodes.insert(
-            "d".to_string(),
+            "d".into(),
             ResolvedNode {
-                source_name: "d".to_string(),
+                source_name: "d".into(),
                 resolved_ref: dummy_ref("d"),
                 manifest: None,
                 deps: vec![],
@@ -1727,18 +1725,18 @@ mod tests {
     fn topo_sort_no_deps() {
         let mut nodes = IndexMap::new();
         nodes.insert(
-            "a".to_string(),
+            "a".into(),
             ResolvedNode {
-                source_name: "a".to_string(),
+                source_name: "a".into(),
                 resolved_ref: dummy_ref("a"),
                 manifest: None,
                 deps: vec![],
             },
         );
         nodes.insert(
-            "b".to_string(),
+            "b".into(),
             ResolvedNode {
-                source_name: "b".to_string(),
+                source_name: "b".into(),
                 resolved_ref: dummy_ref("b"),
                 manifest: None,
                 deps: vec![],
@@ -1755,21 +1753,21 @@ mod tests {
     fn topo_sort_cycle_error() {
         let mut nodes = IndexMap::new();
         nodes.insert(
-            "a".to_string(),
+            "a".into(),
             ResolvedNode {
-                source_name: "a".to_string(),
+                source_name: "a".into(),
                 resolved_ref: dummy_ref("a"),
                 manifest: None,
-                deps: vec!["b".to_string()],
+                deps: vec!["b".into()],
             },
         );
         nodes.insert(
-            "b".to_string(),
+            "b".into(),
             ResolvedNode {
-                source_name: "b".to_string(),
+                source_name: "b".into(),
                 resolved_ref: dummy_ref("b"),
                 manifest: None,
-                deps: vec!["a".to_string()],
+                deps: vec!["a".into()],
             },
         );
 
@@ -1781,7 +1779,7 @@ mod tests {
 
     fn dummy_ref(name: &str) -> ResolvedRef {
         ResolvedRef {
-            source_name: name.to_string(),
+            source_name: name.into(),
             version: None,
             version_tag: None,
             commit: None,

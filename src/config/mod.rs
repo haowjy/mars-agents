@@ -4,12 +4,13 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ConfigError, MarsError};
+use crate::types::{ItemName, SourceName};
 
 /// Top-level agents.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
-    pub sources: IndexMap<String, SourceEntry>,
+    pub sources: IndexMap<SourceName, SourceEntry>,
     #[serde(default)]
     pub settings: Settings,
 }
@@ -28,11 +29,11 @@ pub struct SourceEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agents: Option<Vec<String>>,
+    pub agents: Option<Vec<ItemName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<String>>,
+    pub skills: Option<Vec<ItemName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
+    pub exclude: Option<Vec<ItemName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rename: Option<IndexMap<String, String>>,
 }
@@ -44,7 +45,7 @@ pub struct SourceEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalConfig {
     #[serde(default)]
-    pub overrides: IndexMap<String, OverrideEntry>,
+    pub overrides: IndexMap<SourceName, OverrideEntry>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -78,11 +79,11 @@ pub enum FilterMode {
     All,
     /// Only install specific agents and/or skills.
     Include {
-        agents: Vec<String>,
-        skills: Vec<String>,
+        agents: Vec<ItemName>,
+        skills: Vec<ItemName>,
     },
     /// Install everything except these items.
-    Exclude(Vec<String>),
+    Exclude(Vec<ItemName>),
 }
 
 /// Effective configuration after merging agents.toml and agents.local.toml.
@@ -90,14 +91,14 @@ pub enum FilterMode {
 /// This is what the rest of the pipeline operates on.
 #[derive(Debug, Clone)]
 pub struct EffectiveConfig {
-    pub sources: IndexMap<String, EffectiveSource>,
+    pub sources: IndexMap<SourceName, EffectiveSource>,
     pub settings: Settings,
 }
 
 /// A fully-resolved source with override tracking.
 #[derive(Debug, Clone)]
 pub struct EffectiveSource {
-    pub name: String,
+    pub name: SourceName,
     pub spec: SourceSpec,
     pub filter: FilterMode,
     pub rename: IndexMap<String, String>,
@@ -172,7 +173,10 @@ pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, Mars
         let has_include = entry.agents.is_some() || entry.skills.is_some();
         let has_exclude = entry.exclude.is_some();
         if has_include && has_exclude {
-            return Err(ConfigError::ConflictingFilters { name: name.clone() }.into());
+            return Err(ConfigError::ConflictingFilters {
+                name: name.to_string(),
+            }
+            .into());
         }
 
         let filter = if has_include {
@@ -393,19 +397,19 @@ path = "/local/path"
             sources: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     SourceEntry {
-                        url: Some("https://github.com/org/base.git".to_string()),
+                        url: Some("https://github.com/org/base.git".into()),
                         path: None,
-                        version: Some("v1.0".to_string()),
-                        agents: Some(vec!["coder".to_string()]),
+                        version: Some("v1.0".into()),
+                        agents: Some(vec!["coder".into()]),
                         skills: None,
                         exclude: None,
                         rename: None,
                     },
                 );
                 m.insert(
-                    "local".to_string(),
+                    "local".into(),
                     SourceEntry {
                         url: None,
                         path: Some(PathBuf::from("../my-agents")),
@@ -476,11 +480,11 @@ path = "/home/dev/local-base"
             sources: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     SourceEntry {
-                        url: Some("https://github.com/org/base.git".to_string()),
+                        url: Some("https://github.com/org/base.git".into()),
                         path: None,
-                        version: Some("v1.0".to_string()),
+                        version: Some("v1.0".into()),
                         agents: None,
                         skills: None,
                         exclude: None,
@@ -512,11 +516,11 @@ path = "/home/dev/local-base"
             sources: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     SourceEntry {
-                        url: Some("https://github.com/org/base.git".to_string()),
+                        url: Some("https://github.com/org/base.git".into()),
                         path: None,
-                        version: Some("v1.0".to_string()),
+                        version: Some("v1.0".into()),
                         agents: None,
                         skills: None,
                         exclude: None,
@@ -531,7 +535,7 @@ path = "/home/dev/local-base"
             overrides: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     OverrideEntry {
                         path: PathBuf::from("/home/dev/local-base"),
                     },
@@ -561,9 +565,9 @@ path = "/home/dev/local-base"
             sources: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     SourceEntry {
-                        url: Some("https://github.com/org/base.git".to_string()),
+                        url: Some("https://github.com/org/base.git".into()),
                         path: None,
                         version: None,
                         agents: None,
@@ -587,11 +591,11 @@ path = "/home/dev/local-base"
             sources: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "base".to_string(),
+                    "base".into(),
                     SourceEntry {
-                        url: Some("https://github.com/org/base.git".to_string()),
+                        url: Some("https://github.com/org/base.git".into()),
                         path: None,
-                        version: Some("v2.0".to_string()),
+                        version: Some("v2.0".into()),
                         agents: None,
                         skills: None,
                         exclude: None,

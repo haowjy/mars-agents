@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
+use crate::types::SourceName;
 
 use super::output;
 
@@ -23,7 +24,7 @@ pub fn run(args: &OverrideArgs, root: &Path, json: bool) -> Result<i32, MarsErro
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::SetOverride {
-            source_name: args.source.clone(),
+            source_name: SourceName::from(args.source.as_str()),
             local_path: args.path.clone(),
         }),
         options: SyncOptions::default(),

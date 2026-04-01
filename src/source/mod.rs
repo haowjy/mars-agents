@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::SourceSpec;
 use crate::error::MarsError;
+use crate::types::{CommitHash, SourceName};
 
 /// Cache directory for fetched sources.
 ///
@@ -27,11 +28,11 @@ impl CacheDir {
 /// A resolved source reference — pinned to a specific version/commit.
 #[derive(Debug, Clone)]
 pub struct ResolvedRef {
-    pub source_name: String,
+    pub source_name: SourceName,
     pub version: Option<semver::Version>,
     /// Original tag name (e.g., "v0.5.2")
     pub version_tag: Option<String>,
-    pub commit: Option<String>,
+    pub commit: Option<CommitHash>,
     pub tree_path: PathBuf,
 }
 

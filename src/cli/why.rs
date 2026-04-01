@@ -76,7 +76,7 @@ pub fn run(args: &WhyArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     let result = WhyResult {
         name: args.name.clone(),
         kind: item.kind.to_string(),
-        source: item.source.clone(),
+        source: item.source.to_string(),
         version: item.version.clone().unwrap_or_else(|| "-".to_string()),
         dest_path: dest_path.clone(),
         required_by: required_by.clone(),

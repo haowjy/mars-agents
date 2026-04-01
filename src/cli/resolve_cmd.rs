@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::hash;
+use crate::types::ContentHash;
 
 use super::output;
 
@@ -52,7 +53,7 @@ pub fn run(args: &ResolveArgs, root: &Path, json: bool) -> Result<i32, MarsError
         if let Some(item) = lock.items.get_mut(dest_path_str) {
             let new_hash = hash::compute_hash(&disk_path, item.kind)?;
             if new_hash != item.installed_checksum {
-                item.installed_checksum = new_hash;
+                item.installed_checksum = ContentHash::from(new_hash);
                 resolved_files.push(dest_path_str.clone());
             }
         }

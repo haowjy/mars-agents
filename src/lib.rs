@@ -11,4 +11,5 @@ pub mod merge;
 pub mod resolve;
 pub mod source;
 pub mod sync;
+pub mod types;
 pub mod validate;

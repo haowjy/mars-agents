@@ -7,16 +7,17 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::source::{AvailableVersion, ResolvedRef};
+use crate::types::{CommitHash, SourceName};
 
 /// Return type for checkout helpers: (semver version, tag name, commit SHA).
-type CheckoutResult = (Option<semver::Version>, Option<String>, Option<String>);
+type CheckoutResult = (Option<semver::Version>, Option<String>, Option<CommitHash>);
 
 /// Options controlling git fetch behavior.
 #[derive(Debug, Clone, Default)]
 pub struct FetchOptions {
     /// Preferred commit SHA to checkout before resolving tags/versions.
     /// Used for lock replay to guarantee reproducible content.
-    pub preferred_commit: Option<String>,
+    pub preferred_commit: Option<CommitHash>,
 }
 
 /// Normalize a git URL to a filesystem-safe directory name.
@@ -203,7 +204,7 @@ pub fn fetch(
         match checkout_commit(&repo, preferred_commit, source_name) {
             Ok(commit) => {
                 return Ok(ResolvedRef {
-                    source_name: source_name.to_string(),
+                    source_name: SourceName::from(source_name),
                     version: version_req.and_then(parse_semver_tag),
                     version_tag: version_req.map(str::to_string),
                     commit: Some(commit),
@@ -228,7 +229,7 @@ pub fn fetch(
     };
 
     Ok(ResolvedRef {
-        source_name: source_name.to_string(),
+        source_name: SourceName::from(source_name),
         version,
         version_tag,
         commit,
@@ -297,7 +298,7 @@ fn checkout_version(
                     source_name: source_name.to_string(),
                     message: format!("failed to peel tag `{tag_name}`: {e}"),
                 })?;
-            let commit_id = obj.id().to_string();
+            let commit_id = CommitHash::from(obj.id().to_string());
 
             // Detach HEAD at the commit
             repo.set_head_detached(obj.id())
@@ -335,7 +336,7 @@ fn checkout_commit(
     repo: &git2::Repository,
     sha: &str,
     source_name: &str,
-) -> Result<String, MarsError> {
+) -> Result<CommitHash, MarsError> {
     let oid = git2::Oid::from_str(sha).map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),
         message: format!("failed to parse commit `{sha}`: {e}"),
@@ -358,7 +359,7 @@ fn checkout_commit(
             message: format!("failed to checkout working tree for commit `{sha}`: {e}"),
         })?;
 
-    Ok(commit.id().to_string())
+    Ok(CommitHash::from(commit.id().to_string()))
 }
 
 /// Checkout HEAD (default branch).
@@ -374,8 +375,7 @@ fn checkout_head(repo: &git2::Repository, source_name: &str) -> Result<CheckoutR
             source_name: source_name.to_string(),
             message: format!("failed to resolve HEAD to commit: {e}"),
         })?
-        .id()
-        .to_string();
+        .id();
 
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
         .map_err(|e| MarsError::Source {
@@ -383,7 +383,7 @@ fn checkout_head(repo: &git2::Repository, source_name: &str) -> Result<CheckoutR
             message: format!("failed to checkout HEAD: {e}"),
         })?;
 
-    Ok((None, None, Some(commit_id)))
+    Ok((None, None, Some(CommitHash::from(commit_id.to_string()))))
 }
 
 /// Wrap a git2 error with source URL context, providing helpful messages
@@ -822,7 +822,7 @@ mod tests {
             "test-source",
             &cache_dir,
             &FetchOptions {
-                preferred_commit: Some(c1.to_string()),
+                preferred_commit: Some(c1.to_string().into()),
             },
         )
         .unwrap();
@@ -852,7 +852,7 @@ mod tests {
             "test-source",
             &cache_dir,
             &FetchOptions {
-                preferred_commit: Some(missing_commit.to_string()),
+                preferred_commit: Some(missing_commit.to_string().into()),
             },
         );
 

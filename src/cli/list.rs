@@ -60,7 +60,7 @@ pub fn run(args: &ListArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         };
 
         entries.push(ListEntry {
-            source: item.source.clone(),
+            source: item.source.to_string(),
             item: dest_path_str.clone(),
             kind: item.kind.to_string(),
             version: item.version.clone().unwrap_or_else(|| "-".to_string()),

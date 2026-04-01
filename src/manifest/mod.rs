@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::MarsError;
+use crate::types::ItemName;
 
 /// Per-package manifest (mars.toml in package repo root).
 ///
@@ -32,7 +33,7 @@ pub struct DepSpec {
     pub url: String,
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub items: Option<Vec<String>>,
+    pub items: Option<Vec<ItemName>>,
 }
 
 const MANIFEST_FILE: &str = "mars.toml";
@@ -87,7 +88,7 @@ version = ">=0.5"
         let base_dep = &manifest.dependencies["base"];
         assert_eq!(base_dep.url, "https://github.com/org/base.git");
         assert_eq!(base_dep.version, ">=1.0");
-        let expected_items: Vec<String> = vec!["coder".to_string(), "reviewer".to_string()];
+        let expected_items: Vec<String> = vec!["coder".into(), "reviewer".into()];
         assert_eq!(base_dep.items.as_ref().unwrap(), &expected_items);
 
         let utils_dep = &manifest.dependencies["utils"];
@@ -134,18 +135,18 @@ version = "0.2.0"
     fn roundtrip_manifest() {
         let manifest = Manifest {
             package: PackageInfo {
-                name: "test".to_string(),
-                version: "1.0.0".to_string(),
-                description: Some("A test package".to_string()),
+                name: "test".into(),
+                version: "1.0.0".into(),
+                description: Some("A test package".into()),
             },
             dependencies: {
                 let mut m = IndexMap::new();
                 m.insert(
-                    "dep1".to_string(),
+                    "dep1".into(),
                     DepSpec {
-                        url: "https://github.com/org/dep1.git".to_string(),
-                        version: ">=1.0".to_string(),
-                        items: Some(vec!["agent1".to_string()]),
+                        url: "https://github.com/org/dep1.git".into(),
+                        version: ">=1.0".into(),
+                        items: Some(vec!["agent1".into()]),
                     },
                 );
                 m

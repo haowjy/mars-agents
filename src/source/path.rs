@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::source::ResolvedRef;
+use crate::types::SourceName;
 
 /// Fetch a path source: resolve relative paths against project root, verify exists.
 ///
@@ -44,7 +45,7 @@ pub fn fetch_path(
     }
 
     Ok(ResolvedRef {
-        source_name: source_name.to_string(),
+        source_name: SourceName::from(source_name),
         version: None,
         version_tag: None,
         commit: None,

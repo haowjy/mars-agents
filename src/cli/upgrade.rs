@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
+use crate::types::SourceName;
 
 use super::output;
 
@@ -18,7 +19,11 @@ pub struct UpgradeArgs {
 pub fn run(args: &UpgradeArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Maximize {
-            targets: args.sources.iter().cloned().collect(),
+            targets: args
+                .sources
+                .iter()
+                .map(|s| SourceName::from(s.as_str()))
+                .collect(),
         },
         mutation: None,
         options: SyncOptions::default(),

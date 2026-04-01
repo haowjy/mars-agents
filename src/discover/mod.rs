@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
+use crate::types::ItemName;
 
 /// An item discovered in a source tree by filesystem convention.
 ///
@@ -47,7 +48,7 @@ pub fn discover_source(tree_path: &Path) -> Result<Vec<DiscoveredItem>, MarsErro
                 items.push(DiscoveredItem {
                     id: ItemId {
                         kind: ItemKind::Agent,
-                        name: stem.to_string_lossy().into_owned(),
+                        name: ItemName::from(stem.to_string_lossy().into_owned()),
                     },
                     source_path: PathBuf::from("agents").join(&file_name),
                 });
@@ -73,7 +74,7 @@ pub fn discover_source(tree_path: &Path) -> Result<Vec<DiscoveredItem>, MarsErro
                 items.push(DiscoveredItem {
                     id: ItemId {
                         kind: ItemKind::Skill,
-                        name: name_str.into_owned(),
+                        name: ItemName::from(name_str.into_owned()),
                     },
                     source_path: PathBuf::from("skills").join(&dir_name),
                 });

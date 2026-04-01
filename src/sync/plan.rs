@@ -4,6 +4,7 @@ use crate::lock::{ItemId, LockedItem};
 use crate::sync::apply::SyncOptions;
 use crate::sync::diff::{DiffEntry, SyncDiff};
 use crate::sync::target::TargetItem;
+use crate::types::SourceName;
 
 /// A planned set of actions to execute.
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ pub enum PlannedAction {
     Skip {
         item_id: ItemId,
         dest_path: PathBuf,
-        source_name: String,
+        source_name: SourceName,
         reason: &'static str,
     },
     /// Three-way merge required.
@@ -40,7 +41,7 @@ pub enum PlannedAction {
     KeepLocal {
         item_id: ItemId,
         dest_path: PathBuf,
-        source_name: String,
+        source_name: SourceName,
     },
 }
 
@@ -91,7 +92,7 @@ pub fn create(
                 } else {
                     // Three-way merge needed
                     let dest_path_str = locked.dest_path.clone();
-                    let base_path = cache_bases_dir.join(&locked.installed_checksum);
+                    let base_path = cache_bases_dir.join(locked.installed_checksum.as_ref());
 
                     // Read base content from cache (or empty if missing)
                     let base_content = std::fs::read(&base_path).unwrap_or_default();
@@ -151,24 +152,24 @@ mod tests {
         TargetItem {
             id: ItemId {
                 kind: ItemKind::Agent,
-                name: name.to_string(),
+                name: name.into(),
             },
-            source_name: "test".to_string(),
+            source_name: "test".into(),
             source_url: None,
             source_path: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
             dest_path: PathBuf::from(format!("agents/{name}.md")),
-            source_hash: hash::hash_bytes(b"test content"),
+            source_hash: hash::hash_bytes(b"test content").into(),
             rewritten_content: None,
         }
     }
 
     fn make_locked(name: &str) -> LockedItem {
         LockedItem {
-            source: "test".to_string(),
+            source: "test".into(),
             kind: ItemKind::Agent,
             version: None,
-            source_checksum: hash::hash_bytes(b"old content"),
-            installed_checksum: hash::hash_bytes(b"old content"),
+            source_checksum: hash::hash_bytes(b"old content").into(),
+            installed_checksum: hash::hash_bytes(b"old content").into(),
             dest_path: format!("agents/{name}.md"),
         }
     }
@@ -246,7 +247,7 @@ mod tests {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
                 locked: make_locked("conflicted"),
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -262,7 +263,7 @@ mod tests {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
                 locked: make_locked("conflicted"),
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -292,7 +293,7 @@ mod tests {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
                 locked: make_locked("modified"),
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -308,7 +309,7 @@ mod tests {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
                 locked: make_locked("modified"),
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -331,10 +332,10 @@ mod tests {
                 target: make_target("agent"),
                 locked: {
                     let mut locked = make_locked("agent");
-                    locked.installed_checksum = installed_hash;
+                    locked.installed_checksum = installed_hash.into();
                     locked
                 },
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -356,7 +357,7 @@ mod tests {
             items: vec![DiffEntry::Conflict {
                 target: make_target("agent"),
                 locked: make_locked("agent"),
-                local_hash: "sha256:local".to_string(),
+                local_hash: "sha256:local".into(),
             }],
         };
 

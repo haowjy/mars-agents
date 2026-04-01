@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::{ItemId, ItemKind};
+use crate::types::ItemName;
 
 /// Warning from dependency validation.
 ///
@@ -68,7 +69,7 @@ pub fn check_deps(
                 warnings.push(ValidationWarning::MissingSkill {
                     agent: ItemId {
                         kind: ItemKind::Agent,
-                        name: agent_name.clone(),
+                        name: ItemName::from(agent_name.clone()),
                     },
                     skill_name,
                     suggestion,
@@ -88,7 +89,7 @@ pub fn check_deps(
         warnings.push(ValidationWarning::OrphanedSkill {
             skill: ItemId {
                 kind: ItemKind::Skill,
-                name: skill_name.clone(),
+                name: ItemName::from(skill_name.clone()),
             },
         });
     }

@@ -61,6 +61,8 @@ pub struct ResolveOptions {
     pub maximize: bool,
     /// Source names to upgrade (empty = all, when maximize=true).
     pub upgrade_targets: HashSet<String>,
+    /// If true, locked commit replay failures become hard errors.
+    pub frozen: bool,
 }
 
 /// Abstraction over source operations needed by the resolver.
@@ -77,6 +79,7 @@ pub trait SourceProvider {
         url: &str,
         version: &AvailableVersion,
         source_name: &str,
+        preferred_commit: Option<&str>,
     ) -> Result<ResolvedRef, MarsError>;
 
     /// Fetch a git source at a branch or commit ref (non-semver).
@@ -132,9 +135,8 @@ pub fn parse_version_constraint(version: Option<&str>) -> VersionConstraint {
         if parts.len() == 2
             && let (Ok(major), Ok(minor)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>())
         {
-            let req =
-                VersionReq::parse(&format!(">={major}.{minor}.0, <{major}.{}.0", minor + 1))
-                    .expect("valid minor range req");
+            let req = VersionReq::parse(&format!(">={major}.{minor}.0, <{major}.{}.0", minor + 1))
+                .expect("valid minor range req");
             return VersionConstraint::Semver(req);
         }
     }
@@ -207,13 +209,8 @@ pub fn resolve(
             ));
 
         // Resolve and fetch the source
-        let resolved_ref = resolve_single_source(
-            &pending_src,
-            provider,
-            locked,
-            options,
-            &constraints,
-        )?;
+        let resolved_ref =
+            resolve_single_source(&pending_src, provider, locked, options, &constraints)?;
 
         // Read manifest for transitive deps
         let manifest = provider.read_manifest(&resolved_ref.tree_path)?;
@@ -291,19 +288,17 @@ fn resolve_single_source(
             // Path sources: no version resolution, just use the path
             provider.fetch_path(path, &pending.name)
         }
-        SourceSpec::Git(git) => {
-            resolve_git_source(
-                &pending.name,
-                &git.url,
-                constraints
-                    .get(&pending.name)
-                    .map(|c| c.as_slice())
-                    .unwrap_or(&[]),
-                provider,
-                locked,
-                options,
-            )
-        }
+        SourceSpec::Git(git) => resolve_git_source(
+            &pending.name,
+            &git.url,
+            constraints
+                .get(&pending.name)
+                .map(|c| c.as_slice())
+                .unwrap_or(&[]),
+            provider,
+            locked,
+            options,
+        ),
     }
 }
 
@@ -318,7 +313,9 @@ fn resolve_git_source(
 ) -> Result<ResolvedRef, MarsError> {
     // If all constraints are ref pins, use the first one
     // (multiple ref pins for the same source is likely an error, but we'll use first)
-    let has_ref_pin = constraints.iter().any(|(_, c)| matches!(c, VersionConstraint::RefPin(_)));
+    let has_ref_pin = constraints
+        .iter()
+        .any(|(_, c)| matches!(c, VersionConstraint::RefPin(_)));
     if has_ref_pin {
         for (_, constraint) in constraints {
             if let VersionConstraint::RefPin(ref_name) = constraint {
@@ -349,14 +346,16 @@ fn resolve_git_source(
         .iter()
         .any(|(_, c)| matches!(c, VersionConstraint::Latest));
 
+    let locked_source = locked.and_then(|lf| lf.sources.get(name));
+
     // Get locked version for this source (if any)
-    let locked_version = locked
-        .and_then(|lf| lf.sources.get(name))
+    let locked_version = locked_source
         .and_then(|ls| ls.version.as_ref())
         .and_then(|v| {
             let v = v.strip_prefix('v').unwrap_or(v);
             Version::parse(v).ok()
         });
+    let locked_commit = locked_source.and_then(|ls| ls.commit.as_deref());
 
     // Determine whether to maximize this source:
     // - explicit maximize mode (mars upgrade)
@@ -366,9 +365,38 @@ fn resolve_git_source(
             && (options.upgrade_targets.is_empty() || options.upgrade_targets.contains(name)));
 
     // Select version
-    let selected = select_version(name, &available, &semver_reqs, locked_version.as_ref(), maximize)?;
+    let selected = select_version(
+        name,
+        &available,
+        &semver_reqs,
+        locked_version.as_ref(),
+        maximize,
+    )?;
 
-    provider.fetch_git_version(url, selected, name)
+    let should_try_locked_commit = !maximize
+        && locked_commit.is_some()
+        && match locked_version.as_ref() {
+            Some(version) => selected.version == *version,
+            None => true,
+        };
+
+    let preferred_commit = if should_try_locked_commit {
+        locked_commit
+    } else {
+        None
+    };
+
+    match provider.fetch_git_version(url, selected, name, preferred_commit) {
+        Ok(resolved) => Ok(resolved),
+        Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => Err(err),
+        Err(MarsError::LockedCommitUnreachable { commit, url }) => {
+            eprintln!(
+                "warning: locked commit {commit} for {url} is unreachable; re-resolving from tag"
+            );
+            provider.fetch_git_version(url.as_str(), selected, name, None)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// Select a concrete version from available versions, respecting constraints.
@@ -401,7 +429,8 @@ fn select_version<'a>(
             .map(|(requester, req)| format!("  `{requester}` requires {req}"))
             .collect();
 
-        let available_desc: Vec<String> = available.iter().map(|av| av.version.to_string()).collect();
+        let available_desc: Vec<String> =
+            available.iter().map(|av| av.version.to_string()).collect();
 
         return Err(ResolutionError::VersionConflict {
             name: source_name.to_string(),
@@ -489,7 +518,10 @@ fn topological_sort(nodes: &IndexMap<String, ResolvedNode>) -> Result<Vec<String
                 // dep → name edge means name depends on dep
                 // In Kahn's: in_degree[name] += 1 (name has an incoming dep edge)
                 *in_degree.entry(name.as_str()).or_insert(0) += 1;
-                adjacency.entry(dep.as_str()).or_default().push(name.as_str());
+                adjacency
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(name.as_str());
             }
         }
     }
@@ -545,10 +577,13 @@ fn topological_sort(nodes: &IndexMap<String, ResolvedNode>) -> Result<Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EffectiveConfig, EffectiveSource, FilterMode, GitSpec, Settings, SourceSpec};
+    use crate::config::{
+        EffectiveConfig, EffectiveSource, FilterMode, GitSpec, Settings, SourceSpec,
+    };
     use crate::manifest::{DepSpec, Manifest, PackageInfo};
     use indexmap::IndexMap;
-    use std::collections::HashMap;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -562,6 +597,10 @@ mod tests {
         trees: HashMap<String, PathBuf>,
         /// Manifests to return for specific source trees
         manifests: HashMap<PathBuf, Option<Manifest>>,
+        /// Preferred commits that should simulate an unreachable lock replay.
+        unreachable_preferred_commits: HashSet<String>,
+        /// Captures preferred-commit hints passed by the resolver.
+        seen_preferred_commits: RefCell<Vec<Option<String>>>,
     }
 
     impl MockProvider {
@@ -570,6 +609,8 @@ mod tests {
                 versions: HashMap::new(),
                 trees: HashMap::new(),
                 manifests: HashMap::new(),
+                unreachable_preferred_commits: HashSet::new(),
+                seen_preferred_commits: RefCell::new(Vec::new()),
             }
         }
 
@@ -587,18 +628,22 @@ mod tests {
         }
 
         /// Register a source tree for a source name, with optional manifest.
-        fn add_source(
-            &mut self,
-            name: &str,
-            tree_path: PathBuf,
-            manifest: Option<Manifest>,
-        ) {
+        fn add_source(&mut self, name: &str, tree_path: PathBuf, manifest: Option<Manifest>) {
             if let Some(ref m) = manifest {
                 self.manifests.insert(tree_path.clone(), Some(m.clone()));
             } else {
                 self.manifests.insert(tree_path.clone(), None);
             }
             self.trees.insert(name.to_string(), tree_path);
+        }
+
+        fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
+            self.unreachable_preferred_commits
+                .insert(commit.to_string());
+        }
+
+        fn seen_preferred_commits(&self) -> Vec<Option<String>> {
+            self.seen_preferred_commits.borrow().clone()
         }
     }
 
@@ -609,20 +654,34 @@ mod tests {
 
         fn fetch_git_version(
             &self,
-            _url: &str,
+            url: &str,
             version: &AvailableVersion,
             source_name: &str,
+            preferred_commit: Option<&str>,
         ) -> Result<ResolvedRef, MarsError> {
-            let tree_path = self
-                .trees
-                .get(source_name)
-                .cloned()
-                .unwrap_or_default();
+            self.seen_preferred_commits
+                .borrow_mut()
+                .push(preferred_commit.map(str::to_string));
+
+            if let Some(commit) = preferred_commit
+                && self.unreachable_preferred_commits.contains(commit)
+            {
+                return Err(MarsError::LockedCommitUnreachable {
+                    commit: commit.to_string(),
+                    url: url.to_string(),
+                });
+            }
+
+            let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
             Ok(ResolvedRef {
                 source_name: source_name.to_string(),
                 version: Some(version.version.clone()),
                 version_tag: Some(version.tag.clone()),
-                commit: Some("mock-commit".to_string()),
+                commit: Some(
+                    preferred_commit
+                        .map(str::to_string)
+                        .unwrap_or_else(|| "mock-commit".to_string()),
+                ),
                 tree_path,
             })
         }
@@ -633,11 +692,7 @@ mod tests {
             ref_name: &str,
             source_name: &str,
         ) -> Result<ResolvedRef, MarsError> {
-            let tree_path = self
-                .trees
-                .get(source_name)
-                .cloned()
-                .unwrap_or_default();
+            let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
             Ok(ResolvedRef {
                 source_name: source_name.to_string(),
                 version: None,
@@ -647,11 +702,7 @@ mod tests {
             })
         }
 
-        fn fetch_path(
-            &self,
-            path: &Path,
-            source_name: &str,
-        ) -> Result<ResolvedRef, MarsError> {
+        fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
             Ok(ResolvedRef {
                 source_name: source_name.to_string(),
                 version: None,
@@ -661,10 +712,7 @@ mod tests {
             })
         }
 
-        fn read_manifest(
-            &self,
-            source_tree: &Path,
-        ) -> Result<Option<Manifest>, MarsError> {
+        fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError> {
             Ok(self.manifests.get(source_tree).cloned().unwrap_or(None))
         }
     }
@@ -860,7 +908,10 @@ mod tests {
         provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
         provider.add_source("a", tree, None);
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("^1.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
@@ -925,7 +976,10 @@ mod tests {
         provider.add_source("a", tree_a, Some(manifest_a));
         provider.add_source("dep", tree_dep, None);
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("v1.0.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
@@ -1037,8 +1091,14 @@ mod tests {
         let result = resolve(&config, &provider, None, &default_options());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("shared"), "error should mention 'shared': {err}");
-        assert!(err.contains("1.5.0"), "error should mention the constraint: {err}");
+        assert!(
+            err.contains("shared"),
+            "error should mention 'shared': {err}"
+        );
+        assert!(
+            err.contains("1.5.0"),
+            "error should mention the constraint: {err}"
+        );
     }
 
     #[test]
@@ -1114,9 +1174,10 @@ mod tests {
         provider.add_source("a", tree_a, Some(manifest_a));
         provider.add_source("b", tree_b, Some(manifest_b));
 
-        let config = make_config(vec![
-            ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
 
         let result = resolve(&config, &provider, None, &default_options());
         assert!(result.is_err());
@@ -1140,7 +1201,10 @@ mod tests {
         );
         provider.add_source("a", tree, None);
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("^1.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
 
         // Lock file says v1.1.0
         let mut lock = LockFile::empty();
@@ -1175,7 +1239,10 @@ mod tests {
         provider.add_source("a", tree, None);
 
         // Config now requires ^2.0
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("^2.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^2.0")),
+        )]);
 
         // Lock file says v1.0.0 — no longer satisfies ^2.0
         let mut lock = LockFile::empty();
@@ -1197,6 +1264,181 @@ mod tests {
     }
 
     #[test]
+    fn locked_commit_is_used_when_reachable() {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
+        provider.add_source("a", tree, None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
+
+        let locked_commit = "locked-sha-123";
+        let mut lock = LockFile::empty();
+        lock.sources.insert(
+            "a".to_string(),
+            crate::lock::LockedSource {
+                url: Some("https://example.com/a.git".to_string()),
+                path: None,
+                version: Some("v1.1.0".to_string()),
+                commit: Some(locked_commit.to_string()),
+                tree_hash: None,
+            },
+        );
+
+        let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.commit.as_deref(),
+            Some(locked_commit)
+        );
+        assert_eq!(
+            provider.seen_preferred_commits(),
+            vec![Some(locked_commit.to_string())]
+        );
+    }
+
+    #[test]
+    fn normal_mode_falls_back_when_locked_commit_unreachable() {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
+        provider.add_source("a", tree, None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
+
+        let unreachable_commit = "missing-locked-sha";
+        provider.mark_unreachable_preferred_commit(unreachable_commit);
+
+        let mut lock = LockFile::empty();
+        lock.sources.insert(
+            "a".to_string(),
+            crate::lock::LockedSource {
+                url: Some("https://example.com/a.git".to_string()),
+                path: None,
+                version: Some("v1.1.0".to_string()),
+                commit: Some(unreachable_commit.to_string()),
+                tree_hash: None,
+            },
+        );
+
+        let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.version,
+            Some(Version::new(1, 1, 0))
+        );
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.commit.as_deref(),
+            Some("mock-commit")
+        );
+        assert_eq!(
+            provider.seen_preferred_commits(),
+            vec![Some(unreachable_commit.to_string()), None]
+        );
+    }
+
+    #[test]
+    fn frozen_mode_errors_when_locked_commit_unreachable() {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
+        provider.add_source("a", tree, None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
+
+        let unreachable_commit = "missing-locked-sha";
+        provider.mark_unreachable_preferred_commit(unreachable_commit);
+
+        let mut lock = LockFile::empty();
+        lock.sources.insert(
+            "a".to_string(),
+            crate::lock::LockedSource {
+                url: Some("https://example.com/a.git".to_string()),
+                path: None,
+                version: Some("v1.1.0".to_string()),
+                commit: Some(unreachable_commit.to_string()),
+                tree_hash: None,
+            },
+        );
+
+        let options = ResolveOptions {
+            frozen: true,
+            ..default_options()
+        };
+        let result = resolve(&config, &provider, Some(&lock), &options);
+        assert!(matches!(
+            result,
+            Err(MarsError::LockedCommitUnreachable { .. })
+        ));
+        assert_eq!(
+            provider.seen_preferred_commits(),
+            vec![Some(unreachable_commit.to_string())]
+        );
+    }
+
+    #[test]
+    fn maximize_mode_ignores_locked_commit() {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+
+        let mut provider = MockProvider::new();
+        provider.add_versions(
+            "https://example.com/a.git",
+            vec![(1, 0, 0), (1, 1, 0), (1, 2, 0)],
+        );
+        provider.add_source("a", tree, None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
+
+        let unreachable_commit = "missing-locked-sha";
+        provider.mark_unreachable_preferred_commit(unreachable_commit);
+
+        let mut lock = LockFile::empty();
+        lock.sources.insert(
+            "a".to_string(),
+            crate::lock::LockedSource {
+                url: Some("https://example.com/a.git".to_string()),
+                path: None,
+                version: Some("v1.0.0".to_string()),
+                commit: Some(unreachable_commit.to_string()),
+                tree_hash: None,
+            },
+        );
+
+        let options = ResolveOptions {
+            maximize: true,
+            upgrade_targets: HashSet::new(),
+            frozen: false,
+        };
+        let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.version,
+            Some(Version::new(1, 2, 0))
+        );
+        assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    }
+
+    #[test]
     fn latest_resolves_to_newest() {
         let dir = TempDir::new().unwrap();
         let tree = dir.path().join("a");
@@ -1209,8 +1451,10 @@ mod tests {
         );
         provider.add_source("a", tree, None);
 
-        let config =
-            make_config(vec![("a", git_spec("https://example.com/a.git", Some("latest")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("latest")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
@@ -1235,7 +1479,10 @@ mod tests {
         );
         provider.add_source("a", tree, None);
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("v2")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v2")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
@@ -1252,8 +1499,10 @@ mod tests {
         let mut provider = MockProvider::new();
         provider.add_source("a", tree, None);
 
-        let config =
-            make_config(vec![("a", git_spec("https://example.com/a.git", Some("main")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("main")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
@@ -1271,7 +1520,10 @@ mod tests {
         provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
         provider.add_source("a", tree, None); // No manifest
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("v1.0.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
 
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         assert_eq!(graph.nodes.len(), 1);
@@ -1308,11 +1560,15 @@ mod tests {
         );
         provider.add_source("a", tree, None);
 
-        let config = make_config(vec![("a", git_spec("https://example.com/a.git", Some("^1.0")))]);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("^1.0")),
+        )]);
 
         let options = ResolveOptions {
             maximize: true,
             upgrade_targets: HashSet::new(),
+            frozen: false,
         };
 
         let graph = resolve(&config, &provider, None, &options).unwrap();
@@ -1329,14 +1585,8 @@ mod tests {
         std::fs::create_dir_all(&tree_b).unwrap();
 
         let mut provider = MockProvider::new();
-        provider.add_versions(
-            "https://example.com/a.git",
-            vec![(1, 0, 0), (1, 5, 0)],
-        );
-        provider.add_versions(
-            "https://example.com/b.git",
-            vec![(2, 0, 0), (2, 5, 0)],
-        );
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 5, 0)]);
+        provider.add_versions("https://example.com/b.git", vec![(2, 0, 0), (2, 5, 0)]);
         provider.add_source("a", tree_a, None);
         provider.add_source("b", tree_b, None);
 
@@ -1349,6 +1599,7 @@ mod tests {
         let options = ResolveOptions {
             maximize: true,
             upgrade_targets: HashSet::from(["a".to_string()]),
+            frozen: false,
         };
 
         let graph = resolve(&config, &provider, None, &options).unwrap();

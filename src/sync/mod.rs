@@ -13,8 +13,8 @@ use crate::error::{ConfigError, MarsError};
 use crate::resolve::{ResolveOptions, SourceProvider};
 use crate::source::{self, AvailableVersion, CacheDir, ResolvedRef};
 use crate::sync::apply::ApplyResult;
-use crate::validate::ValidationWarning;
 pub use crate::sync::apply::SyncOptions;
+use crate::validate::ValidationWarning;
 
 /// Report from a completed sync operation.
 #[derive(Debug)]
@@ -123,7 +123,7 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
         cache_dir: &cache.path,
         project_root: root,
     };
-    let resolve_options = to_resolve_options(&request.resolution);
+    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
     let graph = crate::resolve::resolve(&effective, &provider, Some(&old_lock), &resolve_options)?;
 
     // Step 8: Build target state.
@@ -197,17 +197,19 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
-    if request.options.frozen
-        && matches!(request.resolution, ResolutionMode::Maximize { .. })
-    {
+    if request.options.frozen && matches!(request.resolution, ResolutionMode::Maximize { .. }) {
         return Err(MarsError::InvalidRequest {
-            message: "cannot use --frozen with upgrade (frozen locks versions; upgrade maximizes them)".to_string(),
+            message:
+                "cannot use --frozen with upgrade (frozen locks versions; upgrade maximizes them)"
+                    .to_string(),
         });
     }
 
     if request.options.frozen && request.mutation.is_some() {
         return Err(MarsError::InvalidRequest {
-            message: "cannot modify config in --frozen mode (config change would require lock update)".to_string(),
+            message:
+                "cannot modify config in --frozen mode (config change would require lock update)"
+                    .to_string(),
         });
     }
 
@@ -303,12 +305,16 @@ fn validate_targets(
     Ok(())
 }
 
-fn to_resolve_options(mode: &ResolutionMode) -> ResolveOptions {
+fn to_resolve_options(mode: &ResolutionMode, frozen: bool) -> ResolveOptions {
     match mode {
-        ResolutionMode::Normal => ResolveOptions::default(),
+        ResolutionMode::Normal => ResolveOptions {
+            frozen,
+            ..ResolveOptions::default()
+        },
         ResolutionMode::Maximize { targets } => ResolveOptions {
             maximize: true,
             upgrade_targets: targets.clone(),
+            frozen,
         },
     }
 }
@@ -332,8 +338,18 @@ impl SourceProvider for RealSourceProvider<'_> {
         url: &str,
         version: &AvailableVersion,
         source_name: &str,
+        preferred_commit: Option<&str>,
     ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch(url, Some(&version.tag), source_name, self.cache_dir)
+        let fetch_options = source::git::FetchOptions {
+            preferred_commit: preferred_commit.map(str::to_string),
+        };
+        source::git::fetch(
+            url,
+            Some(&version.tag),
+            source_name,
+            self.cache_dir,
+            &fetch_options,
+        )
     }
 
     fn fetch_git_ref(
@@ -342,7 +358,13 @@ impl SourceProvider for RealSourceProvider<'_> {
         ref_name: &str,
         source_name: &str,
     ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch(url, Some(ref_name), source_name, self.cache_dir)
+        source::git::fetch(
+            url,
+            Some(ref_name),
+            source_name,
+            self.cache_dir,
+            &source::git::FetchOptions::default(),
+        )
     }
 
     fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {

@@ -11,6 +11,14 @@ use crate::source::{AvailableVersion, ResolvedRef};
 /// Return type for checkout helpers: (semver version, tag name, commit SHA).
 type CheckoutResult = (Option<semver::Version>, Option<String>, Option<String>);
 
+/// Options controlling git fetch behavior.
+#[derive(Debug, Clone, Default)]
+pub struct FetchOptions {
+    /// Preferred commit SHA to checkout before resolving tags/versions.
+    /// Used for lock replay to guarantee reproducible content.
+    pub preferred_commit: Option<String>,
+}
+
 /// Normalize a git URL to a filesystem-safe directory name.
 ///
 /// Strips protocol prefixes and replaces `/` and `:` with `_`.
@@ -113,8 +121,7 @@ fn list_tags_from_repo(repo: &git2::Repository) -> Result<Vec<AvailableVersion>,
 
 /// List tags via detached remote (no local clone needed).
 fn list_tags_via_detached_remote(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
-    let mut remote =
-        git2::Remote::create_detached(url).map_err(|e| wrap_git_error(url, &e))?;
+    let mut remote = git2::Remote::create_detached(url).map_err(|e| wrap_git_error(url, &e))?;
 
     // Connect to read remote refs
     remote
@@ -179,6 +186,7 @@ pub fn fetch(
     version_req: Option<&str>,
     source_name: &str,
     cache_dir: &Path,
+    options: &FetchOptions,
 ) -> Result<ResolvedRef, MarsError> {
     let dirname = url_to_dirname(url);
     let cache_path = cache_dir.join(&dirname);
@@ -190,6 +198,26 @@ pub fn fetch(
         // Clone fresh
         clone_repo(url, &cache_path, source_name)?
     };
+
+    if let Some(preferred_commit) = options.preferred_commit.as_deref() {
+        match checkout_commit(&repo, preferred_commit, source_name) {
+            Ok(commit) => {
+                return Ok(ResolvedRef {
+                    source_name: source_name.to_string(),
+                    version: version_req.and_then(parse_semver_tag),
+                    version_tag: version_req.map(str::to_string),
+                    commit: Some(commit),
+                    tree_path: cache_path,
+                });
+            }
+            Err(_) => {
+                return Err(MarsError::LockedCommitUnreachable {
+                    commit: preferred_commit.to_string(),
+                    url: url.to_string(),
+                });
+            }
+        }
+    }
 
     // Determine what to checkout
     let (version, version_tag, commit) = if let Some(req) = version_req {
@@ -215,7 +243,8 @@ fn clone_repo(url: &str, dest: &Path, source_name: &str) -> Result<git2::Reposit
         std::fs::create_dir_all(parent)?;
     }
 
-    let repo = git2::Repository::clone(url, dest).map_err(|e| wrap_git_error_named(source_name, url, &e))?;
+    let repo = git2::Repository::clone(url, dest)
+        .map_err(|e| wrap_git_error_named(source_name, url, &e))?;
     Ok(repo)
 }
 
@@ -225,8 +254,8 @@ fn update_cached_repo(
     url: &str,
     source_name: &str,
 ) -> Result<git2::Repository, MarsError> {
-    let repo =
-        git2::Repository::open(cache_path).map_err(|e| wrap_git_error_named(source_name, url, &e))?;
+    let repo = git2::Repository::open(cache_path)
+        .map_err(|e| wrap_git_error_named(source_name, url, &e))?;
 
     // Fetch all refs from origin (including tags)
     {
@@ -257,34 +286,30 @@ fn checkout_version(
     source_name: &str,
 ) -> Result<CheckoutResult, MarsError> {
     // Try exact tag match first: "v1.0.0" or the version_req directly
-    let tag_candidates = [
-        version_req.to_string(),
-        format!("v{version_req}"),
-    ];
+    let tag_candidates = [version_req.to_string(), format!("v{version_req}")];
 
     for tag_name in &tag_candidates {
         let refname = format!("refs/tags/{tag_name}");
         if let Ok(reference) = repo.find_reference(&refname) {
-            let obj = reference.peel(git2::ObjectType::Commit).map_err(|e| {
-                MarsError::Source {
+            let obj = reference
+                .peel(git2::ObjectType::Commit)
+                .map_err(|e| MarsError::Source {
                     source_name: source_name.to_string(),
                     message: format!("failed to peel tag `{tag_name}`: {e}"),
-                }
-            })?;
+                })?;
             let commit_id = obj.id().to_string();
 
             // Detach HEAD at the commit
-            repo.set_head_detached(obj.id()).map_err(|e| MarsError::Source {
-                source_name: source_name.to_string(),
-                message: format!("failed to checkout tag `{tag_name}`: {e}"),
-            })?;
-            repo.checkout_head(Some(
-                git2::build::CheckoutBuilder::new().force(),
-            ))
-            .map_err(|e| MarsError::Source {
-                source_name: source_name.to_string(),
-                message: format!("failed to checkout working tree for `{tag_name}`: {e}"),
-            })?;
+            repo.set_head_detached(obj.id())
+                .map_err(|e| MarsError::Source {
+                    source_name: source_name.to_string(),
+                    message: format!("failed to checkout tag `{tag_name}`: {e}"),
+                })?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+                .map_err(|e| MarsError::Source {
+                    source_name: source_name.to_string(),
+                    message: format!("failed to checkout working tree for `{tag_name}`: {e}"),
+                })?;
 
             let version = parse_semver_tag(tag_name);
             return Ok((version, Some(tag_name.clone()), Some(commit_id)));
@@ -293,35 +318,51 @@ fn checkout_version(
 
     // No exact tag match — try as a commit SHA
     if let Ok(oid) = git2::Oid::from_str(version_req)
-        && let Ok(commit) = repo.find_commit(oid)
+        && repo.find_commit(oid).is_ok()
     {
-        repo.set_head_detached(commit.id()).map_err(|e| MarsError::Source {
-            source_name: source_name.to_string(),
-            message: format!("failed to checkout commit `{version_req}`: {e}"),
-        })?;
-        repo.checkout_head(Some(
-            git2::build::CheckoutBuilder::new().force(),
-        ))
-        .map_err(|e| MarsError::Source {
-            source_name: source_name.to_string(),
-            message: format!("failed to checkout working tree for commit `{version_req}`: {e}"),
-        })?;
-        return Ok((None, None, Some(oid.to_string())));
+        let commit_id = checkout_commit(repo, version_req, source_name)?;
+        return Ok((None, None, Some(commit_id)));
     }
 
     Err(MarsError::Source {
         source_name: source_name.to_string(),
-        message: format!(
-            "version `{version_req}` not found — no matching tag or commit"
-        ),
+        message: format!("version `{version_req}` not found — no matching tag or commit"),
     })
 }
 
-/// Checkout HEAD (default branch).
-fn checkout_head(
+/// Checkout a specific commit SHA.
+fn checkout_commit(
     repo: &git2::Repository,
+    sha: &str,
     source_name: &str,
-) -> Result<CheckoutResult, MarsError> {
+) -> Result<String, MarsError> {
+    let oid = git2::Oid::from_str(sha).map_err(|e| MarsError::Source {
+        source_name: source_name.to_string(),
+        message: format!("failed to parse commit `{sha}`: {e}"),
+    })?;
+
+    let commit = repo.find_commit(oid).map_err(|e| MarsError::Source {
+        source_name: source_name.to_string(),
+        message: format!("failed to find commit `{sha}`: {e}"),
+    })?;
+
+    repo.set_head_detached(commit.id())
+        .map_err(|e| MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!("failed to checkout commit `{sha}`: {e}"),
+        })?;
+
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .map_err(|e| MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!("failed to checkout working tree for commit `{sha}`: {e}"),
+        })?;
+
+    Ok(commit.id().to_string())
+}
+
+/// Checkout HEAD (default branch).
+fn checkout_head(repo: &git2::Repository, source_name: &str) -> Result<CheckoutResult, MarsError> {
     let head = repo.head().map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),
         message: format!("failed to read HEAD: {e}"),
@@ -591,6 +632,7 @@ mod tests {
             Some("v1.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -622,6 +664,7 @@ mod tests {
             Some("v1.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -631,6 +674,7 @@ mod tests {
             Some("v1.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -655,6 +699,7 @@ mod tests {
             Some("v1.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -668,6 +713,7 @@ mod tests {
             Some("v2.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -690,6 +736,7 @@ mod tests {
             None,
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
@@ -714,12 +761,19 @@ mod tests {
             Some("v99.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         );
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("v99.0.0"), "error should mention the version: {err}");
-        assert!(err.contains("test-source"), "error should mention source name: {err}");
+        assert!(
+            err.contains("v99.0.0"),
+            "error should mention the version: {err}"
+        );
+        assert!(
+            err.contains("test-source"),
+            "error should mention source name: {err}"
+        );
     }
 
     #[test]
@@ -739,10 +793,72 @@ mod tests {
             Some("1.0.0"),
             "test-source",
             &cache_dir,
+            &FetchOptions::default(),
         )
         .unwrap();
 
         assert_eq!(resolved.version, Some(semver::Version::new(1, 0, 0)));
         assert_eq!(resolved.version_tag.as_deref(), Some("v1.0.0"));
+    }
+
+    #[test]
+    fn fetch_prefers_locked_commit_over_tag_target() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("origin");
+        let cache_dir = dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+
+        let repo = create_test_repo(&repo_dir);
+        let c1 = create_commit_with_file(&repo, "file.txt", "v1", "v1");
+        create_tag(&repo, "v1.0.0", c1);
+
+        let c2 = create_commit_with_file(&repo, "file.txt", "v2", "v2");
+        repo.tag_delete("v1.0.0").unwrap();
+        create_tag(&repo, "v1.0.0", c2);
+
+        let resolved = fetch(
+            repo_dir.to_str().unwrap(),
+            Some("v1.0.0"),
+            "test-source",
+            &cache_dir,
+            &FetchOptions {
+                preferred_commit: Some(c1.to_string()),
+            },
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(resolved.tree_path.join("file.txt")).unwrap();
+        let c1_str = c1.to_string();
+        assert_eq!(content, "v1");
+        assert_eq!(resolved.commit.as_deref(), Some(c1_str.as_str()));
+        assert_eq!(resolved.version, Some(semver::Version::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn fetch_returns_locked_commit_unreachable_for_missing_preferred_commit() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("origin");
+        let cache_dir = dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+
+        let repo = create_test_repo(&repo_dir);
+        let c1 = create_commit_with_file(&repo, "file.txt", "v1", "v1");
+        create_tag(&repo, "v1.0.0", c1);
+
+        let missing_commit = "0123456789012345678901234567890123456789";
+        let result = fetch(
+            repo_dir.to_str().unwrap(),
+            Some("v1.0.0"),
+            "test-source",
+            &cache_dir,
+            &FetchOptions {
+                preferred_commit: Some(missing_commit.to_string()),
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(MarsError::LockedCommitUnreachable { commit, .. }) if commit == missing_commit
+        ));
     }
 }

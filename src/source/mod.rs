@@ -87,6 +87,7 @@ pub fn fetch_source(
             git_spec.version.as_deref(),
             source_name,
             cache_dir,
+            &git::FetchOptions::default(),
         ),
         SourceSpec::Path(p) => path::fetch_path(p, project_root, source_name),
     }

@@ -86,14 +86,19 @@ pub enum Command {
     Repair(repair::RepairArgs),
 }
 
-/// Dispatch a parsed CLI command to the appropriate handler.
-///
-/// Returns an exit code:
-/// - 0: success
-/// - 1: sync completed with unresolved conflicts
-/// - 2: resolution/validation error
-/// - 3: I/O or git error
-pub fn dispatch(cli: Cli) -> Result<i32, MarsError> {
+/// Dispatch a parsed CLI command to the appropriate handler and map errors to
+/// the final exit code.
+pub fn dispatch(cli: Cli) -> i32 {
+    match dispatch_result(cli) {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            err.exit_code()
+        }
+    }
+}
+
+fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Add(args) => {

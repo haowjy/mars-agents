@@ -83,11 +83,42 @@ pub enum MarsError {
     #[error("validation: {0}")]
     Validation(#[from] ValidationError),
 
+    #[error("invalid request: {message}")]
+    InvalidRequest { message: String },
+
+    #[error("frozen violation: {message}")]
+    FrozenViolation { message: String },
+
+    #[error("locked commit {commit} is no longer reachable in {url} — the tag may have been force-pushed")]
+    LockedCommitUnreachable { commit: String, url: String },
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("git error: {0}")]
     Git(#[from] git2::Error),
+}
+
+impl MarsError {
+    /// Map error variants to CLI exit codes.
+    ///
+    /// - 1: sync completed with unresolved conflicts
+    /// - 2: resolution/validation/config error
+    /// - 3: I/O or git error
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            MarsError::Conflict { .. } => 1,
+            MarsError::Config(_)
+            | MarsError::Lock(_)
+            | MarsError::Resolution(_)
+            | MarsError::Collision { .. }
+            | MarsError::Validation(_)
+            | MarsError::InvalidRequest { .. }
+            | MarsError::FrozenViolation { .. }
+            | MarsError::LockedCommitUnreachable { .. } => 2,
+            MarsError::Source { .. } | MarsError::Io(_) | MarsError::Git(_) => 3,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, MarsError>;
@@ -205,5 +236,86 @@ mod tests {
             Ok(42)
         }
         assert_eq!(example().unwrap(), 42);
+    }
+
+    #[test]
+    fn mars_error_exit_codes_match_spec() {
+        let cases = vec![
+            (
+                MarsError::Conflict {
+                    path: "agents/reviewer.md".to_string(),
+                },
+                1,
+            ),
+            (
+                MarsError::Config(ConfigError::Invalid {
+                    message: "bad config".to_string(),
+                }),
+                2,
+            ),
+            (
+                MarsError::Lock(LockError::Corrupt {
+                    message: "bad lock".to_string(),
+                }),
+                2,
+            ),
+            (
+                MarsError::Resolution(ResolutionError::SourceNotFound {
+                    name: "missing".to_string(),
+                }),
+                2,
+            ),
+            (
+                MarsError::Collision {
+                    item: "coder".to_string(),
+                    source_a: "base".to_string(),
+                    source_b: "custom".to_string(),
+                },
+                2,
+            ),
+            (MarsError::Validation(ValidationError::UnresolvableRefs), 2),
+            (
+                MarsError::InvalidRequest {
+                    message: "bad flag combination".to_string(),
+                },
+                2,
+            ),
+            (
+                MarsError::FrozenViolation {
+                    message: "lock file would change but --frozen is set".to_string(),
+                },
+                2,
+            ),
+            (
+                MarsError::LockedCommitUnreachable {
+                    commit: "abc123".to_string(),
+                    url: "https://example.com/repo.git".to_string(),
+                },
+                2,
+            ),
+            (
+                MarsError::Source {
+                    source_name: "origin".to_string(),
+                    message: "network failed".to_string(),
+                },
+                3,
+            ),
+            (
+                MarsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                )),
+                3,
+            ),
+            (MarsError::Git(git2::Error::from_str("git failed")), 3),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(
+                err.exit_code(),
+                expected,
+                "unexpected exit code for error: {err}"
+            );
+        }
     }
 }

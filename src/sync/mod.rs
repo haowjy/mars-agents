@@ -182,8 +182,7 @@ pub fn sync_with_effective_config(
             )
         });
         if has_changes {
-            return Err(MarsError::Source {
-                source_name: "sync".to_string(),
+            return Err(MarsError::FrozenViolation {
                 message: "lock file would change but --frozen is set".to_string(),
             });
         }

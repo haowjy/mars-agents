@@ -28,14 +28,7 @@ pub struct SyncArgs {
 
 /// Run `mars sync`.
 pub fn run(args: &SyncArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let report = match run_sync(root, args.force, args.diff, args.frozen) {
-        Ok(report) => report,
-        Err(err) if is_frozen_lock_mismatch(&err) => {
-            eprintln!("error: {err}");
-            return Ok(2);
-        }
-        Err(err) => return Err(err),
-    };
+    let report = run_sync(root, args.force, args.diff, args.frozen)?;
 
     output::print_sync_report(&report, json);
 
@@ -106,12 +99,4 @@ pub fn run_sync_with_effective_config(
     };
 
     crate::sync::sync_with_effective_config(&ctx, proposed_config, effective_config, write_config)
-}
-
-fn is_frozen_lock_mismatch(err: &MarsError) -> bool {
-    matches!(
-        err,
-        MarsError::Source { source_name, message }
-            if source_name == "sync" && message.contains("--frozen")
-    )
 }

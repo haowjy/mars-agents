@@ -24,6 +24,8 @@ pub enum PlannedAction {
     /// Skip — no changes needed.
     Skip {
         item_id: ItemId,
+        dest_path: PathBuf,
+        source_name: String,
         reason: &'static str,
     },
     /// Three-way merge required.
@@ -35,7 +37,11 @@ pub enum PlannedAction {
     /// Remove an orphaned item.
     Remove { locked: LockedItem },
     /// Keep the local modification.
-    KeepLocal { item_id: ItemId },
+    KeepLocal {
+        item_id: ItemId,
+        dest_path: PathBuf,
+        source_name: String,
+    },
 }
 
 /// Create execution plan from diff.
@@ -66,6 +72,8 @@ pub fn create(
             DiffEntry::Unchanged { target, locked: _ } => {
                 actions.push(PlannedAction::Skip {
                     item_id: target.id.clone(),
+                    dest_path: target.dest_path.clone(),
+                    source_name: target.source_name.clone(),
                     reason: "unchanged",
                 });
             }
@@ -118,6 +126,8 @@ pub fn create(
                 } else {
                     actions.push(PlannedAction::KeepLocal {
                         item_id: target.id.clone(),
+                        dest_path: target.dest_path.clone(),
+                        source_name: target.source_name.clone(),
                     });
                 }
             }

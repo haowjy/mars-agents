@@ -194,20 +194,29 @@ fn execute_action(
             })
         }
 
-        PlannedAction::Skip { item_id, reason: _ } => Ok(ActionOutcome {
+        PlannedAction::Skip {
+            item_id,
+            dest_path,
+            source_name,
+            reason: _,
+        } => Ok(ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Skipped,
-            dest_path: PathBuf::new(),
-            source_name: String::new(),
+            dest_path: dest_path.clone(),
+            source_name: source_name.clone(),
             source_checksum: None,
             installed_checksum: None,
         }),
 
-        PlannedAction::KeepLocal { item_id } => Ok(ActionOutcome {
+        PlannedAction::KeepLocal {
+            item_id,
+            dest_path,
+            source_name,
+        } => Ok(ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Kept,
-            dest_path: PathBuf::new(),
-            source_name: String::new(),
+            dest_path: dest_path.clone(),
+            source_name: source_name.clone(),
             source_checksum: None,
             installed_checksum: None,
         }),
@@ -255,19 +264,28 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
                 installed_checksum: None,
             }
         }
-        PlannedAction::Skip { item_id, .. } => ActionOutcome {
+        PlannedAction::Skip {
+            item_id,
+            dest_path,
+            source_name,
+            ..
+        } => ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Skipped,
-            dest_path: PathBuf::new(),
-            source_name: String::new(),
+            dest_path: dest_path.clone(),
+            source_name: source_name.clone(),
             source_checksum: None,
             installed_checksum: None,
         },
-        PlannedAction::KeepLocal { item_id } => ActionOutcome {
+        PlannedAction::KeepLocal {
+            item_id,
+            dest_path,
+            source_name,
+        } => ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Kept,
-            dest_path: PathBuf::new(),
-            source_name: String::new(),
+            dest_path: dest_path.clone(),
+            source_name: source_name.clone(),
             source_checksum: None,
             installed_checksum: None,
         },
@@ -653,6 +671,8 @@ mod tests {
                     kind: ItemKind::Agent,
                     name: "stable".to_string(),
                 },
+                dest_path: PathBuf::from("agents/stable.md"),
+                source_name: "base".to_string(),
                 reason: "unchanged",
             }],
         };
@@ -665,6 +685,8 @@ mod tests {
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Skipped));
+        assert_eq!(result.outcomes[0].dest_path, PathBuf::from("agents/stable.md"));
+        assert_eq!(result.outcomes[0].source_name, "base");
     }
 
     #[test]
@@ -679,6 +701,8 @@ mod tests {
                     kind: ItemKind::Agent,
                     name: "modified".to_string(),
                 },
+                dest_path: PathBuf::from("agents/modified.md"),
+                source_name: "base".to_string(),
             }],
         };
 
@@ -690,6 +714,11 @@ mod tests {
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Kept));
+        assert_eq!(
+            result.outcomes[0].dest_path,
+            PathBuf::from("agents/modified.md")
+        );
+        assert_eq!(result.outcomes[0].source_name, "base");
     }
 
     // === Install skill directory tests ===

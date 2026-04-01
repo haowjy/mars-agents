@@ -9,6 +9,7 @@ use assert_fs::prelude::*;
 use assert_fs::TempDir;
 use predicates::prelude::*;
 use std::fs;
+use toml::Value;
 
 /// Create a local path source fixture with agents and skills.
 fn create_source(
@@ -118,6 +119,73 @@ fn add_local_source_and_sync() {
 
     // Verify lock file exists
     assert!(agents_dir.child("agents.lock").exists());
+}
+
+#[test]
+fn add_second_source_preserves_first_source_items_in_lock() {
+    let dir = TempDir::new().unwrap();
+    let source_one = create_source(
+        &dir,
+        "base1",
+        &[("coder", "# Coder from base1")],
+        &[],
+    );
+    let source_two = create_source(
+        &dir,
+        "base2",
+        &[("reviewer", "# Reviewer from base2")],
+        &[],
+    );
+
+    let agents_dir = dir.child("project").child(".agents");
+    mars()
+        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source_one.to_str().unwrap(),
+            "--root",
+            agents_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source_two.to_str().unwrap(),
+            "--root",
+            agents_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let lock_content = fs::read_to_string(agents_dir.child("agents.lock").path()).unwrap();
+    let lock: Value = toml::from_str(&lock_content).unwrap();
+    let items = lock["items"].as_table().unwrap();
+
+    assert!(
+        items.contains_key("agents/coder.md"),
+        "expected first source item to remain after second add; lock:\n{lock_content}"
+    );
+    assert!(
+        items.contains_key("agents/reviewer.md"),
+        "expected second source item in lock; lock:\n{lock_content}"
+    );
+
+    assert_eq!(
+        items["agents/coder.md"]["source"].as_str(),
+        Some("base1"),
+        "first source ownership should be preserved"
+    );
+    assert_eq!(
+        items["agents/reviewer.md"]["source"].as_str(),
+        Some("base2"),
+        "second source ownership should be present"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════

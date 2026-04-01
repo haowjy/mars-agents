@@ -7,7 +7,7 @@ use crate::config::{EffectiveConfig, FilterMode, SourceSpec};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{ItemId, ItemKind};
+use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::resolve::ResolvedGraph;
 use crate::validate;
 
@@ -57,13 +57,10 @@ pub fn build(graph: &ResolvedGraph, config: &EffectiveConfig) -> Result<TargetSt
         let discovered = discover::discover_source(&node.resolved_ref.tree_path)?;
 
         // Get the source URL for collision rename extraction
-        let source_url = source_config
-            .and_then(|s| {
-                match &s.spec {
-                    SourceSpec::Git(git) => Some(git.url.clone()),
-                    SourceSpec::Path(_) => s.original_git.as_ref().map(|g| g.url.clone()),
-                }
-            });
+        let source_url = source_config.and_then(|s| match &s.spec {
+            SourceSpec::Git(git) => Some(git.url.clone()),
+            SourceSpec::Path(_) => s.original_git.as_ref().map(|g| g.url.clone()),
+        });
 
         // Determine filter mode
         let filter = source_config
@@ -87,16 +84,8 @@ pub fn build(graph: &ResolvedGraph, config: &EffectiveConfig) -> Result<TargetSt
             // Compute source hash
             let source_hash = hash::compute_hash(&source_content_path, item.id.kind)?;
 
-            // Determine dest_path: apply rename if configured
-            let dest_name = renames
-                .get(&item.id.name)
-                .cloned()
-                .unwrap_or_else(|| item.id.name.clone());
-
-            let dest_path = match item.id.kind {
-                ItemKind::Agent => PathBuf::from("agents").join(format!("{dest_name}.md")),
-                ItemKind::Skill => PathBuf::from("skills").join(&dest_name),
-            };
+            // Determine destination path, honoring path-based and name-based rename maps.
+            let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
 
             let dest_key = dest_path.to_string_lossy().to_string();
 
@@ -203,15 +192,7 @@ pub fn build_with_collisions(
             let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
             let source_hash = hash::compute_hash(&source_content_path, item.id.kind)?;
 
-            let dest_name = renames
-                .get(&item.id.name)
-                .cloned()
-                .unwrap_or_else(|| item.id.name.clone());
-
-            let dest_path = match item.id.kind {
-                ItemKind::Agent => PathBuf::from("agents").join(format!("{dest_name}.md")),
-                ItemKind::Skill => PathBuf::from("skills").join(&dest_name),
-            };
+            let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
 
             all_items.push(TargetItem {
                 id: ItemId {
@@ -397,6 +378,95 @@ pub fn rewrite_skill_refs(
     Ok(())
 }
 
+/// Refuse to overwrite existing on-disk files/directories that are not managed.
+///
+/// If a target destination already exists but is not tracked in the lock file,
+/// treat it as user-authored content and fail sync.
+pub fn check_unmanaged_collisions(
+    install_target: &Path,
+    lock: &LockFile,
+    target: &TargetState,
+) -> Result<(), MarsError> {
+    for (dest_key, target_item) in &target.items {
+        if lock.items.contains_key(dest_key) {
+            continue;
+        }
+
+        let disk_path = install_target.join(&target_item.dest_path);
+        if disk_path.exists() {
+            return Err(MarsError::Source {
+                source_name: target_item.source_name.clone(),
+                message: format!(
+                    "refusing to overwrite unmanaged path `{}`",
+                    target_item.dest_path.display()
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_item_rename(
+    kind: ItemKind,
+    item_name: &str,
+    renames: &IndexMap<String, String>,
+) -> (String, PathBuf) {
+    let default_dest = default_dest_path(kind, item_name);
+    let default_key = default_dest.to_string_lossy().to_string();
+
+    let rename_value = renames.get(&default_key).or_else(|| renames.get(item_name));
+
+    let dest_path = match rename_value {
+        Some(value) => parse_rename_dest(kind, value),
+        None => default_dest,
+    };
+    let dest_name = dest_name_from_path(kind, &dest_path);
+
+    (dest_name, dest_path)
+}
+
+fn default_dest_path(kind: ItemKind, name: &str) -> PathBuf {
+    match kind {
+        ItemKind::Agent => PathBuf::from("agents").join(format!("{name}.md")),
+        ItemKind::Skill => PathBuf::from("skills").join(name),
+    }
+}
+
+fn parse_rename_dest(kind: ItemKind, rename_value: &str) -> PathBuf {
+    let value = PathBuf::from(rename_value);
+    let has_prefix = value.starts_with("agents") || value.starts_with("skills");
+    let has_parent = value.parent().is_some_and(|p| p != Path::new(""));
+
+    if has_prefix || has_parent {
+        return value;
+    }
+
+    match kind {
+        ItemKind::Agent => {
+            if rename_value.ends_with(".md") {
+                PathBuf::from("agents").join(rename_value)
+            } else {
+                PathBuf::from("agents").join(format!("{rename_value}.md"))
+            }
+        }
+        ItemKind::Skill => PathBuf::from("skills").join(rename_value),
+    }
+}
+
+fn dest_name_from_path(kind: ItemKind, path: &Path) -> String {
+    match kind {
+        ItemKind::Agent => path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        ItemKind::Skill => path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    }
+}
+
 /// Rewrite a skill reference in YAML frontmatter.
 ///
 /// Only modifies the `skills:` line(s) in the frontmatter block.
@@ -491,7 +561,8 @@ fn apply_filter(
 
         FilterMode::Include { agents, skills } => {
             // Start with explicitly requested items
-            let mut include_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut include_set: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             // Add explicitly requested agents and skills
             for a in agents {
@@ -533,9 +604,7 @@ pub fn extract_owner_repo(url: Option<&str>, source_name: &str) -> String {
     if let Some(url) = url {
         // Try to extract from URL patterns:
         // github.com/owner/repo, https://github.com/owner/repo.git, etc.
-        let cleaned = url
-            .trim_end_matches('/')
-            .trim_end_matches(".git");
+        let cleaned = url.trim_end_matches('/').trim_end_matches(".git");
 
         // Strip protocol
         let without_proto = cleaned
@@ -569,6 +638,7 @@ pub fn extract_owner_repo(url: Option<&str>, source_name: &str) -> String {
 mod tests {
     use super::*;
     use crate::config::*;
+    use crate::lock::LockFile;
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use indexmap::IndexMap;
@@ -660,37 +730,26 @@ mod tests {
 
     #[test]
     fn extract_github_https_url() {
-        let result = extract_owner_repo(
-            Some("https://github.com/haowjy/meridian-base"),
-            "base",
-        );
+        let result = extract_owner_repo(Some("https://github.com/haowjy/meridian-base"), "base");
         assert_eq!(result, "haowjy_meridian-base");
     }
 
     #[test]
     fn extract_github_https_with_git_suffix() {
-        let result = extract_owner_repo(
-            Some("https://github.com/haowjy/meridian-base.git"),
-            "base",
-        );
+        let result =
+            extract_owner_repo(Some("https://github.com/haowjy/meridian-base.git"), "base");
         assert_eq!(result, "haowjy_meridian-base");
     }
 
     #[test]
     fn extract_github_ssh_url() {
-        let result = extract_owner_repo(
-            Some("git@github.com:haowjy/meridian-base.git"),
-            "base",
-        );
+        let result = extract_owner_repo(Some("git@github.com:haowjy/meridian-base.git"), "base");
         assert_eq!(result, "haowjy_meridian-base");
     }
 
     #[test]
     fn extract_bare_github_url() {
-        let result = extract_owner_repo(
-            Some("github.com/someone/cool-agents"),
-            "cool",
-        );
+        let result = extract_owner_repo(Some("github.com/someone/cool-agents"), "cool");
         assert_eq!(result, "someone_cool-agents");
     }
 
@@ -763,7 +822,10 @@ mod tests {
                 "coder.md",
                 "---\nskills:\n  - planning\n---\n# Coder agent\n",
             )],
-            &[("planning", "# Planning skill"), ("review", "# Review skill")],
+            &[
+                ("planning", "# Planning skill"),
+                ("review", "# Review skill"),
+            ],
         );
         let discovered = discover::discover_source(tree.path()).unwrap();
         let filtered = apply_filter(
@@ -786,10 +848,7 @@ mod tests {
 
     #[test]
     fn build_single_source_no_filter() {
-        let tree = make_source_tree(
-            &[("coder.md", "# coder")],
-            &[("planning", "# planning")],
-        );
+        let tree = make_source_tree(&[("coder.md", "# coder")], &[("planning", "# planning")]);
         let (graph, config) = make_graph_and_config(vec![(
             "base",
             &tree,
@@ -804,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn build_with_rename_mapping() {
+    fn build_with_path_rename_mapping() {
         let tree = make_source_tree(&[("old-name.md", "# old")], &[]);
 
         let (graph, mut config) = make_graph_and_config(vec![(
@@ -815,12 +874,10 @@ mod tests {
         )]);
 
         // Add rename mapping
-        config
-            .sources
-            .get_mut("base")
-            .unwrap()
-            .rename
-            .insert("old-name".to_string(), "new-name".to_string());
+        config.sources.get_mut("base").unwrap().rename.insert(
+            "agents/old-name.md".to_string(),
+            "agents/new-name.md".to_string(),
+        );
 
         let target = build(&graph, &config).unwrap();
         assert_eq!(target.items.len(), 1);
@@ -925,10 +982,7 @@ mod tests {
     #[test]
     fn build_with_agents_filter_pulls_transitive_skills() {
         let tree = make_source_tree(
-            &[(
-                "coder.md",
-                "---\nskills:\n  - planning\n---\n# Coder\n",
-            )],
+            &[("coder.md", "---\nskills:\n  - planning\n---\n# Coder\n")],
             &[("planning", "# Planning"), ("unused-skill", "# Unused")],
         );
 
@@ -952,10 +1006,7 @@ mod tests {
 
     #[test]
     fn build_with_exclude_filter() {
-        let tree = make_source_tree(
-            &[("coder.md", "# coder"), ("deprecated.md", "# old")],
-            &[],
-        );
+        let tree = make_source_tree(&[("coder.md", "# coder"), ("deprecated.md", "# old")], &[]);
 
         let (graph, config) = make_graph_and_config(vec![(
             "base",
@@ -974,16 +1025,35 @@ mod tests {
         let content = "# agent content for hash test";
         let tree = make_source_tree(&[("test.md", content)], &[]);
 
-        let (graph, config) = make_graph_and_config(vec![(
-            "base",
-            &tree,
-            None,
-            FilterMode::All,
-        )]);
+        let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
         let target = build(&graph, &config).unwrap();
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
         assert_eq!(item.source_hash, expected_hash);
+    }
+
+    #[test]
+    fn unmanaged_disk_path_collision_errors() {
+        let tree = make_source_tree(&[("coder.md", "# managed")], &[]);
+        let (graph, config) = make_graph_and_config(vec![(
+            "base",
+            &tree,
+            Some("https://github.com/org/base"),
+            FilterMode::All,
+        )]);
+
+        let target = build(&graph, &config).unwrap();
+        let install_root = TempDir::new().unwrap();
+
+        // Existing user-authored file at the same destination.
+        let existing = install_root.path().join("agents").join("coder.md");
+        fs::create_dir_all(existing.parent().unwrap()).unwrap();
+        fs::write(&existing, "# user-authored").unwrap();
+
+        let err = check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target)
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("refusing to overwrite unmanaged path"));
     }
 }

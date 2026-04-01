@@ -77,22 +77,16 @@ pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     // Load existing config and upsert
     let mut config = crate::config::load(root)?;
     config.sources.insert(parsed.name.clone(), entry);
-    crate::config::save(root, &config)?;
+    // Run sync with proposed config; persist config only after validation passes.
+    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
 
     if !json {
         output::print_info(&format!("added source `{}`", parsed.name));
     }
 
-    // Run sync
-    let report = super::sync::run_sync(root, false, false, false)?;
-
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }
 
 /// Parse a source specifier string into a name + SourceEntry.
@@ -118,10 +112,7 @@ fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
     };
 
     // Local path: starts with `.`, `/`, or `~`
-    if base.starts_with('.')
-        || base.starts_with('/')
-        || base.starts_with('~')
-    {
+    if base.starts_with('.') || base.starts_with('/') || base.starts_with('~') {
         let path = PathBuf::from(&base);
         let name = path
             .file_name()
@@ -144,10 +135,8 @@ fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
 
     // GitHub shorthand: owner/repo (no `.` in first segment, exactly one `/`)
     let parts: Vec<&str> = base.split('/').collect();
-    let is_github_shorthand = parts.len() == 2
-        && !parts[0].contains('.')
-        && !parts[0].is_empty()
-        && !parts[1].is_empty();
+    let is_github_shorthand =
+        parts.len() == 2 && !parts[0].contains('.') && !parts[0].is_empty() && !parts[1].is_empty();
 
     if is_github_shorthand {
         let url = format!("github.com/{}", base);
@@ -176,11 +165,7 @@ fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
         .trim_end_matches(".git");
 
     // Extract name from last path segment
-    let name = cleaned
-        .rsplit('/')
-        .next()
-        .unwrap_or("source")
-        .to_string();
+    let name = cleaned.rsplit('/').next().unwrap_or("source").to_string();
 
     Ok(ParsedSource {
         name,
@@ -225,8 +210,7 @@ mod tests {
 
     #[test]
     fn parse_full_url() {
-        let parsed =
-            parse_source_specifier("github.com/haowjy/meridian-dev-workflow@v2").unwrap();
+        let parsed = parse_source_specifier("github.com/haowjy/meridian-dev-workflow@v2").unwrap();
         assert_eq!(parsed.name, "meridian-dev-workflow");
         assert_eq!(
             parsed.entry.url.as_deref(),
@@ -237,8 +221,7 @@ mod tests {
 
     #[test]
     fn parse_https_url() {
-        let parsed =
-            parse_source_specifier("https://github.com/someone/cool-agents.git").unwrap();
+        let parsed = parse_source_specifier("https://github.com/someone/cool-agents.git").unwrap();
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
             parsed.entry.url.as_deref(),
@@ -251,10 +234,7 @@ mod tests {
         let parsed = parse_source_specifier("./my-agents").unwrap();
         assert_eq!(parsed.name, "my-agents");
         assert!(parsed.entry.url.is_none());
-        assert_eq!(
-            parsed.entry.path.as_deref(),
-            Some(Path::new("./my-agents"))
-        );
+        assert_eq!(parsed.entry.path.as_deref(), Some(Path::new("./my-agents")));
     }
 
     #[test]

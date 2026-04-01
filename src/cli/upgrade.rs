@@ -1,4 +1,4 @@
-//! `mars update` — update sources to newest versions within constraints.
+//! `mars upgrade` — upgrade sources to newest versions within constraints.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -7,15 +7,15 @@ use crate::error::MarsError;
 
 use super::output;
 
-/// Arguments for `mars update`.
+/// Arguments for `mars upgrade`.
 #[derive(Debug, clap::Args)]
-pub struct UpdateArgs {
-    /// Specific sources to update (default: all).
+pub struct UpgradeArgs {
+    /// Specific sources to upgrade (default: all).
     pub sources: Vec<String>,
 }
 
-/// Run `mars update`.
-pub fn run(args: &UpdateArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+/// Run `mars upgrade`.
+pub fn run(args: &UpgradeArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     // Validate that specified sources exist in config
     if !args.sources.is_empty() {
         let config = crate::config::load(root)?;
@@ -67,7 +67,9 @@ pub fn run(args: &UpdateArgs, root: &Path, json: bool) -> Result<i32, MarsError>
         crate::sync::target::rewrite_skill_refs(&mut target_state, &renames, &graph)?;
     }
 
-    let sync_diff = crate::sync::diff::compute(root, &old_lock, &target_state)?;
+    crate::sync::target::check_unmanaged_collisions(root, &old_lock, &target_state)?;
+
+    let sync_diff = crate::sync::diff::compute(root, &old_lock, &target_state, false)?;
 
     let cache_bases_dir = root.join(".mars").join("cache").join("bases");
     let options = crate::sync::apply::SyncOptions {
@@ -76,8 +78,7 @@ pub fn run(args: &UpdateArgs, root: &Path, json: bool) -> Result<i32, MarsError>
         frozen: false,
     };
     let sync_plan = crate::sync::plan::create(&sync_diff, &options, &cache_bases_dir);
-    let applied =
-        crate::sync::apply::execute(root, &sync_plan, &options, &cache_bases_dir)?;
+    let applied = crate::sync::apply::execute(root, &sync_plan, &options, &cache_bases_dir)?;
 
     let new_lock = crate::lock::build(&graph, &applied, &old_lock)?;
     crate::lock::write(root, &new_lock)?;
@@ -90,24 +91,17 @@ pub fn run(args: &UpdateArgs, root: &Path, json: bool) -> Result<i32, MarsError>
 
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }
 
-/// Source provider for update (same as sync pipeline).
+/// Source provider for upgrade (same as sync pipeline).
 struct SyncSourceProvider {
     cache_dir: std::path::PathBuf,
     project_root: std::path::PathBuf,
 }
 
 impl crate::resolve::SourceProvider for SyncSourceProvider {
-    fn list_versions(
-        &self,
-        url: &str,
-    ) -> Result<Vec<crate::source::AvailableVersion>, MarsError> {
+    fn list_versions(&self, url: &str) -> Result<Vec<crate::source::AvailableVersion>, MarsError> {
         crate::source::list_versions(url, &self.cache_dir)
     }
 

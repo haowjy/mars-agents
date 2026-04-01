@@ -15,10 +15,11 @@ pub struct InitArgs {
 }
 
 /// Run `mars init`.
-pub fn run(args: &InitArgs, json: bool) -> Result<i32, MarsError> {
-    let base = match &args.path {
-        Some(p) => p.clone(),
-        None => std::env::current_dir()?,
+pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let base = match (&args.path, explicit_root) {
+        (Some(path), _) => resolve_base(path)?,
+        (None, Some(root)) => resolve_base(root)?,
+        (None, None) => std::env::current_dir()?,
     };
 
     let agents_dir = if base.join("agents.toml").exists() || base.ends_with(".agents") {
@@ -66,6 +67,14 @@ pub fn run(args: &InitArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     Ok(0)
+}
+
+fn resolve_base(path: &Path) -> Result<PathBuf, MarsError> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 /// Add `.mars/` to `.gitignore` in the agents directory if not already present.

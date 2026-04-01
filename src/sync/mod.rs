@@ -66,12 +66,7 @@ impl SourceProvider for RealSourceProvider<'_> {
         version: &AvailableVersion,
         source_name: &str,
     ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch(
-            url,
-            Some(&version.tag),
-            source_name,
-            self.cache_dir,
-        )
+        source::git::fetch(url, Some(&version.tag), source_name, self.cache_dir)
     }
 
     fn fetch_git_ref(
@@ -83,11 +78,7 @@ impl SourceProvider for RealSourceProvider<'_> {
         source::git::fetch(url, Some(ref_name), source_name, self.cache_dir)
     }
 
-    fn fetch_path(
-        &self,
-        path: &Path,
-        source_name: &str,
-    ) -> Result<ResolvedRef, MarsError> {
+    fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
         source::path::fetch_path(path, self.project_root, source_name)
     }
 
@@ -102,7 +93,7 @@ impl SourceProvider for RealSourceProvider<'_> {
 /// The complete sync pipeline — 15 steps matching the feature spec.
 ///
 /// 1. Acquire sync lock
-/// 2. Read agents.toml (merged with agents.local.toml)
+/// 2. Merge proposed config with agents.local.toml
 /// 3. Load existing lock file
 /// 4. Fetch sources + resolve dependency graph — abort on any fetch failure
 /// 5. Discover items in each source, apply filtering
@@ -110,21 +101,39 @@ impl SourceProvider for RealSourceProvider<'_> {
 /// 7. Detect collisions + auto-rename
 /// 8. Rewrite frontmatter refs for renames
 /// 9. Validate skill references
-/// 10. Diff current state against target
-/// 11. Create action plan
-/// 12. Apply changes (or dry-run)
-/// 13. Write new agents.lock
-/// 14. Release lock (implicit via drop)
-/// 15. Report results
-pub fn sync(ctx: &SyncContext) -> Result<SyncReport, MarsError> {
+/// 10. Check unmanaged on-disk collisions
+/// 11. Diff current state against target
+/// 12. Create action plan
+/// 13. Validation gate: optionally persist agents.toml
+/// 14. Apply changes (or dry-run)
+/// 15. Write new agents.lock
+/// 16. Release lock (implicit via drop)
+/// 17. Report results
+pub fn sync(
+    ctx: &SyncContext,
+    proposed_config: &crate::config::Config,
+    write_config: bool,
+) -> Result<SyncReport, MarsError> {
+    let local = crate::config::load_local(&ctx.root)?;
+    let effective = crate::config::merge(proposed_config.clone(), local)?;
+    sync_with_effective_config(ctx, proposed_config, effective, write_config)
+}
+
+/// Sync pipeline entrypoint when the caller already has an EffectiveConfig.
+///
+/// Used by commands like `override` that stage local overrides in-memory and
+/// need to validate/apply before writing agents.local.toml.
+pub fn sync_with_effective_config(
+    ctx: &SyncContext,
+    proposed_config: &crate::config::Config,
+    effective: crate::config::EffectiveConfig,
+    write_config: bool,
+) -> Result<SyncReport, MarsError> {
     // Step 1: Acquire sync lock
     let lock_path = ctx.root.join(".mars").join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    // Step 2: Read config
-    let config = crate::config::load(&ctx.root)?;
-    let local = crate::config::load_local(&ctx.root)?;
-    let effective = crate::config::merge(config, local)?;
+    // Step 2: Effective config already resolved by caller.
 
     // Step 3: Load existing lock file
     let old_lock = crate::lock::load(&ctx.root)?;
@@ -149,10 +158,18 @@ pub fn sync(ctx: &SyncContext) -> Result<SyncReport, MarsError> {
     // Step 9: Validate skill references
     let warnings = validate_skill_refs(&ctx.install_target, &target_state);
 
-    // Step 10: Compute diff
-    let sync_diff = diff::compute(&ctx.install_target, &old_lock, &target_state)?;
+    // Step 10: Prevent managed installs from overwriting unmanaged user-authored files.
+    target::check_unmanaged_collisions(&ctx.install_target, &old_lock, &target_state)?;
 
-    // Step 11: Create plan
+    // Step 11: Compute diff
+    let sync_diff = diff::compute(
+        &ctx.install_target,
+        &old_lock,
+        &target_state,
+        ctx.options.force,
+    )?;
+
+    // Step 12: Create plan
     let cache_bases_dir = ctx.root.join(".mars").join("cache").join("bases");
     let sync_plan = plan::create(&sync_diff, &ctx.options, &cache_bases_dir);
 
@@ -172,7 +189,12 @@ pub fn sync(ctx: &SyncContext) -> Result<SyncReport, MarsError> {
         }
     }
 
-    // Step 12: Apply plan
+    // Step 13: Persist proposed config only after validation gate has passed.
+    if write_config && !ctx.options.dry_run {
+        crate::config::save(&ctx.root, proposed_config)?;
+    }
+
+    // Step 14: Apply plan
     let applied = apply::execute(
         &ctx.install_target,
         &sync_plan,
@@ -183,15 +205,15 @@ pub fn sync(ctx: &SyncContext) -> Result<SyncReport, MarsError> {
     // Orphan pruning is handled by Remove actions in the plan (via diff::Orphan)
     let pruned = Vec::new();
 
-    // Step 13: Write lock file (only if not dry-run and changes were made)
+    // Step 15: Write lock file (only if not dry-run and changes were made)
     if !ctx.options.dry_run {
         let new_lock = crate::lock::build(&graph, &applied, &old_lock)?;
         crate::lock::write(&ctx.root, &new_lock)?;
     }
 
-    // Step 14: Lock released on drop of _sync_lock
+    // Step 16: Lock released on drop of _sync_lock
 
-    // Step 15: Report
+    // Step 17: Report
     Ok(SyncReport {
         applied,
         pruned,
@@ -363,7 +385,7 @@ mod tests {
 
         // Compute diff against empty lock
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
 
         // All items should be Add
         assert_eq!(sync_diff.items.len(), 2);
@@ -410,7 +432,7 @@ mod tests {
         // First sync
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -423,7 +445,7 @@ mod tests {
 
         // Second sync with same content
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2).unwrap();
+        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2, false).unwrap();
 
         // All items should be Unchanged
         for entry in &sync_diff2.items {
@@ -449,7 +471,7 @@ mod tests {
         // First sync
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -466,11 +488,14 @@ mod tests {
 
         // Rebuild target with updated content
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2).unwrap();
+        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2, false).unwrap();
 
         // Should detect an Update
         assert_eq!(sync_diff2.items.len(), 1);
-        assert!(matches!(&sync_diff2.items[0], diff::DiffEntry::Update { .. }));
+        assert!(matches!(
+            &sync_diff2.items[0],
+            diff::DiffEntry::Update { .. }
+        ));
     }
 
     #[test]
@@ -483,7 +508,7 @@ mod tests {
         // First sync
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -495,15 +520,11 @@ mod tests {
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Locally modify the installed file
-        fs::write(
-            fixture.root().join("agents/coder.md"),
-            "# Locally modified",
-        )
-        .unwrap();
+        fs::write(fixture.root().join("agents/coder.md"), "# Locally modified").unwrap();
 
         // Re-sync (source unchanged)
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2).unwrap();
+        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2, false).unwrap();
 
         // Should detect LocalModified
         assert_eq!(sync_diff2.items.len(), 1);
@@ -530,7 +551,7 @@ mod tests {
         // First sync
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -542,11 +563,7 @@ mod tests {
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Locally modify the installed file
-        fs::write(
-            fixture.root().join("agents/coder.md"),
-            "# Locally modified",
-        )
-        .unwrap();
+        fs::write(fixture.root().join("agents/coder.md"), "# Locally modified").unwrap();
 
         // Update source too (triggers conflict)
         let agents_dir = fixture.tree_path(src_idx).join("agents");
@@ -554,7 +571,7 @@ mod tests {
 
         // Re-sync with --force
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2).unwrap();
+        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2, false).unwrap();
 
         let force_options = SyncOptions {
             force: true,
@@ -592,7 +609,7 @@ mod tests {
         // First sync — install both
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -611,7 +628,7 @@ mod tests {
 
         // Re-sync
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2).unwrap();
+        let sync_diff2 = diff::compute(fixture.root(), &first_lock, &target2, false).unwrap();
 
         // Should have one Unchanged and one Orphan
         let orphan_count = sync_diff2
@@ -646,7 +663,7 @@ mod tests {
 
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
 
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let dry_options = SyncOptions {
@@ -659,8 +676,7 @@ mod tests {
         assert!(!sync_plan.actions.is_empty());
 
         // Execute in dry-run mode
-        let result =
-            apply::execute(fixture.root(), &sync_plan, &dry_options, &cache_dir).unwrap();
+        let result = apply::execute(fixture.root(), &sync_plan, &dry_options, &cache_dir).unwrap();
         assert!(!result.outcomes.is_empty());
 
         // No files should have been created
@@ -677,7 +693,7 @@ mod tests {
         // Full pipeline minus actual sync() (which needs real config files)
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
@@ -720,7 +736,7 @@ mod tests {
         assert_eq!(target.items.len(), 2);
 
         let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.root(), &lock, &target).unwrap();
+        let sync_diff = diff::compute(fixture.root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,

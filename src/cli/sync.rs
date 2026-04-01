@@ -2,10 +2,11 @@
 
 use std::path::Path;
 
+use crate::config::{Config, EffectiveConfig};
 use crate::error::MarsError;
 use crate::source::{CacheDir, Fetchers};
-use crate::sync::{SyncContext, SyncReport};
 use crate::sync::apply::SyncOptions;
+use crate::sync::{SyncContext, SyncReport};
 
 use super::output;
 
@@ -27,20 +28,61 @@ pub struct SyncArgs {
 
 /// Run `mars sync`.
 pub fn run(args: &SyncArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let report = run_sync(root, args.force, args.diff, args.frozen)?;
+    let report = match run_sync(root, args.force, args.diff, args.frozen) {
+        Ok(report) => report,
+        Err(err) if is_frozen_lock_mismatch(&err) => {
+            eprintln!("error: {err}");
+            return Ok(2);
+        }
+        Err(err) => return Err(err),
+    };
 
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }
 
 /// Inner sync function shared by `mars sync`, `mars add`, `mars remove`, etc.
 pub fn run_sync(
     root: &Path,
+    force: bool,
+    dry_run: bool,
+    frozen: bool,
+) -> Result<SyncReport, MarsError> {
+    let config = crate::config::load(root)?;
+    run_sync_with_config(root, &config, false, force, dry_run, frozen)
+}
+
+/// Execute sync with a caller-provided config snapshot.
+///
+/// `write_config=true` persists `proposed_config` after the validation gate.
+pub fn run_sync_with_config(
+    root: &Path,
+    proposed_config: &Config,
+    write_config: bool,
+    force: bool,
+    dry_run: bool,
+    frozen: bool,
+) -> Result<SyncReport, MarsError> {
+    let local = crate::config::load_local(root)?;
+    let effective = crate::config::merge(proposed_config.clone(), local)?;
+    run_sync_with_effective_config(
+        root,
+        proposed_config,
+        effective,
+        write_config,
+        force,
+        dry_run,
+        frozen,
+    )
+}
+
+/// Execute sync with caller-provided effective config.
+pub fn run_sync_with_effective_config(
+    root: &Path,
+    proposed_config: &Config,
+    effective_config: EffectiveConfig,
+    write_config: bool,
     force: bool,
     dry_run: bool,
     frozen: bool,
@@ -63,5 +105,13 @@ pub fn run_sync(
         },
     };
 
-    crate::sync::sync(&ctx)
+    crate::sync::sync_with_effective_config(&ctx, proposed_config, effective_config, write_config)
+}
+
+fn is_frozen_lock_mismatch(err: &MarsError) -> bool {
+    matches!(
+        err,
+        MarsError::Source { source_name, message }
+            if source_name == "sync" && message.contains("--frozen")
+    )
 }

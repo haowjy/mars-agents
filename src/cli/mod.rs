@@ -19,7 +19,7 @@ pub mod rename;
 pub mod repair;
 pub mod resolve_cmd;
 pub mod sync;
-pub mod update;
+pub mod upgrade;
 pub mod why;
 
 use std::path::{Path, PathBuf};
@@ -58,8 +58,8 @@ pub enum Command {
     /// Sync: resolve + install (make reality match config).
     Sync(sync::SyncArgs),
 
-    /// Update sources to newest compatible versions.
-    Update(update::UpdateArgs),
+    /// Upgrade sources to newest compatible versions.
+    Upgrade(upgrade::UpgradeArgs),
 
     /// Show available updates without applying.
     Outdated(outdated::OutdatedArgs),
@@ -95,7 +95,7 @@ pub enum Command {
 /// - 3: I/O or git error
 pub fn dispatch(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
-        Command::Init(args) => init::run(args, cli.json),
+        Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Add(args) => {
             let root = find_agents_root(cli.root.as_deref())?;
             add::run(args, &root, cli.json)
@@ -108,9 +108,9 @@ pub fn dispatch(cli: Cli) -> Result<i32, MarsError> {
             let root = find_agents_root(cli.root.as_deref())?;
             sync::run(args, &root, cli.json)
         }
-        Command::Update(args) => {
+        Command::Upgrade(args) => {
             let root = find_agents_root(cli.root.as_deref())?;
-            update::run(args, &root, cli.json)
+            upgrade::run(args, &root, cli.json)
         }
         Command::Outdated(args) => {
             let root = find_agents_root(cli.root.as_deref())?;
@@ -168,10 +168,7 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
 
         // Check if we're inside .agents/ already
         if dir.join("agents.toml").exists()
-            && dir
-                .file_name()
-                .map(|n| n == ".agents")
-                .unwrap_or(false)
+            && dir.file_name().map(|n| n == ".agents").unwrap_or(false)
         {
             return Ok(dir.to_path_buf());
         }

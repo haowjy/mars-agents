@@ -33,7 +33,9 @@ pub fn run(args: &RenameArgs, root: &Path, json: bool) -> Result<i32, MarsError>
     // Load config and add rename entry
     let mut config = crate::config::load(root)?;
     if let Some(source_entry) = config.sources.get_mut(source_name) {
-        let rename_map = source_entry.rename.get_or_insert_with(indexmap::IndexMap::new);
+        let rename_map = source_entry
+            .rename
+            .get_or_insert_with(indexmap::IndexMap::new);
         rename_map.insert(args.from.clone(), args.to.clone());
     } else {
         return Err(MarsError::Source {
@@ -42,20 +44,14 @@ pub fn run(args: &RenameArgs, root: &Path, json: bool) -> Result<i32, MarsError>
         });
     }
 
-    crate::config::save(root, &config)?;
+    // Run sync with proposed config; persist config only after validation passes.
+    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
 
     if !json {
         output::print_info(&format!("renamed {} → {}", args.from, args.to));
     }
 
-    // Run sync
-    let report = super::sync::run_sync(root, false, false, false)?;
-
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }

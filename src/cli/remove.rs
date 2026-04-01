@@ -26,20 +26,15 @@ pub fn run(args: &RemoveArgs, root: &Path, json: bool) -> Result<i32, MarsError>
     }
 
     config.sources.shift_remove(&args.source);
-    crate::config::save(root, &config)?;
+
+    // Run sync with proposed config; persist config only after validation passes.
+    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
 
     if !json {
         output::print_info(&format!("removed source `{}`", args.source));
     }
 
-    // Run sync to prune orphans
-    let report = super::sync::run_sync(root, false, false, false)?;
-
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }

@@ -48,8 +48,13 @@ pub enum DiffEntry {
 /// - `source_checksum`: what the source provided
 /// - `installed_checksum`: what mars wrote to disk
 ///
-/// Compares current disk hash against both to determine the diff entry variant.
-pub fn compute(root: &Path, lock: &LockFile, target: &TargetState) -> Result<SyncDiff, MarsError> {
+/// Compares current disk hash against lock checksums to determine the diff entry variant.
+pub fn compute(
+    root: &Path,
+    lock: &LockFile,
+    target: &TargetState,
+    force: bool,
+) -> Result<SyncDiff, MarsError> {
     let mut items = Vec::new();
 
     // Process each target item
@@ -60,11 +65,19 @@ pub fn compute(root: &Path, lock: &LockFile, target: &TargetState) -> Result<Syn
             // Item exists in lock — compare checksums
             let source_changed = target_item.source_hash != locked_item.source_checksum;
 
-            // Check disk hash against installed_checksum
+            // Check disk hash against the expected baseline.
+            // In --force mode, baseline is source_checksum so conflicted files
+            // are treated as local modifications and get overwritten.
+            let expected_disk_checksum = if force {
+                &locked_item.source_checksum
+            } else {
+                &locked_item.installed_checksum
+            };
+
             let disk_path = root.join(&target_item.dest_path);
             let local_changed = if disk_path.exists() {
                 let disk_hash = hash::compute_hash(&disk_path, target_item.id.kind)?;
-                if disk_hash != locked_item.installed_checksum {
+                if disk_hash != *expected_disk_checksum {
                     Some(disk_hash)
                 } else {
                     None
@@ -201,10 +214,12 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         let lock = LockFile::empty();
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
 
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Add { .. }));
@@ -226,7 +241,9 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         let locked_item = make_locked_item("coder", ItemKind::Agent, &hash, &hash);
         let mut lock_items = IndexMap::new();
@@ -237,7 +254,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Unchanged { .. }));
     }
@@ -260,7 +277,9 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &new_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         // Lock has old hash
         let locked_item = make_locked_item("coder", ItemKind::Agent, &old_hash, &old_hash);
@@ -272,7 +291,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
     }
@@ -292,11 +311,12 @@ mod tests {
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
         // Target has same source hash as lock (no upstream change)
-        let target_item =
-            make_target_item("coder", ItemKind::Agent, &original_hash, source_path);
+        let target_item = make_target_item("coder", ItemKind::Agent, &original_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         // Lock also has original hash
         let locked_item =
@@ -309,7 +329,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::LocalModified { .. }));
     }
@@ -329,11 +349,12 @@ mod tests {
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
         // Target has new source hash (upstream changed)
-        let target_item =
-            make_target_item("coder", ItemKind::Agent, &new_source_hash, source_path);
+        let target_item = make_target_item("coder", ItemKind::Agent, &new_source_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         // Lock has original hash
         let locked_item =
@@ -346,7 +367,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Conflict { .. }));
     }
@@ -371,7 +392,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Orphan { .. }));
     }
@@ -398,11 +419,12 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &source_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".to_string(), target_item);
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         // Lock has different source_checksum and installed_checksum
-        let locked_item =
-            make_locked_item("coder", ItemKind::Agent, &source_hash, &installed_hash);
+        let locked_item = make_locked_item("coder", ItemKind::Agent, &source_hash, &installed_hash);
         let mut lock_items = IndexMap::new();
         lock_items.insert("agents/coder.md".to_string(), locked_item);
         let lock = LockFile {
@@ -411,7 +433,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         // Should be Unchanged because disk matches installed_checksum
         // and source_hash matches source_checksum
@@ -460,7 +482,9 @@ mod tests {
                 source_path_c,
             ),
         );
-        let target = TargetState { items: target_items };
+        let target = TargetState {
+            items: target_items,
+        };
 
         let mut lock_items = IndexMap::new();
         lock_items.insert(
@@ -481,7 +505,7 @@ mod tests {
             items: lock_items,
         };
 
-        let diff = compute(root.path(), &lock, &target).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 4); // Unchanged + Update + Add + Orphan
 
         let unchanged_count = diff
@@ -509,5 +533,58 @@ mod tests {
         assert_eq!(update_count, 1);
         assert_eq!(add_count, 1);
         assert_eq!(orphan_count, 1);
+    }
+
+    #[test]
+    fn force_uses_source_checksum_for_local_change_detection() {
+        let root = TempDir::new().unwrap();
+        let upstream_content = b"# upstream";
+        let conflicted_content = b"<<<<<<< local\n# local\n=======\n# upstream\n>>>>>>> upstream\n";
+
+        let source_hash = hash::hash_bytes(upstream_content);
+        let installed_hash = hash::hash_bytes(conflicted_content);
+
+        // Disk matches prior conflicted content from last sync.
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("coder.md"), conflicted_content).unwrap();
+
+        let mut target_items = IndexMap::new();
+        target_items.insert(
+            "agents/coder.md".to_string(),
+            make_target_item(
+                "coder",
+                ItemKind::Agent,
+                &source_hash,
+                PathBuf::from("/tmp/source/agents/coder.md"),
+            ),
+        );
+        let target = TargetState {
+            items: target_items,
+        };
+
+        let mut lock_items = IndexMap::new();
+        lock_items.insert(
+            "agents/coder.md".to_string(),
+            LockedItem {
+                source: "test-source".to_string(),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: source_hash.clone(),
+                installed_checksum: installed_hash,
+                dest_path: "agents/coder.md".to_string(),
+            },
+        );
+        let lock = LockFile {
+            version: 1,
+            sources: IndexMap::new(),
+            items: lock_items,
+        };
+
+        let normal = compute(root.path(), &lock, &target, false).unwrap();
+        assert!(matches!(&normal.items[0], DiffEntry::Unchanged { .. }));
+
+        let forced = compute(root.path(), &lock, &target, true).unwrap();
+        assert!(matches!(&forced.items[0], DiffEntry::LocalModified { .. }));
     }
 }

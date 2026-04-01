@@ -1,6 +1,7 @@
 //! Git source adapter primitives.
 
 use crate::error::MarsError;
+use crate::source::parse::extract_hostname;
 use crate::source::{AvailableVersion, GlobalCache, ResolvedRef};
 use crate::types::CommitHash;
 
@@ -66,6 +67,13 @@ pub fn url_to_dirname(url: &str) -> String {
 fn parse_semver_tag(tag: &str) -> Option<semver::Version> {
     let version_str = tag.strip_prefix('v').unwrap_or(tag);
     semver::Version::parse(version_str).ok()
+}
+
+/// Return true when the URL host resolves to github.com.
+pub fn is_github_host(url: &str) -> bool {
+    extract_hostname(url)
+        .map(|host| host.eq_ignore_ascii_case("github.com"))
+        .unwrap_or(false)
 }
 
 pub fn list_versions(_url: &str, _cache: &GlobalCache) -> Result<Vec<AvailableVersion>, MarsError> {
@@ -170,5 +178,21 @@ mod tests {
         assert!(parse_semver_tag("latest").is_none());
         assert!(parse_semver_tag("nightly-2024").is_none());
         assert!(parse_semver_tag("release").is_none());
+    }
+
+    // ==================== is_github_host tests ====================
+
+    #[test]
+    fn is_github_host_accepts_supported_formats() {
+        assert!(is_github_host("https://github.com/org/repo"));
+        assert!(is_github_host("github.com/org/repo"));
+        assert!(is_github_host("git@github.com:org/repo.git"));
+        assert!(is_github_host("https://git@github.com:8443/org/repo"));
+    }
+
+    #[test]
+    fn is_github_host_rejects_other_hosts() {
+        assert!(!is_github_host("https://gitlab.com/org/repo"));
+        assert!(!is_github_host("git@source.example.com:org/repo.git"));
     }
 }

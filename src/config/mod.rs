@@ -127,7 +127,8 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
             ConfigError::Io(e)
         }
     })?;
-    let config: Config = toml::from_str(&content).map_err(ConfigError::Parse)?;
+    let mut config: Config = toml::from_str(&content).map_err(ConfigError::Parse)?;
+    migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
 
@@ -263,6 +264,21 @@ fn source_id_for_spec(root: &Path, spec: &SourceSpec) -> SourceId {
             }
         },
     }
+}
+
+fn migrate_legacy_source_urls(config: &mut Config) {
+    for source in config.sources.values_mut() {
+        if let Some(url) = source.url.as_mut() {
+            let raw = url.as_str();
+            if should_upgrade_legacy_git_url(raw) {
+                *url = SourceUrl::from(format!("https://{raw}"));
+            }
+        }
+    }
+}
+
+fn should_upgrade_legacy_git_url(url: &str) -> bool {
+    !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.')
 }
 
 /// Write agents.toml atomically.
@@ -475,6 +491,38 @@ version = "v1.0"
         std::fs::write(dir.path().join("agents.toml"), toml_str).unwrap();
         let config = load(dir.path()).unwrap();
         assert_eq!(config.sources.len(), 1);
+    }
+
+    #[test]
+    fn load_migrates_legacy_bare_domain_url() {
+        let dir = TempDir::new().unwrap();
+        let toml_str = r#"
+[sources.base]
+url = "github.com/org/base"
+"#;
+        std::fs::write(dir.path().join("agents.toml"), toml_str).unwrap();
+
+        let config = load(dir.path()).unwrap();
+        assert_eq!(
+            config.sources["base"].url.as_deref(),
+            Some("https://github.com/org/base")
+        );
+    }
+
+    #[test]
+    fn load_does_not_migrate_ssh_url() {
+        let dir = TempDir::new().unwrap();
+        let toml_str = r#"
+[sources.base]
+url = "git@github.com:org/base.git"
+"#;
+        std::fs::write(dir.path().join("agents.toml"), toml_str).unwrap();
+
+        let config = load(dir.path()).unwrap();
+        assert_eq!(
+            config.sources["base"].url.as_deref(),
+            Some("git@github.com:org/base.git")
+        );
     }
 
     #[test]

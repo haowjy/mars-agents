@@ -113,16 +113,12 @@ pub fn normalize(input: &str, format: SourceFormat) -> Result<NormalizedSource, 
     match format {
         SourceFormat::LocalPath => Ok(NormalizedSource::Path(PathBuf::from(input))),
         SourceFormat::GitHubShorthand => Ok(NormalizedSource::Git(SourceUrl::from(format!(
-            "github.com/{input}"
+            "https://github.com/{input}"
         )))),
         SourceFormat::HttpsUrl => {
-            let stripped = input
-                .strip_prefix("https://")
-                .or_else(|| input.strip_prefix("http://"))
-                .unwrap_or(input);
-            let stripped = stripped.strip_suffix(".git").unwrap_or(stripped);
+            let stripped = input.strip_suffix(".git").unwrap_or(input);
             let stripped = stripped.trim_end_matches('/');
-            if stripped.is_empty() || !stripped.contains('/') {
+            if !has_non_empty_path(stripped) {
                 return Err(ParseError::EmptyUrlPath {
                     input: input.to_string(),
                 });
@@ -142,29 +138,26 @@ pub fn normalize(input: &str, format: SourceFormat) -> Result<NormalizedSource, 
                 .ok_or_else(|| ParseError::MalformedSshUrl {
                     input: input.to_string(),
                 })?;
-            let path = path
-                .strip_suffix(".git")
-                .unwrap_or(path)
-                .trim_end_matches('/');
+            let path = path.trim_end_matches('/');
             let path = path.trim_start_matches('/');
             if host.is_empty() || path.is_empty() {
                 return Err(ParseError::MalformedSshUrl {
                     input: input.to_string(),
                 });
             }
-            Ok(NormalizedSource::Git(SourceUrl::from(format!(
-                "{host}/{path}"
-            ))))
+            Ok(NormalizedSource::Git(SourceUrl::from(input.to_string())))
         }
         SourceFormat::BareDomain => {
             let stripped = input.strip_suffix(".git").unwrap_or(input);
             let stripped = stripped.trim_end_matches('/');
-            if stripped.is_empty() || !stripped.contains('/') {
+            if !has_non_empty_path(stripped) {
                 return Err(ParseError::EmptyUrlPath {
                     input: input.to_string(),
                 });
             }
-            Ok(NormalizedSource::Git(SourceUrl::from(stripped.to_string())))
+            Ok(NormalizedSource::Git(SourceUrl::from(format!(
+                "https://{stripped}"
+            ))))
         }
         SourceFormat::Unknown => Err(ParseError::UnrecognizedFormat {
             input: input.to_string(),
@@ -172,26 +165,71 @@ pub fn normalize(input: &str, format: SourceFormat) -> Result<NormalizedSource, 
     }
 }
 
+/// Extract hostname from a URL-like git source string.
+///
+/// Removes scheme, user info, port, and path; returns only the host.
+pub fn extract_hostname(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // SSH shorthand: git@host:owner/repo(.git)
+    if !trimmed.contains("://")
+        && let Some((user_host, path)) = trimmed.split_once(':')
+        && let Some((_, host)) = user_host.split_once('@')
+        && !path.trim_matches('/').is_empty()
+    {
+        return Some(host.to_string());
+    }
+
+    let mut rest = trimmed;
+    if let Some((_, tail)) = rest.split_once("://") {
+        rest = tail;
+    }
+    if let Some((userinfo, tail)) = rest.split_once('@')
+        && !userinfo.contains('/')
+    {
+        rest = tail;
+    }
+
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.is_empty() {
+        return None;
+    }
+
+    let host = authority.split(':').next().unwrap_or(authority);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
 /// Derive source display name from normalized source.
 pub fn derive_name(source: &NormalizedSource) -> Result<String, ParseError> {
-    let name = match source {
-        NormalizedSource::Git(url) => url
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| ParseError::CannotDeriveName {
-                input: url.to_string(),
-            })?,
-        NormalizedSource::Path(path) => path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| ParseError::CannotDeriveName {
-                input: path.display().to_string(),
-            })?,
-    };
-
-    Ok(name.to_string())
+    match source {
+        NormalizedSource::Git(url) => {
+            let name = url
+                .rsplit('/')
+                .next()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| ParseError::CannotDeriveName {
+                    input: url.to_string(),
+                })?;
+            Ok(name.strip_suffix(".git").unwrap_or(name).to_string())
+        }
+        NormalizedSource::Path(path) => {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| ParseError::CannotDeriveName {
+                    input: path.display().to_string(),
+                })?;
+            Ok(name.to_string())
+        }
+    }
 }
 
 /// Parse a source specifier into a normalized structured value.
@@ -226,6 +264,24 @@ fn strip_suffix_at(input: &str) -> &str {
     match input.rsplit_once('@') {
         Some((base, suffix)) if !suffix.is_empty() => base,
         _ => input,
+    }
+}
+
+fn has_non_empty_path(input: &str) -> bool {
+    let mut rest = input;
+    if let Some((_, tail)) = rest.split_once("://") {
+        rest = tail;
+    }
+    if let Some((userinfo, tail)) = rest.split_once('@')
+        && !userinfo.contains('/')
+    {
+        rest = tail;
+    }
+
+    if let Some((_, path)) = rest.split_once('/') {
+        !path.trim_matches('/').is_empty()
+    } else {
+        false
     }
 }
 
@@ -278,19 +334,19 @@ mod tests {
     fn normalize_handles_all_git_formats() {
         assert_eq!(
             normalize("owner/repo", SourceFormat::GitHubShorthand).unwrap(),
-            NormalizedSource::Git(SourceUrl::from("github.com/owner/repo"))
+            NormalizedSource::Git(SourceUrl::from("https://github.com/owner/repo"))
         );
         assert_eq!(
             normalize("https://github.com/org/repo.git", SourceFormat::HttpsUrl).unwrap(),
-            NormalizedSource::Git(SourceUrl::from("github.com/org/repo"))
+            NormalizedSource::Git(SourceUrl::from("https://github.com/org/repo"))
         );
         assert_eq!(
             normalize("git@github.com:org/repo.git", SourceFormat::SshUrl).unwrap(),
-            NormalizedSource::Git(SourceUrl::from("github.com/org/repo"))
+            NormalizedSource::Git(SourceUrl::from("git@github.com:org/repo.git"))
         );
         assert_eq!(
             normalize("github.com/org/repo.git", SourceFormat::BareDomain).unwrap(),
-            NormalizedSource::Git(SourceUrl::from("github.com/org/repo"))
+            NormalizedSource::Git(SourceUrl::from("https://github.com/org/repo"))
         );
     }
 
@@ -304,7 +360,14 @@ mod tests {
     fn derive_name_from_git_and_path() {
         assert_eq!(
             derive_name(&NormalizedSource::Git(SourceUrl::from(
-                "github.com/org/repo"
+                "https://github.com/org/repo"
+            )))
+            .unwrap(),
+            "repo"
+        );
+        assert_eq!(
+            derive_name(&NormalizedSource::Git(SourceUrl::from(
+                "git@github.com:org/repo.git"
             )))
             .unwrap(),
             "repo"
@@ -312,6 +375,26 @@ mod tests {
         assert_eq!(
             derive_name(&NormalizedSource::Path(PathBuf::from("../my-agents"))).unwrap(),
             "my-agents"
+        );
+    }
+
+    #[test]
+    fn extract_hostname_handles_supported_formats() {
+        assert_eq!(
+            extract_hostname("https://github.com/org/repo"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            extract_hostname("https://git@github.com:8443/org/repo"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            extract_hostname("git@github.com:org/repo.git"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            extract_hostname("github.com/org/repo"),
+            Some("github.com".to_string())
         );
     }
 
@@ -338,7 +421,7 @@ mod tests {
             Case {
                 input: "haowjy/meridian-base",
                 format: SourceFormat::GitHubShorthand,
-                url: Some("github.com/haowjy/meridian-base"),
+                url: Some("https://github.com/haowjy/meridian-base"),
                 path: None,
                 version: None,
                 name: "meridian-base",
@@ -346,7 +429,7 @@ mod tests {
             Case {
                 input: "haowjy/meridian-base@v1.0",
                 format: SourceFormat::GitHubShorthand,
-                url: Some("github.com/haowjy/meridian-base"),
+                url: Some("https://github.com/haowjy/meridian-base"),
                 path: None,
                 version: Some("v1.0"),
                 name: "meridian-base",
@@ -354,7 +437,7 @@ mod tests {
             Case {
                 input: "https://github.com/org/repo.git",
                 format: SourceFormat::HttpsUrl,
-                url: Some("github.com/org/repo"),
+                url: Some("https://github.com/org/repo"),
                 path: None,
                 version: None,
                 name: "repo",
@@ -362,7 +445,7 @@ mod tests {
             Case {
                 input: "https://github.com/org/repo@v2",
                 format: SourceFormat::HttpsUrl,
-                url: Some("github.com/org/repo"),
+                url: Some("https://github.com/org/repo"),
                 path: None,
                 version: Some("v2"),
                 name: "repo",
@@ -370,7 +453,7 @@ mod tests {
             Case {
                 input: "git@github.com:org/repo.git",
                 format: SourceFormat::SshUrl,
-                url: Some("github.com/org/repo"),
+                url: Some("git@github.com:org/repo.git"),
                 path: None,
                 version: None,
                 name: "repo",
@@ -378,7 +461,7 @@ mod tests {
             Case {
                 input: "git@github.com:org/repo.git@v1.0",
                 format: SourceFormat::SshUrl,
-                url: Some("github.com/org/repo.git@v1.0"),
+                url: Some("git@github.com:org/repo.git@v1.0"),
                 path: None,
                 version: None,
                 name: "repo.git@v1.0",
@@ -386,7 +469,7 @@ mod tests {
             Case {
                 input: "github.com/haowjy/meridian-base",
                 format: SourceFormat::BareDomain,
-                url: Some("github.com/haowjy/meridian-base"),
+                url: Some("https://github.com/haowjy/meridian-base"),
                 path: None,
                 version: None,
                 name: "meridian-base",
@@ -394,7 +477,7 @@ mod tests {
             Case {
                 input: "github.com/haowjy/meridian-base@latest",
                 format: SourceFormat::BareDomain,
-                url: Some("github.com/haowjy/meridian-base"),
+                url: Some("https://github.com/haowjy/meridian-base"),
                 path: None,
                 version: Some("latest"),
                 name: "meridian-base",

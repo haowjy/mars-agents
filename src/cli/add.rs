@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/haowjy/meridian-base")
+            Some("https://github.com/haowjy/meridian-base")
         );
         assert!(parsed.entry.path.is_none());
         assert!(parsed.entry.version.is_none());
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/haowjy/meridian-base")
+            Some("https://github.com/haowjy/meridian-base")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v0.5.0"));
     }
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(parsed.name, "meridian-dev-workflow");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/haowjy/meridian-dev-workflow")
+            Some("https://github.com/haowjy/meridian-dev-workflow")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
     }
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/someone/cool-agents")
+            Some("https://github.com/someone/cool-agents")
         );
     }
 
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/someone/cool-agents")
+            Some("git@github.com:someone/cool-agents.git")
         );
         assert!(parsed.entry.version.is_none());
     }
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(parsed.name, "cool-agents.git@v2");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("github.com/someone/cool-agents.git@v2")
+            Some("git@github.com:someone/cool-agents.git@v2")
         );
         assert!(parsed.entry.version.is_none());
     }

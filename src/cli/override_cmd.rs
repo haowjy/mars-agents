@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::config::OverrideEntry;
 use crate::error::MarsError;
+use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
 
@@ -20,31 +20,15 @@ pub struct OverrideArgs {
 
 /// Run `mars override`.
 pub fn run(args: &OverrideArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    // Validate source exists in config
-    let config = crate::config::load(root)?;
-    if !config.sources.contains_key(&args.source) {
-        return Err(MarsError::Source {
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: Some(ConfigMutation::SetOverride {
             source_name: args.source.clone(),
-            message: format!("source `{}` not found in agents.toml", args.source),
-        });
-    }
-
-    // Load or create agents.local.toml
-    let mut local = crate::config::load_local(root)?;
-    local.overrides.insert(
-        args.source.clone(),
-        OverrideEntry {
-            path: args.path.clone(),
-        },
-    );
-    let effective = crate::config::merge(config.clone(), local.clone())?;
-
-    // Validate and apply with in-memory override before persisting local config.
-    let report = super::sync::run_sync_with_effective_config(
-        root, &config, effective, false, false, false, false,
-    )?;
-
-    crate::config::save_local(root, &local)?;
+            local_path: args.path.clone(),
+        }),
+        options: SyncOptions::default(),
+    };
+    let report = crate::sync::execute(root, &request)?;
 
     if !json {
         output::print_success(&format!(

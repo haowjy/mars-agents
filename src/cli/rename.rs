@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
 
@@ -28,24 +29,17 @@ pub fn run(args: &RenameArgs, root: &Path, json: bool) -> Result<i32, MarsError>
     }
 
     let locked_item = &lock.items[&args.from];
-    let source_name = &locked_item.source;
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: Some(ConfigMutation::SetRename {
+            source_name: locked_item.source.clone(),
+            from: args.from.clone(),
+            to: args.to.clone(),
+        }),
+        options: SyncOptions::default(),
+    };
 
-    // Load config and add rename entry
-    let mut config = crate::config::load(root)?;
-    if let Some(source_entry) = config.sources.get_mut(source_name) {
-        let rename_map = source_entry
-            .rename
-            .get_or_insert_with(indexmap::IndexMap::new);
-        rename_map.insert(args.from.clone(), args.to.clone());
-    } else {
-        return Err(MarsError::Source {
-            source_name: source_name.clone(),
-            message: format!("source `{source_name}` not found in agents.toml"),
-        });
-    }
-
-    // Run sync with proposed config; persist config only after validation passes.
-    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
+    let report = crate::sync::execute(root, &request)?;
 
     if !json {
         output::print_info(&format!("renamed {} → {}", args.from, args.to));

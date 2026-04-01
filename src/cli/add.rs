@@ -2,11 +2,10 @@
 
 use std::path::Path;
 
-use indexmap::IndexMap;
-
-use crate::config::{Config, Settings, SourceEntry};
+use crate::config::SourceEntry;
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;
+use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
 
@@ -37,18 +36,6 @@ struct ParsedSource {
 
 /// Run `mars add`.
 pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    // Auto-init if needed
-    let config_path = root.join("agents.toml");
-    if !config_path.exists() {
-        std::fs::create_dir_all(root)?;
-        std::fs::create_dir_all(root.join(".mars"))?;
-        let config = Config {
-            sources: IndexMap::new(),
-            settings: Settings {},
-        };
-        crate::config::save(root, &config)?;
-    }
-
     // Parse source specifier
     let parsed = parse_source_specifier(&args.source)?;
 
@@ -75,11 +62,16 @@ pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         rename: None,
     };
 
-    // Load existing config and upsert
-    let mut config = crate::config::load(root)?;
-    config.sources.insert(parsed.name.clone(), entry);
-    // Run sync with proposed config; persist config only after validation passes.
-    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: Some(ConfigMutation::UpsertSource {
+            name: parsed.name.clone(),
+            entry,
+        }),
+        options: SyncOptions::default(),
+    };
+
+    let report = crate::sync::execute(root, &request)?;
 
     if !json {
         output::print_info(&format!("added source `{}`", parsed.name));

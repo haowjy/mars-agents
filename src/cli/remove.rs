@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
 
@@ -15,20 +16,14 @@ pub struct RemoveArgs {
 
 /// Run `mars remove`.
 pub fn run(args: &RemoveArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    // Load config and remove source
-    let mut config = crate::config::load(root)?;
-
-    if !config.sources.contains_key(&args.source) {
-        return Err(MarsError::Source {
-            source_name: args.source.clone(),
-            message: format!("source `{}` not found in agents.toml", args.source),
-        });
-    }
-
-    config.sources.shift_remove(&args.source);
-
-    // Run sync with proposed config; persist config only after validation passes.
-    let report = super::sync::run_sync_with_config(root, &config, true, false, false, false)?;
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: Some(ConfigMutation::RemoveSource {
+            name: args.source.clone(),
+        }),
+        options: SyncOptions::default(),
+    };
+    let report = crate::sync::execute(root, &request)?;
 
     if !json {
         output::print_info(&format!("removed source `{}`", args.source));

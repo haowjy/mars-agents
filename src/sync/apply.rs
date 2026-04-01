@@ -6,7 +6,7 @@ use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 
 /// Options controlling sync behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SyncOptions {
     /// Force overwrite on conflicts (skip merge).
     pub force: bool,

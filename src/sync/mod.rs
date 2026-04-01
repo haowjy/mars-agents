@@ -6,27 +6,15 @@ pub mod target;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::error::MarsError;
-use crate::resolve::{ResolveOptions, SourceProvider};
-use crate::source::{self, AvailableVersion, CacheDir, Fetchers, ResolvedRef};
-use crate::sync::apply::{ApplyResult, SyncOptions};
-use crate::validate::ValidationWarning;
+use indexmap::IndexMap;
 
-/// Context for a sync operation.
-///
-/// Carries the root directory, fetchers, cache, and options.
-/// Supports separating resolution root from install target for future
-/// workspace support.
-#[derive(Debug)]
-pub struct SyncContext {
-    /// `.agents/` directory — config + lock live here.
-    pub root: PathBuf,
-    /// Where items are installed (defaults to root).
-    pub install_target: PathBuf,
-    pub fetchers: Fetchers,
-    pub cache: CacheDir,
-    pub options: SyncOptions,
-}
+use crate::config::{Config, EffectiveConfig, LocalConfig, OverrideEntry, Settings, SourceEntry};
+use crate::error::{ConfigError, MarsError};
+use crate::resolve::{ResolveOptions, SourceProvider};
+use crate::source::{self, AvailableVersion, CacheDir, ResolvedRef};
+use crate::sync::apply::ApplyResult;
+use crate::validate::ValidationWarning;
+pub use crate::sync::apply::SyncOptions;
 
 /// Report from a completed sync operation.
 #[derive(Debug)]
@@ -43,6 +31,285 @@ impl SyncReport {
             .outcomes
             .iter()
             .any(|o| matches!(o.action, apply::ActionTaken::Conflicted))
+    }
+}
+
+/// What a CLI command requests from the sync pipeline.
+#[derive(Debug, Clone)]
+pub struct SyncRequest {
+    /// How to resolve versions.
+    pub resolution: ResolutionMode,
+    /// Config mutation to apply under flock.
+    pub mutation: Option<ConfigMutation>,
+    /// Behavior flags.
+    pub options: SyncOptions,
+}
+
+/// Resolution behavior for the resolver stage.
+#[derive(Debug, Clone)]
+pub enum ResolutionMode {
+    /// Normal sync behavior.
+    Normal,
+    /// Upgrade behavior (maximize versions), optionally scoped to specific sources.
+    Maximize { targets: HashSet<String> },
+}
+
+/// Config mutation to apply atomically under flock.
+#[derive(Debug, Clone)]
+pub enum ConfigMutation {
+    /// Add or update a source in agents.toml.
+    UpsertSource { name: String, entry: SourceEntry },
+    /// Remove a source from agents.toml.
+    RemoveSource { name: String },
+    /// Add or update an override in agents.local.toml.
+    SetOverride {
+        source_name: String,
+        local_path: PathBuf,
+    },
+    /// Remove an override from agents.local.toml.
+    ClearOverride { source_name: String },
+    /// Set or update a rename mapping for one managed item.
+    SetRename {
+        source_name: String,
+        from: String,
+        to: String,
+    },
+}
+
+/// Execute the unified sync pipeline.
+pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsError> {
+    validate_request(request)?;
+
+    std::fs::create_dir_all(root.join(".mars").join("cache"))?;
+
+    // Step 1: Acquire sync lock before any config reads/mutations.
+    let lock_path = root.join(".mars").join("sync.lock");
+    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
+
+    // Step 2: Load config under lock (auto-init when mutating and missing).
+    let mut config = match crate::config::load(root) {
+        Ok(config) => config,
+        Err(err) if is_config_not_found(&err) && request.mutation.is_some() => Config {
+            sources: IndexMap::new(),
+            settings: Settings {},
+        },
+        Err(err) => return Err(err),
+    };
+
+    // Step 3: Apply config mutation.
+    let has_mutation = request.mutation.is_some();
+    if let Some(mutation) = &request.mutation {
+        apply_mutation(&mut config, mutation)?;
+    }
+
+    // Step 4: Load/mutate local overrides under the same lock.
+    let mut local = crate::config::load_local(root)?;
+    if let Some(mutation) = &request.mutation {
+        apply_local_mutation(&mut local, mutation);
+    }
+
+    // Step 4b: Build effective config.
+    let effective = crate::config::merge(config.clone(), local.clone())?;
+
+    // Step 5: Validate upgrade targets exist.
+    validate_targets(&request.resolution, &effective)?;
+
+    // Step 6: Load existing lock file.
+    let old_lock = crate::lock::load(root)?;
+
+    // Step 7: Resolve dependency graph.
+    let cache = CacheDir::new(root)?;
+    let provider = RealSourceProvider {
+        cache_dir: &cache.path,
+        project_root: root,
+    };
+    let resolve_options = to_resolve_options(&request.resolution);
+    let graph = crate::resolve::resolve(&effective, &provider, Some(&old_lock), &resolve_options)?;
+
+    // Step 8: Build target state.
+    let (mut target_state, renames) = target::build_with_collisions(&graph, &effective)?;
+
+    // Step 9: Handle collisions + rewrite frontmatter refs.
+    if !renames.is_empty() {
+        target::rewrite_skill_refs(&mut target_state, &renames, &graph)?;
+    }
+
+    // Step 10: Validate skill references.
+    let warnings = validate_skill_refs(root, &target_state);
+
+    // Step 11: Prevent managed installs from overwriting unmanaged files.
+    target::check_unmanaged_collisions(root, &old_lock, &target_state)?;
+
+    // Step 12: Compute diff.
+    let sync_diff = diff::compute(root, &old_lock, &target_state, request.options.force)?;
+
+    // Step 13: Create plan.
+    let cache_bases_dir = root.join(".mars").join("cache").join("bases");
+    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
+
+    // Step 14: Frozen gate.
+    if request.options.frozen {
+        let has_changes = sync_plan.actions.iter().any(|a| {
+            !matches!(
+                a,
+                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+            )
+        });
+        if has_changes {
+            return Err(MarsError::FrozenViolation {
+                message: "lock file would change but --frozen is set".to_string(),
+            });
+        }
+    }
+
+    // Step 15: Persist config/local only after validation gate and before apply.
+    if has_mutation && !request.options.dry_run {
+        match request.mutation {
+            Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
+                crate::config::save_local(root, &local)?;
+            }
+            Some(
+                ConfigMutation::UpsertSource { .. }
+                | ConfigMutation::RemoveSource { .. }
+                | ConfigMutation::SetRename { .. },
+            ) => {
+                crate::config::save(root, &config)?;
+            }
+            None => {}
+        }
+    }
+
+    // Step 16: Apply plan.
+    let applied = apply::execute(root, &sync_plan, &request.options, &cache_bases_dir)?;
+    let pruned = Vec::new();
+
+    // Step 17: Write lock file.
+    if !request.options.dry_run {
+        let new_lock = crate::lock::build(&graph, &applied, &old_lock)?;
+        crate::lock::write(root, &new_lock)?;
+    }
+
+    Ok(SyncReport {
+        applied,
+        pruned,
+        warnings,
+    })
+}
+
+fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
+    if request.options.frozen
+        && matches!(request.resolution, ResolutionMode::Maximize { .. })
+    {
+        return Err(MarsError::InvalidRequest {
+            message: "cannot use --frozen with upgrade (frozen locks versions; upgrade maximizes them)".to_string(),
+        });
+    }
+
+    if request.options.frozen && request.mutation.is_some() {
+        return Err(MarsError::InvalidRequest {
+            message: "cannot modify config in --frozen mode (config change would require lock update)".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn is_config_not_found(error: &MarsError) -> bool {
+    matches!(error, MarsError::Config(ConfigError::NotFound { .. }))
+}
+
+fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), MarsError> {
+    match mutation {
+        ConfigMutation::UpsertSource { name, entry } => {
+            config.sources.insert(name.clone(), entry.clone());
+            Ok(())
+        }
+        ConfigMutation::RemoveSource { name } => {
+            if !config.sources.contains_key(name) {
+                return Err(MarsError::Source {
+                    source_name: name.clone(),
+                    message: format!("source `{name}` not found in agents.toml"),
+                });
+            }
+            config.sources.shift_remove(name);
+            Ok(())
+        }
+        ConfigMutation::SetOverride { source_name, .. } => {
+            if !config.sources.contains_key(source_name) {
+                return Err(MarsError::Source {
+                    source_name: source_name.clone(),
+                    message: format!("source `{source_name}` not found in agents.toml"),
+                });
+            }
+            Ok(())
+        }
+        ConfigMutation::SetRename {
+            source_name,
+            from,
+            to,
+        } => {
+            let source = config
+                .sources
+                .get_mut(source_name)
+                .ok_or_else(|| MarsError::Source {
+                    source_name: source_name.clone(),
+                    message: format!("source `{source_name}` not found in agents.toml"),
+                })?;
+            let rename_map = source.rename.get_or_insert_with(indexmap::IndexMap::new);
+            rename_map.insert(from.clone(), to.clone());
+            Ok(())
+        }
+        ConfigMutation::ClearOverride { .. } => Ok(()),
+    }
+}
+
+fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMutation) {
+    match mutation {
+        ConfigMutation::SetOverride {
+            source_name,
+            local_path,
+        } => {
+            local.overrides.insert(
+                source_name.clone(),
+                OverrideEntry {
+                    path: local_path.clone(),
+                },
+            );
+        }
+        ConfigMutation::ClearOverride { source_name } => {
+            local.overrides.shift_remove(source_name);
+        }
+        ConfigMutation::UpsertSource { .. }
+        | ConfigMutation::RemoveSource { .. }
+        | ConfigMutation::SetRename { .. } => {}
+    }
+}
+
+fn validate_targets(
+    resolution: &ResolutionMode,
+    effective: &EffectiveConfig,
+) -> Result<(), MarsError> {
+    if let ResolutionMode::Maximize { targets } = resolution {
+        for name in targets {
+            if !effective.sources.contains_key(name) {
+                return Err(MarsError::Source {
+                    source_name: name.clone(),
+                    message: format!("source `{name}` not found in agents.toml"),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn to_resolve_options(mode: &ResolutionMode) -> ResolveOptions {
+    match mode {
+        ResolutionMode::Normal => ResolveOptions::default(),
+        ResolutionMode::Maximize { targets } => ResolveOptions {
+            maximize: true,
+            upgrade_targets: targets.clone(),
+        },
     }
 }
 
@@ -88,136 +355,6 @@ impl SourceProvider for RealSourceProvider<'_> {
     ) -> Result<Option<crate::manifest::Manifest>, MarsError> {
         crate::manifest::load(source_tree)
     }
-}
-
-/// The complete sync pipeline — 15 steps matching the feature spec.
-///
-/// 1. Acquire sync lock
-/// 2. Merge proposed config with agents.local.toml
-/// 3. Load existing lock file
-/// 4. Fetch sources + resolve dependency graph — abort on any fetch failure
-/// 5. Discover items in each source, apply filtering
-/// 6. Build target state (intent-based filtering)
-/// 7. Detect collisions + auto-rename
-/// 8. Rewrite frontmatter refs for renames
-/// 9. Validate skill references
-/// 10. Check unmanaged on-disk collisions
-/// 11. Diff current state against target
-/// 12. Create action plan
-/// 13. Validation gate: optionally persist agents.toml
-/// 14. Apply changes (or dry-run)
-/// 15. Write new agents.lock
-/// 16. Release lock (implicit via drop)
-/// 17. Report results
-pub fn sync(
-    ctx: &SyncContext,
-    proposed_config: &crate::config::Config,
-    write_config: bool,
-) -> Result<SyncReport, MarsError> {
-    let local = crate::config::load_local(&ctx.root)?;
-    let effective = crate::config::merge(proposed_config.clone(), local)?;
-    sync_with_effective_config(ctx, proposed_config, effective, write_config)
-}
-
-/// Sync pipeline entrypoint when the caller already has an EffectiveConfig.
-///
-/// Used by commands like `override` that stage local overrides in-memory and
-/// need to validate/apply before writing agents.local.toml.
-pub fn sync_with_effective_config(
-    ctx: &SyncContext,
-    proposed_config: &crate::config::Config,
-    effective: crate::config::EffectiveConfig,
-    write_config: bool,
-) -> Result<SyncReport, MarsError> {
-    // Step 1: Acquire sync lock
-    let lock_path = ctx.root.join(".mars").join("sync.lock");
-    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
-
-    // Step 2: Effective config already resolved by caller.
-
-    // Step 3: Load existing lock file
-    let old_lock = crate::lock::load(&ctx.root)?;
-
-    // Step 4: Resolve dependency graph (fetches sources)
-    // This is where fetch failures will abort the pipeline
-    let provider = RealSourceProvider {
-        cache_dir: &ctx.cache.path,
-        project_root: &ctx.root,
-    };
-    let resolve_options = ResolveOptions::default();
-    let graph = crate::resolve::resolve(&effective, &provider, Some(&old_lock), &resolve_options)?;
-
-    // Step 5-6: Build target state (includes discovery and filtering)
-    let (mut target_state, renames) = target::build_with_collisions(&graph, &effective)?;
-
-    // Step 7-8: Handle collisions + rewrite frontmatter refs
-    if !renames.is_empty() {
-        target::rewrite_skill_refs(&mut target_state, &renames, &graph)?;
-    }
-
-    // Step 9: Validate skill references
-    let warnings = validate_skill_refs(&ctx.install_target, &target_state);
-
-    // Step 10: Prevent managed installs from overwriting unmanaged user-authored files.
-    target::check_unmanaged_collisions(&ctx.install_target, &old_lock, &target_state)?;
-
-    // Step 11: Compute diff
-    let sync_diff = diff::compute(
-        &ctx.install_target,
-        &old_lock,
-        &target_state,
-        ctx.options.force,
-    )?;
-
-    // Step 12: Create plan
-    let cache_bases_dir = ctx.root.join(".mars").join("cache").join("bases");
-    let sync_plan = plan::create(&sync_diff, &ctx.options, &cache_bases_dir);
-
-    // Check frozen mode before applying
-    if ctx.options.frozen {
-        let has_changes = sync_plan.actions.iter().any(|a| {
-            !matches!(
-                a,
-                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
-            )
-        });
-        if has_changes {
-            return Err(MarsError::FrozenViolation {
-                message: "lock file would change but --frozen is set".to_string(),
-            });
-        }
-    }
-
-    // Step 13: Persist proposed config only after validation gate has passed.
-    if write_config && !ctx.options.dry_run {
-        crate::config::save(&ctx.root, proposed_config)?;
-    }
-
-    // Step 14: Apply plan
-    let applied = apply::execute(
-        &ctx.install_target,
-        &sync_plan,
-        &ctx.options,
-        &cache_bases_dir,
-    )?;
-
-    // Orphan pruning is handled by Remove actions in the plan (via diff::Orphan)
-    let pruned = Vec::new();
-
-    // Step 15: Write lock file (only if not dry-run and changes were made)
-    if !ctx.options.dry_run {
-        let new_lock = crate::lock::build(&graph, &applied, &old_lock)?;
-        crate::lock::write(&ctx.root, &new_lock)?;
-    }
-
-    // Step 16: Lock released on drop of _sync_lock
-
-    // Step 17: Report
-    Ok(SyncReport {
-        applied,
-        pruned,
-        warnings,
-    })
 }
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -363,6 +500,118 @@ mod tests {
                 settings: Settings {},
             },
         )
+    }
+
+    fn path_source_entry(path: &Path) -> SourceEntry {
+        SourceEntry {
+            url: None,
+            path: Some(path.to_path_buf()),
+            version: None,
+            agents: None,
+            skills: None,
+            exclude: None,
+            rename: None,
+        }
+    }
+
+    #[test]
+    fn validate_request_rejects_frozen_with_maximize() {
+        let request = SyncRequest {
+            resolution: ResolutionMode::Maximize {
+                targets: HashSet::new(),
+            },
+            mutation: None,
+            options: SyncOptions {
+                force: false,
+                dry_run: false,
+                frozen: true,
+            },
+        };
+
+        let err = validate_request(&request).unwrap_err();
+        assert!(matches!(err, MarsError::InvalidRequest { .. }));
+        assert!(err.to_string().contains("--frozen"));
+    }
+
+    #[test]
+    fn validate_request_rejects_frozen_with_mutation() {
+        let request = SyncRequest {
+            resolution: ResolutionMode::Normal,
+            mutation: Some(ConfigMutation::RemoveSource {
+                name: "base".to_string(),
+            }),
+            options: SyncOptions {
+                force: false,
+                dry_run: false,
+                frozen: true,
+            },
+        };
+
+        let err = validate_request(&request).unwrap_err();
+        assert!(matches!(err, MarsError::InvalidRequest { .. }));
+        assert!(err.to_string().contains("cannot modify config"));
+    }
+
+    #[test]
+    fn execute_auto_inits_config_for_mutation() {
+        let root = TempDir::new().unwrap();
+        let source = TempDir::new().unwrap();
+        fs::create_dir_all(source.path().join("agents")).unwrap();
+        fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
+
+        let request = SyncRequest {
+            resolution: ResolutionMode::Normal,
+            mutation: Some(ConfigMutation::UpsertSource {
+                name: "base".to_string(),
+                entry: path_source_entry(source.path()),
+            }),
+            options: SyncOptions::default(),
+        };
+
+        let report = execute(root.path(), &request).unwrap();
+        assert!(!report.applied.outcomes.is_empty());
+        assert!(root.path().join("agents.toml").exists());
+
+        let saved = crate::config::load(root.path()).unwrap();
+        assert!(saved.sources.contains_key("base"));
+    }
+
+    #[test]
+    fn execute_dry_run_with_mutation_does_not_write_config() {
+        let root = TempDir::new().unwrap();
+        crate::config::save(
+            root.path(),
+            &Config {
+                sources: IndexMap::new(),
+                settings: Settings {},
+            },
+        )
+        .unwrap();
+
+        let source = TempDir::new().unwrap();
+        fs::create_dir_all(source.path().join("agents")).unwrap();
+        fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
+
+        let request = SyncRequest {
+            resolution: ResolutionMode::Normal,
+            mutation: Some(ConfigMutation::UpsertSource {
+                name: "base".to_string(),
+                entry: path_source_entry(source.path()),
+            }),
+            options: SyncOptions {
+                force: false,
+                dry_run: true,
+                frozen: false,
+            },
+        };
+
+        let report = execute(root.path(), &request).unwrap();
+        assert!(!report.applied.outcomes.is_empty());
+
+        let saved = crate::config::load(root.path()).unwrap();
+        assert!(!saved.sources.contains_key("base"));
+        assert!(!root.path().join("agents/coder.md").exists());
+        assert!(!root.path().join("agents.lock").exists());
     }
 
     // === Integration tests for the pipeline stages ===

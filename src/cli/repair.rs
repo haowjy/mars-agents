@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
 
@@ -20,14 +21,20 @@ pub fn run(_args: &RepairArgs, root: &Path, json: bool) -> Result<i32, MarsError
         output::print_info("repairing — re-syncing from sources...");
     }
 
-    // Force sync: overwrites everything, rebuilds from sources
-    let report = super::sync::run_sync(root, true, false, false)?;
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: None,
+        options: SyncOptions {
+            force: true,
+            dry_run: false,
+            frozen: false,
+        },
+    };
+
+    // Force sync: overwrites everything, rebuilds from sources.
+    let report = crate::sync::execute(root, &request)?;
 
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }

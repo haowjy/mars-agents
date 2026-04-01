@@ -1,4 +1,5 @@
 pub mod git;
+pub mod parse;
 pub mod path;
 
 use std::path::{Path, PathBuf};
@@ -81,9 +82,12 @@ pub fn fetch_source(
     project_root: &Path,
 ) -> Result<ResolvedRef, MarsError> {
     match spec {
-        SourceSpec::Git(git_spec) => {
-            git::fetch(&git_spec.url, git_spec.version.as_deref(), source_name, cache_dir)
-        }
+        SourceSpec::Git(git_spec) => git::fetch(
+            &git_spec.url,
+            git_spec.version.as_deref(),
+            source_name,
+            cache_dir,
+        ),
         SourceSpec::Path(p) => path::fetch_path(p, project_root, source_name),
     }
 }

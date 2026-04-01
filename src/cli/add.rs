@@ -1,11 +1,12 @@
 //! `mars add <source>` — add or update a source, then sync.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use indexmap::IndexMap;
 
 use crate::config::{Config, Settings, SourceEntry};
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
+use crate::source::parse;
 
 use super::output;
 
@@ -98,81 +99,18 @@ pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
 /// - `https://github.com/owner/repo.git` → full git URL
 /// - `./path` or `../path` or `/absolute` → local path
 fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
-    // Split off @version if present
-    let (base, version) = if let Some(at_pos) = spec.rfind('@') {
-        let (b, v) = spec.split_at(at_pos);
-        let ver = &v[1..]; // skip '@'
-        if ver.is_empty() {
-            (spec.to_string(), None)
-        } else {
-            (b.to_string(), Some(ver.to_string()))
-        }
-    } else {
-        (spec.to_string(), None)
-    };
-
-    // Local path: starts with `.`, `/`, or `~`
-    if base.starts_with('.') || base.starts_with('/') || base.starts_with('~') {
-        let path = PathBuf::from(&base);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "local".to_string());
-
-        return Ok(ParsedSource {
-            name,
-            entry: SourceEntry {
-                url: None,
-                path: Some(path),
-                version: None, // local paths are unversioned
-                agents: None,
-                skills: None,
-                exclude: None,
-                rename: None,
-            },
-        });
-    }
-
-    // GitHub shorthand: owner/repo (no `.` in first segment, exactly one `/`)
-    let parts: Vec<&str> = base.split('/').collect();
-    let is_github_shorthand =
-        parts.len() == 2 && !parts[0].contains('.') && !parts[0].is_empty() && !parts[1].is_empty();
-
-    if is_github_shorthand {
-        let url = format!("github.com/{}", base);
-        let name = parts[1].to_string();
-
-        return Ok(ParsedSource {
-            name,
-            entry: SourceEntry {
-                url: Some(url),
-                path: None,
-                version,
-                agents: None,
-                skills: None,
-                exclude: None,
-                rename: None,
-            },
-        });
-    }
-
-    // Full URL: contains a `.` in the domain part
-    // Strip https:// or git:// prefix, strip .git suffix
-    let cleaned = base
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_start_matches("git://")
-        .trim_end_matches(".git");
-
-    // Extract name from last path segment
-    let name = cleaned.rsplit('/').next().unwrap_or("source").to_string();
+    let parsed = parse::parse(spec).map_err(|e| {
+        MarsError::Config(ConfigError::Invalid {
+            message: e.to_string(),
+        })
+    })?;
 
     Ok(ParsedSource {
-        name,
+        name: parsed.name,
         entry: SourceEntry {
-            url: Some(cleaned.to_string()),
-            path: None,
-            version,
+            url: parsed.url,
+            path: parsed.path,
+            version: parsed.version,
             agents: None,
             skills: None,
             exclude: None,
@@ -227,6 +165,28 @@ mod tests {
             parsed.entry.url.as_deref(),
             Some("github.com/someone/cool-agents")
         );
+    }
+
+    #[test]
+    fn parse_ssh_url() {
+        let parsed = parse_source_specifier("git@github.com:someone/cool-agents.git").unwrap();
+        assert_eq!(parsed.name, "cool-agents");
+        assert_eq!(
+            parsed.entry.url.as_deref(),
+            Some("github.com/someone/cool-agents")
+        );
+        assert!(parsed.entry.version.is_none());
+    }
+
+    #[test]
+    fn parse_ssh_url_keeps_at_suffix_in_path() {
+        let parsed = parse_source_specifier("git@github.com:someone/cool-agents.git@v2").unwrap();
+        assert_eq!(parsed.name, "cool-agents.git@v2");
+        assert_eq!(
+            parsed.entry.url.as_deref(),
+            Some("github.com/someone/cool-agents.git@v2")
+        );
+        assert!(parsed.entry.version.is_none());
     }
 
     #[test]

@@ -1,4 +1,7 @@
+use std::fs;
 use std::path::Path;
+
+use sha2::{Digest, Sha256};
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
@@ -8,7 +11,203 @@ use crate::lock::ItemKind;
 /// For agents (single `.md` file): SHA-256 of file content.
 /// For skills (directory): SHA-256 of sorted `(relative_path, file_hash)` pairs —
 /// deterministic regardless of filesystem ordering.
+///
+/// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
-    let _ = (path, kind);
-    todo!()
+    match kind {
+        ItemKind::Agent => {
+            let content = fs::read(path)?;
+            Ok(hash_bytes(&content))
+        }
+        ItemKind::Skill => compute_dir_hash(path),
+    }
+}
+
+/// Compute SHA-256 of raw bytes.
+///
+/// Returns `"sha256:<64-char-lowercase-hex>"`.
+pub fn hash_bytes(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    let digest = hasher.finalize();
+    format!("sha256:{:064x}", digest)
+}
+
+/// Compute a deterministic hash for a directory by:
+/// 1. Walking all files recursively
+/// 2. Collecting (relative_path, file_sha256) pairs
+/// 3. Sorting lexicographically by path
+/// 4. Concatenating "path:hash\n" strings
+/// 5. SHA-256 of the concatenated result
+fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    collect_file_hashes(dir, dir, &mut entries)?;
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut manifest = String::new();
+    for (rel_path, hash) in &entries {
+        manifest.push_str(rel_path);
+        manifest.push(':');
+        manifest.push_str(hash);
+        manifest.push('\n');
+    }
+
+    Ok(hash_bytes(manifest.as_bytes()))
+}
+
+/// Recursively collect (relative_path, hash) pairs for all files in a directory.
+fn collect_file_hashes(
+    root: &Path,
+    current: &Path,
+    entries: &mut Vec<(String, String)>,
+) -> Result<(), MarsError> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            collect_file_hashes(root, &path, entries)?;
+        } else {
+            let rel_path = path
+                .strip_prefix(root)
+                .expect("path is always under root")
+                .to_string_lossy()
+                .into_owned();
+            // Use forward slashes for cross-platform determinism
+            let rel_path = rel_path.replace('\\', "/");
+            let content = fs::read(&path)?;
+            let hash = hash_bytes(&content);
+            entries.push((rel_path, hash));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn hash_bytes_known_content() {
+        // SHA-256 of empty string is well-known
+        let hash = hash_bytes(b"");
+        assert_eq!(
+            hash,
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn hash_bytes_hello_world() {
+        let hash = hash_bytes(b"hello world");
+        assert_eq!(
+            hash,
+            "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    #[test]
+    fn hash_bytes_returns_lowercase_hex() {
+        let hash = hash_bytes(b"test");
+        assert!(hash.starts_with("sha256:"));
+        let hex = &hash["sha256:".len()..];
+        assert_eq!(hex.len(), 64);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn compute_hash_agent_file() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("agent.md");
+        fs::write(&file, "agent content").unwrap();
+
+        let hash = compute_hash(&file, ItemKind::Agent).unwrap();
+        assert!(hash.starts_with("sha256:"));
+        assert_eq!(hash, hash_bytes(b"agent content"));
+    }
+
+    #[test]
+    fn compute_hash_empty_file() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("empty.md");
+        fs::write(&file, "").unwrap();
+
+        let hash = compute_hash(&file, ItemKind::Agent).unwrap();
+        assert_eq!(
+            hash,
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn compute_hash_skill_directory() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("my-skill");
+        fs::create_dir_all(skill_dir.join("sub")).unwrap();
+        fs::write(skill_dir.join("main.md"), "main content").unwrap();
+        fs::write(skill_dir.join("sub").join("helper.md"), "helper content").unwrap();
+
+        let hash = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        assert!(hash.starts_with("sha256:"));
+
+        // Verify determinism: same content → same hash
+        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn dir_hash_deterministic_regardless_of_creation_order() {
+        let dir1 = TempDir::new().unwrap();
+        let skill1 = dir1.path().join("skill");
+        fs::create_dir_all(&skill1).unwrap();
+        // Create files in order: a, b
+        fs::write(skill1.join("a.md"), "content a").unwrap();
+        fs::write(skill1.join("b.md"), "content b").unwrap();
+
+        let dir2 = TempDir::new().unwrap();
+        let skill2 = dir2.path().join("skill");
+        fs::create_dir_all(&skill2).unwrap();
+        // Create files in reverse order: b, a
+        fs::write(skill2.join("b.md"), "content b").unwrap();
+        fs::write(skill2.join("a.md"), "content a").unwrap();
+
+        let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
+        let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn dir_hash_changes_with_different_content() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("file.md"), "version 1").unwrap();
+
+        let hash1 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+
+        fs::write(skill_dir.join("file.md"), "version 2").unwrap();
+
+        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn dir_hash_changes_with_different_filename() {
+        let dir1 = TempDir::new().unwrap();
+        let skill1 = dir1.path().join("skill");
+        fs::create_dir_all(&skill1).unwrap();
+        fs::write(skill1.join("a.md"), "content").unwrap();
+
+        let dir2 = TempDir::new().unwrap();
+        let skill2 = dir2.path().join("skill");
+        fs::create_dir_all(&skill2).unwrap();
+        fs::write(skill2.join("b.md"), "content").unwrap();
+
+        let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
+        let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
+        assert_ne!(hash1, hash2);
+    }
 }

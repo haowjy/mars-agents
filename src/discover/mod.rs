@@ -252,7 +252,10 @@ mod tests {
 
         // Agents first (sorted), then skills (sorted)
         let names: Vec<&str> = items1.iter().map(|i| i.id.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha", "middle", "zebra", "a-skill", "z-skill"]);
+        assert_eq!(
+            names,
+            vec!["alpha", "middle", "zebra", "a-skill", "z-skill"]
+        );
     }
 
     #[test]

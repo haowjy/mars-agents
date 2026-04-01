@@ -39,10 +39,7 @@ pub fn fetch_path(
     if !resolved.is_dir() {
         return Err(MarsError::Source {
             source_name: source_name.to_string(),
-            message: format!(
-                "path is not a directory: {}",
-                resolved.display()
-            ),
+            message: format!("path is not a directory: {}", resolved.display()),
         });
     }
 
@@ -80,7 +77,10 @@ mod tests {
         assert!(resolved.version.is_none());
         assert!(resolved.version_tag.is_none());
         assert!(resolved.commit.is_none());
-        assert_eq!(resolved.tree_path.canonicalize().unwrap(), source_dir.canonicalize().unwrap());
+        assert_eq!(
+            resolved.tree_path.canonicalize().unwrap(),
+            source_dir.canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -91,8 +91,7 @@ mod tests {
         std::fs::create_dir_all(&project_root).unwrap();
         std::fs::create_dir_all(&source_dir).unwrap();
 
-        let resolved =
-            fetch_path(Path::new("local-agents"), &project_root, "local").unwrap();
+        let resolved = fetch_path(Path::new("local-agents"), &project_root, "local").unwrap();
 
         assert_eq!(
             resolved.tree_path.canonicalize().unwrap(),
@@ -108,12 +107,8 @@ mod tests {
         std::fs::create_dir_all(&project_root).unwrap();
         std::fs::create_dir_all(&source_dir).unwrap();
 
-        let resolved = fetch_path(
-            Path::new("../external-agents"),
-            &project_root,
-            "external",
-        )
-        .unwrap();
+        let resolved =
+            fetch_path(Path::new("../external-agents"), &project_root, "external").unwrap();
 
         assert_eq!(
             resolved.tree_path.canonicalize().unwrap(),
@@ -124,11 +119,7 @@ mod tests {
     #[test]
     fn fetch_nonexistent_path_returns_error() {
         let dir = TempDir::new().unwrap();
-        let result = fetch_path(
-            &dir.path().join("nonexistent"),
-            dir.path(),
-            "bad-source",
-        );
+        let result = fetch_path(&dir.path().join("nonexistent"), dir.path(), "bad-source");
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

@@ -84,9 +84,7 @@ pub fn merge_content(
         .output()
         .map_err(|e| MarsError::Source {
             source_name: "merge".to_string(),
-            message: format!(
-                "failed to run `git merge-file`: {e} — is git installed and in PATH?"
-            ),
+            message: format!("failed to run `git merge-file`: {e} — is git installed and in PATH?"),
         })?;
 
     let exit_code = output.status.code().unwrap_or(-1);
@@ -348,14 +346,14 @@ mod tests {
 
     #[test]
     fn count_one_conflict() {
-        let content =
-            b"before\n<<<<<<< local\nlocal\n=======\ntheirs\n>>>>>>> theirs\nafter\n";
+        let content = b"before\n<<<<<<< local\nlocal\n=======\ntheirs\n>>>>>>> theirs\nafter\n";
         assert_eq!(count_conflict_markers(content), 1);
     }
 
     #[test]
     fn count_multiple_conflicts() {
-        let content = b"<<<<<<< a\nx\n=======\ny\n>>>>>>> b\nok\n<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
+        let content =
+            b"<<<<<<< a\nx\n=======\ny\n>>>>>>> b\nok\n<<<<<<< a\np\n=======\nq\n>>>>>>> b\n";
         assert_eq!(count_conflict_markers(content), 2);
     }
 }

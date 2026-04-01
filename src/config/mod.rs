@@ -113,9 +113,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     let path = root.join(CONFIG_FILE);
     let content = std::fs::read_to_string(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            ConfigError::NotFound {
-                path: path.clone(),
-            }
+            ConfigError::NotFound { path: path.clone() }
         } else {
             ConfigError::Io(e)
         }
@@ -156,9 +154,7 @@ pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, Mars
             (None, Some(path)) => SourceSpec::Path(path.clone()),
             (Some(_), Some(_)) => {
                 return Err(ConfigError::Invalid {
-                    message: format!(
-                        "source `{name}` has both `url` and `path` — pick one"
-                    ),
+                    message: format!("source `{name}` has both `url` and `path` — pick one"),
                 }
                 .into());
             }
@@ -176,10 +172,7 @@ pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, Mars
         let has_include = entry.agents.is_some() || entry.skills.is_some();
         let has_exclude = entry.exclude.is_some();
         if has_include && has_exclude {
-            return Err(ConfigError::ConflictingFilters {
-                name: name.clone(),
-            }
-            .into());
+            return Err(ConfigError::ConflictingFilters { name: name.clone() }.into());
         }
 
         let filter = if has_include {
@@ -222,9 +215,7 @@ pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, Mars
     // Warn if override references a source not in config
     for override_name in local.overrides.keys() {
         if !config.sources.contains_key(override_name) {
-            eprintln!(
-                "warning: override `{override_name}` references a source not in agents.toml"
-            );
+            eprintln!("warning: override `{override_name}` references a source not in agents.toml");
         }
     }
 
@@ -267,7 +258,10 @@ version = "v1.0"
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.sources.len(), 1);
         let entry = &config.sources["base"];
-        assert_eq!(entry.url.as_deref(), Some("https://github.com/org/base.git"));
+        assert_eq!(
+            entry.url.as_deref(),
+            Some("https://github.com/org/base.git")
+        );
         assert!(entry.path.is_none());
         assert_eq!(entry.version.as_deref(), Some("v1.0"));
     }
@@ -355,7 +349,10 @@ exclude = ["reviewer"]
         let result = merge(config, local);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("bad"), "error should mention source name: {err}");
+        assert!(
+            err.contains("bad"),
+            "error should mention source name: {err}"
+        );
     }
 
     #[test]
@@ -580,10 +577,7 @@ path = "/home/dev/local-base"
             settings: Settings {},
         };
         let effective = merge(config, LocalConfig::default()).unwrap();
-        assert!(matches!(
-            effective.sources["base"].filter,
-            FilterMode::All
-        ));
+        assert!(matches!(effective.sources["base"].filter, FilterMode::All));
     }
 
     #[test]

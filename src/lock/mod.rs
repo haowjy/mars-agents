@@ -215,10 +215,7 @@ pub fn build(
                         .and_then(|n| n.resolved_ref.version_tag.clone())
                 });
 
-                let source_checksum = outcome
-                    .source_checksum
-                    .clone()
-                    .unwrap_or_default();
+                let source_checksum = outcome.source_checksum.clone().unwrap_or_default();
                 let installed_checksum = outcome
                     .installed_checksum
                     .clone()
@@ -248,7 +245,6 @@ pub fn build(
         items,
     })
 }
-
 
 #[cfg(test)]
 mod tests {

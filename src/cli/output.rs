@@ -8,8 +8,8 @@ use std::io::Write;
 use serde::Serialize;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
-use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::sync::SyncReport;
+use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::validate::ValidationWarning;
 
 /// Check if colored output should be used.
@@ -216,7 +216,10 @@ fn format_warning(w: &ValidationWarning) -> String {
             }
         }
         ValidationWarning::OrphanedSkill { skill } => {
-            format!("skill `{}` is installed but not referenced by any agent", skill.name)
+            format!(
+                "skill `{}` is installed but not referenced by any agent",
+                skill.name
+            )
         }
     }
 }
@@ -224,10 +227,7 @@ fn format_warning(w: &ValidationWarning) -> String {
 /// Print a list of items as a table or JSON.
 pub fn print_list(entries: &[ListEntry], json: bool) {
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(entries).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(entries).unwrap_or_default());
     } else {
         print_list_human(entries);
     }
@@ -296,10 +296,7 @@ pub fn print_doctor(issues: &[String], json: bool) {
             ok: issues.is_empty(),
             issues: issues.to_vec(),
         };
-        println!(
-            "{}",
-            serde_json::to_string(&report).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         let mut stdout = StandardStream::stdout(color_choice());
         if issues.is_empty() {
@@ -325,10 +322,7 @@ pub fn print_doctor(issues: &[String], json: bool) {
 
 /// Print simple JSON value.
 pub fn print_json<T: Serialize>(value: &T) {
-    println!(
-        "{}",
-        serde_json::to_string(value).unwrap_or_default()
-    );
+    println!("{}", serde_json::to_string(value).unwrap_or_default());
 }
 
 /// Print a simple success message.

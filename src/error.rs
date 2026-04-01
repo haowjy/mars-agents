@@ -89,7 +89,9 @@ pub enum MarsError {
     #[error("frozen violation: {message}")]
     FrozenViolation { message: String },
 
-    #[error("locked commit {commit} is no longer reachable in {url} — the tag may have been force-pushed")]
+    #[error(
+        "locked commit {commit} is no longer reachable in {url} — the tag may have been force-pushed"
+    )]
     LockedCommitUnreachable { commit: String, url: String },
 
     #[error("I/O error: {0}")]

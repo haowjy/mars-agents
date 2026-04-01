@@ -51,9 +51,7 @@ pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError
             && content.contains("<<<<<<<")
             && content.contains(">>>>>>>")
         {
-            issues.push(format!(
-                "{dest_path_str} has unresolved conflict markers"
-            ));
+            issues.push(format!("{dest_path_str} has unresolved conflict markers"));
         }
 
         // Check checksum matches
@@ -87,9 +85,5 @@ pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError
 
     output::print_doctor(&issues, json);
 
-    if issues.is_empty() {
-        Ok(0)
-    } else {
-        Ok(2)
-    }
+    if issues.is_empty() { Ok(0) } else { Ok(2) }
 }

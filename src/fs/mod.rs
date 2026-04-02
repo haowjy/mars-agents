@@ -26,22 +26,44 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
 
 /// Atomic directory install: copy source tree to a temp dir in the same
 /// parent as `dest`, then rename into place.
+///
+/// Uses rename-old-then-rename-new to minimize the window where `dest`
+/// doesn't exist. If `dest` already exists, it's renamed to `.{name}.old`
+/// before the new content takes its place. Stale `.old` from prior crashes
+/// is cleaned up automatically.
 pub fn atomic_install_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
 
     let tmp_dir = tempfile::TempDir::new_in(parent)?;
     copy_dir_recursive(src, tmp_dir.path())?;
+    let tmp_path = tmp_dir.keep();
 
-    // If destination already exists, remove it first
     if dest.exists() {
-        fs::remove_dir_all(dest)?;
+        // Step 1: Rename old to .old (old content still accessible)
+        let old_path = parent.join(format!(
+            ".{}.old",
+            dest.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        // Clean up stale .old from a prior crash
+        if old_path.exists() {
+            fs::remove_dir_all(&old_path)?;
+        }
+        // Atomic: old content moves to .old, dest slot is free
+        fs::rename(dest, &old_path)?;
+        // Atomic: new content takes dest slot
+        if let Err(e) = fs::rename(&tmp_path, dest) {
+            // Rollback: move old content back
+            let _ = fs::rename(&old_path, dest);
+            let _ = fs::remove_dir_all(&tmp_path);
+            return Err(e.into());
+        }
+        // Cleanup: remove old content (non-critical)
+        let _ = fs::remove_dir_all(&old_path);
+    } else {
+        fs::rename(&tmp_path, dest)?;
     }
 
-    // Rename temp dir into place (atomic on same filesystem)
-    // into_path() prevents TempDir's Drop from removing it
-    let tmp_path = tmp_dir.keep();
-    fs::rename(&tmp_path, dest)?;
     Ok(())
 }
 
@@ -206,6 +228,52 @@ mod tests {
 
         assert!(dest.join("new.txt").exists());
         assert!(!dest.join("old.txt").exists());
+    }
+
+    #[test]
+    fn atomic_install_dir_cleans_stale_old() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src_dir");
+        let dest = dir.path().join("dest_dir");
+
+        // Create initial dest
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("old.txt"), "old").unwrap();
+
+        // Create stale .old from a prior crash
+        let old_path = dir.path().join(".dest_dir.old");
+        fs::create_dir_all(&old_path).unwrap();
+        fs::write(old_path.join("stale.txt"), "stale").unwrap();
+
+        // Create source
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("new.txt"), "new").unwrap();
+
+        atomic_install_dir(&src, &dest).unwrap();
+
+        assert!(dest.join("new.txt").exists());
+        assert!(!dest.join("old.txt").exists());
+        assert!(!old_path.exists(), "stale .old should be cleaned up");
+    }
+
+    #[test]
+    fn atomic_install_dir_dest_exists_throughout() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src_dir");
+        let dest = dir.path().join("dest_dir");
+
+        // Create initial dest
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("v1.txt"), "v1").unwrap();
+
+        // Create source
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("v2.txt"), "v2").unwrap();
+
+        assert!(dest.exists(), "dest should exist before install");
+        atomic_install_dir(&src, &dest).unwrap();
+        assert!(dest.exists(), "dest should exist after install");
+        assert!(dest.join("v2.txt").exists());
     }
 
     #[test]

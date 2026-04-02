@@ -151,60 +151,34 @@ pub fn dispatch(cli: Cli) -> i32 {
 
 fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
+        // Root-free commands
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Check(args) => check::run(args, cli.json),
-        Command::Add(args) => {
+        // All other commands require a managed root
+        cmd => {
             let ctx = find_agents_root(cli.root.as_deref())?;
-            add::run(args, &ctx, cli.json)
+            dispatch_with_root(cmd, &ctx, cli.json)
         }
-        Command::Remove(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            remove::run(args, &ctx, cli.json)
-        }
-        Command::Sync(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            sync::run(args, &ctx, cli.json)
-        }
-        Command::Upgrade(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            upgrade::run(args, &ctx, cli.json)
-        }
-        Command::Outdated(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            outdated::run(args, &ctx, cli.json)
-        }
-        Command::List(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            list::run(args, &ctx, cli.json)
-        }
-        Command::Why(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            why::run(args, &ctx, cli.json)
-        }
-        Command::Rename(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            rename::run(args, &ctx, cli.json)
-        }
-        Command::Resolve(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            resolve_cmd::run(args, &ctx, cli.json)
-        }
-        Command::Override(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            override_cmd::run(args, &ctx, cli.json)
-        }
-        Command::Link(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            link::run(args, &ctx, cli.json)
-        }
-        Command::Doctor(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            doctor::run(args, &ctx, cli.json)
-        }
-        Command::Repair(args) => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
-            repair::run(args, &ctx, cli.json)
-        }
+    }
+}
+
+fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    match cmd {
+        Command::Add(args) => add::run(args, ctx, json),
+        Command::Remove(args) => remove::run(args, ctx, json),
+        Command::Sync(args) => sync::run(args, ctx, json),
+        Command::Upgrade(args) => upgrade::run(args, ctx, json),
+        Command::Outdated(args) => outdated::run(args, ctx, json),
+        Command::List(args) => list::run(args, ctx, json),
+        Command::Why(args) => why::run(args, ctx, json),
+        Command::Rename(args) => rename::run(args, ctx, json),
+        Command::Resolve(args) => resolve_cmd::run(args, ctx, json),
+        Command::Override(args) => override_cmd::run(args, ctx, json),
+        Command::Link(args) => link::run(args, ctx, json),
+        Command::Doctor(args) => doctor::run(args, ctx, json),
+        Command::Repair(args) => repair::run(args, ctx, json),
+        // Init and Check handled in dispatch_result — unreachable here
+        Command::Init(_) | Command::Check(_) => unreachable!(),
     }
 }
 

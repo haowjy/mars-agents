@@ -311,8 +311,9 @@ fn scan_dir_recursive(target_subdir: &Path, managed_subdir: &Path) -> ScanResult
     let mut files_to_move = Vec::new();
     let mut conflicts = Vec::new();
 
-    // Walk the target directory recursively
+    // Walk the target directory recursively, without following symlinks
     for entry in walkdir::WalkDir::new(target_subdir)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {
@@ -320,13 +321,19 @@ fn scan_dir_recursive(target_subdir: &Path, managed_subdir: &Path) -> ScanResult
         if ft.is_dir() {
             continue; // Directories are structural, handled during cleanup
         }
+        if ft.is_symlink() {
+            // Skip symlinks — don't follow, don't treat as conflicts.
+            // They survive the merge-and-link process since we only
+            // remove regular files.
+            continue;
+        }
 
         let relative = match entry.path().strip_prefix(target_subdir) {
             Ok(r) => r.to_path_buf(),
             Err(_) => continue,
         };
 
-        // Non-regular files (symlinks, fifos, sockets) → treat as conflict
+        // Non-regular files (fifos, sockets) → treat as conflict
         if !ft.is_file() {
             conflicts.push(ConflictInfo {
                 relative_path: relative,
@@ -345,14 +352,26 @@ fn scan_dir_recursive(target_subdir: &Path, managed_subdir: &Path) -> ScanResult
             // Both exist as files — compare content
             let target_hash = hash_file(entry.path());
             let managed_hash = hash_file(&managed_path);
-            if target_hash != managed_hash {
-                conflicts.push(ConflictInfo {
-                    relative_path: relative,
-                    target_desc: target_hash,
-                    managed_desc: managed_hash,
-                });
+            match (target_hash, managed_hash) {
+                (Some(th), Some(mh)) if th == mh => {
+                    // Identical — skip
+                }
+                (Some(th), Some(mh)) => {
+                    conflicts.push(ConflictInfo {
+                        relative_path: relative,
+                        target_desc: th,
+                        managed_desc: mh,
+                    });
+                }
+                (th, mh) => {
+                    // Can't read one or both files — treat as conflict
+                    conflicts.push(ConflictInfo {
+                        relative_path: relative,
+                        target_desc: th.unwrap_or_else(|| "unreadable".to_string()),
+                        managed_desc: mh.unwrap_or_else(|| "unreadable".to_string()),
+                    });
+                }
             }
-            // If hashes match, file is identical — skip
         } else {
             // Type mismatch (file in target, dir in managed or vice versa)
             conflicts.push(ConflictInfo {
@@ -371,8 +390,9 @@ fn scan_dir_recursive(target_subdir: &Path, managed_subdir: &Path) -> ScanResult
 }
 
 /// Compute SHA-256 of a single file for comparison.
-fn hash_file(path: &Path) -> String {
-    hash::hash_bytes(&std::fs::read(path).unwrap_or_default())
+/// Returns None if the file can't be read (permission denied, etc).
+fn hash_file(path: &Path) -> Option<String> {
+    std::fs::read(path).ok().map(|bytes| hash::hash_bytes(&bytes))
 }
 
 // ── Act ─────────────────────────────────────────────────────────────────────
@@ -723,6 +743,34 @@ mod tests {
         assert!(managed.join("unique.md").exists());
         // target_sub should be a symlink now
         assert!(target_sub.symlink_metadata().unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn scan_dir_recursive_skips_symlinks() {
+        let dir = TempDir::new().unwrap();
+        let target_sub = dir.path().join("target").join("agents");
+        let managed = dir.path().join("managed").join("agents");
+        std::fs::create_dir_all(&target_sub).unwrap();
+        std::fs::create_dir_all(&managed).unwrap();
+
+        // Regular file — not a conflict (unique to target)
+        std::fs::write(target_sub.join("real.md"), "real agent").unwrap();
+
+        // Symlink in target dir — should be skipped, not treated as conflict
+        std::os::unix::fs::symlink(
+            target_sub.join("real.md"),
+            target_sub.join("linked.md"),
+        ).unwrap();
+
+        let result = scan_dir_recursive(&target_sub, &managed);
+        match result {
+            ScanResult::MergeableDir { files_to_move } => {
+                // Only the real file should be listed for moving
+                assert_eq!(files_to_move.len(), 1);
+                assert_eq!(files_to_move[0], PathBuf::from("real.md"));
+            }
+            _ => panic!("expected MergeableDir, got {:?}", std::mem::discriminant(&result)),
+        }
     }
 
     #[test]

@@ -69,6 +69,15 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
         for entry in entries {
             let path = entry.path();
+            if super::is_symlink(&path) {
+                let name = path.file_stem()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "skipping symlinked agent `{name}` — source packages should not contain symlinks"
+                ));
+                continue;
+            }
             let filename = path
                 .file_stem()
                 .and_then(|n| n.to_str())
@@ -142,6 +151,15 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
         for entry in entries {
             let path = entry.path();
+            if super::is_symlink(&path) {
+                let name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "skipping symlinked skill `{name}` — source packages should not contain symlinks"
+                ));
+                continue;
+            }
             let dirname = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -268,4 +286,58 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     if errors.is_empty() { Ok(0) } else { Ok(1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    #[test]
+    fn check_skips_symlinked_agent() {
+        let dir = TempDir::new().unwrap();
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+
+        // Real agent
+        std::fs::write(
+            agents.join("real.md"),
+            "---\nname: real\ndescription: real agent\n---\n# Real",
+        ).unwrap();
+
+        // Symlinked agent pointing to the real one
+        std::os::unix::fs::symlink(agents.join("real.md"), agents.join("linked.md")).unwrap();
+
+        let args = super::CheckArgs { path: Some(dir.path().to_path_buf()) };
+        // Should succeed (the symlink is warned, not errored)
+        let code = super::run(&args, true).unwrap();
+        // No structural errors — the real agent is valid
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn check_skips_symlinked_skill() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join("skills");
+        let real_skill = skills.join("real-skill");
+        std::fs::create_dir_all(&real_skill).unwrap();
+        std::fs::write(
+            real_skill.join("SKILL.md"),
+            "---\nname: real-skill\ndescription: a skill\n---\n# Skill",
+        ).unwrap();
+
+        // Symlinked skill dir
+        std::os::unix::fs::symlink(&real_skill, skills.join("linked-skill")).unwrap();
+
+        // Also add an agent so the package isn't empty
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("coder.md"),
+            "---\nname: coder\ndescription: agent\n---\n# Coder",
+        ).unwrap();
+
+        let args = super::CheckArgs { path: Some(dir.path().to_path_buf()) };
+        let code = super::run(&args, true).unwrap();
+        assert_eq!(code, 0);
+    }
 }

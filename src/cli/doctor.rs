@@ -105,6 +105,15 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             if let Ok(entries) = std::fs::read_dir(&agents_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
+                    if super::is_symlink(&path) {
+                        let name = path.file_stem()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or_default();
+                        issues.push(format!(
+                            "skipping symlinked agent `{name}` — individual symlinks in managed dirs are not validated"
+                        ));
+                        continue;
+                    }
                     if path.extension().and_then(|e| e.to_str()) == Some("md") {
                         let name = path.file_stem()
                             .and_then(|n| n.to_str())
@@ -124,6 +133,15 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             if let Ok(entries) = std::fs::read_dir(&skills_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
+                    if super::is_symlink(&path) {
+                        let name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or_default();
+                        issues.push(format!(
+                            "skipping symlinked skill `{name}` — individual symlinks in managed dirs are not validated"
+                        ));
+                        continue;
+                    }
                     if path.is_dir() {
                         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                             // Verify it has a SKILL.md (valid skill dir)

@@ -208,6 +208,13 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     }
 }
 
+/// Check if a path is a symlink (uses symlink_metadata, doesn't follow).
+pub fn is_symlink(path: &Path) -> bool {
+    path.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
 /// Find the mars-managed root by walking up from cwd, or use `--root` flag.
 ///
 /// Walk up the directory tree looking for a directory containing `mars.toml`.

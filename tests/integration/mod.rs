@@ -58,7 +58,7 @@ fn init_creates_agents_toml() {
     let dir = TempDir::new().unwrap();
 
     mars()
-        .args(["init", dir.path().to_str().unwrap()])
+        .args(["init", "--root", dir.path().join(".agents").to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("initialized"));
@@ -70,19 +70,20 @@ fn init_creates_agents_toml() {
 }
 
 #[test]
-fn init_twice_fails() {
+fn init_twice_is_idempotent() {
     let dir = TempDir::new().unwrap();
 
     mars()
-        .args(["init", dir.path().to_str().unwrap()])
+        .args(["init", "--root", dir.path().join(".agents").to_str().unwrap()])
         .assert()
         .success();
 
+    // Second init should succeed (idempotent) with info message
     mars()
-        .args(["init", dir.path().to_str().unwrap()])
+        .args(["init", "--root", dir.path().join(".agents").to_str().unwrap()])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("already exists"));
+        .success()
+        .stdout(predicate::str::contains("already initialized"));
 }
 
 #[test]
@@ -98,7 +99,7 @@ fn add_local_source_and_sync() {
     // Init
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -135,7 +136,7 @@ fn add_second_source_preserves_first_source_items_in_lock() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -195,7 +196,7 @@ fn sync_idempotent() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -228,7 +229,7 @@ fn remove_prunes_files() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -275,7 +276,7 @@ fn list_shows_installed_items() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -327,7 +328,7 @@ fn why_traces_skill_to_source() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -401,7 +402,7 @@ fn sync_force_overwrites_local_changes() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -457,7 +458,7 @@ fn add_with_agents_filter() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -491,7 +492,7 @@ fn root_discovery_from_subdir() {
     // Init and add
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -529,7 +530,7 @@ fn json_output_valid() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -595,7 +596,7 @@ fn doctor_reports_healthy_state() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -633,7 +634,7 @@ fn override_writes_local_config() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -684,7 +685,7 @@ fn conflict_flow_with_resolve() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -767,7 +768,7 @@ fn add_rejects_unmanaged_file_collision() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -804,7 +805,7 @@ fn sync_force_clears_previous_conflict_markers() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -853,7 +854,7 @@ fn rename_applies_path_mapping_during_sync() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -908,13 +909,12 @@ fn init_with_root_uses_resolved_root_path_in_message() {
         .assert()
         .success();
 
+    // Second init should be idempotent
     mars()
         .args(["init", "--root", root.to_str().unwrap()])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            root.join("agents.toml").to_string_lossy().to_string(),
-        ));
+        .success()
+        .stdout(predicate::str::contains("already initialized"));
 }
 
 #[test]
@@ -924,7 +924,7 @@ fn sync_frozen_returns_exit_code_two() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -959,7 +959,7 @@ fn sync_errors_when_lock_is_corrupt() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -990,7 +990,7 @@ fn repair_recovers_from_corrupt_lock() {
 
     let agents_dir = dir.child("project").child(".agents");
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -1025,7 +1025,7 @@ fn add_nonexistent_path_does_not_pollute_config() {
     let agents_dir = dir.child("project").child(".agents");
 
     mars()
-        .args(["init", dir.child("project").path().to_str().unwrap()])
+        .args(["init", "--root", dir.child("project").child(".agents").path().to_str().unwrap()])
         .assert()
         .success();
 

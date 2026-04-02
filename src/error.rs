@@ -112,6 +112,13 @@ pub enum MarsError {
     )]
     LockedCommitUnreachable { commit: String, url: String },
 
+    /// Link operation error — conflict, missing target, bad symlink.
+    #[error("link error: {target}: {message}")]
+    Link {
+        target: String,
+        message: String,
+    },
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -135,7 +142,8 @@ impl MarsError {
     pub fn exit_code(&self) -> i32 {
         match self {
             MarsError::Conflict { .. } => 1,
-            MarsError::Config(_)
+            MarsError::Link { .. }
+            | MarsError::Config(_)
             | MarsError::Lock(_)
             | MarsError::Resolution(_)
             | MarsError::Collision { .. }
@@ -269,6 +277,16 @@ mod tests {
     }
 
     #[test]
+    fn link_error_formats_correctly() {
+        let err = MarsError::Link {
+            target: ".claude".to_string(),
+            message: "conflicts found".to_string(),
+        };
+        assert_eq!(err.to_string(), "link error: .claude: conflicts found");
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
     fn mars_error_exit_codes_match_spec() {
         let cases = vec![
             (
@@ -320,6 +338,13 @@ mod tests {
                 MarsError::LockedCommitUnreachable {
                     commit: "abc123".to_string(),
                     url: "https://example.com/repo.git".to_string(),
+                },
+                2,
+            ),
+            (
+                MarsError::Link {
+                    target: ".claude".to_string(),
+                    message: "conflicts found".to_string(),
                 },
                 2,
             ),

@@ -29,6 +29,15 @@ use clap::{Parser, Subcommand};
 
 use crate::error::{LockError, MarsError};
 
+/// Directories where mars manages agents.toml as the primary root.
+/// These are the default target for `mars init`.
+pub const WELL_KNOWN: &[&str] = &[".agents"];
+
+/// Tool-specific directories that commonly need linking.
+/// Root detection searches these in addition to WELL_KNOWN.
+/// `mars link` warns if the target isn't in TOOL_DIRS or WELL_KNOWN.
+pub const TOOL_DIRS: &[&str] = &[".claude", ".cursor"];
+
 /// mars — agent package manager for .agents/
 #[derive(Debug, Parser)]
 #[command(name = "mars", version, about = "Agent package manager for .agents/")]
@@ -181,12 +190,9 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
     let cwd = std::env::current_dir()?;
     let mut dir = cwd.as_path();
 
-    // Well-known subdirectory names to check at each level
-    const WELL_KNOWN: &[&str] = &[".agents", ".claude"];
-
     loop {
-        // Check well-known subdirectories
-        for subdir in WELL_KNOWN {
+        // Check well-known subdirectories + tool dirs
+        for subdir in WELL_KNOWN.iter().chain(TOOL_DIRS.iter()) {
             let candidate = dir.join(subdir);
             if candidate.join("agents.toml").exists() {
                 return Ok(candidate);

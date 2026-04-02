@@ -839,7 +839,6 @@ mod tests {
                 DepSpec {
                     url: SourceUrl::from(dep_url),
                     version: dep_ver.to_string(),
-                    items: None,
                 },
             );
         }

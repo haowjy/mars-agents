@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::MarsError;
-use crate::types::{ItemName, SourceUrl};
+use crate::types::SourceUrl;
 
 /// Per-package manifest (mars.toml in package repo root).
 ///
@@ -32,8 +32,6 @@ pub struct PackageInfo {
 pub struct DepSpec {
     pub url: SourceUrl,
     pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub items: Option<Vec<ItemName>>,
 }
 
 const MANIFEST_FILE: &str = "mars.toml";
@@ -70,7 +68,6 @@ description = "My custom agents"
 [dependencies.base]
 url = "https://github.com/org/base.git"
 version = ">=1.0"
-items = ["coder", "reviewer"]
 
 [dependencies.utils]
 url = "https://github.com/org/utils.git"
@@ -88,11 +85,8 @@ version = ">=0.5"
         let base_dep = &manifest.dependencies["base"];
         assert_eq!(base_dep.url, "https://github.com/org/base.git");
         assert_eq!(base_dep.version, ">=1.0");
-        let expected_items: Vec<String> = vec!["coder".into(), "reviewer".into()];
-        assert_eq!(base_dep.items.as_ref().unwrap(), &expected_items);
 
         let utils_dep = &manifest.dependencies["utils"];
-        assert!(utils_dep.items.is_none());
     }
 
     #[test]
@@ -146,7 +140,6 @@ version = "0.2.0"
                     DepSpec {
                         url: "https://github.com/org/dep1.git".into(),
                         version: ">=1.0".into(),
-                        items: Some(vec!["agent1".into()]),
                     },
                 );
                 m

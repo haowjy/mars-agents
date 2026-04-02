@@ -46,116 +46,6 @@ pub struct RenameAction {
     pub source_name: SourceName,
 }
 
-/// Build target state: discover items per source, apply agents/skills/exclude
-/// filtering, resolve skill deps from frontmatter.
-pub fn build(graph: &ResolvedGraph, config: &EffectiveConfig) -> Result<TargetState, MarsError> {
-    let mut items = IndexMap::new();
-
-    // Process sources in topological order (deps before dependents)
-    for source_name in &graph.order {
-        let node = &graph.nodes[source_name];
-        let source_config = config.sources.get(source_name);
-
-        // Discover items in the source tree
-        let discovered = discover::discover_source(&node.resolved_ref.tree_path)?;
-
-        // Get the source URL for collision rename extraction
-        let source_id = source_config
-            .map(|s| s.id.clone())
-            .unwrap_or_else(|| node.source_id.clone());
-
-        // Determine filter mode
-        let filter = source_config
-            .map(|s| &s.filter)
-            .cloned()
-            .unwrap_or(FilterMode::All);
-
-        // Get rename mappings
-        let renames = source_config
-            .map(|s| &s.rename)
-            .cloned()
-            .unwrap_or_default();
-
-        // Apply filtering
-        let filtered = apply_filter(&discovered, &filter, &node.resolved_ref.tree_path)?;
-
-        // Add filtered items to target state
-        for item in filtered {
-            let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
-
-            // Compute source hash
-            let source_hash =
-                ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?);
-
-            // Determine destination path, honoring path-based and name-based rename maps.
-            let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
-
-            let target_item = TargetItem {
-                id: ItemId {
-                    kind: item.id.kind,
-                    name: dest_name,
-                },
-                source_name: source_name.clone(),
-                source_id: source_id.clone(),
-                source_path: source_content_path,
-                dest_path: dest_path.clone(),
-                source_hash,
-                rewritten_content: None,
-            };
-
-            items.insert(dest_path, target_item);
-        }
-    }
-
-    Ok(TargetState { items })
-}
-
-/// Detect collisions on destination paths and auto-rename both with
-/// `{name}__{owner}_{repo}`.
-///
-/// Uses source identity from resolved nodes for `{owner}_{repo}` extraction.
-pub fn check_collisions(
-    target: &mut TargetState,
-    graph: &ResolvedGraph,
-    config: &EffectiveConfig,
-) -> Result<Vec<RenameAction>, MarsError> {
-    // Collect items by their base name (without any source suffix) to detect collisions
-    // We detect collisions by looking for dest_path conflicts
-    // When two sources produce the same dest_path, we rename both.
-
-    // First pass: find which dest_paths have multiple items wanting the same slot
-    let mut dest_to_sources: HashMap<DestPath, Vec<(SourceName, ItemName)>> = HashMap::new();
-
-    for (dest_key, item) in &target.items {
-        dest_to_sources
-            .entry(dest_key.clone())
-            .or_default()
-            .push((item.source_name.clone(), item.id.name.clone()));
-    }
-
-    // Only process actual collisions (more than one item for same dest)
-    // Since IndexMap only keeps the last insert, we need a different approach.
-    // We need to detect collisions BEFORE inserting into the map.
-    // Actually, the build() function above will silently overwrite collisions.
-    // Let me restructure: we need to collect ALL items first, then detect collisions.
-
-    // Since build() already deduplicates via IndexMap, collisions are lost.
-    // The correct approach: check_collisions should be called during build,
-    // or we need to collect items differently.
-
-    // For now, since build() processes sources in topological order and
-    // later sources overwrite earlier ones in the IndexMap, collisions are
-    // silently resolved by last-wins. We need to restructure.
-
-    // The better approach: collect into a Vec first, detect collisions, then rename.
-    // But since build() is already called, we can't see the collisions anymore.
-    // Let's just return empty for now and handle collisions properly in the
-    // refactored build_with_collisions() below.
-
-    let _ = (graph, config);
-    Ok(Vec::new())
-}
-
 /// Build target state with collision detection integrated.
 ///
 /// This is the main entry point — it builds the target, detects collisions,
@@ -789,7 +679,8 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
         assert!(target.items.contains_key("skills/planning"));
@@ -814,7 +705,8 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "agents/new-name.md".into());
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
         assert_eq!(target.items["agents/new-name.md"].id.name, "new-name");
@@ -1145,7 +1037,8 @@ mod tests {
             },
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2); // coder + planning
         assert!(target.items.contains_key("agents/coder.md"));
         assert!(target.items.contains_key("skills/planning"));
@@ -1164,7 +1057,8 @@ mod tests {
             FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
     }
@@ -1176,7 +1070,8 @@ mod tests {
 
         let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
         assert_eq!(item.source_hash, expected_hash);
@@ -1192,7 +1087,8 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
         // Existing user-authored file at the same destination.
@@ -1217,7 +1113,8 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
         // Simulate partial prior install: file on disk with same content
@@ -1239,7 +1136,8 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let target = build(&graph, &config).unwrap();
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
         // User-authored file with different content

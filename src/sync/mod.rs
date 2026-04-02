@@ -80,6 +80,42 @@ pub enum ConfigMutation {
         from: String,
         to: String,
     },
+    /// Add a link target to settings.links (idempotent).
+    SetLink { target: String },
+    /// Remove a link target from settings.links.
+    ClearLink { target: String },
+}
+
+/// Link-specific config mutations. Separate type from ConfigMutation
+/// to enforce that only link operations use the lightweight (no-sync) mutation path.
+#[derive(Debug, Clone)]
+pub enum LinkMutation {
+    /// Add a link target to settings.links (idempotent).
+    Set { target: String },
+    /// Remove a link target from settings.links.
+    Clear { target: String },
+}
+
+/// Apply a link mutation under sync lock, without running the full sync pipeline.
+/// Only for settings.links changes — use sync::execute for source mutations.
+pub fn mutate_link_config(root: &Path, mutation: &LinkMutation) -> Result<(), MarsError> {
+    let lock_path = root.join(".mars").join("sync.lock");
+    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
+
+    let mut config = crate::config::load(root)?;
+    match mutation {
+        LinkMutation::Set { target } => {
+            if !config.settings.links.contains(target) {
+                config.settings.links.push(target.clone());
+            }
+        }
+        LinkMutation::Clear { target } => {
+            config.settings.links.retain(|l| l != target);
+        }
+    }
+    crate::config::save(root, &config)?;
+
+    Ok(())
 }
 
 /// Execute the unified sync pipeline.
@@ -178,7 +214,9 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
             Some(
                 ConfigMutation::UpsertSource { .. }
                 | ConfigMutation::RemoveSource { .. }
-                | ConfigMutation::SetRename { .. },
+                | ConfigMutation::SetRename { .. }
+                | ConfigMutation::SetLink { .. }
+                | ConfigMutation::ClearLink { .. },
             ) => {
                 crate::config::save(root, &config)?;
             }
@@ -292,6 +330,16 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
             Ok(())
         }
         ConfigMutation::ClearOverride { .. } => Ok(()),
+        ConfigMutation::SetLink { target } => {
+            if !config.settings.links.contains(target) {
+                config.settings.links.push(target.clone());
+            }
+            Ok(())
+        }
+        ConfigMutation::ClearLink { target } => {
+            config.settings.links.retain(|l| l != target);
+            Ok(())
+        }
     }
 }
 
@@ -313,7 +361,9 @@ fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMutation) {
         }
         ConfigMutation::UpsertSource { .. }
         | ConfigMutation::RemoveSource { .. }
-        | ConfigMutation::SetRename { .. } => {}
+        | ConfigMutation::SetRename { .. }
+        | ConfigMutation::SetLink { .. }
+        | ConfigMutation::ClearLink { .. } => {}
     }
 }
 

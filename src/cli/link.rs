@@ -97,8 +97,11 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         linked += 1;
     }
 
-    // Persist the link in settings
-    persist_link(&ctx.managed_root, &args.target)?;
+    // Persist the link in settings (under sync lock)
+    crate::sync::mutate_link_config(
+        &ctx.managed_root,
+        &crate::sync::LinkMutation::Set { target: args.target.clone() },
+    )?;
 
     if json {
         output::print_json(&serde_json::json!({
@@ -135,8 +138,11 @@ fn unlink(ctx: &super::MarsContext, target_name: &str, target_dir: &Path, json: 
         }
     }
 
-    // Remove from settings
-    remove_link(&ctx.managed_root, target_name)?;
+    // Remove from settings (under sync lock)
+    crate::sync::mutate_link_config(
+        &ctx.managed_root,
+        &crate::sync::LinkMutation::Clear { target: target_name.to_string() },
+    )?;
 
     if json {
         output::print_json(&serde_json::json!({
@@ -156,20 +162,4 @@ fn unlink(ctx: &super::MarsContext, target_name: &str, target_dir: &Path, json: 
     Ok(0)
 }
 
-/// Add a link target to settings if not already present.
-fn persist_link(root: &Path, target: &str) -> Result<(), MarsError> {
-    let mut config = crate::config::load(root)?;
-    if !config.settings.links.contains(&target.to_string()) {
-        config.settings.links.push(target.to_string());
-        crate::config::save(root, &config)?;
-    }
-    Ok(())
-}
 
-/// Remove a link target from settings.
-fn remove_link(root: &Path, target: &str) -> Result<(), MarsError> {
-    let mut config = crate::config::load(root)?;
-    config.settings.links.retain(|l| l != target);
-    crate::config::save(root, &config)?;
-    Ok(())
-}

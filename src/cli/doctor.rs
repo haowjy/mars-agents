@@ -83,7 +83,69 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
+    // Check link health
+    if let Ok(config) = crate::config::load(&ctx.managed_root) {
+        for link_target in &config.settings.links {
+            check_link_health(ctx, link_target, &mut issues);
+        }
+    }
+
     output::print_doctor(&issues, json);
 
     if issues.is_empty() { Ok(0) } else { Ok(2) }
+}
+
+/// Validate link health for a single link target.
+fn check_link_health(ctx: &super::MarsContext, target: &str, issues: &mut Vec<String>) {
+    let target_dir = ctx.project_root.join(target);
+
+    if !target_dir.exists() {
+        issues.push(format!(
+            "link `{target}` — directory {} doesn't exist.              Run `mars link --unlink {target}` to remove stale entry.",
+            target_dir.display()
+        ));
+        return;
+    }
+
+    for subdir in ["agents", "skills"] {
+        let link_path = target_dir.join(subdir);
+        let expected = ctx.managed_root.join(subdir);
+
+        // Check if symlink exists
+        if link_path.symlink_metadata().is_err() {
+            issues.push(format!(
+                "link `{target}` — missing {target}/{subdir} symlink.                  Run `mars link {target}` to fix."
+            ));
+            continue;
+        }
+
+        // Check if it's a symlink (not a real dir)
+        match link_path.read_link() {
+            Ok(actual_target) => {
+                // Resolve and compare
+                let resolved = target_dir.join(&actual_target);
+                let resolved_canon = resolved.canonicalize().ok();
+                let expected_canon = expected.canonicalize().ok();
+
+                if resolved_canon != expected_canon {
+                    issues.push(format!(
+                        "link `{target}` — {target}/{subdir} points to {} (expected {})",
+                        actual_target.display(),
+                        expected.display()
+                    ));
+                } else if !link_path.exists() {
+                    // Symlink exists but target is broken
+                    issues.push(format!(
+                        "link `{target}` — {target}/{subdir} is a broken symlink"
+                    ));
+                }
+            }
+            Err(_) => {
+                // Real directory, not a symlink
+                issues.push(format!(
+                    "link `{target}` — {target}/{subdir} is a real directory, not a symlink.                      Run `mars link {target}` to merge and link."
+                ));
+            }
+        }
+    }
 }

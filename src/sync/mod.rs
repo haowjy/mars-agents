@@ -125,9 +125,10 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
 
     // Step 7: Resolve dependency graph.
     let cache = GlobalCache::new()?;
+    let project_root = root.parent().unwrap_or(root);
     let provider = RealSourceProvider {
         cache: &cache,
-        project_root: root,
+        project_root,
     };
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
     let graph = crate::resolve::resolve(&effective, &provider, Some(&old_lock), &resolve_options)?;

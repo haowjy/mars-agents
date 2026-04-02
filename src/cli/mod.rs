@@ -8,6 +8,7 @@
 //! - Maps `MarsError` to exit codes and stderr messages
 
 pub mod add;
+pub mod cache;
 pub mod check;
 pub mod doctor;
 pub mod init;
@@ -132,6 +133,9 @@ pub enum Command {
 
     /// Rebuild state from lock + sources.
     Repair(repair::RepairArgs),
+
+    /// Manage the global source cache.
+    Cache(cache::CacheArgs),
 }
 
 /// Dispatch a parsed CLI command to the appropriate handler and map errors to
@@ -154,6 +158,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         // Root-free commands
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Check(args) => check::run(args, cli.json),
+        Command::Cache(args) => cache::run(args, cli.json),
         // All other commands require a managed root
         cmd => {
             let ctx = find_agents_root(cli.root.as_deref())?;
@@ -177,8 +182,8 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Link(args) => link::run(args, ctx, json),
         Command::Doctor(args) => doctor::run(args, ctx, json),
         Command::Repair(args) => repair::run(args, ctx, json),
-        // Init and Check handled in dispatch_result — unreachable here
-        Command::Init(_) | Command::Check(_) => unreachable!(),
+        // Root-free commands handled in dispatch_result — unreachable here
+        Command::Init(_) | Command::Check(_) | Command::Cache(_) => unreachable!(),
     }
 }
 

@@ -128,9 +128,9 @@ jobs:
             )
           }
 
-          publish_platform npm/@mars-agents/linux-x64 mars-linux-x64
-          publish_platform npm/@mars-agents/darwin-arm64 mars-darwin-arm64
-          publish_platform npm/@mars-agents/darwin-x64 mars-darwin-x64
+          publish_platform npm/@haowjy/mars-agents-linux-x64 mars-linux-x64
+          publish_platform npm/@haowjy/mars-agents-darwin-arm64 mars-darwin-arm64
+          publish_platform npm/@haowjy/mars-agents-darwin-x64 mars-darwin-x64
 
       - name: Publish CLI stub package
         env:
@@ -139,13 +139,13 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
 
           # Skip if already published
-          if npm view "@mars-agents/cli@$VERSION" version >/dev/null 2>&1; then
-            echo "Skipping @mars-agents/cli@$VERSION — already published"
+          if npm view "@haowjy/mars-agents@$VERSION" version >/dev/null 2>&1; then
+            echo "Skipping @haowjy/mars-agents@$VERSION — already published"
             exit 0
           fi
 
           (
-            cd npm/@mars-agents/cli
+            cd npm/@haowjy/mars-agents
             node -e "
               const pkg = require('./package.json');
               pkg.version = '$VERSION';

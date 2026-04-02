@@ -1,14 +1,13 @@
 {
-  "name": "@mars-agents/linux-x64",
+  "name": "@haowjy/mars-agents-darwin-arm64",
   "version": "0.0.1",
-  "description": "mars binary for Linux x64",
+  "description": "mars binary for macOS ARM64 (Apple Silicon)",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/haowjy/mars-agents.git"
   },
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "libc": ["glibc"],
+  "os": ["darwin"],
+  "cpu": ["arm64"],
   "files": ["mars"]
 }

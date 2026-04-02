@@ -1,5 +1,5 @@
 {
-  "name": "@mars-agents/cli",
+  "name": "@haowjy/mars-agents",
   "version": "0.0.1",
   "description": "Mars — agent package manager for .agents/ directories",
   "license": "MIT",
@@ -15,8 +15,8 @@
     "node": ">=16"
   },
   "optionalDependencies": {
-    "@mars-agents/linux-x64": "0.0.1",
-    "@mars-agents/darwin-arm64": "0.0.1",
-    "@mars-agents/darwin-x64": "0.0.1"
+    "@haowjy/mars-agents-linux-x64": "0.0.1",
+    "@haowjy/mars-agents-darwin-arm64": "0.0.1",
+    "@haowjy/mars-agents-darwin-x64": "0.0.1"
   }
 }

@@ -181,6 +181,7 @@ mod tests {
             source_path,
             dest_path: dest_path.into(),
             source_hash: ContentHash::from(source_hash),
+            is_flat_skill: false,
             rewritten_content: None,
         }
     }

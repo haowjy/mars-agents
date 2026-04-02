@@ -310,7 +310,15 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
             Ok(ContentHash::from(crate::hash::hash_bytes(&content)))
         }
         ItemKind::Skill => {
-            crate::fs::atomic_install_dir(&target.source_path, dest)?;
+            if target.is_flat_skill {
+                crate::fs::atomic_install_dir_filtered(
+                    &target.source_path,
+                    dest,
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+                )?;
+            } else {
+                crate::fs::atomic_install_dir(&target.source_path, dest)?;
+            }
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
         }
     }
@@ -461,6 +469,7 @@ mod tests {
             source_path,
             dest_path: format!("agents/{name}.md").into(),
             source_hash: hash::hash_bytes(content).into(),
+            is_flat_skill: false,
             rewritten_content: None,
         }
     }
@@ -781,6 +790,7 @@ mod tests {
             source_path: source_skill,
             dest_path: "skills/planning".into(),
             source_hash: skill_hash.into(),
+            is_flat_skill: false,
             rewritten_content: None,
         };
 
@@ -805,6 +815,64 @@ mod tests {
             fs::read_to_string(installed_dir.join("SKILL.md")).unwrap(),
             "# Planning skill"
         );
+    }
+
+    #[test]
+    fn install_flat_skill_excludes_repo_metadata() {
+        let root = TempDir::new().unwrap();
+        let source_dir = TempDir::new().unwrap();
+        let cache_dir = TempDir::new().unwrap();
+        let bases_dir = cache_dir.path().join("bases");
+
+        let flat_source = source_dir.path().join("flat-skill");
+        fs::create_dir_all(flat_source.join(".git")).unwrap();
+        fs::create_dir_all(flat_source.join("resources")).unwrap();
+        fs::write(flat_source.join("SKILL.md"), b"# Flat skill").unwrap();
+        fs::write(flat_source.join("resources/guide.md"), b"# Guide").unwrap();
+        fs::write(flat_source.join("mars.toml"), b"[sources]").unwrap();
+        fs::write(flat_source.join(".gitignore"), b"target/").unwrap();
+        fs::write(flat_source.join(".git/config"), b"[core]").unwrap();
+
+        let source_hash = hash::compute_skill_hash_filtered(
+            &flat_source,
+            crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+        )
+        .unwrap();
+
+        let target = TargetItem {
+            id: ItemId {
+                kind: ItemKind::Skill,
+                name: "flat-skill".into(),
+            },
+            source_name: "test".into(),
+            source_id: crate::types::SourceId::Path {
+                canonical: flat_source.clone(),
+            },
+            source_path: flat_source,
+            dest_path: "skills/flat-skill".into(),
+            source_hash: source_hash.into(),
+            is_flat_skill: true,
+            rewritten_content: None,
+        };
+
+        let plan = SyncPlan {
+            actions: vec![PlannedAction::Install { target }],
+        };
+
+        let options = SyncOptions {
+            force: false,
+            dry_run: false,
+            frozen: false,
+        };
+
+        execute(root.path(), &plan, &options, &bases_dir).unwrap();
+
+        let installed = root.path().join("skills/flat-skill");
+        assert!(installed.join("SKILL.md").exists());
+        assert!(installed.join("resources/guide.md").exists());
+        assert!(!installed.join(".git").exists());
+        assert!(!installed.join("mars.toml").exists());
+        assert!(!installed.join(".gitignore").exists());
     }
 
     // === Prune orphans tests ===

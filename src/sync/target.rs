@@ -34,6 +34,8 @@ pub struct TargetItem {
     pub dest_path: DestPath,
     /// SHA-256 of source content.
     pub source_hash: ContentHash,
+    /// True when this item comes from root-level `SKILL.md` flat skill discovery.
+    pub is_flat_skill: bool,
     /// Optional in-memory content override after frontmatter rewrites.
     pub rewritten_content: Option<String>,
 }
@@ -61,7 +63,8 @@ pub fn build_with_collisions(
         let node = &graph.nodes[source_name];
         let source_config = config.sources.get(source_name);
 
-        let discovered = discover::discover_source(&node.resolved_ref.tree_path)?;
+        let discovered =
+            discover::discover_source(&node.resolved_ref.tree_path, Some(source_name.as_str()))?;
 
         let source_id = source_config
             .map(|s| s.id.clone())
@@ -80,9 +83,17 @@ pub fn build_with_collisions(
         let filtered = apply_filter(&discovered, &filter, &node.resolved_ref.tree_path)?;
 
         for item in filtered {
+            let is_flat_skill =
+                item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
             let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
-            let source_hash =
-                ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?);
+            let source_hash = if is_flat_skill {
+                ContentHash::from(hash::compute_skill_hash_filtered(
+                    &source_content_path,
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+                )?)
+            } else {
+                ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?)
+            };
 
             let (dest_name, dest_path) = apply_item_rename(item.id.kind, &item.id.name, &renames);
 
@@ -96,6 +107,7 @@ pub fn build_with_collisions(
                 source_path: source_content_path,
                 dest_path,
                 source_hash,
+                is_flat_skill,
                 rewritten_content: None,
             });
         }
@@ -219,7 +231,11 @@ pub fn rewrite_skill_refs(
             let selected = entries
                 .iter()
                 .find(|(_, source)| source == &source_name)
-                .or_else(|| entries.iter().find(|(_, source)| agent_deps.contains(source)));
+                .or_else(|| {
+                    entries
+                        .iter()
+                        .find(|(_, source)| agent_deps.contains(source))
+                });
             if let Some((new_name, _)) = selected {
                 renames_for_agent.insert(original_name.to_string(), new_name.to_string());
             }
@@ -603,7 +619,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered = discover::discover_source(tree.path()).unwrap();
+        let discovered = discover::discover_source(tree.path(), None).unwrap();
         let filtered = apply_filter(&discovered, &FilterMode::All, tree.path()).unwrap();
         assert_eq!(filtered.len(), 3);
     }
@@ -614,7 +630,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[],
         );
-        let discovered = discover::discover_source(tree.path()).unwrap();
+        let discovered = discover::discover_source(tree.path(), None).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec!["reviewer".into()]),
@@ -631,7 +647,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered = discover::discover_source(tree.path()).unwrap();
+        let discovered = discover::discover_source(tree.path(), None).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
@@ -657,7 +673,7 @@ mod tests {
                 ("review", "# Review skill"),
             ],
         );
-        let discovered = discover::discover_source(tree.path()).unwrap();
+        let discovered = discover::discover_source(tree.path(), None).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
@@ -808,6 +824,7 @@ mod tests {
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -827,6 +844,7 @@ mod tests {
                 source_hash: hash::compute_hash(&skill_path, ItemKind::Skill)
                     .unwrap()
                     .into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -875,6 +893,7 @@ mod tests {
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -903,11 +922,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let agent_path = dir.path().join("agents/coder.md");
         fs::create_dir_all(agent_path.parent().unwrap()).unwrap();
-        fs::write(
-            &agent_path,
-            "---\nskills:\n- planning\n---\n# Agent\n",
-        )
-        .unwrap();
+        fs::write(&agent_path, "---\nskills:\n- planning\n---\n# Agent\n").unwrap();
 
         let skill_b_path = dir.path().join("skills/planning__org_b");
         fs::create_dir_all(&skill_b_path).unwrap();
@@ -932,6 +947,7 @@ mod tests {
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -951,6 +967,7 @@ mod tests {
                 source_hash: hash::compute_hash(&skill_b_path, ItemKind::Skill)
                     .unwrap()
                     .into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -970,6 +987,7 @@ mod tests {
                 source_hash: hash::compute_hash(&skill_c_path, ItemKind::Skill)
                     .unwrap()
                     .into(),
+                is_flat_skill: false,
                 rewritten_content: None,
             },
         );
@@ -1154,6 +1172,9 @@ mod tests {
 
         let err = check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target)
             .unwrap_err();
-        assert!(err.to_string().contains("refusing to overwrite unmanaged path"));
+        assert!(
+            err.to_string()
+                .contains("refusing to overwrite unmanaged path")
+        );
     }
 }

@@ -1,6 +1,7 @@
 //! `mars check [PATH]` — validate a source package before publishing.
 //!
-//! Scans a directory as a mars source package (agents/*.md, skills/*/SKILL.md)
+//! Scans a directory as a mars source package
+//! (`agents/*.md`, `skills/*/SKILL.md`, or a flat root `SKILL.md`)
 //! and validates structure, frontmatter, and internal skill dependencies.
 //! No config or lock file needed — works on raw source directories.
 
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::discover;
 use crate::error::MarsError;
 use crate::frontmatter;
 
@@ -48,175 +50,174 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         }));
     }
 
-    let agents_dir = base.join("agents");
     let skills_dir = base.join("skills");
 
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // ── Discover agents ──────────────────────────────────────────────
+    let discovered = discover::discover_source(&base, None)?;
+
+    // ── Validate discovered agents/skills ────────────────────────────
     let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
     let mut agent_skill_refs: Vec<(String, Vec<String>)> = Vec::new();
+    let mut skill_names: HashMap<String, PathBuf> = HashMap::new();
 
-    if agents_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path().extension().and_then(|x| x.to_str()) == Some("md") && e.path().is_file()
-            })
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+    for item in discovered {
+        let path = base.join(&item.source_path);
+        match item.id.kind {
+            crate::lock::ItemKind::Agent => {
+                if super::is_symlink(&path) {
+                    let name = path
+                        .file_stem()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or_default();
+                    warnings.push(format!(
+                        "skipping symlinked agent `{name}` — source packages should not contain symlinks"
+                    ));
+                    continue;
+                }
 
-        for entry in entries {
-            let path = entry.path();
-            if super::is_symlink(&path) {
-                let name = path.file_stem()
+                let filename = path
+                    .file_stem()
                     .and_then(|n| n.to_str())
-                    .unwrap_or_default();
-                warnings.push(format!(
-                    "skipping symlinked agent `{name}` — source packages should not contain symlinks"
-                ));
-                continue;
-            }
-            let filename = path
-                .file_stem()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
+                    .unwrap_or_default()
+                    .to_string();
 
-            match std::fs::read_to_string(&path) {
-                Ok(content) => match frontmatter::parse(&content) {
-                    Ok(fm) => {
-                        let name = fm
-                            .name()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| filename.clone());
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => match frontmatter::parse(&content) {
+                        Ok(fm) => {
+                            let name = fm
+                                .name()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| filename.clone());
 
-                        // Check name field exists
-                        if fm.name().is_none() {
-                            warnings.push(format!("agent `{filename}` has no `name` in frontmatter"));
+                            if fm.name().is_none() {
+                                warnings.push(format!(
+                                    "agent `{filename}` has no `name` in frontmatter"
+                                ));
+                            }
+
+                            if fm.get("description").and_then(|v| v.as_str()).is_none() {
+                                warnings.push(format!("agent `{name}` has no `description`"));
+                            }
+
+                            if fm.name().is_some() && name != filename {
+                                warnings.push(format!(
+                                    "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
+                                ));
+                            }
+
+                            if let Some(existing) = agent_names.get(&name) {
+                                errors.push(format!(
+                                    "duplicate agent name `{name}` in {} and {}",
+                                    existing.display(),
+                                    path.display()
+                                ));
+                            } else {
+                                agent_names.insert(name.clone(), path.clone());
+                            }
+
+                            let skills = fm.skills();
+                            if !skills.is_empty() {
+                                agent_skill_refs.push((name, skills));
+                            }
                         }
-
-                        // Check description
-                        if fm.get("description").and_then(|v| v.as_str()).is_none() {
-                            warnings.push(format!("agent `{name}` has no `description`"));
+                        Err(e) => {
+                            errors.push(format!("agent `{filename}` has invalid frontmatter: {e}"));
                         }
-
-                        // Check name/filename match
-                        if fm.name().is_some() && name != filename {
-                            warnings.push(format!(
-                                "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
-                            ));
-                        }
-
-                        // Check for duplicate names
-                        if let Some(existing) = agent_names.get(&name) {
-                            errors.push(format!(
-                                "duplicate agent name `{name}` in {} and {}",
-                                existing.display(),
-                                path.display()
-                            ));
-                        } else {
-                            agent_names.insert(name.clone(), path.clone());
-                        }
-
-                        // Collect skill references
-                        let skills = fm.skills();
-                        if !skills.is_empty() {
-                            agent_skill_refs.push((name, skills));
-                        }
-                    }
+                    },
                     Err(e) => {
-                        errors.push(format!(
-                            "agent `{filename}` has invalid frontmatter: {e}"
-                        ));
+                        errors.push(format!("cannot read {}: {e}", path.display()));
                     }
-                },
-                Err(e) => {
-                    errors.push(format!("cannot read {}: {e}", path.display()));
+                }
+            }
+            crate::lock::ItemKind::Skill => {
+                let (dirname, skill_md, duplicate_path) = if item.source_path
+                    == std::path::Path::new(".")
+                {
+                    let dirname = item.id.name.to_string();
+                    (dirname, base.join("SKILL.md"), base.join("SKILL.md"))
+                } else {
+                    if super::is_symlink(&path) {
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or_default();
+                        warnings.push(format!(
+                            "skipping symlinked skill `{name}` — source packages should not contain symlinks"
+                        ));
+                        continue;
+                    }
+                    let dirname = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    (dirname, path.join("SKILL.md"), path.clone())
+                };
+
+                match std::fs::read_to_string(&skill_md) {
+                    Ok(content) => match frontmatter::parse(&content) {
+                        Ok(fm) => {
+                            let name = fm
+                                .name()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| dirname.clone());
+
+                            if fm.name().is_none() {
+                                warnings.push(format!(
+                                    "skill `{dirname}` has no `name` in frontmatter"
+                                ));
+                            }
+
+                            if fm.get("description").and_then(|v| v.as_str()).is_none() {
+                                warnings.push(format!("skill `{name}` has no `description`"));
+                            }
+
+                            if fm.name().is_some() && name != dirname {
+                                warnings.push(format!(
+                                    "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
+                                ));
+                            }
+
+                            if let Some(existing) = skill_names.get(&name) {
+                                errors.push(format!(
+                                    "duplicate skill name `{name}` in {} and {}",
+                                    existing.display(),
+                                    duplicate_path.display()
+                                ));
+                            } else {
+                                skill_names.insert(name, duplicate_path);
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!("skill `{dirname}` has invalid frontmatter: {e}"));
+                        }
+                    },
+                    Err(e) => {
+                        errors.push(format!("cannot read {}: {e}", skill_md.display()));
+                    }
                 }
             }
         }
     }
 
-    // ── Discover skills ──────────────────────────────────────────────
-    let mut skill_names: HashMap<String, PathBuf> = HashMap::new();
-
+    // Structural validation for nested skill layout:
+    // if skills/* directories exist, each must contain SKILL.md.
     if skills_dir.is_dir() {
         let mut entries: Vec<_> = std::fs::read_dir(&skills_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
             .collect();
         entries.sort_by_key(|e| e.file_name());
-
         for entry in entries {
             let path = entry.path();
-            if super::is_symlink(&path) {
-                let name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default();
-                warnings.push(format!(
-                    "skipping symlinked skill `{name}` — source packages should not contain symlinks"
-                ));
-                continue;
-            }
             let dirname = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
-
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.exists() {
-                errors.push(format!(
-                    "skill `{dirname}` is missing SKILL.md"
-                ));
-                continue;
-            }
-
-            match std::fs::read_to_string(&skill_md) {
-                Ok(content) => match frontmatter::parse(&content) {
-                    Ok(fm) => {
-                        let name = fm
-                            .name()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| dirname.clone());
-
-                        if fm.name().is_none() {
-                            warnings.push(format!(
-                                "skill `{dirname}` has no `name` in frontmatter"
-                            ));
-                        }
-
-                        if fm.get("description").and_then(|v| v.as_str()).is_none() {
-                            warnings.push(format!("skill `{name}` has no `description`"));
-                        }
-
-                        if fm.name().is_some() && name != dirname {
-                            warnings.push(format!(
-                                "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
-                            ));
-                        }
-
-                        if let Some(existing) = skill_names.get(&name) {
-                            errors.push(format!(
-                                "duplicate skill name `{name}` in {} and {}",
-                                existing.display(),
-                                path.display()
-                            ));
-                        } else {
-                            skill_names.insert(name, path);
-                        }
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "skill `{dirname}` has invalid frontmatter: {e}"
-                        ));
-                    }
-                },
-                Err(e) => {
-                    errors.push(format!("cannot read {}: {e}", skill_md.display()));
-                }
+                .unwrap_or_default();
+            if !path.join("SKILL.md").exists() {
+                errors.push(format!("skill `{dirname}` is missing SKILL.md"));
             }
         }
     }
@@ -302,12 +303,15 @@ mod tests {
         std::fs::write(
             agents.join("real.md"),
             "---\nname: real\ndescription: real agent\n---\n# Real",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Symlinked agent pointing to the real one
         std::os::unix::fs::symlink(agents.join("real.md"), agents.join("linked.md")).unwrap();
 
-        let args = super::CheckArgs { path: Some(dir.path().to_path_buf()) };
+        let args = super::CheckArgs {
+            path: Some(dir.path().to_path_buf()),
+        };
         // Should succeed (the symlink is warned, not errored)
         let code = super::run(&args, true).unwrap();
         // No structural errors — the real agent is valid
@@ -323,7 +327,8 @@ mod tests {
         std::fs::write(
             real_skill.join("SKILL.md"),
             "---\nname: real-skill\ndescription: a skill\n---\n# Skill",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Symlinked skill dir
         std::os::unix::fs::symlink(&real_skill, skills.join("linked-skill")).unwrap();
@@ -334,9 +339,28 @@ mod tests {
         std::fs::write(
             agents.join("coder.md"),
             "---\nname: coder\ndescription: agent\n---\n# Coder",
-        ).unwrap();
+        )
+        .unwrap();
 
-        let args = super::CheckArgs { path: Some(dir.path().to_path_buf()) };
+        let args = super::CheckArgs {
+            path: Some(dir.path().to_path_buf()),
+        };
+        let code = super::run(&args, true).unwrap();
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn check_accepts_flat_skill_repo() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: flat-skill\ndescription: flat layout\n---\n# Flat skill",
+        )
+        .unwrap();
+
+        let args = super::CheckArgs {
+            path: Some(dir.path().to_path_buf()),
+        };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
     }

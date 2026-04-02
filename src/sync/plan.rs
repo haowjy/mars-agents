@@ -160,6 +160,7 @@ mod tests {
             source_path: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
             dest_path: format!("agents/{name}.md").into(),
             source_hash: hash::hash_bytes(b"test content").into(),
+            is_flat_skill: false,
             rewritten_content: None,
         }
     }

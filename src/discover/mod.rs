@@ -20,11 +20,15 @@ pub struct DiscoveredItem {
 /// Convention:
 /// - `agents/*.md` files become `ItemKind::Agent` items
 /// - `skills/*/SKILL.md` directories become `ItemKind::Skill` items
+/// - If neither is found, a root-level `SKILL.md` is treated as one flat skill
 /// - Everything else is ignored
 ///
 /// Sources without a `mars.toml` work identically — discovery doesn't
 /// depend on the manifest.
-pub fn discover_source(tree_path: &Path) -> Result<Vec<DiscoveredItem>, MarsError> {
+pub fn discover_source(
+    tree_path: &Path,
+    fallback_name: Option<&str>,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
     let mut items = Vec::new();
 
     // Discover agents: agents/*.md (non-recursive)
@@ -80,6 +84,24 @@ pub fn discover_source(tree_path: &Path) -> Result<Vec<DiscoveredItem>, MarsErro
                 });
             }
         }
+    }
+
+    // Flat skill fallback: root SKILL.md means the whole repo is one skill.
+    // Only used when no conventional agents/skills were discovered.
+    if items.is_empty() && tree_path.join("SKILL.md").is_file() {
+        let name = fallback_name.map(String::from).unwrap_or_else(|| {
+            tree_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown-skill".to_string())
+        });
+        items.push(DiscoveredItem {
+            id: ItemId {
+                kind: ItemKind::Skill,
+                name: ItemName::from(name),
+            },
+            source_path: PathBuf::from("."),
+        });
     }
 
     // Sort by (kind, name) for deterministic ordering.
@@ -154,8 +176,7 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
 
-            let (frontmatter_name, description, skill_refs) =
-                parse_installed_frontmatter(&path);
+            let (frontmatter_name, description, skill_refs) = parse_installed_frontmatter(&path);
 
             agents.push(InstalledItem {
                 id: ItemId {
@@ -199,8 +220,7 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
                 continue;
             }
 
-            let (frontmatter_name, description, _) =
-                parse_installed_frontmatter(&skill_md);
+            let (frontmatter_name, description, _) = parse_installed_frontmatter(&skill_md);
 
             skills.push(InstalledItem {
                 id: ItemId {
@@ -225,9 +245,7 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
 
 /// Parse frontmatter from an installed file, returning (name, description, skill_refs).
 /// Returns None/empty on parse failure — the item is still discovered.
-fn parse_installed_frontmatter(
-    path: &Path,
-) -> (Option<String>, Option<String>, Vec<String>) {
+fn parse_installed_frontmatter(path: &Path) -> (Option<String>, Option<String>, Vec<String>) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return (None, None, Vec::new()),
@@ -280,7 +298,7 @@ mod tests {
     #[test]
     fn discover_agents_only() {
         let tree = make_tree(&["coder.md", "reviewer.md"], &[]);
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
 
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id.kind, ItemKind::Agent);
@@ -294,7 +312,7 @@ mod tests {
     #[test]
     fn discover_skills_only() {
         let tree = make_tree(&[], &["planning"]);
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.kind, ItemKind::Skill);
@@ -305,7 +323,7 @@ mod tests {
     #[test]
     fn discover_agents_and_skills() {
         let tree = make_tree(&["coder.md", "reviewer.md"], &["planning", "review"]);
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
 
         assert_eq!(items.len(), 4);
         // Agents come first (Agent < Skill), sorted by name
@@ -323,7 +341,7 @@ mod tests {
     #[test]
     fn empty_tree_no_agents_or_skills_dir() {
         let tree = TempDir::new().unwrap();
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert!(items.is_empty());
     }
 
@@ -331,7 +349,7 @@ mod tests {
     fn empty_agents_dir() {
         let tree = TempDir::new().unwrap();
         fs::create_dir_all(tree.path().join("agents")).unwrap();
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert!(items.is_empty());
     }
 
@@ -345,7 +363,7 @@ mod tests {
         fs::write(agents_dir.join("config.yaml"), "not an agent").unwrap();
         fs::write(agents_dir.join("README"), "not an agent").unwrap();
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "coder");
     }
@@ -361,7 +379,7 @@ mod tests {
         fs::write(valid.join("SKILL.md"), "# skill").unwrap();
         // incomplete/ has no SKILL.md
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "planning");
     }
@@ -389,7 +407,7 @@ mod tests {
         fs::create_dir_all(&visible_skill).unwrap();
         fs::write(visible_skill.join("SKILL.md"), "# planning").unwrap();
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id.name, "visible");
         assert_eq!(items[1].id.name, "planning");
@@ -402,8 +420,8 @@ mod tests {
             &["z-skill", "a-skill"],
         );
 
-        let items1 = discover_source(tree.path()).unwrap();
-        let items2 = discover_source(tree.path()).unwrap();
+        let items1 = discover_source(tree.path(), None).unwrap();
+        let items2 = discover_source(tree.path(), None).unwrap();
 
         // Same order every time
         assert_eq!(items1, items2);
@@ -425,7 +443,7 @@ mod tests {
         fs::write(sub.join("nested.md"), "# nested").unwrap();
         fs::write(agents_dir.join("top.md"), "# top").unwrap();
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "top");
     }
@@ -438,7 +456,7 @@ mod tests {
         fs::create_dir_all(&skills_dir).unwrap();
         fs::write(skills_dir.join("not-a-dir"), "# not a skill dir").unwrap();
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert!(items.is_empty());
     }
 
@@ -446,7 +464,7 @@ mod tests {
     fn dunder_prefix_skills_discovered() {
         // Skills with __ prefix are common (e.g., __meridian-spawn)
         let tree = make_tree(&[], &["__meridian-spawn", "planning"]);
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
 
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id.name, "__meridian-spawn");
@@ -461,7 +479,7 @@ mod tests {
         fs::write(agents_dir.join("coder.md"), "# coder").unwrap();
         // No skills/ dir at all
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "coder");
     }
@@ -475,9 +493,70 @@ mod tests {
         fs::write(planning.join("SKILL.md"), "# planning").unwrap();
         // No agents/ dir at all
 
-        let items = discover_source(tree.path()).unwrap();
+        let items = discover_source(tree.path(), None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "planning");
+    }
+
+    #[test]
+    fn flat_skill_repo_discovered() {
+        let tree = TempDir::new().unwrap();
+        fs::write(tree.path().join("SKILL.md"), "# flat skill").unwrap();
+
+        let items = discover_source(tree.path(), None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].source_path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn flat_skill_with_resources() {
+        let tree = TempDir::new().unwrap();
+        fs::write(tree.path().join("SKILL.md"), "# flat skill").unwrap();
+        fs::create_dir_all(tree.path().join("resources")).unwrap();
+        fs::write(tree.path().join("resources/guide.md"), "# guide").unwrap();
+
+        let items = discover_source(tree.path(), None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].source_path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn flat_skill_uses_fallback_name() {
+        let tree = TempDir::new().unwrap();
+        fs::write(tree.path().join("SKILL.md"), "# flat skill").unwrap();
+
+        let items = discover_source(tree.path(), Some("my-skill")).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name, "my-skill");
+    }
+
+    #[test]
+    fn flat_skill_uses_dirname_when_no_fallback() {
+        let parent = TempDir::new().unwrap();
+        let tree = parent.path().join("demo-skill");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join("SKILL.md"), "# flat skill").unwrap();
+
+        let items = discover_source(&tree, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name, "demo-skill");
+    }
+
+    #[test]
+    fn nested_structure_ignores_root_skill_md() {
+        let tree = TempDir::new().unwrap();
+        fs::write(tree.path().join("SKILL.md"), "# root skill").unwrap();
+        let planning = tree.path().join("skills/planning");
+        fs::create_dir_all(&planning).unwrap();
+        fs::write(planning.join("SKILL.md"), "# nested skill").unwrap();
+
+        let items = discover_source(tree.path(), None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].id.name, "planning");
+        assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
     }
 
     // === discover_installed tests ===
@@ -489,7 +568,11 @@ mod tests {
         let skills_dir = root.path().join("skills");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::create_dir_all(skills_dir.join("planning")).unwrap();
-        fs::write(agents_dir.join("coder.md"), "---\nname: coder\n---\n# Agent").unwrap();
+        fs::write(
+            agents_dir.join("coder.md"),
+            "---\nname: coder\n---\n# Agent",
+        )
+        .unwrap();
         fs::write(
             skills_dir.join("planning").join("SKILL.md"),
             "---\nname: planning\n---\n# Skill",
@@ -553,10 +636,18 @@ mod tests {
         let state = discover_installed(root.path()).unwrap();
         assert_eq!(state.agents.len(), 2);
 
-        let linked = state.agents.iter().find(|a| a.id.name.as_str() == "linked").unwrap();
+        let linked = state
+            .agents
+            .iter()
+            .find(|a| a.id.name.as_str() == "linked")
+            .unwrap();
         assert!(linked.is_symlink);
 
-        let real_agent = state.agents.iter().find(|a| a.id.name.as_str() == "real").unwrap();
+        let real_agent = state
+            .agents
+            .iter()
+            .find(|a| a.id.name.as_str() == "real")
+            .unwrap();
         assert!(!real_agent.is_symlink);
     }
 }

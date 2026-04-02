@@ -23,6 +23,14 @@ pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     }
 }
 
+/// Compute hash for a skill directory while excluding selected top-level entries.
+pub fn compute_skill_hash_filtered(
+    dir: &Path,
+    excluded_top_level: &[&str],
+) -> Result<String, MarsError> {
+    compute_dir_hash_filtered(dir, excluded_top_level)
+}
+
 /// Compute SHA-256 of raw bytes.
 ///
 /// Returns `"sha256:<64-char-lowercase-hex>"`.
@@ -40,8 +48,12 @@ pub fn hash_bytes(content: &[u8]) -> String {
 /// 4. Concatenating "path:hash\n" strings
 /// 5. SHA-256 of the concatenated result
 fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
+    compute_dir_hash_filtered(dir, &[])
+}
+
+fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<String, MarsError> {
     let mut entries: Vec<(String, String)> = Vec::new();
-    collect_file_hashes(dir, dir, &mut entries)?;
+    collect_file_hashes(dir, dir, &mut entries, excluded_top_level)?;
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut manifest = String::new();
@@ -60,20 +72,22 @@ fn collect_file_hashes(
     root: &Path,
     current: &Path,
     entries: &mut Vec<(String, String)>,
+    excluded_top_level: &[&str],
 ) -> Result<(), MarsError> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
 
+        let rel_path = path.strip_prefix(root).expect("path is always under root");
+        if is_excluded_top_level(rel_path, excluded_top_level) {
+            continue;
+        }
+
         if file_type.is_dir() {
-            collect_file_hashes(root, &path, entries)?;
+            collect_file_hashes(root, &path, entries, excluded_top_level)?;
         } else {
-            let rel_path = path
-                .strip_prefix(root)
-                .expect("path is always under root")
-                .to_string_lossy()
-                .into_owned();
+            let rel_path = rel_path.to_string_lossy().into_owned();
             // Use forward slashes for cross-platform determinism
             let rel_path = rel_path.replace('\\', "/");
             let content = fs::read(&path)?;
@@ -82,6 +96,13 @@ fn collect_file_hashes(
         }
     }
     Ok(())
+}
+
+fn is_excluded_top_level(path: &Path, excluded_top_level: &[&str]) -> bool {
+    let Some(first) = path.components().next().map(|c| c.as_os_str()) else {
+        return false;
+    };
+    excluded_top_level.iter().any(|excluded| first == *excluded)
 }
 
 #[cfg(test)]
@@ -169,5 +190,28 @@ mod tests {
         let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
         let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn filtered_skill_hash_ignores_excluded_top_level_entries() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skill");
+        fs::create_dir_all(skill_dir.join(".git")).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "base").unwrap();
+        fs::write(skill_dir.join("mars.toml"), "v1").unwrap();
+        fs::write(skill_dir.join(".git").join("config"), "ignored").unwrap();
+
+        let hash1 =
+            compute_skill_hash_filtered(&skill_dir, crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL)
+                .unwrap();
+
+        fs::write(skill_dir.join("mars.toml"), "v2").unwrap();
+        fs::write(skill_dir.join(".git").join("config"), "changed").unwrap();
+
+        let hash2 =
+            compute_skill_hash_filtered(&skill_dir, crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL)
+                .unwrap();
+
+        assert_eq!(hash1, hash2);
     }
 }

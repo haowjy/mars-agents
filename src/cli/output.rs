@@ -47,12 +47,10 @@ pub struct CatalogEntry {
 
 /// Print catalog view (name: description, grouped by kind).
 pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filter: Option<&str>) {
-    let show_agents = kind_filter.is_none()
-        || kind_filter == Some("agents")
-        || kind_filter == Some("agent");
-    let show_skills = kind_filter.is_none()
-        || kind_filter == Some("skills")
-        || kind_filter == Some("skill");
+    let show_agents =
+        kind_filter.is_none() || kind_filter == Some("agents") || kind_filter == Some("agent");
+    let show_skills =
+        kind_filter.is_none() || kind_filter == Some("skills") || kind_filter == Some("skill");
 
     if show_agents && !agents.is_empty() {
         println!("AGENTS");
@@ -377,11 +375,7 @@ pub fn print_doctor(issues: &[String], json: bool) {
                 let _ = writeln!(stdout, "{issue}");
             }
             let _ = writeln!(stdout);
-            let _ = writeln!(
-                stdout,
-                "  {} issues found. Run `mars repair` to fix.",
-                issues.len()
-            );
+            let _ = writeln!(stdout, "  {} issue(s) found", issues.len());
         }
     }
 }

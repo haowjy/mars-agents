@@ -6,6 +6,16 @@ use std::path::Path;
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 
+/// Top-level source entries excluded when installing flat skill repositories.
+pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
+    ".git",
+    ".mars",
+    "mars.toml",
+    "mars.lock",
+    "mars.local.toml",
+    ".gitignore",
+];
+
 /// Atomic file write: write to temp file in same directory, then rename.
 ///
 /// The rename is atomic on POSIX. Temp files are in the same directory
@@ -32,11 +42,28 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
 /// before the new content takes its place. Stale `.old` from prior crashes
 /// is cleaned up automatically.
 pub fn atomic_install_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
+    atomic_install_dir_impl(src, dest, &[])
+}
+
+/// Atomic directory install with optional top-level source entry exclusions.
+pub fn atomic_install_dir_filtered(
+    src: &Path,
+    dest: &Path,
+    excluded_top_level: &[&str],
+) -> Result<(), MarsError> {
+    atomic_install_dir_impl(src, dest, excluded_top_level)
+}
+
+fn atomic_install_dir_impl(
+    src: &Path,
+    dest: &Path,
+    excluded_top_level: &[&str],
+) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
 
     let tmp_dir = tempfile::TempDir::new_in(parent)?;
-    copy_dir_recursive(src, tmp_dir.path())?;
+    copy_dir_recursive(src, tmp_dir.path(), src, excluded_top_level)?;
     let tmp_path = tmp_dir.keep();
 
     if dest.exists() {
@@ -68,21 +95,40 @@ pub fn atomic_install_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
 }
 
 /// Recursively copy a directory tree.
-fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), MarsError> {
+fn copy_dir_recursive(
+    src: &Path,
+    dest: &Path,
+    root: &Path,
+    excluded_top_level: &[&str],
+) -> Result<(), MarsError> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
 
+        let rel_path = src_path
+            .strip_prefix(root)
+            .expect("copy traversal path should be under root");
+        if is_excluded_top_level(rel_path, excluded_top_level) {
+            continue;
+        }
+
         if file_type.is_dir() {
             fs::create_dir_all(&dest_path)?;
-            copy_dir_recursive(&src_path, &dest_path)?;
+            copy_dir_recursive(&src_path, &dest_path, root, excluded_top_level)?;
         } else {
             fs::copy(&src_path, &dest_path)?;
         }
     }
     Ok(())
+}
+
+fn is_excluded_top_level(path: &Path, excluded_top_level: &[&str]) -> bool {
+    let Some(first) = path.components().next().map(|c| c.as_os_str()) else {
+        return false;
+    };
+    excluded_top_level.iter().any(|excluded| first == *excluded)
 }
 
 /// Remove a file or directory (skills are dirs).
@@ -274,6 +320,29 @@ mod tests {
         atomic_install_dir(&src, &dest).unwrap();
         assert!(dest.exists(), "dest should exist after install");
         assert!(dest.join("v2.txt").exists());
+    }
+
+    #[test]
+    fn atomic_install_dir_filtered_excludes_top_level_entries() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src_dir");
+        let dest = dir.path().join("dest_dir");
+
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::create_dir_all(src.join("resources")).unwrap();
+        fs::write(src.join("SKILL.md"), "skill").unwrap();
+        fs::write(src.join("mars.toml"), "ignored").unwrap();
+        fs::write(src.join(".gitignore"), "ignored").unwrap();
+        fs::write(src.join(".git").join("config"), "ignored").unwrap();
+        fs::write(src.join("resources").join("guide.md"), "kept").unwrap();
+
+        atomic_install_dir_filtered(&src, &dest, FLAT_SKILL_EXCLUDED_TOP_LEVEL).unwrap();
+
+        assert!(dest.join("SKILL.md").exists());
+        assert!(dest.join("resources").join("guide.md").exists());
+        assert!(!dest.join(".git").exists());
+        assert!(!dest.join("mars.toml").exists());
+        assert!(!dest.join(".gitignore").exists());
     }
 
     #[test]

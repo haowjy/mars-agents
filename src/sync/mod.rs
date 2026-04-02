@@ -97,7 +97,7 @@ pub fn execute(root: &Path, request: &SyncRequest) -> Result<SyncReport, MarsErr
         Ok(config) => config,
         Err(err) if is_config_not_found(&err) && request.mutation.is_some() => Config {
             sources: IndexMap::new(),
-            settings: Settings {},
+            settings: Settings::default(),
         },
         Err(err) => return Err(err),
     };
@@ -570,7 +570,7 @@ mod tests {
             },
             EffectiveConfig {
                 sources: config_sources,
-                settings: Settings {},
+                settings: Settings::default(),
             },
         )
     }
@@ -653,7 +653,7 @@ mod tests {
             root.path(),
             &Config {
                 sources: IndexMap::new(),
-                settings: Settings {},
+                settings: Settings::default(),
             },
         )
         .unwrap();

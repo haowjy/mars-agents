@@ -820,7 +820,7 @@ mod tests {
         }
         EffectiveConfig {
             sources: map,
-            settings: Settings {},
+            settings: Settings::default(),
         }
     }
 

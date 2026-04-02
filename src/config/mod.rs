@@ -63,7 +63,11 @@ pub struct OverrideEntry {
 
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct Settings {}
+pub struct Settings {
+    /// Directories to symlink agents/ and skills/ into (e.g. [".claude"]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
+}
 
 /// Resolved source specification after merging config and overrides.
 #[derive(Debug, Clone)]
@@ -473,7 +477,7 @@ path = "/local/path"
                 );
                 m
             },
-            settings: Settings {},
+            settings: Settings::default(),
         };
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
@@ -573,7 +577,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
-            settings: Settings {},
+            settings: Settings::default(),
         };
         let local = LocalConfig::default();
         let effective = merge(config, local).unwrap();
@@ -606,7 +610,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
-            settings: Settings {},
+            settings: Settings::default(),
         };
         let local = LocalConfig {
             overrides: {
@@ -652,7 +656,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
-            settings: Settings {},
+            settings: Settings::default(),
         };
         let effective = merge(config, LocalConfig::default()).unwrap();
         assert!(matches!(effective.sources["base"].filter, FilterMode::All));
@@ -675,7 +679,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
-            settings: Settings {},
+            settings: Settings::default(),
         };
         save(dir.path(), &config).unwrap();
         let reloaded = load(dir.path()).unwrap();

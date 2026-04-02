@@ -642,7 +642,7 @@ mod tests {
         };
         let config = EffectiveConfig {
             sources: config_sources,
-            settings: Settings {},
+            settings: Settings::default(),
         };
         (graph, config)
     }

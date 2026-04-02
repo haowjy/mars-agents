@@ -10,6 +10,7 @@
 pub mod add;
 pub mod doctor;
 pub mod init;
+pub mod link;
 pub mod list;
 pub mod outdated;
 pub mod output;
@@ -79,6 +80,9 @@ pub enum Command {
     /// Set a local dev override for a source.
     Override(override_cmd::OverrideArgs),
 
+    /// Symlink agents/ and skills/ into another directory (e.g. .claude).
+    Link(link::LinkArgs),
+
     /// Validate state consistency.
     Doctor(doctor::DoctorArgs),
 
@@ -144,6 +148,10 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
             let root = find_agents_root(cli.root.as_deref())?;
             override_cmd::run(args, &root, cli.json)
         }
+        Command::Link(args) => {
+            let root = find_agents_root(cli.root.as_deref())?;
+            link::run(args, &root, cli.json)
+        }
         Command::Doctor(args) => {
             let root = find_agents_root(cli.root.as_deref())?;
             doctor::run(args, &root, cli.json)
@@ -155,10 +163,16 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     }
 }
 
-/// Find `.agents/` root by walking up from cwd, or use `--root` flag.
+/// Find the mars-managed root by walking up from cwd, or use `--root` flag.
 ///
 /// Walk up the directory tree looking for a directory containing `agents.toml`.
-/// Checks both `.agents/agents.toml` and `agents.toml` at each level.
+/// The managed root can be any directory (`.agents/`, `.claude/`, etc.) —
+/// mars doesn't impose a specific name.
+///
+/// Search order at each level:
+/// 1. `.agents/agents.toml` (convention default)
+/// 2. `.claude/agents.toml` (Claude Code projects)
+/// 3. If cwd itself contains `agents.toml`, use it directly
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
     if let Some(root) = explicit {
         return Ok(root.to_path_buf());
@@ -167,17 +181,20 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
     let cwd = std::env::current_dir()?;
     let mut dir = cwd.as_path();
 
+    // Well-known subdirectory names to check at each level
+    const WELL_KNOWN: &[&str] = &[".agents", ".claude"];
+
     loop {
-        // Check for .agents/agents.toml
-        let agents_dir = dir.join(".agents");
-        if agents_dir.join("agents.toml").exists() {
-            return Ok(agents_dir);
+        // Check well-known subdirectories
+        for subdir in WELL_KNOWN {
+            let candidate = dir.join(subdir);
+            if candidate.join("agents.toml").exists() {
+                return Ok(candidate);
+            }
         }
 
-        // Check if we're inside .agents/ already
-        if dir.join("agents.toml").exists()
-            && dir.file_name().map(|n| n == ".agents").unwrap_or(false)
-        {
+        // Check if we're already inside a mars-managed directory
+        if dir.join("agents.toml").exists() {
             return Ok(dir.to_path_buf());
         }
 
@@ -191,7 +208,7 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
     Err(MarsError::Source {
         source_name: "root".to_string(),
         message: format!(
-            "no .agents/ directory found from {} to /. Run `mars init` first.",
+            "no agents.toml found from {} to /. Run `mars init` first.",
             cwd.display()
         ),
     })

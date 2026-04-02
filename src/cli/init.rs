@@ -1,4 +1,4 @@
-//! `mars init` — scaffold `.agents/agents.toml`.
+//! `mars init [path]` — scaffold a mars-managed directory with `agents.toml`.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use super::output;
 /// Arguments for `mars init`.
 #[derive(Debug, clap::Args)]
 pub struct InitArgs {
-    /// Path to initialize (default: current directory).
+    /// Target directory to initialize (default: .agents/ in cwd).
     pub path: Option<PathBuf>,
 }
 
@@ -22,10 +22,23 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         (None, None) => std::env::current_dir()?,
     };
 
-    let agents_dir = if base.join("agents.toml").exists() || base.ends_with(".agents") {
-        // Already inside .agents/ or pointing at it
+    let agents_dir = if explicit_root.is_some() {
+        // --root flag: use it directly
+        base.clone()
+    } else if let Some(ref path) = args.path {
+        // Explicit path arg: if it looks like a target dir (.claude, .cursor),
+        // use it directly. Otherwise treat it as a project root and append .agents/
+        let path_str = path.to_string_lossy();
+        if path_str.starts_with('.') || base.join("agents.toml").exists() {
+            base.clone()
+        } else {
+            base.join(".agents")
+        }
+    } else if base.join("agents.toml").exists() {
+        // Already inside a mars-managed directory
         base.clone()
     } else {
+        // Default: create .agents/ in cwd
         base.join(".agents")
     };
 
@@ -47,7 +60,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
     // Write empty config
     let config = Config {
         sources: indexmap::IndexMap::new(),
-        settings: Settings {},
+        settings: Settings::default(),
     };
     crate::config::save(&agents_dir, &config)?;
 

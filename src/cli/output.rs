@@ -236,12 +236,6 @@ fn format_warning(w: &ValidationWarning) -> String {
                 None => base,
             }
         }
-        ValidationWarning::OrphanedSkill { skill } => {
-            format!(
-                "skill `{}` is installed but not referenced by any agent",
-                skill.name
-            )
-        }
     }
 }
 

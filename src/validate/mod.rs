@@ -19,8 +19,6 @@ pub enum ValidationWarning {
         /// Fuzzy match suggestion: "did you mean X?"
         suggestion: Option<String>,
     },
-    /// A skill is installed but no agent references it.
-    OrphanedSkill { skill: ItemId },
 }
 
 /// Parse YAML frontmatter from an agent .md file.
@@ -47,7 +45,6 @@ fn extract_skills_from_content(content: &str) -> Vec<String> {
 ///
 /// Reads YAML frontmatter from each agent .md file to extract `skills: [...]`.
 /// Checks each referenced skill name exists in `available_skills`.
-/// Also detects orphaned skills (installed but not referenced by any agent).
 ///
 /// Returns warnings, not errors — a missing skill doesn't prevent sync.
 pub fn check_deps(
@@ -55,15 +52,12 @@ pub fn check_deps(
     available_skills: &HashSet<String>,
 ) -> Result<Vec<ValidationWarning>, MarsError> {
     let mut warnings = Vec::new();
-    let mut referenced_skills: HashSet<String> = HashSet::new();
 
     for (agent_name, agent_path) in agents {
         // Defensive: if we can't read/parse the file, treat as no skills
         let skills = parse_agent_skills(agent_path).unwrap_or_default();
 
         for skill_name in skills {
-            referenced_skills.insert(skill_name.clone());
-
             if !available_skills.contains(&skill_name) {
                 let suggestion = find_suggestion(&skill_name, available_skills);
                 warnings.push(ValidationWarning::MissingSkill {
@@ -76,22 +70,6 @@ pub fn check_deps(
                 });
             }
         }
-    }
-
-    // Check for orphaned skills (installed but not referenced)
-    let mut orphaned: Vec<&String> = available_skills
-        .iter()
-        .filter(|s| !referenced_skills.contains(*s))
-        .collect();
-    orphaned.sort(); // Deterministic order
-
-    for skill_name in orphaned {
-        warnings.push(ValidationWarning::OrphanedSkill {
-            skill: ItemId {
-                kind: ItemKind::Skill,
-                name: ItemName::from(skill_name.clone()),
-            },
-        });
     }
 
     Ok(warnings)
@@ -269,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn orphaned_skill_produces_warning() {
+    fn unreferenced_skill_produces_no_warning() {
         let dir = TempDir::new().unwrap();
         let p = write_agent(dir.path(), "coder", "---\nskills: []\n---\n# Coder\n");
 
@@ -277,14 +255,7 @@ mod tests {
         let skills: HashSet<String> = ["unused-skill"].iter().map(|s| s.to_string()).collect();
 
         let warnings = check_deps(&agents, &skills).unwrap();
-        assert_eq!(warnings.len(), 1);
-        match &warnings[0] {
-            ValidationWarning::OrphanedSkill { skill } => {
-                assert_eq!(skill.name, "unused-skill");
-                assert_eq!(skill.kind, ItemKind::Skill);
-            }
-            other => panic!("expected OrphanedSkill, got {other:?}"),
-        }
+        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -325,15 +296,9 @@ mod tests {
         let skills: HashSet<String> = ["planning"].iter().map(|s| s.to_string()).collect();
 
         let warnings = check_deps(&agents, &skills).unwrap();
-        assert_eq!(warnings.len(), 2); // 1 MissingSkill + 1 OrphanedSkill
+        assert_eq!(warnings.len(), 1); // 1 MissingSkill only
 
-        // Find the MissingSkill warning
-        let missing = warnings
-            .iter()
-            .find(|w| matches!(w, ValidationWarning::MissingSkill { .. }))
-            .unwrap();
-
-        match missing {
+        match &warnings[0] {
             ValidationWarning::MissingSkill { suggestion, .. } => {
                 assert_eq!(suggestion.as_deref(), Some("planning"));
             }
@@ -398,18 +363,11 @@ mod tests {
 
         let warnings = check_deps(&agents, &skills).unwrap();
 
-        // Count by type
-        let missing_count = warnings
+        // Only MissingSkill warnings — no orphan warnings
+        assert_eq!(warnings.len(), 2); // missing-a, missing-b
+        assert!(warnings
             .iter()
-            .filter(|w| matches!(w, ValidationWarning::MissingSkill { .. }))
-            .count();
-        let orphan_count = warnings
-            .iter()
-            .filter(|w| matches!(w, ValidationWarning::OrphanedSkill { .. }))
-            .count();
-
-        assert_eq!(missing_count, 2); // missing-a, missing-b
-        assert_eq!(orphan_count, 1); // orphan (existing is referenced)
+            .all(|w| matches!(w, ValidationWarning::MissingSkill { .. })));
     }
 
     #[test]

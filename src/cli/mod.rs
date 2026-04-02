@@ -220,18 +220,37 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
 /// 3. If cwd itself contains `mars.toml`, use it directly
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     if let Some(root) = explicit {
+        // User explicitly chose this root — trust it (no containment check)
         return MarsContext::new(root.to_path_buf());
     }
 
     let cwd = std::env::current_dir()?;
-    let mut dir = cwd.as_path();
+    // Canonicalize cwd to resolve ancestor symlinks so the walk-up operates
+    // on real paths and containment checks catch .agents/ symlinks pointing
+    // outside the real cwd tree.
+    let cwd_canon = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+    let mut dir = cwd_canon.as_path();
 
     loop {
         // Check well-known subdirectories + tool dirs
         for subdir in WELL_KNOWN.iter().chain(TOOL_DIRS.iter()) {
             let candidate = dir.join(subdir);
             if candidate.join("mars.toml").exists() {
-                return MarsContext::new(candidate);
+                let ctx = MarsContext::new(candidate)?;
+                // Validate: canonical managed_root should be under the
+                // directory we found it in. A symlinked .agents/ pointing
+                // outside the project tree would fail this check.
+                if !ctx.managed_root.starts_with(dir) {
+                    return Err(MarsError::Config(ConfigError::Invalid {
+                        message: format!(
+                            "{}/{} resolves to {} which is outside {}. \
+                             The managed root may be a symlink. Use --root to override.",
+                            dir.display(), subdir,
+                            ctx.managed_root.display(), dir.display(),
+                        ),
+                    }));
+                }
+                return Ok(ctx);
             }
         }
 
@@ -283,6 +302,42 @@ mod tests {
         let ctx = find_agents_root(Some(&agents_dir)).unwrap();
         assert_eq!(ctx.managed_root, agents_dir.canonicalize().unwrap());
         assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn find_root_symlink_outside_project_detected() {
+        // Verify the containment invariant: a symlinked .agents/ resolving
+        // outside the project tree should be detectable.
+        let project_dir = TempDir::new().unwrap();
+        let external_dir = TempDir::new().unwrap();
+
+        // Create the external agents dir with mars.toml
+        let external_agents = external_dir.path().join(".agents");
+        std::fs::create_dir_all(&external_agents).unwrap();
+        std::fs::write(external_agents.join("mars.toml"), "[sources]\n").unwrap();
+
+        // Symlink project/.agents -> external/.agents
+        let project_agents = project_dir.path().join(".agents");
+        std::os::unix::fs::symlink(&external_agents, &project_agents).unwrap();
+
+        // MarsContext::new canonicalizes, so managed_root resolves outside project
+        let ctx = MarsContext::new(project_agents).unwrap();
+        let project_canon = project_dir.path().canonicalize().unwrap();
+        assert!(
+            !ctx.managed_root.starts_with(&project_canon),
+            "symlinked managed_root should resolve outside project"
+        );
+    }
+
+    #[test]
+    fn find_root_explicit_bypasses_containment() {
+        // --root flag should work even for paths that would fail containment
+        let dir = TempDir::new().unwrap();
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+
+        let ctx = find_agents_root(Some(&agents)).unwrap();
+        assert_eq!(ctx.managed_root, agents.canonicalize().unwrap());
     }
 
     #[test]

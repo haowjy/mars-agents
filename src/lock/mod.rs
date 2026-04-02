@@ -42,6 +42,8 @@ pub struct LockedSource {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitHash>,
+    /// Reserved for future content verification of fetched source trees.
+    /// TODO: populate during fetch/build once deterministic tree hashing is implemented.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_hash: Option<String>,
 }
@@ -232,7 +234,7 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
         path,
         version: node.resolved_ref.version_tag.clone(),
         commit: node.resolved_ref.commit.clone(),
-        tree_hash: None, // Could compute, but not critical for v1
+        tree_hash: None,
     }
 }
 

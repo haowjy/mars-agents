@@ -2,9 +2,8 @@ pub mod git;
 pub mod parse;
 pub mod path;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::config::SourceSpec;
 use crate::error::MarsError;
 use crate::types::{CommitHash, SourceName, SourceUrl};
 
@@ -65,25 +64,6 @@ pub struct AvailableVersion {
     pub tag: String,
     pub version: semver::Version,
     pub commit_id: String,
-}
-
-/// Dispatch to the right fetcher based on source spec.
-pub fn fetch_source(
-    spec: &SourceSpec,
-    source_name: &str,
-    cache: &GlobalCache,
-    project_root: &Path,
-) -> Result<ResolvedRef, MarsError> {
-    match spec {
-        SourceSpec::Git(git_spec) => git::fetch(
-            git_spec.url.as_ref(),
-            git_spec.version.as_deref(),
-            source_name,
-            cache,
-            &git::FetchOptions::default(),
-        ),
-        SourceSpec::Path(p) => path::fetch_path(p, project_root, source_name),
-    }
 }
 
 /// List available versions from a git remote (for resolution).

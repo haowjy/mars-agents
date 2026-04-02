@@ -1,6 +1,5 @@
 //! `mars doctor` — validate state consistency.
 
-use std::path::Path;
 
 use crate::error::MarsError;
 use crate::hash;
@@ -12,11 +11,11 @@ use super::output;
 pub struct DoctorArgs {}
 
 /// Run `mars doctor`.
-pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut issues = Vec::new();
 
     // Check config is valid
-    match crate::config::load(root) {
+    match crate::config::load(&ctx.managed_root) {
         Ok(_) => {}
         Err(e) => {
             issues.push(format!("config error: {e}"));
@@ -24,7 +23,7 @@ pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError
     }
 
     // Check lock file
-    let lock = match crate::lock::load(root) {
+    let lock = match crate::lock::load(&ctx.managed_root) {
         Ok(l) => l,
         Err(e) => {
             issues.push(format!("lock file error: {e}"));
@@ -35,7 +34,7 @@ pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError
 
     // Check each locked item
     for (dest_path_str, item) in &lock.items {
-        let disk_path = root.join(dest_path_str);
+        let disk_path = ctx.managed_root.join(dest_path_str);
 
         // Check file exists
         if !disk_path.exists() {
@@ -70,9 +69,9 @@ pub fn run(_args: &DoctorArgs, root: &Path, json: bool) -> Result<i32, MarsError
     }
 
     // Check agent→skill references
-    if let Ok(config) = crate::config::load(root) {
-        let local = crate::config::load_local(root).unwrap_or_default();
-        if let Ok(effective) = crate::config::merge_with_root(config, local, root) {
+    if let Ok(config) = crate::config::load(&ctx.managed_root) {
+        let local = crate::config::load_local(&ctx.managed_root).unwrap_or_default();
+        if let Ok(effective) = crate::config::merge_with_root(config, local, &ctx.managed_root) {
             // Check that all sources in config have corresponding lock entries
             for source_name in effective.sources.keys() {
                 if !lock.sources.contains_key(source_name) {

@@ -26,11 +26,11 @@ pub struct ListArgs {
 }
 
 /// Run `mars list`.
-pub fn run(args: &ListArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(root)?;
+pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let lock = crate::lock::load(&ctx.managed_root)?;
 
     if args.status {
-        return run_status(args, root, &lock, json);
+        return run_status(args, &ctx.managed_root, &lock, json);
     }
 
     // Default: catalog view (name + description from frontmatter)
@@ -57,7 +57,7 @@ pub fn run(args: &ListArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         }
 
         // Read frontmatter for name + description
-        let disk_path = root.join(dest_path);
+        let disk_path = ctx.managed_root.join(dest_path);
         let content_path = match item.kind {
             ItemKind::Agent => disk_path.clone(),
             ItemKind::Skill => disk_path.join("SKILL.md"),

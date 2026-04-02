@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
-use crate::error::{LockError, MarsError};
+use crate::error::{ConfigError, LockError, MarsError};
 
 /// Directories where mars manages agents.toml as the primary root.
 /// These are the default target for `mars init`.
@@ -37,6 +37,37 @@ pub const WELL_KNOWN: &[&str] = &[".agents"];
 /// Root detection searches these in addition to WELL_KNOWN.
 /// `mars link` warns if the target isn't in TOOL_DIRS or WELL_KNOWN.
 pub const TOOL_DIRS: &[&str] = &[".claude", ".cursor"];
+
+/// Resolved context for a mars command — both the managed root
+/// and its parent project root.
+pub struct MarsContext {
+    /// The directory containing agents.toml (e.g. /project/.agents)
+    pub managed_root: PathBuf,
+    /// The project directory (managed_root's parent, e.g. /project)
+    pub project_root: PathBuf,
+}
+
+impl MarsContext {
+    /// Build from a managed root path. Enforces the invariant that
+    /// managed_root must have a parent (i.e., is always a subdirectory).
+    pub fn new(managed_root: PathBuf) -> Result<Self, MarsError> {
+        let canonical = if managed_root.exists() {
+            managed_root.canonicalize().unwrap_or(managed_root.clone())
+        } else {
+            managed_root.clone()
+        };
+        let project_root = canonical.parent()
+            .ok_or_else(|| MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "managed root {} has no parent directory — the managed root must be \
+                     a subdirectory (e.g., /project/.agents, not /project)",
+                    managed_root.display()
+                ),
+            }))?
+            .to_path_buf();
+        Ok(MarsContext { managed_root: canonical, project_root })
+    }
+}
 
 /// mars — agent package manager for .agents/
 #[derive(Debug, Parser)]
@@ -118,56 +149,56 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Add(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            add::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            add::run(args, &ctx, cli.json)
         }
         Command::Remove(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            remove::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            remove::run(args, &ctx, cli.json)
         }
         Command::Sync(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            sync::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            sync::run(args, &ctx, cli.json)
         }
         Command::Upgrade(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            upgrade::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            upgrade::run(args, &ctx, cli.json)
         }
         Command::Outdated(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            outdated::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            outdated::run(args, &ctx, cli.json)
         }
         Command::List(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            list::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            list::run(args, &ctx, cli.json)
         }
         Command::Why(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            why::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            why::run(args, &ctx, cli.json)
         }
         Command::Rename(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            rename::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            rename::run(args, &ctx, cli.json)
         }
         Command::Resolve(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            resolve_cmd::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            resolve_cmd::run(args, &ctx, cli.json)
         }
         Command::Override(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            override_cmd::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            override_cmd::run(args, &ctx, cli.json)
         }
         Command::Link(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            link::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            link::run(args, &ctx, cli.json)
         }
         Command::Doctor(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            doctor::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            doctor::run(args, &ctx, cli.json)
         }
         Command::Repair(args) => {
-            let root = find_agents_root(cli.root.as_deref())?;
-            repair::run(args, &root, cli.json)
+            let ctx = find_agents_root(cli.root.as_deref())?;
+            repair::run(args, &ctx, cli.json)
         }
     }
 }
@@ -182,9 +213,9 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
 /// 1. `.agents/agents.toml` (convention default)
 /// 2. `.claude/agents.toml` (Claude Code projects)
 /// 3. If cwd itself contains `agents.toml`, use it directly
-pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
+pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     if let Some(root) = explicit {
-        return Ok(root.to_path_buf());
+        return MarsContext::new(root.to_path_buf());
     }
 
     let cwd = std::env::current_dir()?;
@@ -195,13 +226,13 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
         for subdir in WELL_KNOWN.iter().chain(TOOL_DIRS.iter()) {
             let candidate = dir.join(subdir);
             if candidate.join("agents.toml").exists() {
-                return Ok(candidate);
+                return MarsContext::new(candidate);
             }
         }
 
         // Check if we're already inside a mars-managed directory
         if dir.join("agents.toml").exists() {
-            return Ok(dir.to_path_buf());
+            return MarsContext::new(dir.to_path_buf());
         }
 
         // Walk up
@@ -211,13 +242,12 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<PathBuf, MarsError> {
         }
     }
 
-    Err(MarsError::Source {
-        source_name: "root".to_string(),
+    Err(MarsError::Config(ConfigError::Invalid {
         message: format!(
             "no agents.toml found from {} to /. Run `mars init` first.",
             cwd.display()
         ),
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -228,8 +258,8 @@ mod tests {
     #[test]
     fn find_root_with_explicit_path() {
         let dir = TempDir::new().unwrap();
-        let root = find_agents_root(Some(dir.path())).unwrap();
-        assert_eq!(root, dir.path());
+        let ctx = find_agents_root(Some(dir.path())).unwrap();
+        assert_eq!(ctx.managed_root, dir.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -245,7 +275,15 @@ mod tests {
 
         // find_agents_root uses cwd, so we test with explicit
         // The actual walk-up requires changing cwd which isn't safe in tests
-        let found = find_agents_root(Some(&agents_dir)).unwrap();
-        assert_eq!(found, agents_dir);
+        let ctx = find_agents_root(Some(&agents_dir)).unwrap();
+        assert_eq!(ctx.managed_root, agents_dir.canonicalize().unwrap());
+        assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn mars_context_new_errors_on_root_path() {
+        // "/" has no parent — should error
+        let result = MarsContext::new(std::path::PathBuf::from("/"));
+        assert!(result.is_err());
     }
 }

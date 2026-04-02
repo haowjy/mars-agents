@@ -1,6 +1,5 @@
 //! `mars add <source>` — add or update a source, then sync.
 
-use std::path::Path;
 
 use crate::config::{FilterConfig, SourceEntry};
 use crate::error::{ConfigError, MarsError};
@@ -36,7 +35,7 @@ struct ParsedSource {
 }
 
 /// Run `mars add`.
-pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     // Parse source specifier
     let parsed = parse_source_specifier(&args.source)?;
 
@@ -90,11 +89,11 @@ pub fn run(args: &AddArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     };
 
     // Check if source already exists before executing (for accurate messaging).
-    let already_exists = crate::config::load(root)
+    let already_exists = crate::config::load(&ctx.managed_root)
         .map(|c| c.sources.contains_key(&parsed.name))
         .unwrap_or(false);
 
-    let report = crate::sync::execute(root, &request)?;
+    let report = crate::sync::execute(&ctx.managed_root, &request)?;
 
     if !json {
         if already_exists {
@@ -141,6 +140,7 @@ fn parse_source_specifier(spec: &str) -> Result<ParsedSource, MarsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn parse_github_shorthand() {

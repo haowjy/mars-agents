@@ -1,6 +1,5 @@
 //! `mars upgrade` — upgrade sources to newest versions within constraints.
 
-use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
@@ -16,7 +15,7 @@ pub struct UpgradeArgs {
 }
 
 /// Run `mars upgrade`.
-pub fn run(args: &UpgradeArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Maximize {
             targets: args
@@ -29,7 +28,7 @@ pub fn run(args: &UpgradeArgs, root: &Path, json: bool) -> Result<i32, MarsError
         options: SyncOptions::default(),
     };
 
-    let report = crate::sync::execute(root, &request)?;
+    let report = crate::sync::execute(&ctx.managed_root, &request)?;
 
     output::print_sync_report(&report, json);
 

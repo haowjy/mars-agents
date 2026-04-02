@@ -16,8 +16,8 @@ pub struct ResolveArgs {
 }
 
 /// Run `mars resolve`.
-pub fn run(args: &ResolveArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let mut lock = crate::lock::load(root)?;
+pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let mut lock = crate::lock::load(&ctx.managed_root)?;
     let mut resolved_files = Vec::new();
     let mut still_conflicted = Vec::new();
 
@@ -38,7 +38,7 @@ pub fn run(args: &ResolveArgs, root: &Path, json: bool) -> Result<i32, MarsError
     };
 
     for dest_path_str in &items_to_check {
-        let disk_path = root.join(dest_path_str);
+        let disk_path = ctx.managed_root.join(dest_path_str);
         if !disk_path.exists() {
             continue;
         }
@@ -61,7 +61,7 @@ pub fn run(args: &ResolveArgs, root: &Path, json: bool) -> Result<i32, MarsError
 
     // Write updated lock
     if !resolved_files.is_empty() {
-        crate::lock::write(root, &lock)?;
+        crate::lock::write(&ctx.managed_root, &lock)?;
     }
 
     if json {

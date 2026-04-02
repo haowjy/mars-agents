@@ -17,17 +17,17 @@ pub struct RepairArgs {}
 /// Re-syncs everything from config. This is effectively a forced sync
 /// that rebuilds the state. If lock exists, items are re-installed from
 /// sources to match it. If lock is missing, a fresh sync is performed.
-pub fn run(_args: &RepairArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     if !json {
         output::print_info("repairing — re-syncing from sources...");
     }
 
-    let recovered_corrupt_lock = match crate::lock::load(root) {
+    let recovered_corrupt_lock = match crate::lock::load(&ctx.managed_root) {
         Ok(_) => false,
         Err(MarsError::Lock(LockError::Corrupt { message })) => {
             eprintln!("warning: {message}");
             eprintln!("warning: lock is corrupt, rebuilding from agents.toml + sources");
-            crate::lock::write(root, &LockFile::empty())?;
+            crate::lock::write(&ctx.managed_root, &LockFile::empty())?;
             true
         }
         Err(err) => return Err(err),
@@ -45,9 +45,9 @@ pub fn run(_args: &RepairArgs, root: &Path, json: bool) -> Result<i32, MarsError
 
     // Force sync: overwrites everything, rebuilds from sources.
     let report = if recovered_corrupt_lock {
-        execute_repair_with_collision_cleanup(root, &request)?
+        execute_repair_with_collision_cleanup(&ctx.managed_root, &request)?
     } else {
-        crate::sync::execute(root, &request)?
+        crate::sync::execute(&ctx.managed_root, &request)?
     };
 
     output::print_sync_report(&report, json);

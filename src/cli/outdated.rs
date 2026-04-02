@@ -1,6 +1,5 @@
 //! `mars outdated` — show available updates without applying.
 
-use std::path::Path;
 
 use serde::Serialize;
 
@@ -23,9 +22,9 @@ struct OutdatedEntry {
 }
 
 /// Run `mars outdated`.
-pub fn run(_args: &OutdatedArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(root)?;
-    let config = crate::config::load(root)?;
+pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let lock = crate::lock::load(&ctx.managed_root)?;
+    let config = crate::config::load(&ctx.managed_root)?;
     let cache = crate::source::GlobalCache::new()?;
 
     let mut entries = Vec::new();

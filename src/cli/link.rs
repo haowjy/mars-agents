@@ -23,8 +23,8 @@ pub struct LinkArgs {
 }
 
 /// Run `mars link`.
-pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let project_root = root.parent().unwrap_or(root);
+pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let project_root = &ctx.project_root;
     let target_dir = if Path::new(&args.target).is_absolute() {
         std::path::PathBuf::from(&args.target)
     } else {
@@ -32,7 +32,7 @@ pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     };
 
     if args.unlink {
-        return unlink(root, &args.target, &target_dir, json);
+        return unlink(ctx, &args.target, &target_dir, json);
     }
 
     // Create target directory if needed
@@ -42,7 +42,7 @@ pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     })?;
 
     // Compute relative path from target dir back to mars root
-    let rel_root = pathdiff::diff_paths(root, &target_dir).unwrap_or_else(|| root.to_path_buf());
+    let rel_root = pathdiff::diff_paths(&ctx.managed_root, &target_dir).unwrap_or_else(|| ctx.managed_root.clone());
 
     let mut linked = 0;
     for subdir in ["agents", "skills"] {
@@ -73,7 +73,7 @@ pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         }
 
         // Ensure the source dir exists
-        let source_dir = root.join(subdir);
+        let source_dir = ctx.managed_root.join(subdir);
         if !source_dir.exists() {
             std::fs::create_dir_all(&source_dir)?;
         }
@@ -98,7 +98,7 @@ pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     }
 
     // Persist the link in settings
-    persist_link(root, &args.target)?;
+    persist_link(&ctx.managed_root, &args.target)?;
 
     if json {
         output::print_json(&serde_json::json!({
@@ -119,7 +119,7 @@ pub fn run(args: &LinkArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
 }
 
 /// Remove symlinks created by `mars link`.
-fn unlink(root: &Path, target_name: &str, target_dir: &Path, json: bool) -> Result<i32, MarsError> {
+fn unlink(ctx: &super::MarsContext, target_name: &str, target_dir: &Path, json: bool) -> Result<i32, MarsError> {
     let mut removed = 0;
 
     for subdir in ["agents", "skills"] {
@@ -136,7 +136,7 @@ fn unlink(root: &Path, target_name: &str, target_dir: &Path, json: bool) -> Resu
     }
 
     // Remove from settings
-    remove_link(root, target_name)?;
+    remove_link(&ctx.managed_root, target_name)?;
 
     if json {
         output::print_json(&serde_json::json!({

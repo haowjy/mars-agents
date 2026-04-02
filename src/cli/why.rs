@@ -27,8 +27,8 @@ struct WhyResult {
 }
 
 /// Run `mars why`.
-pub fn run(args: &WhyArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(root)?;
+pub fn run(args: &WhyArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let lock = crate::lock::load(&ctx.managed_root)?;
 
     // Find the item by name (try matching dest_path, name stem, or skill dir name)
     let mut found = None;
@@ -70,7 +70,7 @@ pub fn run(args: &WhyArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
 
     // Find which agents reference this item (if it's a skill)
     let required_by = if item.kind == ItemKind::Skill {
-        find_referencing_agents(root, &lock, &args.name)
+        find_referencing_agents(&ctx.managed_root, &lock, &args.name)
     } else {
         Vec::new()
     };

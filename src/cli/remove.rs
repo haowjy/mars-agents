@@ -1,6 +1,5 @@
 //! `mars remove <source>` — remove a source from config and prune its items.
 
-use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
@@ -16,7 +15,7 @@ pub struct RemoveArgs {
 }
 
 /// Run `mars remove`.
-pub fn run(args: &RemoveArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::RemoveSource {
@@ -24,7 +23,7 @@ pub fn run(args: &RemoveArgs, root: &Path, json: bool) -> Result<i32, MarsError>
         }),
         options: SyncOptions::default(),
     };
-    let report = crate::sync::execute(root, &request)?;
+    let report = crate::sync::execute(&ctx.managed_root, &request)?;
 
     if !json {
         output::print_info(&format!("removed source `{}`", args.source));

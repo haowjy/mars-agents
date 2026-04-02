@@ -1,6 +1,5 @@
 //! `mars sync` — resolve + install (make reality match config).
 
-use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
@@ -24,7 +23,7 @@ pub struct SyncArgs {
 }
 
 /// Run `mars sync`.
-pub fn run(args: &SyncArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -35,7 +34,7 @@ pub fn run(args: &SyncArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
         },
     };
 
-    let report = crate::sync::execute(root, &request)?;
+    let report = crate::sync::execute(&ctx.managed_root, &request)?;
 
     output::print_sync_report(&report, json);
 

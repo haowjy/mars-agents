@@ -1,6 +1,5 @@
 //! `mars override` — set a local dev override for a source.
 
-use std::path::Path;
 
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
@@ -20,7 +19,7 @@ pub struct OverrideArgs {
 }
 
 /// Run `mars override`.
-pub fn run(args: &OverrideArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::SetOverride {
@@ -29,7 +28,7 @@ pub fn run(args: &OverrideArgs, root: &Path, json: bool) -> Result<i32, MarsErro
         }),
         options: SyncOptions::default(),
     };
-    let report = crate::sync::execute(root, &request)?;
+    let report = crate::sync::execute(&ctx.managed_root, &request)?;
 
     if !json {
         output::print_success(&format!(

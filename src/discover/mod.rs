@@ -89,6 +89,163 @@ pub fn discover_source(tree_path: &Path) -> Result<Vec<DiscoveredItem>, MarsErro
     Ok(items)
 }
 
+/// An installed item with parsed frontmatter metadata.
+#[derive(Debug, Clone)]
+pub struct InstalledItem {
+    pub id: ItemId,
+    /// Disk path (absolute) to the installed file/dir.
+    pub path: PathBuf,
+    /// Parsed frontmatter name (may differ from filename).
+    pub frontmatter_name: Option<String>,
+    /// Parsed frontmatter description.
+    pub description: Option<String>,
+    /// Skills referenced in frontmatter (agents only).
+    pub skill_refs: Vec<String>,
+    /// Whether this is a symlink (skipped from validation).
+    pub is_symlink: bool,
+}
+
+/// Result of scanning an installed managed root.
+#[derive(Debug, Clone)]
+pub struct InstalledState {
+    pub agents: Vec<InstalledItem>,
+    pub skills: Vec<InstalledItem>,
+}
+
+/// Discover all installed agents and skills in a managed root.
+///
+/// Scans `agents/*.md` and `skills/*/SKILL.md`, parses frontmatter,
+/// and collects metadata. Includes symlinks (marked as such) so
+/// callers can decide whether to skip or warn.
+pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
+    let mut agents = Vec::new();
+    let mut skills = Vec::new();
+
+    // Scan agents/*.md
+    let agents_dir = root.join("agents");
+    if agents_dir.is_dir() {
+        for entry in std::fs::read_dir(&agents_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+
+            // Skip hidden files
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            let is_symlink = path
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+
+            // Must be a .md file (following symlinks for the check)
+            if !path.is_file() {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str());
+            if ext != Some("md") {
+                continue;
+            }
+
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            let (frontmatter_name, description, skill_refs) =
+                parse_installed_frontmatter(&path);
+
+            agents.push(InstalledItem {
+                id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: ItemName::from(stem),
+                },
+                path,
+                frontmatter_name,
+                description,
+                skill_refs,
+                is_symlink,
+            });
+        }
+    }
+
+    // Scan skills/*/SKILL.md
+    let skills_dir = root.join("skills");
+    if skills_dir.is_dir() {
+        for entry in std::fs::read_dir(&skills_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dir_name = entry.file_name();
+            let name_str = dir_name.to_string_lossy();
+
+            // Skip hidden directories
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            let is_symlink = path
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+
+            if !path.is_dir() {
+                continue;
+            }
+
+            let skill_md = path.join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+
+            let (frontmatter_name, description, _) =
+                parse_installed_frontmatter(&skill_md);
+
+            skills.push(InstalledItem {
+                id: ItemId {
+                    kind: ItemKind::Skill,
+                    name: ItemName::from(name_str.into_owned()),
+                },
+                path,
+                frontmatter_name,
+                description,
+                skill_refs: Vec::new(),
+                is_symlink,
+            });
+        }
+    }
+
+    // Sort for deterministic order
+    agents.sort_by(|a, b| a.id.cmp(&b.id));
+    skills.sort_by(|a, b| a.id.cmp(&b.id));
+
+    Ok(InstalledState { agents, skills })
+}
+
+/// Parse frontmatter from an installed file, returning (name, description, skill_refs).
+/// Returns None/empty on parse failure — the item is still discovered.
+fn parse_installed_frontmatter(
+    path: &Path,
+) -> (Option<String>, Option<String>, Vec<String>) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (None, None, Vec::new()),
+    };
+    match crate::frontmatter::parse(&content) {
+        Ok(fm) => {
+            let name = fm.name().map(str::to_owned);
+            let description = fm
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+            let skill_refs = fm.skills();
+            (name, description, skill_refs)
+        }
+        Err(_) => (None, None, Vec::new()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,5 +478,85 @@ mod tests {
         let items = discover_source(tree.path()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name, "planning");
+    }
+
+    // === discover_installed tests ===
+
+    #[test]
+    fn discover_installed_finds_agents_and_skills() {
+        let root = TempDir::new().unwrap();
+        let agents_dir = root.path().join("agents");
+        let skills_dir = root.path().join("skills");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::create_dir_all(skills_dir.join("planning")).unwrap();
+        fs::write(agents_dir.join("coder.md"), "---\nname: coder\n---\n# Agent").unwrap();
+        fs::write(
+            skills_dir.join("planning").join("SKILL.md"),
+            "---\nname: planning\n---\n# Skill",
+        )
+        .unwrap();
+
+        let state = discover_installed(root.path()).unwrap();
+        assert_eq!(state.agents.len(), 1);
+        assert_eq!(state.agents[0].id.name, "coder");
+        assert_eq!(state.skills.len(), 1);
+        assert_eq!(state.skills[0].id.name, "planning");
+    }
+
+    #[test]
+    fn discover_installed_parses_frontmatter() {
+        let root = TempDir::new().unwrap();
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("coder.md"),
+            "---\nname: my-coder\ndescription: A coding agent\nskills:\n  - planning\n  - review\n---\n# Agent",
+        )
+        .unwrap();
+
+        let state = discover_installed(root.path()).unwrap();
+        assert_eq!(state.agents.len(), 1);
+        let agent = &state.agents[0];
+        assert_eq!(agent.frontmatter_name.as_deref(), Some("my-coder"));
+        assert_eq!(agent.description.as_deref(), Some("A coding agent"));
+        assert_eq!(agent.skill_refs, vec!["planning", "review"]);
+    }
+
+    #[test]
+    fn discover_installed_handles_missing_frontmatter() {
+        let root = TempDir::new().unwrap();
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("bare.md"), "# No frontmatter").unwrap();
+
+        let state = discover_installed(root.path()).unwrap();
+        assert_eq!(state.agents.len(), 1);
+        assert_eq!(state.agents[0].id.name, "bare");
+        assert!(state.agents[0].frontmatter_name.is_none());
+        assert!(state.agents[0].skill_refs.is_empty());
+    }
+
+    #[test]
+    fn discover_installed_handles_symlinks() {
+        let root = TempDir::new().unwrap();
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create a real agent file
+        let real = agents_dir.join("real.md");
+        fs::write(&real, "# Real agent").unwrap();
+
+        // Create a symlink
+        let link = agents_dir.join("linked.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let state = discover_installed(root.path()).unwrap();
+        assert_eq!(state.agents.len(), 2);
+
+        let linked = state.agents.iter().find(|a| a.id.name.as_str() == "linked").unwrap();
+        assert!(linked.is_symlink);
+
+        let real_agent = state.agents.iter().find(|a| a.id.name.as_str() == "real").unwrap();
+        assert!(!real_agent.is_symlink);
     }
 }

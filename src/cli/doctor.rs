@@ -83,78 +83,43 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     // Check skill dependencies — every agent's declared skills must exist on disk.
-    // Scans the actual filesystem, not just the lock — catches both mars-managed
-    // and user-created local skills.
+    // Uses discover_installed() to scan the actual filesystem, catching both
+    // mars-managed and user-created local agents/skills.
     {
         use std::collections::HashSet;
-        let mut agents: Vec<(String, std::path::PathBuf)> = Vec::new();
-        let mut available_skills: HashSet<String> = HashSet::new();
 
-        // Collect agents from lock (we know their paths)
-        for (dest_path, item) in &lock.items {
-            if item.kind == crate::lock::ItemKind::Agent {
-                let name = item.dest_path.to_string();
-                let path = ctx.managed_root.join(dest_path);
-                agents.push((name, path));
+        let installed = crate::discover::discover_installed(&ctx.managed_root)?;
+
+        // Report symlinked items
+        for item in installed.agents.iter().chain(installed.skills.iter()) {
+            if item.is_symlink {
+                let kind = if item.id.kind == crate::lock::ItemKind::Agent {
+                    "agent"
+                } else {
+                    "skill"
+                };
+                issues.push(format!(
+                    "skipping symlinked {kind} `{}` — individual symlinks in managed dirs are not validated",
+                    item.id.name
+                ));
             }
         }
 
-        // Also scan for agent .md files on disk not in the lock (user-created)
-        let agents_dir = ctx.managed_root.join("agents");
-        if agents_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if super::is_symlink(&path) {
-                        let name = path.file_stem()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default();
-                        issues.push(format!(
-                            "skipping symlinked agent `{name}` — individual symlinks in managed dirs are not validated"
-                        ));
-                        continue;
-                    }
-                    if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                        let name = path.file_stem()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default()
-                            .to_string();
-                        if !agents.iter().any(|(n, _)| n.ends_with(&format!("{name}.md"))) {
-                            agents.push((name, path));
-                        }
-                    }
-                }
-            }
-        }
+        let available_skills: HashSet<String> = installed
+            .skills
+            .iter()
+            .filter(|s| !s.is_symlink)
+            .map(|s| s.id.name.to_string())
+            .collect();
 
-        // Scan disk for ALL available skills (managed + unmanaged)
-        let skills_dir = ctx.managed_root.join("skills");
-        if skills_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if super::is_symlink(&path) {
-                        let name = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default();
-                        issues.push(format!(
-                            "skipping symlinked skill `{name}` — individual symlinks in managed dirs are not validated"
-                        ));
-                        continue;
-                    }
-                    if path.is_dir() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            // Verify it has a SKILL.md (valid skill dir)
-                            if path.join("SKILL.md").exists() {
-                                available_skills.insert(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let agents_for_check: Vec<(String, std::path::PathBuf)> = installed
+            .agents
+            .iter()
+            .filter(|a| !a.is_symlink)
+            .map(|a| (a.id.name.to_string(), a.path.clone()))
+            .collect();
 
-        if let Ok(warnings) = crate::validate::check_deps(&agents, &available_skills) {
+        if let Ok(warnings) = crate::validate::check_deps(&agents_for_check, &available_skills) {
             for w in &warnings {
                 match w {
                     crate::validate::ValidationWarning::MissingSkill {

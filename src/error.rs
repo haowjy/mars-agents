@@ -87,10 +87,7 @@ pub enum MarsError {
 
     /// Sync refused to overwrite a file/directory not tracked in mars.lock.
     #[error("source error: {source_name}: refusing to overwrite unmanaged path `{}`", path.display())]
-    UnmanagedCollision {
-        source_name: String,
-        path: PathBuf,
-    },
+    UnmanagedCollision { source_name: String, path: PathBuf },
 
     #[error("resolution failed: {0}")]
     Resolution(#[from] ResolutionError),
@@ -121,10 +118,7 @@ pub enum MarsError {
 
     /// Link operation error — conflict, missing target, bad symlink.
     #[error("link error: {target}: {message}")]
-    Link {
-        target: String,
-        message: String,
-    },
+    Link { target: String, message: String },
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

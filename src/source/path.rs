@@ -149,5 +149,4 @@ mod tests {
             "error should mention 'not a directory': {err}"
         );
     }
-
 }

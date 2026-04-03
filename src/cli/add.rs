@@ -1,6 +1,5 @@
 //! `mars add <source>` — add or update a source, then sync.
 
-
 use crate::config::{FilterConfig, SourceEntry};
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;

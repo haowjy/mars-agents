@@ -58,16 +58,22 @@ impl MarsContext {
         } else {
             managed_root.clone()
         };
-        let project_root = canonical.parent()
-            .ok_or_else(|| MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "managed root {} has no parent directory — the managed root must be \
+        let project_root = canonical
+            .parent()
+            .ok_or_else(|| {
+                MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "managed root {} has no parent directory — the managed root must be \
                      a subdirectory (e.g., /project/.agents, not /project)",
-                    managed_root.display()
-                ),
-            }))?
+                        managed_root.display()
+                    ),
+                })
+            })?
             .to_path_buf();
-        Ok(MarsContext { managed_root: canonical, project_root })
+        Ok(MarsContext {
+            managed_root: canonical,
+            project_root,
+        })
     }
 }
 
@@ -231,8 +237,10 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
                         message: format!(
                             "{}/{} resolves to {} which is outside {}. \
                              The managed root may be a symlink. Use --root to override.",
-                            dir.display(), subdir,
-                            ctx.managed_root.display(), dir.display(),
+                            dir.display(),
+                            subdir,
+                            ctx.managed_root.display(),
+                            dir.display(),
                         ),
                     }));
                 }

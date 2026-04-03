@@ -277,9 +277,11 @@ mod tests {
 
         // Only MissingSkill warnings — no orphan warnings
         assert_eq!(warnings.len(), 2); // missing-a, missing-b
-        assert!(warnings
-            .iter()
-            .all(|w| matches!(w, ValidationWarning::MissingSkill { .. })));
+        assert!(
+            warnings
+                .iter()
+                .all(|w| matches!(w, ValidationWarning::MissingSkill { .. }))
+        );
     }
 
     #[test]

@@ -84,10 +84,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         add_to_gitignore(&managed_root)?;
 
         if !json {
-            output::print_info(&format!(
-                "{} already initialized",
-                managed_root.display()
-            ));
+            output::print_info(&format!("{} already initialized", managed_root.display()));
         }
     }
 

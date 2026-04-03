@@ -50,9 +50,7 @@ fn run_clean(json: bool) -> Result<i32, MarsError> {
     let total = archives + git;
 
     if json {
-        println!(
-            "{{\"freed_bytes\":{total},\"archives_bytes\":{archives},\"git_bytes\":{git}}}"
-        );
+        println!("{{\"freed_bytes\":{total},\"archives_bytes\":{archives},\"git_bytes\":{git}}}");
     } else {
         output::print_info(&format!(
             "cleaned {} (archives: {}, git: {})",

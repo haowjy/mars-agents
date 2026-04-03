@@ -71,10 +71,11 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 
     // Reject self-link — linking the managed root to itself creates circular symlinks
     if let (Ok(target_canon), Ok(root_canon)) = (
-        target_dir.canonicalize().or_else(|_| Ok::<_, std::io::Error>(target_dir.clone())),
+        target_dir
+            .canonicalize()
+            .or_else(|_| Ok::<_, std::io::Error>(target_dir.clone())),
         ctx.managed_root.canonicalize(),
-    )
-        && target_canon == root_canon
+    ) && target_canon == root_canon
     {
         return Err(MarsError::Link {
             target: target_name,
@@ -171,9 +172,7 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             }));
         } else {
             let total = all_conflicts.len() + foreign_details.len();
-            eprintln!(
-                "error: cannot link {target_name} — {total} conflict(s) found:\n"
-            );
+            eprintln!("error: cannot link {target_name} — {total} conflict(s) found:\n");
             for (subdir, info) in &all_conflicts {
                 eprintln!("  {subdir}/{}", info.relative_path.display());
                 eprintln!(
@@ -197,9 +196,7 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
                     foreign_target.display()
                 );
             }
-            eprintln!(
-                "hint: resolve conflicts manually, then retry `mars link {target_name}`"
-            );
+            eprintln!("hint: resolve conflicts manually, then retry `mars link {target_name}`");
             eprintln!(
                 "hint: or use `mars link {target_name} --force` to replace with symlinks (data loss)"
             );
@@ -225,12 +222,7 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             }
             ScanResult::MergeableDir { files_to_move } => {
                 let managed_subdir = ctx.managed_root.join(subdir);
-                merge_and_link(
-                    &link_path,
-                    &link_target,
-                    &managed_subdir,
-                    &files_to_move,
-                )?;
+                merge_and_link(&link_path, &link_target, &managed_subdir, &files_to_move)?;
                 linked += 1;
                 if !json && !files_to_move.is_empty() {
                     output::print_info(&format!(
@@ -298,7 +290,11 @@ fn scan_link_target(link_path: &Path, managed_subdir: &Path) -> ScanResult {
 
         match (actual_resolved, expected_resolved) {
             (Some(a), Some(b)) if a == b => return ScanResult::AlreadyLinked,
-            _ => return ScanResult::ForeignSymlink { target: actual_target },
+            _ => {
+                return ScanResult::ForeignSymlink {
+                    target: actual_target,
+                };
+            }
         }
     }
 
@@ -392,7 +388,9 @@ fn scan_dir_recursive(target_subdir: &Path, managed_subdir: &Path) -> ScanResult
 /// Compute SHA-256 of a single file for comparison.
 /// Returns None if the file can't be read (permission denied, etc).
 fn hash_file(path: &Path) -> Option<String> {
-    std::fs::read(path).ok().map(|bytes| hash::hash_bytes(&bytes))
+    std::fs::read(path)
+        .ok()
+        .map(|bytes| hash::hash_bytes(&bytes))
 }
 
 // ── Act ─────────────────────────────────────────────────────────────────────
@@ -714,10 +712,7 @@ mod tests {
         match result {
             ScanResult::ConflictedDir { conflicts } => {
                 assert_eq!(conflicts.len(), 1);
-                assert_eq!(
-                    conflicts[0].relative_path,
-                    PathBuf::from("sub/existing.md")
-                );
+                assert_eq!(conflicts[0].relative_path, PathBuf::from("sub/existing.md"));
             }
             _ => panic!("expected ConflictedDir"),
         }
@@ -742,7 +737,13 @@ mod tests {
         // File should be in managed root
         assert!(managed.join("unique.md").exists());
         // target_sub should be a symlink now
-        assert!(target_sub.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(
+            target_sub
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -757,10 +758,8 @@ mod tests {
         std::fs::write(target_sub.join("real.md"), "real agent").unwrap();
 
         // Symlink in target dir — should be skipped, not treated as conflict
-        std::os::unix::fs::symlink(
-            target_sub.join("real.md"),
-            target_sub.join("linked.md"),
-        ).unwrap();
+        std::os::unix::fs::symlink(target_sub.join("real.md"), target_sub.join("linked.md"))
+            .unwrap();
 
         let result = scan_dir_recursive(&target_sub, &managed);
         match result {
@@ -769,7 +768,10 @@ mod tests {
                 assert_eq!(files_to_move.len(), 1);
                 assert_eq!(files_to_move[0], PathBuf::from("real.md"));
             }
-            _ => panic!("expected MergeableDir, got {:?}", std::mem::discriminant(&result)),
+            _ => panic!(
+                "expected MergeableDir, got {:?}",
+                std::mem::discriminant(&result)
+            ),
         }
     }
 

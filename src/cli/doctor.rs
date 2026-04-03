@@ -1,6 +1,5 @@
 //! `mars doctor` — validate state consistency.
 
-
 use crate::error::MarsError;
 use crate::hash;
 

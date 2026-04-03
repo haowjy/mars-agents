@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::error::{LockError, MarsError};
 use crate::lock::LockFile;
-use crate::sync::{ResolutionMode, SyncOptions, SyncRequest, SyncReport};
+use crate::sync::{ResolutionMode, SyncOptions, SyncReport, SyncRequest};
 
 use super::output;
 

@@ -1,6 +1,5 @@
 //! `mars outdated` — show available updates without applying.
 
-
 use serde::Serialize;
 
 use crate::error::MarsError;
@@ -56,7 +55,13 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
         if versions.is_empty() {
             // Untagged repo — compare locked commit vs current HEAD
             let current_head = crate::source::git::ls_remote_head(url.as_ref())
-                .map(|sha| if sha.len() >= 12 { sha[..12].to_string() } else { sha })
+                .map(|sha| {
+                    if sha.len() >= 12 {
+                        sha[..12].to_string()
+                    } else {
+                        sha
+                    }
+                })
                 .unwrap_or_else(|_| "-".to_string());
             let locked_commit = lock
                 .sources

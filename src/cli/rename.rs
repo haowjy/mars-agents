@@ -1,6 +1,5 @@
 //! `mars rename` — rename a managed item.
 
-
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 use crate::types::DestPath;

@@ -1,6 +1,5 @@
 //! `mars sync` — resolve + install (make reality match config).
 
-
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 

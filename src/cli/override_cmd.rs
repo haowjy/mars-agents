@@ -1,6 +1,5 @@
 //! `mars override` — set a local dev override for a source.
 
-
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
 use crate::types::SourceName;

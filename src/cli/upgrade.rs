@@ -1,6 +1,5 @@
 //! `mars upgrade` — upgrade sources to newest versions within constraints.
 
-
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 use crate::types::SourceName;

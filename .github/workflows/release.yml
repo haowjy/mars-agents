@@ -79,7 +79,7 @@ jobs:
             runner: ubuntu-latest
             artifact: wheels-linux-x64
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
             artifact: wheels-linux-arm64
           - target: aarch64-apple-darwin
             runner: macos-latest
@@ -89,12 +89,6 @@ jobs:
             artifact: wheels-darwin-x64
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -225,7 +219,7 @@ jobs:
             (
               cd "$pkg_dir"
               npm version "$VERSION" --no-git-tag-version --allow-same-version
-              cp "../../artifacts/$binary" mars
+              cp "$GITHUB_WORKSPACE/artifacts/$binary" mars
               chmod +x mars
               npm publish --provenance --access public
             )

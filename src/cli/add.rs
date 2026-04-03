@@ -3,7 +3,9 @@
 use crate::config::{DependencyEntry, FilterConfig};
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;
-use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};
+use crate::sync::{
+    ConfigMutation, DependencyUpsertChange, ResolutionMode, SyncOptions, SyncRequest,
+};
 use crate::types::{ItemName, SourceName};
 
 use super::output;
@@ -11,8 +13,9 @@ use super::output;
 /// Arguments for `mars add`.
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
-    /// Source specifier: owner/repo, owner/repo@version, URL, or local path.
-    pub source: String,
+    /// Source specifiers (one or more): owner/repo, owner/repo@version, URL, or local path.
+    #[arg(required = true)]
+    pub sources: Vec<String>,
 
     /// Only install specific agents from this source.
     #[arg(long, value_delimiter = ',')]
@@ -25,6 +28,14 @@ pub struct AddArgs {
     /// Exclude specific items from this source.
     #[arg(long, value_delimiter = ',')]
     pub exclude: Vec<String>,
+
+    /// Install only skills from this source (no agents).
+    #[arg(long)]
+    pub only_skills: bool,
+
+    /// Install only agents (plus their transitive skill deps) from this source.
+    #[arg(long)]
+    pub only_agents: bool,
 }
 
 /// Parsed dependency specifier.
@@ -35,79 +46,117 @@ struct ParsedDependency {
 
 /// Run `mars add`.
 pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    // Parse dependency specifier
-    let parsed = parse_dependency_specifier(&args.source)?;
+    // Validate: filters require exactly one source
+    let has_filters = !args.agents.is_empty()
+        || !args.skills.is_empty()
+        || !args.exclude.is_empty()
+        || args.only_skills
+        || args.only_agents;
 
-    // Build DependencyEntry with filters
-    let entry = DependencyEntry {
-        url: parsed.entry.url,
-        path: parsed.entry.path,
-        version: parsed.entry.version,
-        filter: FilterConfig {
-            agents: if args.agents.is_empty() {
-                None
-            } else {
-                Some(
-                    args.agents
-                        .iter()
-                        .map(|v| ItemName::from(v.as_str()))
-                        .collect(),
-                )
-            },
-            skills: if args.skills.is_empty() {
-                None
-            } else {
-                Some(
-                    args.skills
-                        .iter()
-                        .map(|v| ItemName::from(v.as_str()))
-                        .collect(),
-                )
-            },
-            exclude: if args.exclude.is_empty() {
-                None
-            } else {
-                Some(
-                    args.exclude
-                        .iter()
-                        .map(|v| ItemName::from(v.as_str()))
-                        .collect(),
-                )
-            },
-            rename: None,
-        },
-    };
+    if has_filters && args.sources.len() > 1 {
+        return Err(MarsError::InvalidRequest {
+            message: "filters may only be used when adding exactly one source".to_string(),
+        });
+    }
 
+    // Validate filter flag combinations early
+    let filter_config = build_filter_config(args);
+    crate::config::validate_filter(&filter_config, "cli")?;
+
+    // Build mutations for all sources
+    let mutations: Vec<(SourceName, DependencyEntry)> = args
+        .sources
+        .iter()
+        .map(|source| {
+            let parsed = parse_dependency_specifier(source)?;
+            let entry = DependencyEntry {
+                url: parsed.entry.url,
+                path: parsed.entry.path,
+                version: parsed.entry.version,
+                filter: filter_config.clone(),
+            };
+            Ok((parsed.name, entry))
+        })
+        .collect::<Result<Vec<_>, MarsError>>()?;
+
+    // For single source, use direct mutation path
+    // For multi-source, apply mutations sequentially then run one sync
+    if mutations.len() == 1 {
+        let (name, entry) = mutations.into_iter().next().unwrap();
+
+        let request = SyncRequest {
+            resolution: ResolutionMode::Normal,
+            mutation: Some(ConfigMutation::UpsertDependency {
+                name: name.clone(),
+                entry,
+            }),
+            options: SyncOptions::default(),
+        };
+
+        let report = crate::sync::execute(ctx, &request)?;
+
+        if !json {
+            print_dependency_messages(&report.dependency_changes);
+        }
+
+        output::print_sync_report(&report, json);
+        return if report.has_conflicts() { Ok(1) } else { Ok(0) };
+    }
+
+    // Multi-source: send one batch mutation through sync pipeline.
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
-        mutation: Some(ConfigMutation::UpsertDependency {
-            name: parsed.name.clone(),
-            entry,
-        }),
+        mutation: Some(ConfigMutation::BatchUpsert(mutations)),
         options: SyncOptions::default(),
     };
-
-    // Check if dependency already exists before executing (for accurate messaging).
-    let already_exists = crate::config::load(&ctx.project_root)
-        .map(|c| c.dependencies.contains_key(&parsed.name))
-        .unwrap_or(false);
 
     let report = crate::sync::execute(ctx, &request)?;
 
     if !json {
-        if already_exists {
-            output::print_warn(&format!(
-                "dependency `{}` already exists — updated",
-                parsed.name
-            ));
-        } else {
-            output::print_info(&format!("added dependency `{}`", parsed.name));
-        }
+        print_dependency_messages(&report.dependency_changes);
     }
 
     output::print_sync_report(&report, json);
-
     if report.has_conflicts() { Ok(1) } else { Ok(0) }
+}
+
+/// Build FilterConfig from CLI args.
+fn build_filter_config(args: &AddArgs) -> FilterConfig {
+    FilterConfig {
+        agents: if args.agents.is_empty() {
+            None
+        } else {
+            Some(
+                args.agents
+                    .iter()
+                    .map(|v| ItemName::from(v.as_str()))
+                    .collect(),
+            )
+        },
+        skills: if args.skills.is_empty() {
+            None
+        } else {
+            Some(
+                args.skills
+                    .iter()
+                    .map(|v| ItemName::from(v.as_str()))
+                    .collect(),
+            )
+        },
+        exclude: if args.exclude.is_empty() {
+            None
+        } else {
+            Some(
+                args.exclude
+                    .iter()
+                    .map(|v| ItemName::from(v.as_str()))
+                    .collect(),
+            )
+        },
+        rename: None,
+        only_skills: args.only_skills,
+        only_agents: args.only_agents,
+    }
 }
 
 /// Parse a dependency specifier string into a name + DependencyEntry.
@@ -136,9 +185,66 @@ fn parse_dependency_specifier(spec: &str) -> Result<ParsedDependency, MarsError>
     })
 }
 
+fn print_dependency_messages(changes: &[DependencyUpsertChange]) {
+    for change in changes {
+        if change.already_exists {
+            output::print_warn(&format!(
+                "dependency `{}` already exists — updated",
+                change.name
+            ));
+            if let Some(old_filter) = &change.old_filter
+                && old_filter != &change.new_filter
+            {
+                output::print_info(&format!(
+                    "filters changed: {} → {}",
+                    format_filter(old_filter),
+                    format_filter(&change.new_filter)
+                ));
+            }
+        } else {
+            output::print_info(&format!("added dependency `{}`", change.name));
+        }
+    }
+}
+
+fn format_filter(filter: &FilterConfig) -> String {
+    if filter.only_skills {
+        return "only_skills=true".to_string();
+    }
+    if filter.only_agents {
+        return "only_agents=true".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(agents) = &filter.agents {
+        parts.push(format!("agents=[{}]", format_item_names(agents)));
+    }
+    if let Some(skills) = &filter.skills {
+        parts.push(format!("skills=[{}]", format_item_names(skills)));
+    }
+    if let Some(exclude) = &filter.exclude {
+        parts.push(format!("exclude=[{}]", format_item_names(exclude)));
+    }
+
+    if parts.is_empty() {
+        "all".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn format_item_names(items: &[ItemName]) -> String {
+    items
+        .iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::DependencyUpsertChange;
     use std::path::Path;
 
     #[test]
@@ -238,5 +344,66 @@ mod tests {
             parsed.entry.path.as_deref(),
             Some(Path::new("/home/dev/agents"))
         );
+    }
+
+    #[test]
+    fn format_filter_all() {
+        assert_eq!(format_filter(&FilterConfig::default()), "all");
+    }
+
+    #[test]
+    fn format_filter_only_modes() {
+        assert_eq!(
+            format_filter(&FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            }),
+            "only_skills=true"
+        );
+        assert_eq!(
+            format_filter(&FilterConfig {
+                only_agents: true,
+                ..FilterConfig::default()
+            }),
+            "only_agents=true"
+        );
+    }
+
+    #[test]
+    fn format_filter_lists() {
+        assert_eq!(
+            format_filter(&FilterConfig {
+                agents: Some(vec!["reviewer".into(), "planner".into()]),
+                ..FilterConfig::default()
+            }),
+            "agents=[reviewer,planner]"
+        );
+        assert_eq!(
+            format_filter(&FilterConfig {
+                exclude: Some(vec!["legacy".into()]),
+                ..FilterConfig::default()
+            }),
+            "exclude=[legacy]"
+        );
+    }
+
+    #[test]
+    fn detects_filter_change_for_message() {
+        let old_filter = FilterConfig {
+            agents: Some(vec!["reviewer".into()]),
+            ..FilterConfig::default()
+        };
+        let change = DependencyUpsertChange {
+            name: "ops".into(),
+            already_exists: true,
+            old_filter: Some(old_filter.clone()),
+            new_filter: FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            },
+        };
+        assert_ne!(change.old_filter.as_ref(), Some(&change.new_filter));
+        assert_eq!(format_filter(&old_filter), "agents=[reviewer]");
+        assert_eq!(format_filter(&change.new_filter), "only_skills=true");
     }
 }

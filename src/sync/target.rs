@@ -404,25 +404,69 @@ fn apply_filter(
             }
 
             // Resolve transitive skill deps from agent frontmatter
-            for agent_name in agents {
-                // Find the agent in discovered items
-                if let Some(agent_item) = discovered
-                    .iter()
-                    .find(|i| i.id.kind == ItemKind::Agent && i.id.name == *agent_name)
-                {
-                    let agent_path = tree_path.join(&agent_item.source_path);
-                    let skill_deps = validate::parse_agent_skills(&agent_path).unwrap_or_default();
-                    for skill in skill_deps {
-                        include_set.insert(ItemName::from(skill));
-                    }
-                }
-            }
+            resolve_agent_skill_deps(discovered, agents, tree_path, &mut include_set);
 
             Ok(discovered
                 .iter()
                 .filter(|item| include_set.contains(&item.id.name))
                 .cloned()
                 .collect())
+        }
+
+        FilterMode::OnlySkills => Ok(discovered
+            .iter()
+            .filter(|item| item.id.kind == ItemKind::Skill)
+            .cloned()
+            .collect()),
+
+        FilterMode::OnlyAgents => {
+            // Collect all agents
+            let agents: Vec<_> = discovered
+                .iter()
+                .filter(|item| item.id.kind == ItemKind::Agent)
+                .cloned()
+                .collect();
+
+            // Resolve transitive skill deps from all agent frontmatter
+            let agent_names: Vec<ItemName> = agents.iter().map(|a| a.id.name.clone()).collect();
+            let mut skill_deps: std::collections::HashSet<ItemName> =
+                std::collections::HashSet::new();
+            resolve_agent_skill_deps(discovered, &agent_names, tree_path, &mut skill_deps);
+
+            // Include agents + their transitive skill deps only
+            let skills: Vec<_> = discovered
+                .iter()
+                .filter(|item| item.id.kind == ItemKind::Skill && skill_deps.contains(&item.id.name))
+                .cloned()
+                .collect();
+
+            let mut result = agents;
+            result.extend(skills);
+            Ok(result)
+        }
+    }
+}
+
+/// Resolve transitive skill dependencies from agent frontmatter.
+///
+/// For each agent name, finds the matching discovered item and parses its
+/// frontmatter to extract skill dependencies, inserting them into the provided set.
+fn resolve_agent_skill_deps(
+    discovered: &[discover::DiscoveredItem],
+    agent_names: &[ItemName],
+    tree_path: &Path,
+    skill_deps: &mut std::collections::HashSet<ItemName>,
+) {
+    for agent_name in agent_names {
+        if let Some(agent_item) = discovered
+            .iter()
+            .find(|i| i.id.kind == ItemKind::Agent && i.id.name == *agent_name)
+        {
+            let agent_path = tree_path.join(&agent_item.source_path);
+            let deps = validate::parse_agent_skills(&agent_path).unwrap_or_default();
+            for skill in deps {
+                skill_deps.insert(ItemName::from(skill));
+            }
         }
     }
 }

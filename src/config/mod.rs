@@ -63,6 +63,14 @@ pub struct FilterConfig {
     pub exclude: Option<Vec<ItemName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rename: Option<RenameMap>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub only_skills: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub only_agents: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 /// Dev override config (mars.local.toml).
@@ -118,6 +126,10 @@ pub enum FilterMode {
     },
     /// Install everything except these items.
     Exclude(Vec<ItemName>),
+    /// Install only skills, no agents.
+    OnlySkills,
+    /// Install only agents plus their transitive skill dependencies.
+    OnlyAgents,
 }
 
 /// Effective configuration after merging mars.toml and mars.local.toml.
@@ -253,26 +265,10 @@ pub fn merge_with_root(
             }
         };
 
-        // Validate filter mode: agents/skills XOR exclude
-        let has_include = entry.filter.agents.is_some() || entry.filter.skills.is_some();
-        let has_exclude = entry.filter.exclude.is_some();
-        if has_include && has_exclude {
-            return Err(ConfigError::ConflictingFilters {
-                name: name.to_string(),
-            }
-            .into());
-        }
+        // Validate filter combinations
+        validate_filter(&entry.filter, name.as_ref())?;
 
-        let filter = if has_include {
-            FilterMode::Include {
-                agents: entry.filter.agents.clone().unwrap_or_default(),
-                skills: entry.filter.skills.clone().unwrap_or_default(),
-            }
-        } else if has_exclude {
-            FilterMode::Exclude(entry.filter.exclude.clone().unwrap_or_default())
-        } else {
-            FilterMode::All
-        };
+        let filter = entry.filter.to_mode();
 
         let rename = entry.filter.rename.clone().unwrap_or_default();
 
@@ -315,6 +311,80 @@ pub fn merge_with_root(
         dependencies,
         settings: config.settings,
     })
+}
+
+/// Validate filter configuration for consistency.
+///
+/// Rejects invalid combinations:
+/// - `only_skills` and `only_agents` together
+/// - category-only flags with include lists
+/// - category-only flags with exclude
+/// - include lists with exclude
+pub fn validate_filter(filter: &FilterConfig, dep_name: &str) -> Result<(), MarsError> {
+    let has_include = filter.agents.is_some() || filter.skills.is_some();
+    let has_exclude = filter.exclude.is_some();
+    let has_category = filter.only_skills || filter.only_agents;
+
+    if filter.only_skills && filter.only_agents {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "dependency `{dep_name}`: only_skills and only_agents are mutually exclusive"
+            ),
+        }
+        .into());
+    }
+    if has_category && has_include {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "dependency `{dep_name}`: only_skills/only_agents cannot combine with agents/skills lists"
+            ),
+        }
+        .into());
+    }
+    if has_category && has_exclude {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "dependency `{dep_name}`: only_skills/only_agents cannot combine with exclude"
+            ),
+        }
+        .into());
+    }
+    if has_include && has_exclude {
+        return Err(ConfigError::ConflictingFilters {
+            name: dep_name.to_string(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+impl FilterConfig {
+    /// Convert to the resolved FilterMode enum.
+    pub fn to_mode(&self) -> FilterMode {
+        if self.only_skills {
+            FilterMode::OnlySkills
+        } else if self.only_agents {
+            FilterMode::OnlyAgents
+        } else if self.agents.is_some() || self.skills.is_some() {
+            FilterMode::Include {
+                agents: self.agents.clone().unwrap_or_default(),
+                skills: self.skills.clone().unwrap_or_default(),
+            }
+        } else if self.exclude.is_some() {
+            FilterMode::Exclude(self.exclude.clone().unwrap_or_default())
+        } else {
+            FilterMode::All
+        }
+    }
+
+    /// Returns true if any filter field is set (not default).
+    pub fn has_any_filter(&self) -> bool {
+        self.agents.is_some()
+            || self.skills.is_some()
+            || self.exclude.is_some()
+            || self.only_skills
+            || self.only_agents
+    }
 }
 
 fn source_id_for_spec(root: &Path, spec: &SourceSpec) -> SourceId {
@@ -547,6 +617,8 @@ path = "/local/path"
                             skills: None,
                             exclude: None,
                             rename: None,
+                            only_skills: false,
+                            only_agents: false,
                         },
                     },
                 );
@@ -862,5 +934,197 @@ url = "https://github.com/org/base.git"
             deserialized.settings.managed_root.as_deref(),
             Some(".claude")
         );
+    }
+
+    #[test]
+    fn parse_only_skills_filter() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+only_skills = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let effective = merge(config, local).unwrap();
+        let source = &effective.dependencies["base"];
+        assert!(matches!(source.filter, FilterMode::OnlySkills));
+    }
+
+    #[test]
+    fn parse_only_agents_filter() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+only_agents = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let effective = merge(config, local).unwrap();
+        let source = &effective.dependencies["base"];
+        assert!(matches!(source.filter, FilterMode::OnlyAgents));
+    }
+
+    #[test]
+    fn error_on_only_skills_and_only_agents() {
+        let toml_str = r#"
+[dependencies.bad]
+url = "https://github.com/org/bad.git"
+only_skills = true
+only_agents = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let result = merge(config, local);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("mutually exclusive"),
+            "should mention mutually exclusive: {err}"
+        );
+    }
+
+    #[test]
+    fn error_on_only_skills_with_agents_list() {
+        let toml_str = r#"
+[dependencies.bad]
+url = "https://github.com/org/bad.git"
+only_skills = true
+agents = ["coder"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let result = merge(config, local);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot combine"),
+            "should mention cannot combine: {err}"
+        );
+    }
+
+    #[test]
+    fn error_on_only_agents_with_skills_list() {
+        let toml_str = r#"
+[dependencies.bad]
+url = "https://github.com/org/bad.git"
+only_agents = true
+skills = ["planning"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let result = merge(config, local);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_on_only_skills_with_exclude() {
+        let toml_str = r#"
+[dependencies.bad]
+url = "https://github.com/org/bad.git"
+only_skills = true
+exclude = ["deprecated"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let result = merge(config, local);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn only_skills_false_not_serialized() {
+        let config = Config {
+            dependencies: {
+                let mut m = IndexMap::new();
+                m.insert(
+                    "base".into(),
+                    DependencyEntry {
+                        url: Some("https://github.com/org/base.git".into()),
+                        path: None,
+                        version: None,
+                        filter: FilterConfig::default(),
+                    },
+                );
+                m
+            },
+            settings: Settings::default(),
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            !serialized.contains("only_skills"),
+            "false booleans should not be serialized: {serialized}"
+        );
+        assert!(
+            !serialized.contains("only_agents"),
+            "false booleans should not be serialized: {serialized}"
+        );
+    }
+
+    #[test]
+    fn only_skills_true_roundtrips() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+only_skills = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.dependencies["base"].filter.only_skills);
+        assert!(!config.dependencies["base"].filter.only_agents);
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let reloaded: Config = toml::from_str(&serialized).unwrap();
+        assert!(reloaded.dependencies["base"].filter.only_skills);
+    }
+
+    #[test]
+    fn filter_config_has_any_filter() {
+        assert!(!FilterConfig::default().has_any_filter());
+        assert!(FilterConfig {
+            only_skills: true,
+            ..FilterConfig::default()
+        }
+        .has_any_filter());
+        assert!(FilterConfig {
+            agents: Some(vec!["coder".into()]),
+            ..FilterConfig::default()
+        }
+        .has_any_filter());
+    }
+
+    #[test]
+    fn filter_config_to_mode() {
+        assert!(matches!(FilterConfig::default().to_mode(), FilterMode::All));
+        assert!(matches!(
+            FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            }
+            .to_mode(),
+            FilterMode::OnlySkills
+        ));
+        assert!(matches!(
+            FilterConfig {
+                only_agents: true,
+                ..FilterConfig::default()
+            }
+            .to_mode(),
+            FilterMode::OnlyAgents
+        ));
+        assert!(matches!(
+            FilterConfig {
+                agents: Some(vec!["coder".into()]),
+                ..FilterConfig::default()
+            }
+            .to_mode(),
+            FilterMode::Include { .. }
+        ));
+        assert!(matches!(
+            FilterConfig {
+                exclude: Some(vec!["old".into()]),
+                ..FilterConfig::default()
+            }
+            .to_mode(),
+            FilterMode::Exclude(_)
+        ));
     }
 }

@@ -7,7 +7,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    Config, DependencyEntry, EffectiveConfig, LocalConfig, Manifest, OverrideEntry, Settings,
+    Config, DependencyEntry, EffectiveConfig, FilterConfig, LocalConfig, Manifest, OverrideEntry,
+    Settings,
 };
 use crate::error::{ConfigError, MarsError};
 use crate::hash;
@@ -24,6 +25,7 @@ pub struct SyncReport {
     pub applied: ApplyResult,
     pub pruned: Vec<apply::ActionOutcome>,
     pub warnings: Vec<ValidationWarning>,
+    pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Whether this was a dry run (`--diff`). Affects output wording only.
     pub dry_run: bool,
 }
@@ -66,6 +68,8 @@ pub enum ConfigMutation {
         name: SourceName,
         entry: DependencyEntry,
     },
+    /// Add or update multiple dependencies in mars.toml atomically under one sync lock.
+    BatchUpsert(Vec<(SourceName, DependencyEntry)>),
     /// Remove a dependency from mars.toml.
     RemoveDependency { name: SourceName },
     /// Add or update an override in mars.local.toml.
@@ -81,6 +85,15 @@ pub enum ConfigMutation {
         from: String,
         to: String,
     },
+}
+
+/// Metadata captured when `UpsertDependency` mutates an existing/new dependency.
+#[derive(Debug, Clone)]
+pub struct DependencyUpsertChange {
+    pub name: SourceName,
+    pub already_exists: bool,
+    pub old_filter: Option<FilterConfig>,
+    pub new_filter: FilterConfig,
 }
 
 /// Link-specific config mutations. Separate type from ConfigMutation
@@ -143,9 +156,11 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
 
     // Step 3: Apply config mutation.
     let has_mutation = request.mutation.is_some();
-    if let Some(mutation) = &request.mutation {
-        apply_mutation(&mut config, mutation)?;
-    }
+    let dependency_changes = if let Some(mutation) = &request.mutation {
+        apply_mutation(&mut config, mutation)?
+    } else {
+        Vec::new()
+    };
 
     // Step 4: Load/mutate local overrides under the same lock.
     let mut local = crate::config::load_local(project_root)?;
@@ -313,12 +328,13 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
 
     // Step 15: Persist config/local only after validation gate and before apply.
     if has_mutation && !request.options.dry_run {
-        match request.mutation {
+        match &request.mutation {
             Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
                 crate::config::save_local(project_root, &local)?;
             }
             Some(
                 ConfigMutation::UpsertDependency { .. }
+                | ConfigMutation::BatchUpsert(..)
                 | ConfigMutation::RemoveDependency { .. }
                 | ConfigMutation::SetRename { .. },
             ) => {
@@ -354,6 +370,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         applied,
         pruned,
         warnings,
+        dependency_changes,
         dry_run: request.options.dry_run,
     })
 }
@@ -382,29 +399,27 @@ fn is_config_not_found(error: &MarsError) -> bool {
     matches!(error, MarsError::Config(ConfigError::NotFound { .. }))
 }
 
-fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), MarsError> {
+/// Apply a config mutation to the in-memory config.
+///
+/// Public so that CLI commands can batch mutations before triggering sync.
+pub fn apply_config_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), MarsError> {
+    apply_mutation(config, mutation).map(|_| ())
+}
+
+fn apply_mutation(
+    config: &mut Config,
+    mutation: &ConfigMutation,
+) -> Result<Vec<DependencyUpsertChange>, MarsError> {
     match mutation {
         ConfigMutation::UpsertDependency { name, entry } => {
-            if let Some(existing) = config.dependencies.get_mut(name) {
-                // Merge: update location fields, preserve user customizations
-                existing.url = entry.url.clone();
-                existing.path = entry.path.clone();
-                existing.version = entry.version.clone();
-                // Only overwrite filters if the new entry explicitly sets them
-                if entry.filter.agents.is_some() {
-                    existing.filter.agents = entry.filter.agents.clone();
-                }
-                if entry.filter.skills.is_some() {
-                    existing.filter.skills = entry.filter.skills.clone();
-                }
-                if entry.filter.exclude.is_some() {
-                    existing.filter.exclude = entry.filter.exclude.clone();
-                }
-                // Never overwrite rename rules from add — those are set via `mars rename`
-            } else {
-                config.dependencies.insert(name.clone(), entry.clone());
+            Ok(vec![apply_dependency_upsert(config, name, entry)])
+        }
+        ConfigMutation::BatchUpsert(entries) => {
+            let mut changes = Vec::with_capacity(entries.len());
+            for (name, entry) in entries {
+                changes.push(apply_dependency_upsert(config, name, entry));
             }
-            Ok(())
+            Ok(changes)
         }
         ConfigMutation::RemoveDependency { name } => {
             if !config.dependencies.contains_key(name) {
@@ -414,7 +429,7 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
                 });
             }
             config.dependencies.shift_remove(name);
-            Ok(())
+            Ok(Vec::new())
         }
         ConfigMutation::SetOverride { source_name, .. } => {
             if !config.dependencies.contains_key(source_name) {
@@ -423,7 +438,7 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
                     message: format!("dependency `{source_name}` not found in mars.toml"),
                 });
             }
-            Ok(())
+            Ok(Vec::new())
         }
         ConfigMutation::SetRename {
             source_name,
@@ -443,9 +458,9 @@ fn apply_mutation(config: &mut Config, mutation: &ConfigMutation) -> Result<(), 
                 .rename
                 .get_or_insert_with(crate::types::RenameMap::new);
             rename_map.insert(ItemName::from(from.as_str()), ItemName::from(to.as_str()));
-            Ok(())
+            Ok(Vec::new())
         }
-        ConfigMutation::ClearOverride { .. } => Ok(()),
+        ConfigMutation::ClearOverride { .. } => Ok(Vec::new()),
     }
 }
 
@@ -466,8 +481,50 @@ fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMutation) {
             local.overrides.shift_remove(source_name);
         }
         ConfigMutation::UpsertDependency { .. }
+        | ConfigMutation::BatchUpsert(..)
         | ConfigMutation::RemoveDependency { .. }
         | ConfigMutation::SetRename { .. } => {}
+    }
+}
+
+fn apply_dependency_upsert(
+    config: &mut Config,
+    name: &SourceName,
+    entry: &DependencyEntry,
+) -> DependencyUpsertChange {
+    if let Some(existing) = config.dependencies.get_mut(name) {
+        let old_filter = existing.filter.clone();
+
+        // Merge: update location fields, preserve user customizations
+        existing.url = entry.url.clone();
+        existing.path = entry.path.clone();
+        existing.version = entry.version.clone();
+        // Atomic filter replacement: when any filter field is set on the
+        // incoming entry, replace the entire filter config (minus rename).
+        // This prevents mixed-mode states like agents + only_skills.
+        // When no filter flags are provided (e.g., version bump), preserve existing.
+        if entry.filter.has_any_filter() {
+            let rename = existing.filter.rename.take();
+            existing.filter = entry.filter.clone();
+            // Preserve rename — those are set via `mars rename`, not `mars add`
+            existing.filter.rename = rename;
+        }
+        // Never overwrite rename rules from add — those are set via `mars rename`
+
+        DependencyUpsertChange {
+            name: name.clone(),
+            already_exists: true,
+            old_filter: Some(old_filter),
+            new_filter: existing.filter.clone(),
+        }
+    } else {
+        config.dependencies.insert(name.clone(), entry.clone());
+        DependencyUpsertChange {
+            name: name.clone(),
+            already_exists: false,
+            old_filter: None,
+            new_filter: entry.filter.clone(),
+        }
     }
 }
 
@@ -1358,5 +1415,304 @@ mod tests {
         assert!(fixture.managed_root().join("agents/coder.md").exists());
         assert!(fixture.managed_root().join("agents/reviewer.md").exists());
         assert_eq!(result.outcomes.len(), 2);
+    }
+
+    // === Tests for atomic filter replacement in apply_mutation ===
+
+    #[test]
+    fn apply_mutation_atomic_filter_replacement() {
+        let mut config = Config::default();
+        // First add with agents filter
+        let entry1 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v1".into()),
+            filter: FilterConfig {
+                agents: Some(vec!["reviewer".into()]),
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry1,
+            },
+        )
+        .unwrap();
+        assert!(config.dependencies["base"].filter.agents.is_some());
+
+        // Re-add with only_skills — should atomically replace, clearing agents
+        let entry2 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v1".into()),
+            filter: FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry2,
+            },
+        )
+        .unwrap();
+
+        let dep = &config.dependencies["base"];
+        assert!(dep.filter.only_skills);
+        assert!(
+            dep.filter.agents.is_none(),
+            "agents should be cleared by atomic replacement"
+        );
+    }
+
+    #[test]
+    fn apply_mutation_preserves_filters_on_version_bump() {
+        let mut config = Config::default();
+        // Add with agents filter
+        let entry1 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v1".into()),
+            filter: FilterConfig {
+                agents: Some(vec!["coder".into()]),
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry1,
+            },
+        )
+        .unwrap();
+
+        // Re-add with no filter (version bump only)
+        let entry2 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v2".into()),
+            filter: FilterConfig::default(),
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry2,
+            },
+        )
+        .unwrap();
+
+        let dep = &config.dependencies["base"];
+        assert_eq!(dep.version.as_deref(), Some("v2"));
+        assert_eq!(
+            dep.filter.agents.as_deref(),
+            Some(&["coder".into()][..]),
+            "agents filter should be preserved on version bump"
+        );
+    }
+
+    #[test]
+    fn apply_mutation_preserves_rename_on_filter_change() {
+        let mut config = Config::default();
+        let mut rename_map = crate::types::RenameMap::new();
+        rename_map.insert("old".into(), "new".into());
+
+        let entry1 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: None,
+            filter: FilterConfig {
+                agents: Some(vec!["coder".into()]),
+                rename: Some(rename_map),
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry1,
+            },
+        )
+        .unwrap();
+
+        // Re-add with different filter — rename should be preserved
+        let entry2 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: None,
+            filter: FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry2,
+            },
+        )
+        .unwrap();
+
+        let dep = &config.dependencies["base"];
+        assert!(dep.filter.only_skills);
+        assert!(dep.filter.agents.is_none());
+        assert!(
+            dep.filter.rename.is_some(),
+            "rename should be preserved across filter changes"
+        );
+        assert_eq!(dep.filter.rename.as_ref().unwrap().get("old").unwrap(), "new");
+    }
+
+    #[test]
+    fn apply_mutation_batch_upsert_applies_all_entries() {
+        let mut config = Config::default();
+        let batch = vec![
+            (
+                "base".into(),
+                DependencyEntry {
+                    url: Some("https://github.com/org/base.git".into()),
+                    path: None,
+                    version: Some("v1".into()),
+                    filter: FilterConfig::default(),
+                },
+            ),
+            (
+                "workflow".into(),
+                DependencyEntry {
+                    url: Some("https://github.com/org/workflow.git".into()),
+                    path: None,
+                    version: Some("v2".into()),
+                    filter: FilterConfig::default(),
+                },
+            ),
+        ];
+
+        let changes = apply_mutation(&mut config, &ConfigMutation::BatchUpsert(batch)).unwrap();
+        assert_eq!(changes.len(), 2);
+        assert!(config.dependencies.contains_key("base"));
+        assert!(config.dependencies.contains_key("workflow"));
+    }
+
+    #[test]
+    fn apply_mutation_returns_old_and_new_filters_for_readd() {
+        let mut config = Config::default();
+        let entry1 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v1".into()),
+            filter: FilterConfig {
+                agents: Some(vec!["reviewer".into()]),
+                ..FilterConfig::default()
+            },
+        };
+        apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry1,
+            },
+        )
+        .unwrap();
+
+        let entry2 = DependencyEntry {
+            url: Some("https://github.com/org/base.git".into()),
+            path: None,
+            version: Some("v2".into()),
+            filter: FilterConfig {
+                only_skills: true,
+                ..FilterConfig::default()
+            },
+        };
+        let changes = apply_mutation(
+            &mut config,
+            &ConfigMutation::UpsertDependency {
+                name: "base".into(),
+                entry: entry2,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        assert!(change.already_exists);
+        assert_eq!(change.name, "base");
+        assert_eq!(
+            change.old_filter.as_ref().and_then(|f| f.agents.as_deref()),
+            Some(&["reviewer".into()][..])
+        );
+        assert!(change.new_filter.only_skills);
+        assert!(change.new_filter.agents.is_none());
+    }
+
+    // === Tests for OnlySkills / OnlyAgents filter in pipeline ===
+
+    #[test]
+    fn pipeline_only_skills_filter() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(
+            &[("coder.md", "# Coder agent")],
+            &[("planning", "# Planning skill")],
+        );
+
+        let (graph, config) = make_graph_config(
+            &fixture,
+            vec![("base", src_idx, FilterMode::OnlySkills)],
+        );
+
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        // Should only have the skill, not the agent
+        assert_eq!(target.items.len(), 1);
+        assert!(target.items.contains_key("skills/planning"));
+    }
+
+    #[test]
+    fn pipeline_only_agents_filter() {
+        let mut fixture = TestFixture::new();
+        // Agent with a skill dependency in frontmatter
+        let agent_content = "---\nskills:\n  - planning\n---\n# Coder agent";
+        let src_idx = fixture.add_source(
+            &[("coder.md", agent_content)],
+            &[
+                ("planning", "# Planning skill"),
+                ("standalone", "# Standalone skill"),
+            ],
+        );
+
+        let (graph, config) = make_graph_config(
+            &fixture,
+            vec![("base", src_idx, FilterMode::OnlyAgents)],
+        );
+
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        // Should have the agent + its transitive skill dep, but NOT standalone
+        assert_eq!(target.items.len(), 2);
+        assert!(target.items.contains_key("agents/coder.md"));
+        assert!(target.items.contains_key("skills/planning"));
+        assert!(!target.items.contains_key("skills/standalone"));
+    }
+
+    #[test]
+    fn pipeline_only_agents_no_agents_source() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(
+            &[],
+            &[("planning", "# Planning skill")],
+        );
+
+        let (graph, config) = make_graph_config(
+            &fixture,
+            vec![("base", src_idx, FilterMode::OnlyAgents)],
+        );
+
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        // No agents means nothing gets installed
+        assert_eq!(target.items.len(), 0);
     }
 }

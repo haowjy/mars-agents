@@ -26,9 +26,6 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             artifact: mars-darwin-x64
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-            artifact: mars-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -56,21 +53,16 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Strip binary (Unix)
-        if: matrix.target != 'aarch64-unknown-linux-gnu' && !contains(matrix.target, 'windows')
+      - name: Strip binary
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: strip target/${{ matrix.target }}/release/mars
 
       - name: Strip binary (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: aarch64-linux-gnu-strip target/${{ matrix.target }}/release/mars
 
-      - name: Rename binary (Unix)
-        if: "!contains(matrix.target, 'windows')"
+      - name: Rename binary
         run: cp target/${{ matrix.target }}/release/mars ${{ matrix.artifact }}
-
-      - name: Rename binary (Windows)
-        if: contains(matrix.target, 'windows')
-        run: cp target/${{ matrix.target }}/release/mars.exe ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -95,9 +87,6 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             artifact: wheels-darwin-x64
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-            artifact: wheels-windows-x64
     steps:
       - uses: actions/checkout@v4
 
@@ -235,6 +224,7 @@ jobs:
           }
 
           publish_platform npm/@haowjy/mars-agents-linux-x64 mars-linux-x64
+          publish_platform npm/@haowjy/mars-agents-linux-arm64 mars-linux-arm64
           publish_platform npm/@haowjy/mars-agents-darwin-arm64 mars-darwin-arm64
           publish_platform npm/@haowjy/mars-agents-darwin-x64 mars-darwin-x64
 

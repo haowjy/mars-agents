@@ -16,6 +16,7 @@
   },
   "optionalDependencies": {
     "@haowjy/mars-agents-linux-x64": "0.0.1",
+    "@haowjy/mars-agents-linux-arm64": "0.0.1",
     "@haowjy/mars-agents-darwin-arm64": "0.0.1",
     "@haowjy/mars-agents-darwin-x64": "0.0.1"
   }

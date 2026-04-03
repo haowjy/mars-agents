@@ -1,4 +1,4 @@
-//! `mars remove <source>` — remove a source from config and prune its items.
+//! `mars remove <dependency>` — remove a dependency from config and prune its items.
 
 use crate::error::MarsError;
 use crate::sync::{ConfigMutation, ResolutionMode, SyncOptions, SyncRequest};

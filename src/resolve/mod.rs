@@ -1,7 +1,7 @@
 //! Dependency resolution with semver constraints.
 //!
 //! Algorithm:
-//! 1. Fetch sources from `EffectiveConfig`
+//! 1. Fetch dependencies from `EffectiveConfig`
 //! 2. Read `mars.toml` manifests → discover transitive deps
 //! 3. Intersect version constraints across dependents
 //! 4. Select concrete versions (MVS: minimum version selection)
@@ -184,7 +184,7 @@ pub fn resolve(
     let mut constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>> = HashMap::new();
 
     // Seed with direct dependencies from config
-    for (name, source) in &config.sources {
+    for (name, source) in &config.dependencies {
         let constraint = match &source.spec {
             SourceSpec::Git(git) => parse_version_constraint(git.version.as_deref()),
             SourceSpec::Path(_) => VersionConstraint::Latest, // Path sources: no version
@@ -641,7 +641,7 @@ fn topological_sort(
 mod tests {
     use super::*;
     use crate::config::{
-        DependencyEntry, EffectiveConfig, EffectiveSource, FilterConfig, FilterMode, GitSpec,
+        DependencyEntry, EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec,
         Manifest, PackageInfo, Settings, SourceSpec,
     };
     use crate::types::{RenameMap, SourceId, SourceUrl};
@@ -810,7 +810,7 @@ mod tests {
         for (name, spec) in sources {
             map.insert(
                 name.into(),
-                EffectiveSource {
+                EffectiveDependency {
                     name: name.into(),
                     id: source_id_for_spec(&spec),
                     spec,
@@ -822,7 +822,7 @@ mod tests {
             );
         }
         EffectiveConfig {
-            sources: map,
+            dependencies: map,
             settings: Settings::default(),
         }
     }

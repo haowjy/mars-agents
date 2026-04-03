@@ -106,16 +106,16 @@ pub enum Command {
     /// Initialize project-level mars.toml (managed dir default: .agents/).
     Init(init::InitArgs),
 
-    /// Add a source (git URL, GitHub shorthand, or local path).
+    /// Add a dependency (git URL, GitHub shorthand, or local path).
     Add(add::AddArgs),
 
-    /// Remove a source.
+    /// Remove a dependency.
     Remove(remove::RemoveArgs),
 
     /// Sync: resolve + install (make reality match config).
     Sync(sync::SyncArgs),
 
-    /// Upgrade sources to newest compatible versions.
+    /// Upgrade dependencies to newest compatible versions.
     Upgrade(upgrade::UpgradeArgs),
 
     /// Show available updates without applying.
@@ -160,7 +160,7 @@ pub fn dispatch(cli: Cli) -> i32 {
         Err(err) => {
             eprintln!("error: {err}");
             if matches!(err, MarsError::Lock(LockError::Corrupt { .. })) {
-                eprintln!("hint: run `mars repair` to rebuild from mars.toml + sources");
+                eprintln!("hint: run `mars repair` to rebuild from mars.toml + dependencies");
             }
             err.exit_code()
         }
@@ -273,23 +273,6 @@ pub fn default_project_root() -> Result<PathBuf, MarsError> {
     }
 }
 
-fn is_consumer_config(path: &Path) -> Result<bool, MarsError> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(MarsError::Io(e)),
-    };
-
-    let value: toml::Value = toml::from_str(&content).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to parse {}: {e}", path.display()),
-    })?;
-    let Some(table) = value.as_table() else {
-        return Ok(false);
-    };
-
-    Ok(table.contains_key("dependencies"))
-}
-
 /// Find mars project root by walking up from cwd (or using `--root`).
 ///
 /// Walk-up checks `mars.toml` in each directory and stops at the first
@@ -311,11 +294,10 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
         }
 
         let config_path = root.join("mars.toml");
-        if !is_consumer_config(&config_path)? {
+        if !config_path.exists() {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
-                    "{} does not contain a consumer mars.toml config. \
-                     A file with only [package] is a package manifest; run `mars init` to add [dependencies].",
+                    "{} does not contain mars.toml. Run `mars init` first.",
                     root.display()
                 ),
             }));
@@ -332,7 +314,7 @@ fn find_agents_root_from(_explicit: Option<&Path>, start: &Path) -> Result<MarsC
 
     loop {
         let config_path = dir.join("mars.toml");
-        if is_consumer_config(&config_path)? {
+        if config_path.exists() {
             return MarsContext::new(dir.to_path_buf());
         }
 
@@ -349,7 +331,7 @@ fn find_agents_root_from(_explicit: Option<&Path>, start: &Path) -> Result<MarsC
 
     Err(MarsError::Config(ConfigError::Invalid {
         message: format!(
-            "no consumer mars.toml found from {} up to repository root. Run `mars init` first.",
+            "no mars.toml found from {} up to repository root. Run `mars init` first.",
             start.display()
         ),
     }))
@@ -371,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn package_manifest_without_dependencies_is_not_consumer() {
+    fn package_manifest_without_dependencies_is_valid_project_root() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
@@ -379,8 +361,8 @@ mod tests {
         )
         .unwrap();
 
-        let result = find_agents_root(Some(dir.path()));
-        assert!(result.is_err());
+        let ctx = find_agents_root(Some(dir.path())).unwrap();
+        assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -485,7 +467,7 @@ mod tests {
 
     #[test]
     fn walk_up_stops_at_git_boundary() {
-        // outer has .git + consumer config, inner has .git but no config
+        // outer has .git + mars.toml, inner has .git but no mars.toml
         // Starting from inner should NOT find outer's config
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");
@@ -519,8 +501,8 @@ mod tests {
     }
 
     #[test]
-    fn walk_up_skips_package_only_toml() {
-        // child has package-only mars.toml, parent has consumer config
+    fn walk_up_prefers_nearest_mars_toml() {
+        // child has package-only mars.toml, parent also has mars.toml
         let dir = TempDir::new().unwrap();
         let parent = dir.path().join("parent");
         std::fs::create_dir_all(parent.join(".git")).unwrap();
@@ -536,7 +518,7 @@ mod tests {
         .unwrap();
 
         let ctx = find_agents_root_from(None, &child).unwrap();
-        assert_eq!(ctx.project_root, parent.canonicalize().unwrap());
+        assert_eq!(ctx.project_root, child.canonicalize().unwrap());
     }
 
     #[test]
@@ -556,7 +538,7 @@ mod tests {
 
     #[test]
     fn submodule_isolation() {
-        // Outer repo has .git dir + consumer config
+        // Outer repo has .git dir + mars.toml
         // Inner dir has .git FILE (submodule marker) — should not see outer config
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");

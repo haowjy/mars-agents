@@ -60,6 +60,14 @@ pub struct LockedItem {
     pub dest_path: DestPath,
 }
 
+/// `_self` item data provided by sync to force lock retention.
+#[derive(Debug, Clone)]
+pub struct SelfLockItem {
+    pub dest_path: DestPath,
+    pub kind: ItemKind,
+    pub source_checksum: ContentHash,
+}
+
 /// Stable identity for an installed item — decoupled from source URL.
 ///
 /// Items are identified by `(kind, name)`, not by source URL.
@@ -133,6 +141,7 @@ pub fn build(
     graph: &crate::resolve::ResolvedGraph,
     applied: &crate::sync::apply::ApplyResult,
     old_lock: &LockFile,
+    self_items: Option<&[SelfLockItem]>,
 ) -> Result<LockFile, MarsError> {
     use crate::sync::apply::ActionTaken;
 
@@ -228,6 +237,22 @@ pub fn build(
                     },
                 );
             }
+        }
+    }
+
+    if let Some(self_items) = self_items {
+        for item in self_items {
+            items.insert(
+                item.dest_path.clone(),
+                LockedItem {
+                    source: SourceName::from("_self"),
+                    kind: item.kind,
+                    version: None,
+                    source_checksum: item.source_checksum.clone(),
+                    installed_checksum: item.source_checksum.clone(),
+                    dest_path: item.dest_path.clone(),
+                },
+            );
         }
     }
 
@@ -541,7 +566,7 @@ dest_path = "agents/helper.md"
             items: IndexMap::new(),
         };
 
-        let new_lock = build(&graph, &applied, &old_lock).unwrap();
+        let new_lock = build(&graph, &applied, &old_lock, None).unwrap();
 
         let base = &new_lock.dependencies["base"];
         assert_eq!(base.url.as_ref(), Some(&git_url));
@@ -554,5 +579,30 @@ dest_path = "agents/helper.md"
             local.path.as_deref(),
             Some(path_canonical.to_string_lossy().as_ref())
         );
+    }
+
+    #[test]
+    fn build_keeps_self_items_even_without_symlink_actions() {
+        let graph = ResolvedGraph {
+            nodes: IndexMap::new(),
+            order: Vec::new(),
+            id_index: HashMap::new(),
+        };
+        let applied = ApplyResult { outcomes: vec![] };
+        let old_lock = LockFile::empty();
+        let self_items = vec![SelfLockItem {
+            dest_path: "skills/local-skill".into(),
+            kind: ItemKind::Skill,
+            source_checksum: "sha256:self".into(),
+        }];
+
+        let new_lock = build(&graph, &applied, &old_lock, Some(&self_items)).unwrap();
+
+        assert!(new_lock.dependencies.contains_key("_self"));
+        let item = &new_lock.items["skills/local-skill"];
+        assert_eq!(item.source, "_self");
+        assert_eq!(item.kind, ItemKind::Skill);
+        assert_eq!(item.source_checksum, "sha256:self");
+        assert_eq!(item.installed_checksum, "sha256:self");
     }
 }

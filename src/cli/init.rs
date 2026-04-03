@@ -45,40 +45,10 @@ fn validate_target(target: &str) -> Result<(), MarsError> {
 
 fn ensure_consumer_config(project_root: &Path) -> Result<bool, MarsError> {
     let config_path = project_root.join("mars.toml");
-    if !config_path.exists() {
-        crate::fs::atomic_write(&config_path, b"[dependencies]\n")?;
-        return Ok(false);
+    if config_path.exists() {
+        return Ok(true);
     }
 
-    let content = std::fs::read_to_string(&config_path)?;
-
-    let value: toml::Value = toml::from_str(&content).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to parse {}: {e}", config_path.display()),
-    })?;
-
-    let table = value.as_table().ok_or_else(|| {
-        MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "{} must contain a TOML table at the top level",
-                config_path.display()
-            ),
-        })
-    })?;
-
-    if table.contains_key("dependencies") {
-        return Ok(true); // already a consumer
-    }
-
-    if table.contains_key("package") {
-        return Err(MarsError::Config(ConfigError::Invalid {
-            message: "mars.toml contains [package] but no [dependencies]. To use this as both \
-                a package and a consumer, add [dependencies] manually. Running `mars init` \
-                won't modify an existing package manifest."
-                .into(),
-        }));
-    }
-
-    // File exists but has neither — treat as fresh
     crate::fs::atomic_write(&config_path, b"[dependencies]\n")?;
     Ok(false)
 }
@@ -109,17 +79,15 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 
     // 3. Ensure project config + managed structure
     std::fs::create_dir_all(&managed_root)?;
-    std::fs::create_dir_all(managed_root.join(".mars"))?;
+    std::fs::create_dir_all(project_root.join(".mars"))?;
 
     let already_initialized = ensure_consumer_config(&project_root)?;
 
-    // 4. Persist settings.managed_root when target != .agents
-    if target != ".agents" {
-        persist_managed_root(&project_root, &target)?;
-    }
+    // 4. Persist settings.managed_root.
+    persist_managed_root(&project_root, &target)?;
 
-    add_to_gitignore(&managed_root)?;
     ensure_local_gitignored(&project_root)?;
+    ensure_mars_dir_gitignored(&project_root)?;
 
     if !json {
         if already_initialized {
@@ -162,7 +130,11 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 fn persist_managed_root(project_root: &Path, target: &str) -> Result<(), MarsError> {
     match crate::config::load(project_root) {
         Ok(mut config) => {
-            config.settings.managed_root = Some(target.to_string());
+            config.settings.managed_root = if target == ".agents" {
+                None
+            } else {
+                Some(target.to_string())
+            };
             crate::config::save(project_root, &config)?;
         }
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {
@@ -175,39 +147,22 @@ fn persist_managed_root(project_root: &Path, target: &str) -> Result<(), MarsErr
 
 /// Ensure mars.local.toml is in the project root .gitignore.
 fn ensure_local_gitignored(project_root: &Path) -> Result<(), MarsError> {
-    let gitignore_path = project_root.join(".gitignore");
-    let entry = "mars.local.toml";
-
-    if gitignore_path.exists() {
-        let content = std::fs::read_to_string(&gitignore_path)?;
-        if content.lines().any(|line| line.trim() == entry) {
-            return Ok(());
-        }
-        let mut new_content = content;
-        if !new_content.ends_with('\n') && !new_content.is_empty() {
-            new_content.push('\n');
-        }
-        new_content.push_str(entry);
-        new_content.push('\n');
-        crate::fs::atomic_write(&gitignore_path, new_content.as_bytes())?;
-    } else {
-        crate::fs::atomic_write(&gitignore_path, format!("{entry}\n").as_bytes())?;
-    }
-
-    Ok(())
+    ensure_gitignore_entry(project_root, "mars.local.toml")
 }
 
-/// Add `.mars/` to `.gitignore` in the managed directory if not already present.
-fn add_to_gitignore(managed_dir: &Path) -> Result<(), MarsError> {
-    let gitignore_path = managed_dir.join(".gitignore");
-    let entry = ".mars/";
+/// Ensure `.mars/` is in the project root .gitignore.
+fn ensure_mars_dir_gitignored(project_root: &Path) -> Result<(), MarsError> {
+    ensure_gitignore_entry(project_root, ".mars/")
+}
+
+fn ensure_gitignore_entry(project_root: &Path, entry: &str) -> Result<(), MarsError> {
+    let gitignore_path = project_root.join(".gitignore");
 
     if gitignore_path.exists() {
         let content = std::fs::read_to_string(&gitignore_path)?;
         if content.lines().any(|line| line.trim() == entry) {
             return Ok(());
         }
-        // Append
         let mut new_content = content;
         if !new_content.ends_with('\n') && !new_content.is_empty() {
             new_content.push('\n');
@@ -264,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_consumer_config_refuses_package_only() {
+    fn ensure_consumer_config_accepts_existing_mars_toml() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
@@ -272,13 +227,8 @@ mod tests {
         )
         .unwrap();
 
-        let result = ensure_consumer_config(dir.path());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("[package]") && err.contains("[dependencies]"),
-            "should mention both sections: {err}"
-        );
+        let already = ensure_consumer_config(dir.path()).unwrap();
+        assert!(already);
     }
 
     #[test]
@@ -301,27 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn add_to_gitignore_creates_file() {
+    fn ensure_mars_dir_gitignored_creates_file() {
         let dir = TempDir::new().unwrap();
-        let managed_dir = dir.path().join(".agents");
-        std::fs::create_dir_all(&managed_dir).unwrap();
+        ensure_mars_dir_gitignored(dir.path()).unwrap();
 
-        add_to_gitignore(&managed_dir).unwrap();
-
-        let content = std::fs::read_to_string(managed_dir.join(".gitignore")).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert!(content.contains(".mars/"));
     }
 
     #[test]
-    fn add_to_gitignore_idempotent() {
+    fn ensure_mars_dir_gitignored_idempotent() {
         let dir = TempDir::new().unwrap();
-        let managed_dir = dir.path().join(".agents");
-        std::fs::create_dir_all(&managed_dir).unwrap();
+        ensure_mars_dir_gitignored(dir.path()).unwrap();
+        ensure_mars_dir_gitignored(dir.path()).unwrap();
 
-        add_to_gitignore(&managed_dir).unwrap();
-        add_to_gitignore(&managed_dir).unwrap();
-
-        let content = std::fs::read_to_string(managed_dir.join(".gitignore")).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert_eq!(content.matches(".mars/").count(), 1);
     }
 }

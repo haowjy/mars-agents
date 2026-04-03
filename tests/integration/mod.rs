@@ -65,8 +65,11 @@ fn init_creates_agents_toml() {
 
     let agents_dir = dir.child(".agents");
     assert!(dir.child("mars.toml").exists());
-    assert!(agents_dir.child(".mars").exists());
-    assert!(agents_dir.child(".gitignore").exists());
+    assert!(dir.child(".mars").exists());
+    let gitignore = fs::read_to_string(dir.child(".gitignore").path()).unwrap();
+    assert!(gitignore.contains(".mars/"));
+    assert!(gitignore.contains("mars.local.toml"));
+    assert!(agents_dir.exists());
 }
 
 #[test]
@@ -399,7 +402,7 @@ fn sync_diff_does_not_modify_files() {
 
     let agents_dir = dir.child("project").child(".agents");
     // Manually init so we have the dir without any sync
-    fs::create_dir_all(agents_dir.child(".mars").path()).unwrap();
+    fs::create_dir_all(dir.child("project").child(".mars").path()).unwrap();
     fs::write(
         dir.child("project").child("mars.toml").path(),
         format!(
@@ -834,7 +837,7 @@ fn help_shows_all_commands() {
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn add_rejects_unmanaged_file_collision() {
+fn add_skips_unmanaged_file_collision() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[("coder", "# Managed coder")], &[]);
 
@@ -860,13 +863,18 @@ fn add_rejects_unmanaged_file_collision() {
             dir.child("project").path().to_str().unwrap(),
         ])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "refusing to overwrite unmanaged path",
-        ));
+        .success()
+        .stderr(predicate::str::contains("collides with unmanaged path"));
 
     let content = fs::read_to_string(user_file.path()).unwrap();
     assert_eq!(content, "# User-authored");
+
+    let lock_content =
+        fs::read_to_string(dir.child("project").child("mars.lock").path()).unwrap_or_default();
+    assert!(
+        !lock_content.contains("agents/coder.md"),
+        "collision path should not be added to lock: {lock_content}"
+    );
 }
 
 #[test]
@@ -1323,6 +1331,19 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
+    let lock_content_after_resync = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(
+        lock_content_after_resync.contains("[dependencies._self]"),
+        "lock should retain _self dependency after re-sync: {lock_content_after_resync}"
+    );
+    assert!(
+        lock_content_after_resync.contains("[items.\"agents/local-agent.md\"]"),
+        "lock should retain local _self agent after re-sync: {lock_content_after_resync}"
+    );
+    assert!(
+        lock_content_after_resync.contains("[items.\"skills/local-skill\"]"),
+        "lock should retain local _self skill after re-sync: {lock_content_after_resync}"
+    );
 
     // 14. Re-run init — should be idempotent
     mars()
@@ -1335,7 +1356,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .assert()
         .success();
 
-    // 15. Verify init on package-only mars.toml fails
+    // 15. Verify init on package-only mars.toml succeeds
     let pkg_dir = dir.child("pkg-only");
     pkg_dir.create_dir_all().unwrap();
     fs::write(
@@ -1346,5 +1367,5 @@ fn full_pipeline_with_local_package_and_custom_target() {
     mars()
         .args(["init", "--root", pkg_dir.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .success();
 }

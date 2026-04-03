@@ -71,10 +71,10 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let local = crate::config::load_local(&ctx.project_root).unwrap_or_default();
         if let Ok(effective) = crate::config::merge_with_root(config, local, &ctx.project_root) {
             // Check that all sources in config have corresponding lock entries
-            for source_name in effective.sources.keys() {
+            for source_name in effective.dependencies.keys() {
                 if !lock.dependencies.contains_key(source_name) {
                     issues.push(format!(
-                        "source `{source_name}` is in config but not in lock — run `mars sync`"
+                        "dependency `{source_name}` is in config but not in lock — run `mars sync`"
                     ));
                 }
             }
@@ -92,6 +92,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         // Report symlinked items
         for item in installed.agents.iter().chain(installed.skills.iter()) {
             if item.is_symlink {
+                if is_self_symlink(item, ctx, &lock) {
+                    continue;
+                }
                 let kind = if item.id.kind == crate::lock::ItemKind::Agent {
                     "agent"
                 } else {
@@ -154,6 +157,20 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     output::print_doctor(&issues, json);
 
     if issues.is_empty() { Ok(0) } else { Ok(2) }
+}
+
+fn is_self_symlink(
+    item: &crate::discover::InstalledItem,
+    ctx: &super::MarsContext,
+    lock: &crate::lock::LockFile,
+) -> bool {
+    let Ok(rel_path) = item.path.strip_prefix(&ctx.managed_root) else {
+        return false;
+    };
+    let dest_path = crate::types::DestPath::from(rel_path);
+    lock.items
+        .get(&dest_path)
+        .is_some_and(|locked| locked.source.as_ref() == "_self")
 }
 
 /// Validate link health for a single link target.

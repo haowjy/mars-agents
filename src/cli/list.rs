@@ -63,7 +63,8 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             ItemKind::Skill => disk_path.join("SKILL.md"),
         };
 
-        let (name, description) = read_name_description(&content_path);
+        let fallback_name = path_to_name(&disk_path);
+        let (name, description) = read_name_description(&content_path, &fallback_name);
 
         let entry = CatalogEntry {
             name,
@@ -93,17 +94,17 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 }
 
 /// Read name and description from a file's frontmatter.
-fn read_name_description(path: &Path) -> (String, String) {
+fn read_name_description(path: &Path, fallback_name: &str) -> (String, String) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return (path_to_name(path), String::new()),
+        Err(_) => return (fallback_name.to_string(), String::new()),
     };
     match frontmatter::parse(&content) {
         Ok(fm) => {
             let name = fm
                 .name()
                 .map(str::to_string)
-                .unwrap_or_else(|| path_to_name(path));
+                .unwrap_or_else(|| fallback_name.to_string());
             let description = fm
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -111,7 +112,7 @@ fn read_name_description(path: &Path) -> (String, String) {
                 .to_string();
             (name, description)
         }
-        Err(_) => (path_to_name(path), String::new()),
+        Err(_) => (fallback_name.to_string(), String::new()),
     }
 }
 
@@ -183,4 +184,19 @@ fn has_conflict_markers(path: &Path) -> bool {
     std::fs::read_to_string(path)
         .map(|content| content.contains("<<<<<<<") && content.contains(">>>>>>>"))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn read_name_description_uses_provided_fallback_name() {
+        let dir = TempDir::new().unwrap();
+        let missing_skill_md = dir.path().join("skills/test-skill/SKILL.md");
+        let (name, description) = read_name_description(&missing_skill_md, "test-skill");
+        assert_eq!(name, "test-skill");
+        assert_eq!(description, "");
+    }
 }

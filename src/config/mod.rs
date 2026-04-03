@@ -125,13 +125,13 @@ pub enum FilterMode {
 /// This is what the rest of the pipeline operates on.
 #[derive(Debug, Clone)]
 pub struct EffectiveConfig {
-    pub sources: IndexMap<SourceName, EffectiveSource>,
+    pub dependencies: IndexMap<SourceName, EffectiveDependency>,
     pub settings: Settings,
 }
 
 /// A fully-resolved source with override tracking.
 #[derive(Debug, Clone)]
-pub struct EffectiveSource {
+pub struct EffectiveDependency {
     pub name: SourceName,
     pub id: SourceId,
     pub spec: SourceSpec,
@@ -219,7 +219,7 @@ pub fn merge_with_root(
     local: LocalConfig,
     root: &Path,
 ) -> Result<EffectiveConfig, MarsError> {
-    let mut sources = IndexMap::new();
+    let mut dependencies = IndexMap::new();
 
     for (name, entry) in &config.dependencies {
         // Reject reserved name
@@ -288,9 +288,9 @@ pub fn merge_with_root(
         };
         let id = source_id_for_spec(root, &spec);
 
-        sources.insert(
+        dependencies.insert(
             name.clone(),
-            EffectiveSource {
+            EffectiveDependency {
                 name: name.clone(),
                 id,
                 spec,
@@ -312,7 +312,7 @@ pub fn merge_with_root(
     }
 
     Ok(EffectiveConfig {
-        sources,
+        dependencies,
         settings: config.settings,
     })
 }
@@ -451,7 +451,7 @@ skills = ["review"]
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
         let effective = merge(config, local).unwrap();
-        let source = &effective.sources["base"];
+        let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Include { agents, skills } => {
                 assert_eq!(agents, &["coder"]);
@@ -471,7 +471,7 @@ exclude = ["experimental", "deprecated"]
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
         let effective = merge(config, local).unwrap();
-        let source = &effective.sources["base"];
+        let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Exclude(items) => {
                 assert_eq!(items, &["experimental", "deprecated"]);
@@ -706,8 +706,8 @@ path = "/home/dev/local-base"
         };
         let local = LocalConfig::default();
         let effective = merge(config, local).unwrap();
-        assert_eq!(effective.sources.len(), 1);
-        let source = &effective.sources["base"];
+        assert_eq!(effective.dependencies.len(), 1);
+        let source = &effective.dependencies["base"];
         assert!(!source.is_overridden);
         assert!(source.original_git.is_none());
         match &source.spec {
@@ -751,7 +751,7 @@ path = "/home/dev/local-base"
             },
         };
         let effective = merge(config, local).unwrap();
-        let source = &effective.sources["base"];
+        let source = &effective.dependencies["base"];
         assert!(source.is_overridden);
 
         match &source.spec {
@@ -784,7 +784,10 @@ path = "/home/dev/local-base"
             ..Config::default()
         };
         let effective = merge(config, LocalConfig::default()).unwrap();
-        assert!(matches!(effective.sources["base"].filter, FilterMode::All));
+        assert!(matches!(
+            effective.dependencies["base"].filter,
+            FilterMode::All
+        ));
     }
 
     #[test]
@@ -823,7 +826,7 @@ old-name = "new-name"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let effective = merge(config, LocalConfig::default()).unwrap();
-        let source = &effective.sources["base"];
+        let source = &effective.dependencies["base"];
         assert_eq!(source.rename.get("old-name").unwrap(), "new-name");
     }
 

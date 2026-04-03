@@ -1,4 +1,4 @@
-//! `mars add <source>` — add or update a source, then sync.
+//! `mars add <dependency>` — add or update a dependency, then sync.
 
 use crate::config::{DependencyEntry, FilterConfig};
 use crate::error::{ConfigError, MarsError};

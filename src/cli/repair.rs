@@ -1,4 +1,4 @@
-//! `mars repair` — rebuild state from lock + sources.
+//! `mars repair` — rebuild state from lock + dependencies.
 
 use crate::error::{LockError, MarsError};
 use crate::lock::LockFile;
@@ -14,17 +14,17 @@ pub struct RepairArgs {}
 ///
 /// Re-syncs everything from config. This is effectively a forced sync
 /// that rebuilds the state. If lock exists, items are re-installed from
-/// sources to match it. If lock is missing, a fresh sync is performed.
+/// dependencies to match it. If lock is missing, a fresh sync is performed.
 pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     if !json {
-        output::print_info("repairing — re-syncing from sources...");
+        output::print_info("repairing — re-syncing from dependencies...");
     }
 
     let recovered_corrupt_lock = match crate::lock::load(&ctx.project_root) {
         Ok(_) => false,
         Err(MarsError::Lock(LockError::Corrupt { message })) => {
             eprintln!("warning: {message}");
-            eprintln!("warning: lock is corrupt, rebuilding from mars.toml + sources");
+            eprintln!("warning: lock is corrupt, rebuilding from mars.toml + dependencies");
             crate::lock::write(&ctx.project_root, &LockFile::empty())?;
             true
         }
@@ -41,7 +41,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         },
     };
 
-    // Force sync: overwrites everything, rebuilds from sources.
+    // Force sync: overwrites everything, rebuilds from dependencies.
     let report = if recovered_corrupt_lock {
         execute_repair_with_collision_cleanup(ctx, &request)?
     } else {

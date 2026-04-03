@@ -61,7 +61,7 @@ pub fn build_with_collisions(
 
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
-        let source_config = config.sources.get(source_name);
+        let source_config = config.dependencies.get(source_name);
 
         let discovered =
             discover::discover_source(&node.resolved_ref.tree_path, Some(source_name.as_str()))?;
@@ -263,15 +263,25 @@ pub fn rewrite_skill_refs(
     Ok(warnings)
 }
 
-/// Refuse to overwrite existing on-disk files/directories that are not managed.
+/// Existing on-disk destination that is not lock-managed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmanagedCollision {
+    pub source_name: SourceName,
+    pub path: DestPath,
+}
+
+/// Detect target installs that would overwrite unmanaged on-disk content.
 ///
 /// If a target destination already exists but is not tracked in the lock file,
-/// treat it as user-authored content and fail sync.
+/// treat it as user-authored content and report it as a collision so callers can
+/// skip installation while leaving existing files untouched.
 pub fn check_unmanaged_collisions(
     install_target: &Path,
     lock: &LockFile,
     target: &TargetState,
-) -> Result<(), MarsError> {
+) -> Vec<UnmanagedCollision> {
+    let mut collisions = Vec::new();
+
     for (dest_key, target_item) in &target.items {
         if lock.items.contains_key(dest_key) {
             continue;
@@ -288,14 +298,14 @@ pub fn check_unmanaged_collisions(
                 continue;
             }
 
-            return Err(MarsError::UnmanagedCollision {
-                source_name: target_item.source_name.to_string(),
-                path: target_item.dest_path.to_path_buf(),
+            collisions.push(UnmanagedCollision {
+                source_name: target_item.source_name.clone(),
+                path: target_item.dest_path.clone(),
             });
         }
     }
 
-    Ok(())
+    collisions
 }
 
 fn apply_item_rename(kind: ItemKind, item_name: &str, renames: &RenameMap) -> (ItemName, DestPath) {
@@ -500,7 +510,7 @@ mod tests {
     ) -> (ResolvedGraph, EffectiveConfig) {
         let mut nodes = IndexMap::new();
         let mut order = Vec::new();
-        let mut config_sources = IndexMap::new();
+        let mut config_dependencies = IndexMap::new();
 
         for (name, tree, url, filter) in sources {
             let url_str = url.map(|u| u.to_string());
@@ -537,9 +547,9 @@ mod tests {
                 SourceSpec::Path(tree.path().to_path_buf())
             };
 
-            config_sources.insert(
+            config_dependencies.insert(
                 name.into(),
-                EffectiveSource {
+                EffectiveDependency {
                     name: name.into(),
                     id: if let Some(u) = url {
                         SourceId::git(crate::types::SourceUrl::from(u))
@@ -566,7 +576,7 @@ mod tests {
             id_index: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {
-            sources: config_sources,
+            dependencies: config_dependencies,
             settings: Settings::default(),
         };
         (graph, config)
@@ -722,7 +732,7 @@ mod tests {
 
         // Add rename mapping
         config
-            .sources
+            .dependencies
             .get_mut("base")
             .unwrap()
             .rename
@@ -1103,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn unmanaged_disk_path_collision_errors() {
+    fn unmanaged_disk_path_collision_reported() {
         let tree = make_source_tree(&[("coder.md", "# managed")], &[]);
         let (graph, config) = make_graph_and_config(vec![(
             "base",
@@ -1121,10 +1131,14 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# user-authored").unwrap();
 
-        let err = check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target)
-            .unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("refusing to overwrite unmanaged path"));
+        let collisions =
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+        assert_eq!(collisions.len(), 1);
+        assert_eq!(collisions[0].source_name.as_ref(), "base");
+        assert_eq!(
+            collisions[0].path.as_ref().to_string_lossy(),
+            "agents/coder.md"
+        );
     }
 
     #[test]
@@ -1147,12 +1161,14 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, content).unwrap();
 
-        // Should succeed — disk content matches planned install (crash recovery)
-        check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target).unwrap();
+        // Should skip collision — disk content matches planned install (crash recovery)
+        let collisions =
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+        assert!(collisions.is_empty());
     }
 
     #[test]
-    fn unmanaged_collision_still_errors_on_different_content() {
+    fn unmanaged_collision_reported_on_different_content() {
         let tree = make_source_tree(&[("coder.md", "# managed")], &[]);
         let (graph, config) = make_graph_and_config(vec![(
             "base",
@@ -1170,11 +1186,13 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# different user content").unwrap();
 
-        let err = check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target)
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("refusing to overwrite unmanaged path")
+        let collisions =
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+        assert_eq!(collisions.len(), 1);
+        assert_eq!(collisions[0].source_name.as_ref(), "base");
+        assert_eq!(
+            collisions[0].path.as_ref().to_string_lossy(),
+            "agents/coder.md"
         );
     }
 }

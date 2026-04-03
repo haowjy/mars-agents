@@ -10,11 +10,12 @@ use crate::config::{
     Config, DependencyEntry, EffectiveConfig, LocalConfig, Manifest, OverrideEntry, Settings,
 };
 use crate::error::{ConfigError, MarsError};
+use crate::hash;
 use crate::resolve::{ManifestReader, ResolveOptions, SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::types::{CommitHash, ItemName, MarsContext, SourceName};
+use crate::types::{CommitHash, ContentHash, ItemName, MarsContext, SourceName};
 use crate::validate::ValidationWarning;
 
 /// Report from a completed sync operation.
@@ -95,8 +96,9 @@ pub enum LinkMutation {
 /// Apply a link mutation under sync lock, without running the full sync pipeline.
 /// Only for settings.links changes — use sync::execute for source mutations.
 pub fn mutate_link_config(ctx: &MarsContext, mutation: &LinkMutation) -> Result<(), MarsError> {
-    std::fs::create_dir_all(ctx.managed_root.join(".mars"))?;
-    let lock_path = ctx.managed_root.join(".mars").join("sync.lock");
+    let mars_dir = ctx.project_root.join(".mars");
+    std::fs::create_dir_all(&mars_dir)?;
+    let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
     let mut config = crate::config::load(&ctx.project_root)?;
@@ -119,13 +121,14 @@ pub fn mutate_link_config(ctx: &MarsContext, mutation: &LinkMutation) -> Result<
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     let project_root = &ctx.project_root;
     let managed_root = &ctx.managed_root;
+    let mars_dir = project_root.join(".mars");
 
     validate_request(request)?;
 
-    std::fs::create_dir_all(managed_root.join(".mars").join("cache"))?;
+    std::fs::create_dir_all(mars_dir.join("cache"))?;
 
     // Step 1: Acquire sync lock before any config reads/mutations.
-    let lock_path = managed_root.join(".mars").join("sync.lock");
+    let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
     // Step 2: Load config under lock (auto-init when mutating and missing).
@@ -183,7 +186,15 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     let warnings = validate_skill_refs(managed_root, &target_state);
 
     // Step 11: Prevent managed installs from overwriting unmanaged files.
-    target::check_unmanaged_collisions(managed_root, &old_lock, &target_state)?;
+    let unmanaged_collisions =
+        target::check_unmanaged_collisions(managed_root, &old_lock, &target_state);
+    for collision in &unmanaged_collisions {
+        eprintln!(
+            "warning: source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+            collision.source_name, collision.path
+        );
+        target_state.items.shift_remove(&collision.path);
+    }
 
     // Step 12: Compute diff.
     let sync_diff = diff::compute(
@@ -194,8 +205,9 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     )?;
 
     // Step 13: Create plan.
-    let cache_bases_dir = managed_root.join(".mars").join("cache").join("bases");
+    let cache_bases_dir = mars_dir.join("cache").join("bases");
     let mut sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
+    let mut skipped_self_dests: HashSet<crate::types::DestPath> = HashSet::new();
 
     // Step 13b: Inject local package symlinks into plan.
     if config.package.is_some() {
@@ -221,6 +233,14 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         // Inject symlink actions for items that need updating
         for item in &self_items {
             let dest = managed_root.join(item.dest_rel.as_path());
+            if !old_lock.items.contains_key(&item.dest_rel) && dest.symlink_metadata().is_ok() {
+                eprintln!(
+                    "warning: local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+                    item.kind, item.name, item.dest_rel
+                );
+                skipped_self_dests.insert(item.dest_rel.clone());
+                continue;
+            }
             let needs_update = match dest.symlink_metadata() {
                 Ok(meta) if meta.file_type().is_symlink() => {
                     let current_target = std::fs::read_link(&dest).ok();
@@ -301,7 +321,19 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
 
     // Step 17: Write lock file.
     if !request.options.dry_run {
-        let new_lock = crate::lock::build(&graph, &applied, &old_lock)?;
+        let self_lock_items = if config.package.is_some() {
+            let self_items = discover_local_items(project_root)?;
+            let filtered: Vec<_> = self_items
+                .into_iter()
+                .filter(|item| !skipped_self_dests.contains(&item.dest_rel))
+                .collect();
+            build_self_lock_items(&filtered)?
+        } else {
+            Vec::new()
+        };
+        let self_items_for_lock =
+            (!self_lock_items.is_empty()).then_some(self_lock_items.as_slice());
+        let new_lock = crate::lock::build(&graph, &applied, &old_lock, self_items_for_lock)?;
         crate::lock::write(project_root, &new_lock)?;
     }
 
@@ -432,10 +464,10 @@ fn validate_targets(
 ) -> Result<(), MarsError> {
     if let ResolutionMode::Maximize { targets } = resolution {
         for name in targets {
-            if !effective.sources.contains_key(name) {
+            if !effective.dependencies.contains_key(name) {
                 return Err(MarsError::Source {
                     source_name: name.to_string(),
-                    message: format!("source `{name}` not found in mars.toml"),
+                    message: format!("dependency `{name}` not found in mars.toml"),
                 });
             }
         }
@@ -629,6 +661,19 @@ fn discover_local_items(project_root: &Path) -> Result<Vec<LocalItem>, MarsError
     Ok(items)
 }
 
+fn build_self_lock_items(items: &[LocalItem]) -> Result<Vec<crate::lock::SelfLockItem>, MarsError> {
+    let mut lock_items = Vec::with_capacity(items.len());
+    for item in items {
+        let source_checksum = ContentHash::from(hash::compute_hash(&item.source_path, item.kind)?);
+        lock_items.push(crate::lock::SelfLockItem {
+            dest_path: item.dest_rel.clone(),
+            kind: item.kind,
+            source_checksum,
+        });
+    }
+    Ok(lock_items)
+}
+
 /// Check if a planned action targets a specific destination path.
 fn action_matches_dest(action: &plan::PlannedAction, dest: &crate::types::DestPath) -> bool {
     match action {
@@ -666,7 +711,7 @@ mod tests {
             let project_root = TempDir::new().unwrap();
             let managed_root = project_root.path().join(".agents");
             // Create .mars/cache directories
-            fs::create_dir_all(managed_root.join(".mars/cache/bases")).unwrap();
+            fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
             TestFixture {
                 project_root,
                 managed_root,
@@ -715,7 +760,7 @@ mod tests {
     ) -> (ResolvedGraph, EffectiveConfig) {
         let mut nodes = IndexMap::new();
         let mut order = Vec::new();
-        let mut config_sources = IndexMap::new();
+        let mut config_dependencies = IndexMap::new();
 
         for (name, tree_idx, filter) in sources {
             let tree_path = fixture.tree_path(tree_idx);
@@ -739,9 +784,9 @@ mod tests {
             );
             order.push(name.into());
 
-            config_sources.insert(
+            config_dependencies.insert(
                 name.into(),
-                EffectiveSource {
+                EffectiveDependency {
                     name: name.into(),
                     id: crate::types::SourceId::Path {
                         canonical: tree_path.clone(),
@@ -762,7 +807,7 @@ mod tests {
                 id_index: std::collections::HashMap::new(),
             },
             EffectiveConfig {
-                sources: config_sources,
+                dependencies: config_dependencies,
                 settings: Settings::default(),
             },
         )
@@ -819,7 +864,7 @@ mod tests {
     fn execute_auto_inits_config_for_mutation() {
         let project_root = TempDir::new().unwrap();
         let managed_root = project_root.path().join(".agents");
-        fs::create_dir_all(managed_root.join(".mars/cache/bases")).unwrap();
+        fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
         let source = TempDir::new().unwrap();
         fs::create_dir_all(source.path().join("agents")).unwrap();
         fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
@@ -846,7 +891,7 @@ mod tests {
     fn execute_dry_run_with_mutation_does_not_write_config() {
         let project_root = TempDir::new().unwrap();
         let managed_root = project_root.path().join(".agents");
-        fs::create_dir_all(managed_root.join(".mars/cache/bases")).unwrap();
+        fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
         crate::config::save(
             project_root.path(),
             &Config {
@@ -912,7 +957,7 @@ mod tests {
         }
 
         // Create plan
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -939,7 +984,7 @@ mod tests {
         );
 
         // Build lock
-        let new_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let new_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
         assert_eq!(new_lock.items.len(), 2);
         assert!(new_lock.items.contains_key("agents/coder.md"));
         assert!(new_lock.items.contains_key("skills/planning"));
@@ -957,7 +1002,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -966,7 +1011,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
 
         // Second sync with same content
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
@@ -998,7 +1043,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -1007,7 +1052,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
 
         // Update source content
         let agents_dir = fixture.tree_path(src_idx).join("agents");
@@ -1037,7 +1082,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -1046,7 +1091,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
 
         // Locally modify the installed file
         fs::write(
@@ -1086,7 +1131,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -1095,7 +1140,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
 
         // Locally modify the installed file
         fs::write(
@@ -1155,7 +1200,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -1164,7 +1209,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
 
         assert!(fixture.managed_root().join("agents/coder.md").exists());
         assert!(fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1213,7 +1258,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
 
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let dry_options = SyncOptions {
             force: false,
             dry_run: true,
@@ -1243,7 +1288,7 @@ mod tests {
         let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,
@@ -1253,7 +1298,7 @@ mod tests {
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
 
-        let new_lock = crate::lock::build(&graph, &result, &lock).unwrap();
+        let new_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
         crate::lock::write(fixture.project_root(), &new_lock).unwrap();
 
         // Verify lock file exists and is valid
@@ -1287,7 +1332,7 @@ mod tests {
 
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-        let cache_dir = fixture.managed_root().join(".mars/cache/bases");
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions {
             force: false,
             dry_run: false,

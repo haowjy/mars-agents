@@ -480,4 +480,103 @@ mod tests {
             "should reject .agents as --root: {err}"
         );
     }
+
+    // ── Phase 5: Walk-up discovery tests ──────────────────────────
+
+    #[test]
+    fn walk_up_stops_at_git_boundary() {
+        // outer has .git + consumer config, inner has .git but no config
+        // Starting from inner should NOT find outer's config
+        let dir = TempDir::new().unwrap();
+        let outer = dir.path().join("outer");
+        std::fs::create_dir_all(outer.join(".git")).unwrap();
+        std::fs::create_dir_all(outer.join(".agents")).unwrap();
+        std::fs::write(outer.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(inner.join(".git")).unwrap();
+
+        let result = find_agents_root_from(None, &inner);
+        assert!(
+            result.is_err(),
+            "should not find outer config when inner has .git"
+        );
+    }
+
+    #[test]
+    fn walk_up_finds_config_at_git_root() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join(".agents")).unwrap();
+        std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        let subdir = root.join("src").join("lib");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let ctx = find_agents_root_from(None, &subdir).unwrap();
+        assert_eq!(ctx.project_root, root.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn walk_up_skips_package_only_toml() {
+        // child has package-only mars.toml, parent has consumer config
+        let dir = TempDir::new().unwrap();
+        let parent = dir.path().join("parent");
+        std::fs::create_dir_all(parent.join(".git")).unwrap();
+        std::fs::create_dir_all(parent.join(".agents")).unwrap();
+        std::fs::write(parent.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        let child = parent.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(
+            child.join("mars.toml"),
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let ctx = find_agents_root_from(None, &child).unwrap();
+        assert_eq!(ctx.project_root, parent.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn walk_up_from_deep_subdirectory() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join(".agents")).unwrap();
+        std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        let deep = root.join("src").join("foo").join("bar");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let ctx = find_agents_root_from(None, &deep).unwrap();
+        assert_eq!(ctx.project_root, root.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn submodule_isolation() {
+        // Outer repo has .git dir + consumer config
+        // Inner dir has .git FILE (submodule marker) — should not see outer config
+        let dir = TempDir::new().unwrap();
+        let outer = dir.path().join("outer");
+        std::fs::create_dir_all(outer.join(".git")).unwrap();
+        std::fs::create_dir_all(outer.join(".agents")).unwrap();
+        std::fs::write(outer.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        let submodule = outer.join("submodule");
+        std::fs::create_dir_all(&submodule).unwrap();
+        // .git FILE (not dir) marks a submodule
+        std::fs::write(
+            submodule.join(".git"),
+            "gitdir: ../../.git/modules/submodule\n",
+        )
+        .unwrap();
+
+        let result = find_agents_root_from(None, &submodule);
+        assert!(
+            result.is_err(),
+            "should not find outer config through submodule .git file boundary"
+        );
+    }
 }

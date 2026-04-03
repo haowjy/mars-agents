@@ -1170,3 +1170,181 @@ fn upgrade_command_is_available() {
         .success()
         .stdout(predicate::str::contains("upgrade"));
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 4: Full pipeline integration test
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn full_pipeline_with_local_package_and_custom_target() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    // 1. Init with custom target (.claude)
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 2. Verify mars.toml has [dependencies], not [sources], no init marker
+    let config_content = fs::read_to_string(project.child("mars.toml").path()).unwrap();
+    assert!(
+        config_content.contains("[dependencies]"),
+        "should have [dependencies]: {config_content}"
+    );
+    assert!(
+        !config_content.contains("[sources]"),
+        "should not have [sources]: {config_content}"
+    );
+    assert!(
+        !config_content.contains("# created by mars"),
+        "should not have init marker"
+    );
+
+    // 3. Verify mars.local.toml is gitignored
+    let gitignore = fs::read_to_string(project.child(".gitignore").path()).unwrap();
+    assert!(
+        gitignore.contains("mars.local.toml"),
+        "mars.local.toml should be in .gitignore"
+    );
+
+    // 4. Verify settings.managed_root persisted
+    let config: Value = toml::from_str(&config_content).unwrap();
+    assert_eq!(
+        config["settings"]["managed_root"].as_str(),
+        Some(".claude"),
+        "managed_root should be persisted"
+    );
+
+    // 5. Add [package] section and create local items
+    let mut config_str = config_content.clone();
+    config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\n");
+    fs::write(project.child("mars.toml").path(), &config_str).unwrap();
+
+    // Create local agent and skill
+    let local_agents = project.child("agents");
+    local_agents.create_dir_all().unwrap();
+    fs::write(
+        local_agents.child("local-agent.md").path(),
+        "# Local Agent\nThis is a local agent.",
+    )
+    .unwrap();
+
+    let local_skill = project.child("skills").child("local-skill");
+    fs::create_dir_all(local_skill.path()).unwrap();
+    fs::write(
+        local_skill.child("SKILL.md").path(),
+        "# Local Skill\nThis is a local skill.",
+    )
+    .unwrap();
+
+    // 6. Add external dependency
+    let source = create_source(
+        &dir,
+        "ext-source",
+        &[("external-agent", "# External Agent")],
+        &[],
+    );
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 7-10. Verify symlinks and regular files
+    let managed = project.child(".claude");
+    let local_agent_link = managed.child("agents").child("local-agent.md");
+    let local_skill_link = managed.child("skills").child("local-skill");
+    let external_agent = managed.child("agents").child("external-agent.md");
+
+    assert!(local_agent_link.path().exists(), "local agent should exist");
+    assert!(local_skill_link.path().exists(), "local skill should exist");
+    assert!(
+        external_agent.path().exists(),
+        "external agent should exist"
+    );
+
+    // Verify symlinks
+    assert!(
+        local_agent_link
+            .path()
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "local agent should be a symlink"
+    );
+    assert!(
+        local_skill_link
+            .path()
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "local skill should be a symlink"
+    );
+
+    // External should NOT be a symlink
+    assert!(
+        !external_agent
+            .path()
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "external agent should not be a symlink"
+    );
+
+    // 11. Verify lock file has _self entries
+    let lock_content = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(
+        lock_content.contains("[dependencies._self]"),
+        "lock should have _self dependency: {lock_content}"
+    );
+
+    // 12. Verify lock file uses [dependencies.xxx] not [sources.xxx]
+    assert!(
+        !lock_content.contains("[sources."),
+        "lock should not have [sources.]: {lock_content}"
+    );
+
+    // 13. Re-run sync — verify idempotent
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    // 14. Re-run init — should be idempotent
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // 15. Verify init on package-only mars.toml fails
+    let pkg_dir = dir.child("pkg-only");
+    pkg_dir.create_dir_all().unwrap();
+    fs::write(
+        pkg_dir.child("mars.toml").path(),
+        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    mars()
+        .args(["init", "--root", pkg_dir.path().to_str().unwrap()])
+        .assert()
+        .failure();
+}

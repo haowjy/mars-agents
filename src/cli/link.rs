@@ -73,13 +73,13 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
     if let (Ok(target_canon), Ok(root_canon)) = (
         target_dir.canonicalize().or_else(|_| Ok::<_, std::io::Error>(target_dir.clone())),
         ctx.managed_root.canonicalize(),
-    ) {
-        if target_canon == root_canon {
-            return Err(MarsError::Link {
-                target: target_name,
-                message: "cannot link the managed root to itself".to_string(),
-            });
-        }
+    )
+        && target_canon == root_canon
+    {
+        return Err(MarsError::Link {
+            target: target_name,
+            message: "cannot link the managed root to itself".to_string(),
+        });
     }
 
     // Verify config exists before any mutations (resolve-first principle)

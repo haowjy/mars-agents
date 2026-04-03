@@ -126,11 +126,27 @@ Global cache root: `~/.mars/cache` (override with `MARS_CACHE_DIR`).
 ```bash
 cargo build
 cargo test
-cargo clippy --all-targets --all-features
-cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
 
 Notes:
 
 - Integration coverage is under `tests/` (CLI-level behavior).
 - Prefer keeping changes localized to one module/command path when adding features.
+
+## Releasing
+
+```bash
+./scripts/release.sh patch --push    # 0.0.1 → 0.0.2, push to trigger CI
+./scripts/release.sh minor --push    # 0.0.2 → 0.1.0
+./scripts/release.sh 1.0.0 --push    # explicit version
+./scripts/release.sh patch --dry     # run checks only, don't tag
+```
+
+The release script runs pre-release checks (fmt, clippy, tests, release build, version consistency between Cargo.toml and pyproject.toml), bumps both files, commits, tags, and optionally pushes. The `v*` tag triggers GitHub Actions to build platform wheels and publish to PyPI, npm, and crates.io.
+
+Prerequisites for first release:
+- Set up trusted publisher on PyPI (repo: `haowjy/mars-agents`, workflow: `release.yml`, environment: `pypi`)
+- Create `pypi` environment in GitHub repo settings
+- `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` secrets already configured

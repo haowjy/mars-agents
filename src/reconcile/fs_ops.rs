@@ -85,7 +85,15 @@ pub fn atomic_symlink(link_path: &Path, target: &Path) -> Result<(), MarsError> 
             ),
         })?;
 
-        // Atomic rename — replaces whatever non-directory entry exists at link_path
+        // rename(2) cannot replace a directory entry. Remove real directories first.
+        if let Ok(metadata) = link_path.symlink_metadata()
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+        {
+            safe_remove(link_path)?;
+        }
+
+        // Atomic rename — replaces whatever non-directory entry exists at link_path.
         if let Err(e) = fs::rename(&tmp, link_path) {
             let _ = fs::remove_file(&tmp);
             return Err(MarsError::Link {
@@ -279,6 +287,28 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest.join("docs-link").join("guide.md")).expect("read guide"),
             "guide"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_symlink_replaces_existing_directory() {
+        let dir = TempDir::new().expect("temp dir");
+        let link_path = dir.path().join("skills").join("planning");
+        fs::create_dir_all(&link_path).expect("create existing directory");
+        fs::write(link_path.join("SKILL.md"), "old").expect("write old content");
+
+        let source_dir = dir.path().join("local-skills").join("planning");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::write(source_dir.join("SKILL.md"), "new").expect("write source content");
+
+        atomic_symlink(&link_path, &source_dir).expect("replace directory with symlink");
+
+        let meta = fs::symlink_metadata(&link_path).expect("symlink metadata");
+        assert!(meta.file_type().is_symlink(), "destination should be a symlink");
+        assert_eq!(
+            fs::read_to_string(link_path.join("SKILL.md")).expect("read via symlink"),
+            "new"
         );
     }
 }

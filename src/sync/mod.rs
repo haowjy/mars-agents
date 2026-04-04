@@ -1,8 +1,10 @@
 pub mod apply;
 pub mod diff;
+pub mod filter;
 pub mod mutation;
 pub mod plan;
 pub mod provider;
+pub mod rewrite;
 pub mod self_package;
 pub mod target;
 

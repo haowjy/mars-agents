@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LockError, MarsError};
-use crate::types::{CommitHash, ContentHash, DestPath, ItemName, SourceId, SourceName, SourceUrl};
+use crate::types::{CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceUrl};
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -68,38 +68,9 @@ pub struct SelfLockItem {
     pub source_checksum: ContentHash,
 }
 
-/// Stable identity for an installed item — decoupled from source URL.
-///
-/// Items are identified by `(kind, name)`, not by source URL.
-/// If a package moves to a different git host, the item identity is preserved.
-#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ItemId {
-    pub kind: ItemKind,
-    pub name: ItemName,
-}
-
-impl std::fmt::Display for ItemId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.kind, self.name)
-    }
-}
-
-/// Kind of installable item.
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ItemKind {
-    Agent,
-    Skill,
-}
-
-impl std::fmt::Display for ItemKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ItemKind::Agent => write!(f, "agent"),
-            ItemKind::Skill => write!(f, "skill"),
-        }
-    }
-}
+// Re-export ItemKind and ItemId from types — they're shared vocabulary,
+// not lock-specific. This preserves `use crate::lock::ItemKind` compatibility.
+pub use crate::types::{ItemId, ItemKind};
 
 const LOCK_FILE: &str = "mars.lock";
 

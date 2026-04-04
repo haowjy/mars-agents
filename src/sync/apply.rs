@@ -4,18 +4,8 @@ use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
+pub use crate::sync::types::SyncOptions;
 use crate::types::{ContentHash, DestPath, ItemName, SourceName};
-
-/// Options controlling sync behavior.
-#[derive(Debug, Clone, Default)]
-pub struct SyncOptions {
-    /// Force overwrite on conflicts (skip merge).
-    pub force: bool,
-    /// Compute plan but don't execute (dry run).
-    pub dry_run: bool,
-    /// Error if lock file would change (CI mode).
-    pub frozen: bool,
-}
 
 /// The result of applying the sync plan.
 #[derive(Debug, Clone)]

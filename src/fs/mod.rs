@@ -4,7 +4,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::lock::ItemKind;
+use crate::types::ItemKind;
 
 /// Top-level source entries excluded when installing flat skill repositories.
 pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[

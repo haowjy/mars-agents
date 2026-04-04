@@ -7,6 +7,7 @@ pub mod provider;
 pub mod rewrite;
 pub mod self_package;
 pub mod target;
+pub mod types;
 
 use std::collections::HashSet;
 use std::path::PathBuf;

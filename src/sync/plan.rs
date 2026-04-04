@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::lock::{ItemId, ItemKind, LockedItem};
-use crate::sync::apply::SyncOptions;
 use crate::sync::diff::{DiffEntry, SyncDiff};
 use crate::sync::target::TargetItem;
+use crate::sync::types::SyncOptions;
 use crate::types::{DestPath, ItemName, SourceName};
 
 /// A planned set of actions to execute.

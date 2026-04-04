@@ -4,7 +4,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::error::MarsError;
-use crate::lock::ItemKind;
+use crate::types::ItemKind;
 
 /// Compute SHA-256 of a file or directory (for skills).
 ///

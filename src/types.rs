@@ -104,6 +104,39 @@ string_newtype!(SourceUrl);
 string_newtype!(CommitHash);
 string_newtype!(ContentHash);
 
+/// Kind of installable item.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ItemKind {
+    Agent,
+    Skill,
+}
+
+impl fmt::Display for ItemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ItemKind::Agent => write!(f, "agent"),
+            ItemKind::Skill => write!(f, "skill"),
+        }
+    }
+}
+
+/// Stable identity for an installed item — decoupled from source URL.
+///
+/// Items are identified by `(kind, name)`, not by source URL.
+/// If a package moves to a different git host, the item identity is preserved.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ItemId {
+    pub kind: ItemKind,
+    pub name: ItemName,
+}
+
+impl fmt::Display for ItemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.kind, self.name)
+    }
+}
+
 /// Relative path under the install root (`.agents/` / project root).
 #[derive(Eq, PartialEq, Clone, Debug, Ord, PartialOrd)]
 pub struct DestPath(PathBuf);

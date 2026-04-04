@@ -31,9 +31,7 @@ use crate::types::{
 use crate::validate::ValidationWarning;
 
 // Re-export mutation types for public API compatibility.
-pub use crate::sync::mutation::{
-    ConfigMutation, DependencyUpsertChange, LinkMutation, apply_config_mutation, mutate_link_config,
-};
+pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_config_mutation};
 
 /// Report from a completed sync operation.
 #[derive(Debug)]
@@ -245,8 +243,7 @@ fn resolve_graph(
             })
         })
         .collect();
-    let model_aliases =
-        crate::models::merge_model_config(&loaded.config.models, &dep_models, diag);
+    let model_aliases = crate::models::merge_model_config(&loaded.config.models, &dep_models, diag);
 
     Ok(ResolvedState {
         loaded,
@@ -458,12 +455,7 @@ fn apply_plan(
     // Apply plan to .mars/ canonical store (D25).
     // Content is written to .mars/agents/ and .mars/skills/, then
     // sync_targets() copies to all managed target directories.
-    let applied = apply::execute(
-        &mars_dir,
-        &planned.plan,
-        &request.options,
-        &cache_bases_dir,
-    )?;
+    let applied = apply::execute(&mars_dir, &planned.plan, &request.options, &cache_bases_dir)?;
 
     Ok(AppliedState { planned, applied })
 }
@@ -501,6 +493,7 @@ fn sync_targets(
         &mars_dir,
         &targets,
         &applied.applied.outcomes,
+        request.options.force,
         diag,
     );
 

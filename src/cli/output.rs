@@ -103,6 +103,14 @@ fn is_dry_run(report: &SyncReport) -> bool {
 
 fn print_sync_report_json(report: &SyncReport) {
     #[derive(Serialize)]
+    struct JsonTargetOutcome {
+        name: String,
+        synced: usize,
+        removed: usize,
+        errors: Vec<String>,
+    }
+
+    #[derive(Serialize)]
     struct JsonReport {
         ok: bool,
         dry_run: bool,
@@ -112,6 +120,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts: usize,
         kept: usize,
         skipped: usize,
+        targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
     }
 
@@ -140,6 +149,17 @@ fn print_sync_report_json(report: &SyncReport) {
         }
     }
 
+    let targets = report
+        .target_outcomes
+        .iter()
+        .map(|outcome| JsonTargetOutcome {
+            name: outcome.target.clone(),
+            synced: outcome.items_synced,
+            removed: outcome.items_removed,
+            errors: outcome.errors.clone(),
+        })
+        .collect();
+
     let json_report = JsonReport {
         ok: conflicts == 0,
         dry_run: report.dry_run,
@@ -149,6 +169,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts,
         kept,
         skipped,
+        targets,
         diagnostics: report.diagnostics.clone(),
     };
 
@@ -333,33 +354,47 @@ fn print_list_human(entries: &[ListEntry]) {
 }
 
 /// Print doctor report.
-pub fn print_doctor(issues: &[String], json: bool) {
+pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
     if json {
         #[derive(Serialize)]
         struct DoctorReport {
             ok: bool,
-            issues: Vec<String>,
+            errors: Vec<String>,
+            warnings: Vec<String>,
         }
         let report = DoctorReport {
-            ok: issues.is_empty(),
-            issues: issues.to_vec(),
+            ok: errors.is_empty(),
+            errors: errors.to_vec(),
+            warnings: warnings.to_vec(),
         };
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         let mut stdout = StandardStream::stdout(color_choice());
-        if issues.is_empty() {
+        if errors.is_empty() && warnings.is_empty() {
             let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
             let _ = writeln!(stdout, "  all checks passed");
             let _ = stdout.reset();
         } else {
-            for issue in issues {
+            for warning in warnings {
+                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                let _ = write!(stdout, "  ⚠ ");
+                let _ = stdout.reset();
+                let _ = writeln!(stdout, "{warning}");
+            }
+
+            for error in errors {
                 let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
                 let _ = write!(stdout, "  ✗ ");
                 let _ = stdout.reset();
-                let _ = writeln!(stdout, "{issue}");
+                let _ = writeln!(stdout, "{error}");
             }
             let _ = writeln!(stdout);
-            let _ = writeln!(stdout, "  {} issue(s) found", issues.len());
+            if !warnings.is_empty() {
+                let _ = writeln!(stdout, "  {} warning(s)", warnings.len());
+            }
+            if !errors.is_empty() {
+                let _ = writeln!(stdout, "  {} error(s)", errors.len());
+            }
         }
     }
 }

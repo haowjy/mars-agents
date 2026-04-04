@@ -167,11 +167,10 @@ pub fn read_cache(mars_dir: &Path) -> Result<ModelsCache, MarsError> {
     let path = mars_dir.join(CACHE_FILE);
     match std::fs::read_to_string(&path) {
         Ok(content) => {
-            let cache: ModelsCache = serde_json::from_str(&content).map_err(|e| {
-                crate::error::ConfigError::Invalid {
+            let cache: ModelsCache =
+                serde_json::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
                     message: format!("failed to parse models cache: {e}"),
-                }
-            })?;
+                })?;
             Ok(cache)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ModelsCache {
@@ -187,11 +186,10 @@ pub fn write_cache(mars_dir: &Path, cache: &ModelsCache) -> Result<(), MarsError
     std::fs::create_dir_all(mars_dir)?;
     let path = mars_dir.join(CACHE_FILE);
     let tmp_path = mars_dir.join(".models-cache.json.tmp");
-    let content = serde_json::to_string_pretty(cache).map_err(|e| {
-        crate::error::ConfigError::Invalid {
+    let content =
+        serde_json::to_string_pretty(cache).map_err(|e| crate::error::ConfigError::Invalid {
             message: format!("failed to serialize models cache: {e}"),
-        }
-    })?;
+        })?;
     std::fs::write(&tmp_path, content)?;
     std::fs::rename(&tmp_path, &path)?;
     Ok(())
@@ -208,23 +206,24 @@ pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
         status: 0,
         message: format!("failed to fetch models catalog: {e}"),
     })?;
-    let body = response.into_body().read_to_string().map_err(|e| MarsError::Http {
-        url: url.to_string(),
-        status: 0,
-        message: format!("failed to read response body: {e}"),
-    })?;
-    let raw: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-        crate::error::ConfigError::Invalid {
+    let body = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| MarsError::Http {
+            url: url.to_string(),
+            status: 0,
+            message: format!("failed to read response body: {e}"),
+        })?;
+    let raw: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| crate::error::ConfigError::Invalid {
             message: format!("failed to parse models API response: {e}"),
+        })?;
+
+    let data = raw.get("data").and_then(|d| d.as_array()).ok_or_else(|| {
+        crate::error::ConfigError::Invalid {
+            message: "models API response missing 'data' array".to_string(),
         }
     })?;
-
-    let data = raw
-        .get("data")
-        .and_then(|d| d.as_array())
-        .ok_or_else(|| crate::error::ConfigError::Invalid {
-            message: "models API response missing 'data' array".to_string(),
-        })?;
 
     let models = data
         .iter()
@@ -233,7 +232,10 @@ pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
             // OpenRouter IDs are "provider/model-name" — extract both parts
             let (provider_slug, model_id) = full_id.split_once('/')?;
             let provider = normalize_provider(provider_slug);
-            let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
+            let description = v
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(String::from);
             let context_window = v.get("context_length").and_then(|c| c.as_u64());
             let max_output = v
                 .get("top_provider")
@@ -495,10 +497,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
             spec: ModelSpec::AutoResolve {
                 provider: "Google".to_string(),
                 match_patterns: vec!["gemini-*-pro".to_string()],
-                exclude_patterns: vec![
-                    "gemini-1*".to_string(),
-                    "*-preview*".to_string(),
-                ],
+                exclude_patterns: vec!["gemini-1*".to_string(), "*-preview*".to_string()],
             },
         },
     );
@@ -608,13 +607,14 @@ pub fn resolve_all(
                         .map(|s| s.to_string())
                         .unwrap_or_default()
                 } else {
-                    auto_resolve(provider, match_patterns, exclude_patterns, cache)
-                        .unwrap_or_else(|| {
+                    auto_resolve(provider, match_patterns, exclude_patterns, cache).unwrap_or_else(
+                        || {
                             fallbacks
                                 .get(name.as_str())
                                 .map(|s| s.to_string())
                                 .unwrap_or_default()
-                        })
+                        },
+                    )
                 }
             }
         };
@@ -708,12 +708,7 @@ mod tests {
             ("claude-sonnet-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(
-            "Anthropic",
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
         // Newest date wins
         assert_eq!(result, Some("claude-opus-4-20250514".to_string()));
     }
@@ -742,12 +737,7 @@ mod tests {
             ("claude-opus-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(
-            "Anthropic",
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
         // Should skip -latest even though it has a newer date
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
@@ -759,12 +749,7 @@ mod tests {
             fetched_at: None,
         };
 
-        let result = auto_resolve(
-            "Anthropic",
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
         assert_eq!(result, None);
     }
 
@@ -772,12 +757,7 @@ mod tests {
     fn auto_resolve_no_match() {
         let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
 
-        let result = auto_resolve(
-            "OpenAI",
-            &["gpt-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("OpenAI", &["gpt-*".to_string()], &[], &cache);
         assert_eq!(result, None);
     }
 
@@ -785,12 +765,7 @@ mod tests {
     fn auto_resolve_provider_case_insensitive() {
         let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
 
-        let result = auto_resolve(
-            "anthropic",
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("anthropic", &["claude-opus-*".to_string()], &[], &cache);
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
@@ -801,12 +776,7 @@ mod tests {
             ("claude-opus-4x", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(
-            "Anthropic",
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
+        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
         // Same date — shorter ID wins
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }

@@ -46,13 +46,14 @@ pub fn sync_managed_targets(
     mars_dir: &Path,
     targets: &[String],
     outcomes: &[ActionOutcome],
+    force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Vec<TargetSyncOutcome> {
     let mut results = Vec::new();
 
     for target_name in targets {
         let target_root = project_root.join(target_name);
-        match sync_one_target(mars_dir, &target_root, target_name, outcomes) {
+        match sync_one_target(mars_dir, &target_root, target_name, outcomes, force) {
             Ok(outcome) => {
                 if !outcome.errors.is_empty() {
                     for err in &outcome.errors {
@@ -88,6 +89,7 @@ fn sync_one_target(
     target_root: &Path,
     target_name: &str,
     outcomes: &[ActionOutcome],
+    force: bool,
 ) -> Result<TargetSyncOutcome, MarsError> {
     let mut items_synced = 0;
     let mut items_removed = 0;
@@ -108,10 +110,7 @@ fn sync_one_target(
                 let target_path = target_root.join(dest_rel);
                 if target_path.exists() || target_path.symlink_metadata().is_ok() {
                     if let Err(e) = fs_ops::safe_remove(&target_path) {
-                        errors.push(format!(
-                            "failed to remove {}: {e}",
-                            dest_rel.display()
-                        ));
+                        errors.push(format!("failed to remove {}: {e}", dest_rel.display()));
                     } else {
                         items_removed += 1;
                     }
@@ -120,19 +119,17 @@ fn sync_one_target(
             ActionTaken::Skipped => {
                 // Item is unchanged in .mars/ — still expected in target
                 expected_paths.insert(dest_rel.to_path_buf());
-                // Ensure it exists in target (idempotent convergence)
+                // Ensure it exists in target (idempotent convergence).
+                // In --force mode, always refresh from .mars/ even if target exists.
                 let source = mars_dir.join(dest_rel);
                 let dest = target_root.join(dest_rel);
-                if source.exists() && !dest.exists() {
+                if source.exists() && (force || !dest.exists()) {
                     match copy_item_to_target(&source, &dest) {
                         Ok(()) => items_synced += 1,
-                        Err(e) => errors.push(format!(
-                            "failed to copy {}: {e}",
-                            dest_rel.display()
-                        )),
+                        Err(e) => {
+                            errors.push(format!("failed to copy {}: {e}", dest_rel.display()))
+                        }
                     }
-                } else {
-                    // Already exists — nothing to do
                 }
             }
             _ => {
@@ -144,10 +141,9 @@ fn sync_one_target(
                 if source.exists() || source.symlink_metadata().is_ok() {
                     match copy_item_to_target(&source, &dest) {
                         Ok(()) => items_synced += 1,
-                        Err(e) => errors.push(format!(
-                            "failed to copy {}: {e}",
-                            dest_rel.display()
-                        )),
+                        Err(e) => {
+                            errors.push(format!("failed to copy {}: {e}", dest_rel.display()))
+                        }
                     }
                 }
             }
@@ -287,6 +283,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -318,6 +315,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -347,6 +345,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -371,6 +370,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string(), ".claude".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -392,11 +392,8 @@ mod tests {
 
         std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            real_dir.join("local.md"),
-            mars_dir.join("agents/local.md"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(real_dir.join("local.md"), mars_dir.join("agents/local.md"))
+            .unwrap();
 
         let outcomes = vec![make_outcome("agents/local.md", ActionTaken::Symlinked)];
         let mut diag = DiagnosticCollector::new();
@@ -406,6 +403,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -439,6 +437,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -464,6 +463,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            false,
             &mut diag,
         );
 
@@ -474,11 +474,42 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes2,
+            false,
             &mut diag,
         );
 
         assert!(target.join("agents/coder.md").exists());
         // items_synced should be 0 since file already exists
         assert_eq!(results[0].items_synced, 0);
+    }
+
+    #[test]
+    fn sync_force_refreshes_skipped_target_content() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# Tampered").unwrap();
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Skipped)];
+        let mut diag = DiagnosticCollector::new();
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            true,
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 1);
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/coder.md")).unwrap(),
+            "# Canonical"
+        );
     }
 }

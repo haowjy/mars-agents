@@ -122,7 +122,9 @@ fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
         );
     } else {
         if cache.fetched_at.is_none() {
-            eprintln!("hint: no models cache — run `mars models refresh` for auto-resolve. Using fallback IDs.");
+            eprintln!(
+                "hint: no models cache — run `mars models refresh` for auto-resolve. Using fallback IDs."
+            );
             eprintln!();
         }
         // Table output
@@ -131,7 +133,10 @@ fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
             "ALIAS", "HARNESS", "MODE", "RESOLVED", "DESCRIPTION"
         );
         for (name, alias) in &merged {
-            let resolved_id = resolved.get(name).cloned().unwrap_or_else(|| "—".to_string());
+            let resolved_id = resolved
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| "—".to_string());
             let mode = match &alias.spec {
                 ModelSpec::Pinned { .. } => "pinned",
                 ModelSpec::AutoResolve { .. } => "auto-resolve",
@@ -204,7 +209,14 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 if !exclude_patterns.is_empty() {
                     println!("Exclude:  {}", exclude_patterns.join(", "));
                 }
-                println!("Resolved: {}", if resolved_id.is_empty() { "—" } else { &resolved_id });
+                println!(
+                    "Resolved: {}",
+                    if resolved_id.is_empty() {
+                        "—"
+                    } else {
+                        &resolved_id
+                    }
+                );
             }
         }
         if let Some(desc) = &alias.description {

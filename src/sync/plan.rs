@@ -439,7 +439,9 @@ mod tests {
                 target: make_symlink_target("already-self"),
                 locked: make_locked_from_source(
                     "already-self",
-                    crate::types::SourceOrigin::LocalPackage.to_string().as_str(),
+                    crate::types::SourceOrigin::LocalPackage
+                        .to_string()
+                        .as_str(),
                 ),
             }],
         };

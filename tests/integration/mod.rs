@@ -676,6 +676,86 @@ fn doctor_reports_healthy_state() {
         .stdout(predicate::str::contains("all checks passed"));
 }
 
+#[test]
+fn doctor_warns_when_mars_not_gitignored() {
+    let dir = TempDir::new().unwrap();
+
+    mars()
+        .args([
+            "init",
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Remove .mars/ line to trigger warning.
+    let gitignore = dir.child("project").child(".gitignore");
+    let gitignore_path = gitignore.path();
+    let content = fs::read_to_string(gitignore_path).unwrap();
+    let rewritten = content
+        .lines()
+        .filter(|line| line.trim() != ".mars/")
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(gitignore_path, format!("{rewritten}\n")).unwrap();
+
+    mars()
+        .args([
+            "doctor",
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".mars/ is not in .gitignore"));
+}
+
+#[test]
+fn sync_json_includes_target_outcomes() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[("coder", "# Coder")], &[]);
+
+    mars()
+        .args([
+            "init",
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let output = mars()
+        .args([
+            "sync",
+            "--json",
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+
+    let targets = parsed["targets"]
+        .as_array()
+        .expect("sync --json should include a targets array");
+    assert!(!targets.is_empty());
+    assert!(targets[0].get("name").is_some());
+    assert!(targets[0].get("synced").is_some());
+    assert!(targets[0].get("removed").is_some());
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 12. Override
 // ═══════════════════════════════════════════════════════════════
@@ -771,11 +851,7 @@ fn conflict_flow_with_resolve() {
         .child(".mars")
         .child("agents")
         .child("coder.md");
-    fs::write(
-        mars_installed.path(),
-        "# Local change\nline 2\nline 3\n",
-    )
-    .unwrap();
+    fs::write(mars_installed.path(), "# Local change\nline 2\nline 3\n").unwrap();
 
     // Modify source
     fs::write(
@@ -924,11 +1000,7 @@ fn sync_force_clears_previous_conflict_markers() {
         .child(".mars")
         .child("agents")
         .child("coder.md");
-    fs::write(
-        mars_installed.path(),
-        "# Local change\nline 2\nline 3\n",
-    )
-    .unwrap();
+    fs::write(mars_installed.path(), "# Local change\nline 2\nline 3\n").unwrap();
     fs::write(
         source.join("agents").join("coder.md"),
         "# Upstream change\nline 2\nline 3\n",
@@ -1305,8 +1377,14 @@ fn full_pipeline_with_local_package_and_custom_target() {
     let local_skill_target = managed.child("skills").child("local-skill");
     let external_agent = managed.child("agents").child("external-agent.md");
 
-    assert!(local_agent_target.path().exists(), "local agent should exist");
-    assert!(local_skill_target.path().exists(), "local skill should exist");
+    assert!(
+        local_agent_target.path().exists(),
+        "local agent should exist"
+    );
+    assert!(
+        local_skill_target.path().exists(),
+        "local skill should exist"
+    );
     assert!(
         external_agent.path().exists(),
         "external agent should exist"
@@ -1421,7 +1499,7 @@ version = "v1.0"
 agents = ["coder"]
 
 [settings]
-links = [".claude"]
+targets = [".claude"]
 "#,
         )
         .unwrap();
@@ -1436,7 +1514,7 @@ links = [".claude"]
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("no symlinks to remove"));
+        .stdout(predicate::str::contains("settings.targets"));
 
     let config: Value =
         toml::from_str(&fs::read_to_string(project.child("mars.toml").path()).unwrap()).unwrap();
@@ -1456,6 +1534,6 @@ links = [".claude"]
     assert!(
         config["settings"]
             .as_table()
-            .is_some_and(|settings| !settings.contains_key("links"))
+            .is_some_and(|settings| !settings.contains_key("targets"))
     );
 }

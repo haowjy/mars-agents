@@ -109,12 +109,8 @@ pub struct Settings {
     /// Custom managed output directory (e.g. ".claude"). Default: ".agents".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
-    /// Directories to symlink agents/ and skills/ into (e.g. [".claude"]).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<String>,
     /// Managed target directories materialized from .mars/ canonical store.
     /// When set, only listed targets are populated. When unset, defaults to [".agents"].
-    /// Replaces `links` for the copy-based target sync model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
 }
@@ -123,26 +119,16 @@ impl Settings {
     /// Returns the effective list of managed target directories.
     ///
     /// - If `targets` is explicitly set, returns exactly those targets.
-    /// - If `targets` is unset, uses `managed_root` (or ".agents" default) as the primary target,
-    ///   plus any `links` entries (backwards compatibility).
-    /// - D30: backwards compat — when nothing is configured, `.agents/` is the sole target.
+    /// - If `targets` is unset, uses `managed_root` (or ".agents" default).
     pub fn managed_targets(&self) -> Vec<String> {
         if let Some(targets) = &self.targets {
             return targets.clone();
         }
-        // Primary target: managed_root setting, or ".agents" default
-        let primary = self
-            .managed_root
-            .clone()
-            .unwrap_or_else(|| ".agents".to_string());
-        let mut result = vec![primary];
-        // Backwards compat: links = [".claude"] adds .claude as additional target
-        for link in &self.links {
-            if !result.contains(link) {
-                result.push(link.clone());
-            }
-        }
-        result
+        vec![
+            self.managed_root
+                .clone()
+                .unwrap_or_else(|| ".agents".to_string()),
+        ]
     }
 }
 
@@ -755,7 +741,7 @@ exclude = ["experimental"]
 
 [settings]
 managed_root = ".custom-agents"
-links = [".claude", ".cursor"]
+targets = [".claude", ".cursor"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
@@ -780,7 +766,10 @@ links = [".claude", ".cursor"]
             reloaded.settings.managed_root.as_deref(),
             Some(".custom-agents")
         );
-        assert_eq!(reloaded.settings.links, vec![".claude", ".cursor"]);
+        assert_eq!(
+            reloaded.settings.targets,
+            Some(vec![".claude".to_string(), ".cursor".to_string()])
+        );
     }
 
     #[test]
@@ -1069,7 +1058,6 @@ url = "https://github.com/org/base.git"
         let config = Config {
             settings: Settings {
                 managed_root: Some(".claude".into()),
-                links: vec![],
                 targets: None,
             },
             ..Config::default()
@@ -1083,7 +1071,7 @@ url = "https://github.com/org/base.git"
     }
 
     #[test]
-    fn save_preserves_dependencies_when_clearing_last_link() {
+    fn save_preserves_dependencies_when_clearing_last_target() {
         let dir = TempDir::new().unwrap();
         let original = r#"
 [package]
@@ -1097,12 +1085,17 @@ agents = ["coder"]
 
 [settings]
 managed_root = ".agents"
-links = [".claude"]
+targets = [".claude"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
         let mut config = load(dir.path()).unwrap();
-        config.settings.links.retain(|link| link != ".claude");
+        if let Some(targets) = config.settings.targets.as_mut() {
+            targets.retain(|target| target != ".claude");
+            if targets.is_empty() {
+                config.settings.targets = None;
+            }
+        }
         save(dir.path(), &config).unwrap();
 
         let reloaded = load(dir.path()).unwrap();
@@ -1123,7 +1116,7 @@ links = [".claude"]
             Some(&["coder".into()][..])
         );
         assert_eq!(reloaded.settings.managed_root.as_deref(), Some(".agents"));
-        assert!(reloaded.settings.links.is_empty());
+        assert!(reloaded.settings.targets.is_none());
     }
 
     #[test]
@@ -1261,7 +1254,6 @@ only_agents = true
         let original = Config {
             settings: Settings {
                 managed_root: Some(".agents".into()),
-                links: vec![],
                 targets: None,
             },
             ..Config::default()
@@ -1489,15 +1481,6 @@ only_skills = true
     }
 
     #[test]
-    fn managed_targets_from_links_backwards_compat() {
-        let settings = Settings {
-            links: vec![".claude".to_string()],
-            ..Settings::default()
-        };
-        assert_eq!(settings.managed_targets(), vec![".agents", ".claude"]);
-    }
-
-    #[test]
     fn managed_targets_uses_managed_root_as_primary() {
         let settings = Settings {
             managed_root: Some(".claude".to_string()),
@@ -1510,10 +1493,9 @@ only_skills = true
     fn managed_targets_explicit_overrides_links_and_managed_root() {
         let settings = Settings {
             managed_root: Some(".cursor".to_string()),
-            links: vec![".claude".to_string()],
             targets: Some(vec![".codex".to_string()]),
         };
-        // targets takes precedence over everything
+        // targets takes precedence over managed_root
         assert_eq!(settings.managed_targets(), vec![".codex"]);
     }
 }

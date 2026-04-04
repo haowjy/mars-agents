@@ -1,4 +1,4 @@
-//! Config and link mutation logic for the sync pipeline.
+//! Config mutation logic for the sync pipeline.
 //!
 //! Handles applying mutations to `mars.toml` and `mars.local.toml` under the sync lock.
 
@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::config::{Config, DependencyEntry, FilterConfig, LocalConfig, OverrideEntry};
 use crate::error::{ConfigError, MarsError};
-use crate::types::{ItemName, MarsContext, RenameMap, SourceName};
+use crate::types::{ItemName, RenameMap, SourceName};
 
 /// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]
@@ -42,40 +42,6 @@ pub struct DependencyUpsertChange {
     pub already_exists: bool,
     pub old_filter: Option<FilterConfig>,
     pub new_filter: FilterConfig,
-}
-
-/// Link-specific config mutations. Separate type from ConfigMutation
-/// to enforce that only link operations use the lightweight (no-sync) mutation path.
-#[derive(Debug, Clone)]
-pub enum LinkMutation {
-    /// Add a link target to settings.links (idempotent).
-    Set { target: String },
-    /// Remove a link target from settings.links.
-    Clear { target: String },
-}
-
-/// Apply a link mutation under sync lock, without running the full sync pipeline.
-/// Only for settings.links changes — use sync::execute for source mutations.
-pub fn mutate_link_config(ctx: &MarsContext, mutation: &LinkMutation) -> Result<(), MarsError> {
-    let mars_dir = ctx.project_root.join(".mars");
-    std::fs::create_dir_all(&mars_dir)?;
-    let lock_path = mars_dir.join("sync.lock");
-    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
-
-    let mut config = crate::config::load(&ctx.project_root)?;
-    match mutation {
-        LinkMutation::Set { target } => {
-            if !config.settings.links.contains(target) {
-                config.settings.links.push(target.clone());
-            }
-        }
-        LinkMutation::Clear { target } => {
-            config.settings.links.retain(|l| l != target);
-        }
-    }
-    crate::config::save(&ctx.project_root, &config)?;
-
-    Ok(())
 }
 
 /// Apply a config mutation to the in-memory config.

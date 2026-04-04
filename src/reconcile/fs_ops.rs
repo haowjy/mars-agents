@@ -67,10 +67,7 @@ pub fn atomic_symlink(link_path: &Path, target: &Path) -> Result<(), MarsError> 
         let tmp = parent.join(format!(
             ".mars-tmp-symlink-{}-{}",
             std::process::id(),
-            link_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
+            link_path.file_name().unwrap_or_default().to_string_lossy()
         ));
 
         // Clean up any stale temp from a prior crash
@@ -163,10 +160,7 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
                 if entry.file_type()?.is_symlink() {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!(
-                            "broken symlink in source tree: {}",
-                            source_path.display()
-                        ),
+                        format!("broken symlink in source tree: {}", source_path.display()),
                     )
                     .into());
                 }
@@ -305,7 +299,10 @@ mod tests {
         atomic_symlink(&link_path, &source_dir).expect("replace directory with symlink");
 
         let meta = fs::symlink_metadata(&link_path).expect("symlink metadata");
-        assert!(meta.file_type().is_symlink(), "destination should be a symlink");
+        assert!(
+            meta.file_type().is_symlink(),
+            "destination should be a symlink"
+        );
         assert_eq!(
             fs::read_to_string(link_path.join("SKILL.md")).expect("read via symlink"),
             "new"

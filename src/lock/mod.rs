@@ -578,7 +578,11 @@ dest_path = "agents/helper.md"
 
         let new_lock = build(&graph, &applied, &old_lock).unwrap();
 
-        assert!(new_lock.dependencies.contains_key(local_source_name.as_str()));
+        assert!(
+            new_lock
+                .dependencies
+                .contains_key(local_source_name.as_str())
+        );
         let item = &new_lock.items["skills/local-skill"];
         assert_eq!(item.source, local_source_name);
         assert_eq!(item.kind, ItemKind::Skill);

@@ -12,13 +12,14 @@ pub struct DoctorArgs {}
 
 /// Run `mars doctor`.
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let mut issues = Vec::new();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
 
     // Check config is valid
     match crate::config::load(&ctx.project_root) {
         Ok(_) => {}
         Err(e) => {
-            issues.push(format!("config error: {e}"));
+            errors.push(format!("config error: {e}"));
         }
     }
 
@@ -26,8 +27,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let lock = match crate::lock::load(&ctx.project_root) {
         Ok(l) => l,
         Err(e) => {
-            issues.push(format!("lock file error: {e}"));
-            output::print_doctor(&issues, json);
+            errors.push(format!("lock file error: {e}"));
+            output::print_doctor(&errors, &warnings, json);
             return Ok(2);
         }
     };
@@ -39,7 +40,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
         // Check file exists
         if !disk_path.exists() {
-            issues.push(format!(
+            errors.push(format!(
                 "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
             ));
             continue;
@@ -51,7 +52,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             && content.contains("<<<<<<<")
             && content.contains(">>>>>>>")
         {
-            issues.push(format!("{dest_path_str} has unresolved conflict markers"));
+            errors.push(format!("{dest_path_str} has unresolved conflict markers"));
         }
 
         // Check checksum matches
@@ -63,7 +64,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 }
             }
             Err(e) => {
-                issues.push(format!("can't hash {dest_path_str}: {e}"));
+                errors.push(format!("can't hash {dest_path_str}: {e}"));
             }
         }
     }
@@ -77,7 +78,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             // Check that all sources in config have corresponding lock entries
             for source_name in effective.dependencies.keys() {
                 if !lock.dependencies.contains_key(source_name) {
-                    issues.push(format!(
+                    errors.push(format!(
                         "dependency `{source_name}` is in config but not in lock — run `mars sync`"
                     ));
                 }
@@ -104,7 +105,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 } else {
                     "skill"
                 };
-                issues.push(format!(
+                warnings.push(format!(
                     "skipping symlinked {kind} `{}` — individual symlinks in managed dirs are not validated",
                     item.id.name
                 ));
@@ -144,32 +145,25 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                                 agent.name
                             ),
                         };
-                        issues.push(msg);
+                        errors.push(msg);
                     }
                 }
             }
         }
     }
 
-    // Check .mars/ gitignore (D29)
-    check_mars_gitignore(&ctx.project_root, &mut issues);
+    // Check .mars/ gitignore (D29) as warning only.
+    check_mars_gitignore(&ctx.project_root, &mut warnings);
 
-    // Check link health
-    if let Ok(config) = crate::config::load(&ctx.project_root) {
-        for link_target in &config.settings.links {
-            check_link_health(ctx, link_target, &mut issues);
-        }
-    }
+    output::print_doctor(&errors, &warnings, json);
 
-    output::print_doctor(&issues, json);
-
-    if issues.is_empty() { Ok(0) } else { Ok(2) }
+    if errors.is_empty() { Ok(0) } else { Ok(2) }
 }
 
 /// Check if .mars/ is properly gitignored (D29).
 ///
 /// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
-fn check_mars_gitignore(project_root: &std::path::Path, issues: &mut Vec<String>) {
+fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
     let mars_dir = project_root.join(".mars");
     if !mars_dir.exists() {
         return;
@@ -185,7 +179,7 @@ fn check_mars_gitignore(project_root: &std::path::Path, issues: &mut Vec<String>
     };
 
     if !is_ignored {
-        issues.push(
+        warnings.push(
             ".mars/ is not in .gitignore — add `.mars/` to your .gitignore to avoid committing cached data"
                 .to_string(),
         );
@@ -206,59 +200,4 @@ fn is_self_symlink(
     lock.items
         .get(&dest_path)
         .is_some_and(|locked| locked.source.as_ref() == local_source_name.as_str())
-}
-
-/// Validate link health for a single link target.
-fn check_link_health(ctx: &super::MarsContext, target: &str, issues: &mut Vec<String>) {
-    let target_dir = ctx.project_root.join(target);
-
-    if !target_dir.exists() {
-        issues.push(format!(
-            "link `{target}` — directory doesn't exist. Run `mars link --unlink {target}` to remove stale entry"
-        ));
-        return;
-    }
-
-    for subdir in ["agents", "skills"] {
-        let link_path = target_dir.join(subdir);
-        let expected = ctx.managed_root.join(subdir);
-
-        // Check if symlink exists
-        if link_path.symlink_metadata().is_err() {
-            issues.push(format!(
-                "link `{target}` — missing {target}/{subdir} symlink. Run `mars link {target}` to fix"
-            ));
-            continue;
-        }
-
-        // Check if it's a symlink (not a real dir)
-        match link_path.read_link() {
-            Ok(actual_target) => {
-                // Resolve and compare
-                let resolved = target_dir.join(&actual_target);
-                let points_to_managed = match (resolved.canonicalize(), expected.canonicalize()) {
-                    (Ok(a), Ok(b)) => a == b,
-                    _ => false,
-                };
-                if !points_to_managed {
-                    issues.push(format!(
-                        "link `{target}` — {target}/{subdir} points to {} (expected {})",
-                        actual_target.display(),
-                        expected.display()
-                    ));
-                } else if !link_path.exists() {
-                    // Symlink exists but target is broken
-                    issues.push(format!(
-                        "link `{target}` — {target}/{subdir} is a broken symlink"
-                    ));
-                }
-            }
-            Err(_) => {
-                // Real directory, not a symlink
-                issues.push(format!(
-                    "link `{target}` — {target}/{subdir} is a real directory, not a symlink. Run `mars link {target}` to merge and link"
-                ));
-            }
-        }
-    }
 }

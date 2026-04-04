@@ -141,13 +141,13 @@ pub enum Command {
     /// Set a local dev override for a source.
     Override(override_cmd::OverrideArgs),
 
-    /// Symlink agents/ and skills/ into another directory (e.g. .claude).
+    /// Add/remove managed target directories (e.g. .claude).
     Link(link::LinkArgs),
 
     /// Validate a source package before publishing (structure, frontmatter, deps).
     Check(check::CheckArgs),
 
-    /// Diagnose problems in an installed mars project (config, lock, files, links).
+    /// Diagnose problems in an installed mars project (config, lock, files, targets).
     Doctor(doctor::DoctorArgs),
 
     /// Rebuild state from lock + sources.

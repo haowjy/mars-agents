@@ -250,12 +250,11 @@ pub fn resolve(
             for (dep_name, dep_spec) in &manifest.dependencies {
                 deps.push(SourceName::from(dep_name.clone()));
 
+                // ManifestDep always has a URL (path-only deps filtered at load_manifest)
+                let dep_url = dep_spec.url.clone();
+
                 // Only add as pending if not already resolved
                 if !nodes.contains_key(dep_name.as_str()) {
-                    let dep_url = match &dep_spec.url {
-                        Some(u) => u.clone(),
-                        None => continue, // skip path-only manifest deps (shouldn't happen in practice)
-                    };
                     let dep_constraint = parse_version_constraint(dep_spec.version.as_deref());
                     let dep_name_typed = SourceName::from(dep_name.clone());
                     pending.push_back(PendingSource {
@@ -641,8 +640,8 @@ fn topological_sort(
 mod tests {
     use super::*;
     use crate::config::{
-        DependencyEntry, EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec,
-        Manifest, PackageInfo, Settings, SourceSpec,
+        EffectiveConfig, EffectiveDependency, FilterMode, GitSpec, ManifestDep, Manifest,
+        PackageInfo, Settings, SourceSpec,
     };
     use crate::types::{RenameMap, SourceId, SourceUrl};
     use indexmap::IndexMap;
@@ -839,11 +838,9 @@ mod tests {
         for (dep_name, dep_url, dep_ver) in deps {
             dependencies.insert(
                 dep_name.to_string(),
-                DependencyEntry {
-                    url: Some(SourceUrl::from(dep_url)),
-                    path: None,
+                ManifestDep {
+                    url: SourceUrl::from(dep_url),
                     version: Some(dep_ver.to_string()),
-                    filter: FilterConfig::default(),
                 },
             );
         }

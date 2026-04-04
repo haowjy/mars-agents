@@ -12,7 +12,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageInfo>,
     #[serde(default)]
-    pub dependencies: IndexMap<SourceName, DependencyEntry>,
+    pub dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     pub settings: Settings,
 }
@@ -26,11 +26,10 @@ pub struct PackageInfo {
     pub description: Option<String>,
 }
 
-/// Unified dependency specification — replaces both old DepSpec and SourceEntry.
-/// Used in [dependencies] for both "what to install locally" (consumer)
-/// and "what downstream consumers inherit" (package manifest).
+/// Consumer install intent — what goes in [dependencies] of a consumer mars.toml.
+/// Has optional URL or path source plus filters for selecting items.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DependencyEntry {
+pub struct InstallDep {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<SourceUrl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,15 +40,26 @@ pub struct DependencyEntry {
     pub filter: FilterConfig,
 }
 
+/// Backwards-compatible alias during migration.
+pub type DependencyEntry = InstallDep;
+
+/// Package manifest dependency — what a package declares its consumers need.
+/// Always has a URL (packages can't declare path deps for consumers).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManifestDep {
+    pub url: SourceUrl,
+    pub version: Option<String>,
+}
+
 /// Source-manifest view extracted from mars.toml.
 ///
 /// In source repositories, `mars.toml` may include `[package]` +
 /// `[dependencies]` only, or coexist with consumer sections.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Dependencies are ManifestDep (URL required, path-only deps filtered out).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
     pub package: PackageInfo,
-    #[serde(default)]
-    pub dependencies: IndexMap<String, DependencyEntry>,
+    pub dependencies: IndexMap<String, ManifestDep>,
 }
 
 /// Shared include/exclude/rename filter configuration for a source.
@@ -175,6 +185,9 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 ///
 /// Returns `None` when mars.toml is absent or when it has no `[package]`
 /// section (consumer config only).
+///
+/// Converts `InstallDep` entries to `ManifestDep` by filtering out path-only
+/// deps (which can't propagate to consumers) and requiring a URL.
 pub fn load_manifest(source_root: &Path) -> Result<Option<Manifest>, MarsError> {
     let path = source_root.join(CONFIG_FILE);
     match std::fs::read_to_string(&path) {
@@ -186,11 +199,25 @@ pub fn load_manifest(source_root: &Path) -> Result<Option<Manifest>, MarsError> 
             let Some(package) = parsed.package else {
                 return Ok(None);
             };
-            // For manifest purposes, filter to only deps with url+version (package deps)
-            let deps: IndexMap<String, DependencyEntry> = parsed
+            // Convert InstallDep → ManifestDep, filtering out path-only deps
+            let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
+                .filter_map(|(name, entry)| match entry.url {
+                    Some(url) => Some((
+                        name.to_string(),
+                        ManifestDep {
+                            url,
+                            version: entry.version,
+                        },
+                    )),
+                    None => {
+                        // Path-only manifest deps can't propagate to consumers
+                        // Phase 5 (A5) will convert this to Diagnostic::Warning
+                        eprintln!("warning: manifest dependency `{name}` has no URL and will not propagate to consumers");
+                        None
+                    }
+                })
                 .collect();
             Ok(Some(Manifest {
                 package,

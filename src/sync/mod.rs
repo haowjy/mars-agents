@@ -12,13 +12,16 @@ pub mod types;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::config::{Config, EffectiveConfig, Settings};
+use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::error::MarsError;
-use crate::resolve::ResolveOptions;
+use crate::fs::FileLock;
+use crate::lock::LockFile;
+use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::types::{MarsContext, SourceName};
+use crate::sync::target::{RenameAction, TargetState};
+use crate::types::{DestPath, MarsContext, SourceName};
 use crate::validate::ValidationWarning;
 
 // Re-export mutation types for public API compatibility.
@@ -67,21 +70,84 @@ pub enum ResolutionMode {
     Maximize { targets: HashSet<SourceName> },
 }
 
-/// Execute the unified sync pipeline.
-pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
-    let project_root = &ctx.project_root;
-    let managed_root = &ctx.managed_root;
-    let mars_dir = project_root.join(".mars");
+// ---------------------------------------------------------------------------
+// Pipeline phase structs — typed handoffs between pipeline stages.
+// Phase functions consume prior state by value (move semantics, no cloning).
+// ---------------------------------------------------------------------------
 
+/// Phase 1: Load and validate configuration under sync lock.
+pub struct LoadedConfig {
+    pub config: Config,
+    pub local: LocalConfig,
+    pub effective: EffectiveConfig,
+    pub old_lock: LockFile,
+    pub dependency_changes: Vec<DependencyUpsertChange>,
+    pub _sync_lock: FileLock,
+}
+
+/// Phase 2: Resolved dependency graph.
+pub struct ResolvedState {
+    pub loaded: LoadedConfig,
+    pub graph: ResolvedGraph,
+}
+
+/// Phase 3: Desired target state after discovery + filtering.
+pub struct TargetedState {
+    pub resolved: ResolvedState,
+    pub target: TargetState,
+    pub renames: Vec<RenameAction>,
+    pub warnings: Vec<ValidationWarning>,
+}
+
+/// Phase 4: Diff + plan ready for execution.
+pub struct PlannedState {
+    pub targeted: TargetedState,
+    pub plan: plan::SyncPlan,
+    /// Destinations skipped during _self injection (unmanaged collision avoidance).
+    /// Used by finalize to exclude these from the lock file.
+    pub skipped_self_dests: HashSet<DestPath>,
+}
+
+/// Phase 5: Applied results.
+pub struct AppliedState {
+    pub planned: PlannedState,
+    pub applied: ApplyResult,
+}
+
+/// Execute the unified sync pipeline.
+///
+/// Orchestrates phase functions, each consuming the prior phase's output struct.
+pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
+    let loaded = load_config(ctx, request)?;
+    let resolved = resolve_graph(ctx, loaded, request)?;
+    let targeted = build_target(ctx, resolved, request)?;
+    let planned = create_plan(ctx, targeted, request)?;
+    if request.options.frozen {
+        check_frozen_gate(&planned)?;
+    }
+    let applied = apply_plan(ctx, planned, request)?;
+    let report = finalize(ctx, applied, request)?;
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------
+// Phase functions
+// ---------------------------------------------------------------------------
+
+/// Phase 1: Acquire sync lock, load config, apply mutations, merge effective config,
+/// and load the existing lock file.
+fn load_config(ctx: &MarsContext, request: &SyncRequest) -> Result<LoadedConfig, MarsError> {
+    let project_root = &ctx.project_root;
+    let mars_dir = project_root.join(".mars");
 
     std::fs::create_dir_all(mars_dir.join("cache"))?;
 
-    // Step 1: Acquire sync lock before any config reads/mutations.
+    // Acquire sync lock before any config reads/mutations.
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    // Step 2: Load config under lock (auto-init when mutating and missing).
+    // Load config under lock (auto-init when mutating and missing).
     let mut config = match crate::config::load(project_root) {
         Ok(config) => config,
         Err(err) if mutation::is_config_not_found(&err) && request.mutation.is_some() => Config {
@@ -91,60 +157,89 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         Err(err) => return Err(err),
     };
 
-    // Step 3: Apply config mutation.
-    let has_mutation = request.mutation.is_some();
+    // Apply config mutation.
     let dependency_changes = if let Some(m) = &request.mutation {
         mutation::apply_mutation(&mut config, m)?
     } else {
         Vec::new()
     };
 
-    // Step 4: Load/mutate local overrides under the same lock.
+    // Load/mutate local overrides under the same lock.
     let mut local = crate::config::load_local(project_root)?;
     if let Some(m) = &request.mutation {
         mutation::apply_local_mutation(&mut local, m);
     }
 
-    // Step 4b: Build effective config.
+    // Build effective config.
     let effective = crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
 
-    // Step 5: Validate upgrade targets exist.
-    validate_targets(&request.resolution, &effective)?;
-
-    // Step 6: Load existing lock file.
+    // Load existing lock file.
     let old_lock = crate::lock::load(project_root)?;
 
-    // Step 7: Resolve dependency graph.
+    Ok(LoadedConfig {
+        config,
+        local,
+        effective,
+        old_lock,
+        dependency_changes,
+        _sync_lock,
+    })
+}
+
+/// Phase 2: Validate upgrade targets, resolve the dependency graph.
+fn resolve_graph(
+    ctx: &MarsContext,
+    loaded: LoadedConfig,
+    request: &SyncRequest,
+) -> Result<ResolvedState, MarsError> {
+    validate_targets(&request.resolution, &loaded.effective)?;
+
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider {
         cache: &cache,
-        project_root,
+        project_root: &ctx.project_root,
     };
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
     let graph = crate::resolve::resolve(
-        &effective,
+        &loaded.effective,
         &source_provider,
-        Some(&old_lock),
+        Some(&loaded.old_lock),
         &resolve_options,
     )?;
 
-    // Step 8: Build target state.
-    let (mut target_state, renames) = target::build_with_collisions(&graph, &effective)?;
+    Ok(ResolvedState { loaded, graph })
+}
 
-    // Step 9: Handle collisions + rewrite frontmatter refs.
+/// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
+fn build_target(
+    ctx: &MarsContext,
+    resolved: ResolvedState,
+    _request: &SyncRequest,
+) -> Result<TargetedState, MarsError> {
+    let managed_root = &ctx.managed_root;
+
+    // Build target state from resolved graph.
+    let (mut target_state, renames) =
+        target::build_with_collisions(&resolved.graph, &resolved.loaded.effective)?;
+
+    // Handle collisions + rewrite frontmatter refs.
     if !renames.is_empty() {
-        let rewrite_warnings = target::rewrite_skill_refs(&mut target_state, &renames, &graph)?;
+        let rewrite_warnings =
+            target::rewrite_skill_refs(&mut target_state, &renames, &resolved.graph)?;
         for w in &rewrite_warnings {
             eprintln!("{w}");
         }
     }
 
-    // Step 10: Validate skill references.
+    // Validate skill references.
     let warnings = validate_skill_refs(managed_root, &target_state);
 
-    // Step 11: Prevent managed installs from overwriting unmanaged files.
-    let unmanaged_collisions =
-        target::check_unmanaged_collisions(managed_root, &old_lock, &target_state);
+    // Prevent managed installs from overwriting unmanaged files.
+    let unmanaged_collisions = target::check_unmanaged_collisions(
+        managed_root,
+        &resolved.loaded.old_lock,
+        &target_state,
+    );
     for collision in &unmanaged_collisions {
         eprintln!(
             "warning: source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
@@ -153,48 +248,92 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         target_state.items.shift_remove(&collision.path);
     }
 
-    // Step 12: Compute diff.
+    Ok(TargetedState {
+        resolved,
+        target: target_state,
+        renames,
+        warnings,
+    })
+}
+
+/// Phase 4: Compute diff, create plan, inject _self items.
+///
+/// NOTE: _self injection stays here for now — Phase 3 (A2) will move it into build_target.
+fn create_plan(
+    ctx: &MarsContext,
+    mut targeted: TargetedState,
+    request: &SyncRequest,
+) -> Result<PlannedState, MarsError> {
+    let project_root = &ctx.project_root;
+    let managed_root = &ctx.managed_root;
+    let mars_dir = project_root.join(".mars");
+    let cache_bases_dir = mars_dir.join("cache").join("bases");
+
+    // Compute diff.
     let sync_diff = diff::compute(
         managed_root,
-        &old_lock,
-        &target_state,
+        &targeted.resolved.loaded.old_lock,
+        &targeted.target,
         request.options.force,
     )?;
 
-    // Step 13: Create plan.
-    let cache_bases_dir = mars_dir.join("cache").join("bases");
+    // Create plan.
     let mut sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
 
-    // Step 13b-13c: Inject local package symlinks and handle _self lifecycle.
+    // Inject local package symlinks and handle _self lifecycle.
     let skipped_self_dests = self_package::inject_self_items(
-        config.package.is_some(),
+        targeted.resolved.loaded.config.package.is_some(),
         project_root,
         managed_root,
-        &old_lock,
-        &mut target_state,
+        &targeted.resolved.loaded.old_lock,
+        &mut targeted.target,
         &mut sync_plan,
     )?;
 
-    // Step 14: Frozen gate.
-    if request.options.frozen {
-        let has_changes = sync_plan.actions.iter().any(|a| {
-            !matches!(
-                a,
-                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
-            )
-        });
-        if has_changes {
-            return Err(MarsError::FrozenViolation {
-                message: "lock file would change but --frozen is set".into(),
-            });
-        }
-    }
+    Ok(PlannedState {
+        targeted,
+        plan: sync_plan,
+        skipped_self_dests,
+    })
+}
 
-    // Step 15: Persist config/local only after validation gate and before apply.
+/// Check that a frozen sync has no pending changes.
+fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
+    let has_changes = planned.plan.actions.iter().any(|a| {
+        !matches!(
+            a,
+            plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+        )
+    });
+    if has_changes {
+        return Err(MarsError::FrozenViolation {
+            message: "lock file would change but --frozen is set".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Phase 5: Persist config if mutated, apply plan to disk.
+fn apply_plan(
+    ctx: &MarsContext,
+    planned: PlannedState,
+    request: &SyncRequest,
+) -> Result<AppliedState, MarsError> {
+    let project_root = &ctx.project_root;
+    let managed_root = &ctx.managed_root;
+    let mars_dir = project_root.join(".mars");
+    let cache_bases_dir = mars_dir.join("cache").join("bases");
+
+    let has_mutation = request.mutation.is_some();
+
+    // Persist config/local only after validation gate and before apply.
     if has_mutation && !request.options.dry_run {
         match &request.mutation {
             Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
-                crate::config::save_local(project_root, &local)?;
+                crate::config::save_local(
+                    project_root,
+                    &planned.targeted.resolved.loaded.local,
+                )?;
             }
             Some(
                 ConfigMutation::UpsertDependency { .. }
@@ -202,17 +341,36 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
                 | ConfigMutation::RemoveDependency { .. }
                 | ConfigMutation::SetRename { .. },
             ) => {
-                crate::config::save(project_root, &config)?;
+                crate::config::save(
+                    project_root,
+                    &planned.targeted.resolved.loaded.config,
+                )?;
             }
             None => {}
         }
     }
 
-    // Step 16: Apply plan.
-    let applied = apply::execute(managed_root, &sync_plan, &request.options, &cache_bases_dir)?;
-    let pruned = Vec::new();
+    // Apply plan.
+    let applied =
+        apply::execute(managed_root, &planned.plan, &request.options, &cache_bases_dir)?;
 
-    // Step 17: Write lock file.
+    Ok(AppliedState { planned, applied })
+}
+
+/// Phase 6: Write lock file, construct SyncReport.
+fn finalize(
+    ctx: &MarsContext,
+    state: AppliedState,
+    request: &SyncRequest,
+) -> Result<SyncReport, MarsError> {
+    let project_root = &ctx.project_root;
+    let config = &state.planned.targeted.resolved.loaded.config;
+    let old_lock = &state.planned.targeted.resolved.loaded.old_lock;
+    let graph = &state.planned.targeted.resolved.graph;
+
+    let skipped_self_dests = &state.planned.skipped_self_dests;
+
+    // Write lock file.
     if !request.options.dry_run {
         let self_lock_items = if config.package.is_some() {
             let self_items = self_package::discover_local_items(project_root)?;
@@ -226,13 +384,16 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         };
         let self_items_for_lock =
             (!self_lock_items.is_empty()).then_some(self_lock_items.as_slice());
-        let new_lock = crate::lock::build(&graph, &applied, &old_lock, self_items_for_lock)?;
+        let new_lock = crate::lock::build(graph, &state.applied, old_lock, self_items_for_lock)?;
         crate::lock::write(project_root, &new_lock)?;
     }
 
+    let dependency_changes = state.planned.targeted.resolved.loaded.dependency_changes;
+    let warnings = state.planned.targeted.warnings;
+
     Ok(SyncReport {
-        applied,
-        pruned,
+        applied: state.applied,
+        pruned: Vec::new(),
         warnings,
         dependency_changes,
         dry_run: request.options.dry_run,

@@ -3,6 +3,7 @@
 //! Delegates to `git_cli` for git CLI operations and `archive` for
 //! GitHub archive download/extraction.
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::source::parse::extract_hostname;
 use crate::source::{AvailableVersion, GlobalCache, ResolvedRef};
@@ -84,7 +85,11 @@ pub(crate) struct ResolvedVersion {
     pub sha: String,
 }
 
-fn resolve_version(url: &str, version_req: Option<&str>) -> Result<ResolvedVersion, MarsError> {
+fn resolve_version(
+    url: &str,
+    version_req: Option<&str>,
+    diag: &mut DiagnosticCollector,
+) -> Result<ResolvedVersion, MarsError> {
     if let Some(version_req) = version_req {
         if let Some(requested_version) = parse_semver_tag(version_req) {
             let tags = git_cli::ls_remote_tags(url)?;
@@ -120,7 +125,10 @@ fn resolve_version(url: &str, version_req: Option<&str>) -> Result<ResolvedVersi
         });
     }
 
-    eprintln!("warning: no releases found for {url}, using latest commit from default branch");
+    diag.warn(
+        "no-releases",
+        format!("no releases found for {url}, using latest commit from default branch"),
+    );
     let sha = git_cli::ls_remote_head(url)?;
     Ok(ResolvedVersion {
         tag: None,
@@ -155,8 +163,9 @@ pub fn fetch(
     source_name: &str,
     cache: &GlobalCache,
     options: &FetchOptions,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let mut resolved = resolve_version(url, version_req)?;
+    let mut resolved = resolve_version(url, version_req, diag)?;
     if let Some(preferred_commit) = options.preferred_commit.as_ref() {
         resolved.sha = preferred_commit.to_string();
     }
@@ -363,7 +372,16 @@ mod tests {
         fs::create_dir_all(cache.git_dir()).unwrap();
 
         let url = format!("file://{}", remote.path().display());
-        let resolved = fetch(&url, None, "local-source", &cache, &FetchOptions::default()).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        let resolved = fetch(
+            &url,
+            None,
+            "local-source",
+            &cache,
+            &FetchOptions::default(),
+            &mut diag,
+        )
+        .unwrap();
 
         assert_eq!(resolved.source_name.as_ref(), "local-source");
         assert_eq!(resolved.version, Some(Version::new(0, 2, 0)));

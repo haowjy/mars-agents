@@ -4,7 +4,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LockError, MarsError};
-use crate::types::{CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceUrl};
+use crate::types::{
+    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceUrl,
+};
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -60,14 +62,6 @@ pub struct LockedItem {
     pub dest_path: DestPath,
 }
 
-/// `_self` item data provided by sync to force lock retention.
-#[derive(Debug, Clone)]
-pub struct SelfLockItem {
-    pub dest_path: DestPath,
-    pub kind: ItemKind,
-    pub source_checksum: ContentHash,
-}
-
 // Re-export ItemKind and ItemId from types — they're shared vocabulary,
 // not lock-specific. This preserves `use crate::lock::ItemKind` compatibility.
 pub use crate::types::{ItemId, ItemKind};
@@ -112,7 +106,6 @@ pub fn build(
     graph: &crate::resolve::ResolvedGraph,
     applied: &crate::sync::apply::ApplyResult,
     old_lock: &LockFile,
-    self_items: Option<&[SelfLockItem]>,
 ) -> Result<LockFile, MarsError> {
     use crate::sync::apply::ActionTaken;
 
@@ -154,7 +147,7 @@ pub fn build(
                 items.insert(
                     dest_path.clone(),
                     LockedItem {
-                        source: SourceName::from("_self"),
+                        source: SourceOrigin::LocalPackage.to_string().into(),
                         kind: outcome.item_id.kind,
                         version: None,
                         source_checksum: source_checksum.clone(),
@@ -211,27 +204,12 @@ pub fn build(
         }
     }
 
-    if let Some(self_items) = self_items {
-        for item in self_items {
-            items.insert(
-                item.dest_path.clone(),
-                LockedItem {
-                    source: SourceName::from("_self"),
-                    kind: item.kind,
-                    version: None,
-                    source_checksum: item.source_checksum.clone(),
-                    installed_checksum: item.source_checksum.clone(),
-                    dest_path: item.dest_path.clone(),
-                },
-            );
-        }
-    }
-
     // Add synthetic _self source if any symlinked items exist
-    let has_self_items = items.values().any(|item| item.source.as_ref() == "_self");
+    let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
+    let has_self_items = items.values().any(|item| item.source == local_source_name);
     if has_self_items {
         dependencies.insert(
-            SourceName::from("_self"),
+            local_source_name,
             LockedSource {
                 url: None,
                 path: Some(".".into()),
@@ -276,7 +254,7 @@ mod tests {
 
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
-    use crate::sync::apply::ApplyResult;
+    use crate::sync::apply::{ActionOutcome, ActionTaken, ApplyResult};
     use crate::types::{SourceId, SourceUrl};
     use tempfile::TempDir;
 
@@ -537,7 +515,7 @@ dest_path = "agents/helper.md"
             items: IndexMap::new(),
         };
 
-        let new_lock = build(&graph, &applied, &old_lock, None).unwrap();
+        let new_lock = build(&graph, &applied, &old_lock).unwrap();
 
         let base = &new_lock.dependencies["base"];
         assert_eq!(base.url.as_ref(), Some(&git_url));
@@ -553,25 +531,56 @@ dest_path = "agents/helper.md"
     }
 
     #[test]
-    fn build_keeps_self_items_even_without_symlink_actions() {
+    fn build_keeps_self_items_from_old_lock_on_skipped_action() {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
             id_index: HashMap::new(),
         };
-        let applied = ApplyResult { outcomes: vec![] };
-        let old_lock = LockFile::empty();
-        let self_items = vec![SelfLockItem {
-            dest_path: "skills/local-skill".into(),
-            kind: ItemKind::Skill,
-            source_checksum: "sha256:self".into(),
-        }];
+        let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
+        let old_lock = LockFile {
+            version: 1,
+            dependencies: IndexMap::from([(
+                local_source_name.clone(),
+                LockedSource {
+                    url: None,
+                    path: Some(".".into()),
+                    version: None,
+                    commit: None,
+                    tree_hash: None,
+                },
+            )]),
+            items: IndexMap::from([(
+                DestPath::from("skills/local-skill"),
+                LockedItem {
+                    source: local_source_name.clone(),
+                    kind: ItemKind::Skill,
+                    version: None,
+                    source_checksum: "sha256:self".into(),
+                    installed_checksum: "sha256:self".into(),
+                    dest_path: DestPath::from("skills/local-skill"),
+                },
+            )]),
+        };
+        let applied = ApplyResult {
+            outcomes: vec![ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Skill,
+                    name: "local-skill".into(),
+                },
+                action: ActionTaken::Skipped,
+                dest_path: "skills/local-skill".into(),
+                source_name: local_source_name.clone(),
+                source_checksum: None,
+                installed_checksum: None,
+            }],
+        };
 
-        let new_lock = build(&graph, &applied, &old_lock, Some(&self_items)).unwrap();
+        let new_lock = build(&graph, &applied, &old_lock).unwrap();
 
-        assert!(new_lock.dependencies.contains_key("_self"));
+        assert!(new_lock.dependencies.contains_key(local_source_name.as_str()));
         let item = &new_lock.items["skills/local-skill"];
-        assert_eq!(item.source, "_self");
+        assert_eq!(item.source, local_source_name);
         assert_eq!(item.kind, ItemKind::Skill);
         assert_eq!(item.source_checksum, "sha256:self");
         assert_eq!(item.installed_checksum, "sha256:self");

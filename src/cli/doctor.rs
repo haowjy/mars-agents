@@ -2,6 +2,7 @@
 
 use crate::error::MarsError;
 use crate::hash;
+use crate::types::SourceOrigin;
 
 use super::output;
 
@@ -69,7 +70,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     // Check agent→skill references
     if let Ok(config) = crate::config::load(&ctx.project_root) {
         let local = crate::config::load_local(&ctx.project_root).unwrap_or_default();
-        if let Ok(effective) = crate::config::merge_with_root(config, local, &ctx.project_root) {
+        if let Ok((effective, _diagnostics)) =
+            crate::config::merge_with_root(config, local, &ctx.project_root)
+        {
             // Check that all sources in config have corresponding lock entries
             for source_name in effective.dependencies.keys() {
                 if !lock.dependencies.contains_key(source_name) {
@@ -168,9 +171,10 @@ fn is_self_symlink(
         return false;
     };
     let dest_path = crate::types::DestPath::from(rel_path);
+    let local_source_name = SourceOrigin::LocalPackage.to_string();
     lock.items
         .get(&dest_path)
-        .is_some_and(|locked| locked.source.as_ref() == "_self")
+        .is_some_and(|locked| locked.source.as_ref() == local_source_name.as_str())
 }
 
 /// Validate link health for a single link target.

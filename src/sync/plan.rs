@@ -4,7 +4,7 @@ use crate::lock::{ItemId, ItemKind, LockedItem};
 use crate::sync::diff::{DiffEntry, SyncDiff};
 use crate::sync::target::TargetItem;
 use crate::sync::types::SyncOptions;
-use crate::types::{DestPath, ItemName, SourceName};
+use crate::types::{DestPath, ItemName, Materialization, SourceName};
 
 /// A planned set of actions to execute.
 #[derive(Debug, Clone)]
@@ -67,17 +67,37 @@ pub fn create(
 
     for entry in &diff.items {
         match entry {
-            DiffEntry::Add { target } => {
-                actions.push(PlannedAction::Install {
-                    target: target.clone(),
-                });
-            }
+            DiffEntry::Add { target } => match &target.materialization {
+                Materialization::Copy => {
+                    actions.push(PlannedAction::Install {
+                        target: target.clone(),
+                    });
+                }
+                Materialization::Symlink { source_abs } => {
+                    actions.push(PlannedAction::Symlink {
+                        source_abs: source_abs.clone(),
+                        dest_rel: target.dest_path.clone(),
+                        kind: target.id.kind,
+                        name: target.id.name.clone(),
+                    });
+                }
+            },
 
-            DiffEntry::Update { target, locked: _ } => {
-                actions.push(PlannedAction::Overwrite {
-                    target: target.clone(),
-                });
-            }
+            DiffEntry::Update { target, locked: _ } => match &target.materialization {
+                Materialization::Copy => {
+                    actions.push(PlannedAction::Overwrite {
+                        target: target.clone(),
+                    });
+                }
+                Materialization::Symlink { source_abs } => {
+                    actions.push(PlannedAction::Symlink {
+                        source_abs: source_abs.clone(),
+                        dest_rel: target.dest_path.clone(),
+                        kind: target.id.kind,
+                        name: target.id.name.clone(),
+                    });
+                }
+            },
 
             DiffEntry::Unchanged { target, locked: _ } => {
                 actions.push(PlannedAction::Skip {
@@ -163,6 +183,8 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test".into(),
+            origin: crate::types::SourceOrigin::Dependency("test".into()),
+            materialization: crate::types::Materialization::Copy,
             source_id: crate::types::SourceId::Path {
                 canonical: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
             },

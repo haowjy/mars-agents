@@ -2,10 +2,11 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
+use crate::reconcile::fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;
-use crate::types::{ContentHash, DestPath, ItemName, SourceName};
+use crate::types::{ContentHash, DestPath, ItemName, SourceName, SourceOrigin};
 
 /// The result of applying the sync plan.
 #[derive(Debug, Clone)]
@@ -147,7 +148,7 @@ fn execute_action(
             )?;
 
             // Write merged content
-            crate::fs::atomic_write(&dest, &merge_result.content)?;
+            fs_ops::atomic_write_file(&dest, &merge_result.content)?;
 
             let installed_checksum =
                 ContentHash::from(crate::hash::hash_bytes(&merge_result.content));
@@ -174,7 +175,7 @@ fn execute_action(
         PlannedAction::Remove { locked } => {
             let dest = root.join(&locked.dest_path);
             if dest.exists() {
-                crate::fs::remove_item(&dest, locked.kind)?;
+                fs_ops::safe_remove(&dest)?;
             }
 
             let item_id = ItemId {
@@ -230,28 +231,12 @@ fn execute_action(
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            // Remove whatever exists at dest (file, dir, or symlink)
-            if dest.symlink_metadata().is_ok() {
-                if dest.read_link().is_ok() {
-                    std::fs::remove_file(&dest)?;
-                } else if dest.is_dir() {
-                    std::fs::remove_dir_all(&dest)?;
-                } else {
-                    std::fs::remove_file(&dest)?;
-                }
-            }
             // Compute relative symlink path
             let from_dir = dest.parent().unwrap();
             let rel_target =
                 pathdiff::diff_paths(source_abs, from_dir).unwrap_or_else(|| source_abs.clone());
-            // Create symlink
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&rel_target, &dest)?;
-            #[cfg(not(unix))]
-            return Err(MarsError::Link {
-                target: dest.display().to_string(),
-                message: "symlinks are only supported on Unix".to_string(),
-            });
+            // Create symlink after removing any existing content.
+            fs_ops::atomic_symlink(&dest, &rel_target)?;
 
             let source_hash: ContentHash = crate::hash::compute_hash(source_abs, *kind)
                 .unwrap_or_default()
@@ -264,7 +249,7 @@ fn execute_action(
                 },
                 action: ActionTaken::Symlinked,
                 dest_path: dest_rel.clone(),
-                source_name: SourceName::from("_self"),
+                source_name: SourceOrigin::LocalPackage.to_string().into(),
                 source_checksum: Some(source_hash.clone()),
                 installed_checksum: Some(source_hash),
             })
@@ -350,7 +335,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
             },
             action: ActionTaken::Symlinked,
             dest_path: dest_rel.clone(),
-            source_name: SourceName::from("_self"),
+            source_name: SourceOrigin::LocalPackage.to_string().into(),
             source_checksum: None,
             installed_checksum: None,
         },
@@ -364,7 +349,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
     match target.id.kind {
         ItemKind::Agent => {
             let content = content_to_install(target)?;
-            crate::fs::atomic_write(dest, &content)?;
+            fs_ops::atomic_write_file(dest, &content)?;
             Ok(ContentHash::from(crate::hash::hash_bytes(&content)))
         }
         ItemKind::Skill => {
@@ -375,7 +360,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
                 )?;
             } else {
-                crate::fs::atomic_install_dir(&target.source_path, dest)?;
+                fs_ops::atomic_install_dir(&target.source_path, dest)?;
             }
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
         }
@@ -439,14 +424,14 @@ fn cache_base_content(
     match kind {
         ItemKind::Agent => {
             let content = std::fs::read(dest)?;
-            crate::fs::atomic_write(&cache_path, &content)?;
+            fs_ops::atomic_write_file(&cache_path, &content)?;
         }
         ItemKind::Skill => {
             // For skills, cache the SKILL.md content (the merge-relevant part)
             let skill_md = dest.join("SKILL.md");
             if skill_md.exists() {
                 let content = std::fs::read(&skill_md)?;
-                crate::fs::atomic_write(&cache_path, &content)?;
+                fs_ops::atomic_write_file(&cache_path, &content)?;
             }
         }
     }
@@ -484,7 +469,7 @@ pub fn prune_orphans(
         if !target.items.contains_key(dest_path_str) {
             let dest = root.join(dest_path_str);
             if dest.exists() {
-                crate::fs::remove_item(&dest, locked_item.kind)?;
+                fs_ops::safe_remove(&dest)?;
             }
             outcomes.push(ActionOutcome {
                 item_id: ItemId {
@@ -521,6 +506,8 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test-source".into(),
+            origin: crate::types::SourceOrigin::Dependency("test-source".into()),
+            materialization: crate::types::Materialization::Copy,
             source_id: crate::types::SourceId::Path {
                 canonical: source_path.clone(),
             },
@@ -842,6 +829,8 @@ mod tests {
                 name: "planning".into(),
             },
             source_name: "test".into(),
+            origin: crate::types::SourceOrigin::Dependency("test".into()),
+            materialization: crate::types::Materialization::Copy,
             source_id: crate::types::SourceId::Path {
                 canonical: source_skill.clone(),
             },
@@ -903,6 +892,8 @@ mod tests {
                 name: "flat-skill".into(),
             },
             source_name: "test".into(),
+            origin: crate::types::SourceOrigin::Dependency("test".into()),
+            materialization: crate::types::Materialization::Copy,
             source_id: crate::types::SourceId::Path {
                 canonical: flat_source.clone(),
             },

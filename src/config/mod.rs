@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceUrl};
+use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceUrl};
 
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -188,8 +189,9 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 ///
 /// Converts `InstallDep` entries to `ManifestDep` by filtering out path-only
 /// deps (which can't propagate to consumers) and requiring a URL.
-pub fn load_manifest(source_root: &Path) -> Result<Option<Manifest>, MarsError> {
+pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
+    let mut diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let parsed: Config =
@@ -197,7 +199,7 @@ pub fn load_manifest(source_root: &Path) -> Result<Option<Manifest>, MarsError> 
                     message: format!("failed to parse {}: {e}", path.display()),
                 })?;
             let Some(package) = parsed.package else {
-                return Ok(None);
+                return Ok((None, diagnostics));
             };
             // Convert InstallDep → ManifestDep, filtering out path-only deps
             let deps: IndexMap<String, ManifestDep> = parsed
@@ -213,18 +215,27 @@ pub fn load_manifest(source_root: &Path) -> Result<Option<Manifest>, MarsError> 
                     )),
                     None => {
                         // Path-only manifest deps can't propagate to consumers
-                        // Phase 5 (A5) will convert this to Diagnostic::Warning
-                        eprintln!("warning: manifest dependency `{name}` has no URL and will not propagate to consumers");
+                        diagnostics.push(Diagnostic {
+                            level: DiagnosticLevel::Warning,
+                            code: "manifest-path-dep",
+                            message: format!(
+                                "manifest dependency `{name}` has no URL and will not propagate to consumers"
+                            ),
+                            context: None,
+                        });
                         None
                     }
                 })
                 .collect();
-            Ok(Some(Manifest {
-                package,
-                dependencies: deps,
-            }))
+            Ok((
+                Some(Manifest {
+                    package,
+                    dependencies: deps,
+                }),
+                diagnostics,
+            ))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, diagnostics)),
         Err(e) => Err(MarsError::Io(e)),
     }
 }
@@ -247,9 +258,10 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
 /// Validates:
 /// - Each source has `url` XOR `path` (not both, not neither)
 /// - Each source uses either include filters (`agents`/`skills`) or `exclude`, not both
-/// - Warns (via eprintln) if an override references a source name not in config
+/// - Collects diagnostics if an override references a source name not in config
 pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, MarsError> {
-    merge_with_root(config, local, Path::new("."))
+    let (effective, _diagnostics) = merge_with_root(config, local, Path::new("."))?;
+    Ok(effective)
 }
 
 /// Same as `merge`, but uses an explicit root for path-based SourceId canonicalization.
@@ -257,12 +269,14 @@ pub fn merge_with_root(
     config: Config,
     local: LocalConfig,
     root: &Path,
-) -> Result<EffectiveConfig, MarsError> {
+) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
     let mut dependencies = IndexMap::new();
+    let mut diagnostics = Vec::new();
+    let local_source_name = SourceOrigin::LocalPackage.to_string();
 
     for (name, entry) in &config.dependencies {
         // Reject reserved name
-        if name.as_ref() == "_self" {
+        if name.as_ref() == local_source_name.as_str() {
             return Err(ConfigError::Invalid {
                 message: "dependency name `_self` is reserved for local package items".into(),
             }
@@ -328,16 +342,24 @@ pub fn merge_with_root(
     // Warn if override references a dependency not in config
     for override_name in local.overrides.keys() {
         if !config.dependencies.contains_key(override_name) {
-            eprintln!(
-                "warning: override `{override_name}` references a dependency not in mars.toml"
-            );
+            diagnostics.push(Diagnostic {
+                level: DiagnosticLevel::Warning,
+                code: "override-missing-dep",
+                message: format!(
+                    "override `{override_name}` references a dependency not in mars.toml"
+                ),
+                context: None,
+            });
         }
     }
 
-    Ok(EffectiveConfig {
-        dependencies,
-        settings: config.settings,
-    })
+    Ok((
+        EffectiveConfig {
+            dependencies,
+            settings: config.settings,
+        },
+        diagnostics,
+    ))
 }
 
 /// Validate filter configuration for consistency.
@@ -791,7 +813,8 @@ url = "https://github.com/org/base.git"
         )
         .unwrap();
 
-        let manifest = load_manifest(dir.path()).unwrap();
+        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
+        assert!(diagnostics.is_empty());
         assert!(manifest.is_none());
     }
 
@@ -812,7 +835,9 @@ version = ">=1.0.0"
         )
         .unwrap();
 
-        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
+        assert!(diagnostics.is_empty());
+        let manifest = manifest.unwrap();
         assert_eq!(manifest.package.name, "pkg");
         assert_eq!(manifest.package.version, "1.2.3");
         assert!(manifest.dependencies.contains_key("base"));

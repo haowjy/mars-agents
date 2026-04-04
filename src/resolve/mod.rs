@@ -16,6 +16,7 @@ use indexmap::IndexMap;
 use semver::{Version, VersionReq};
 
 use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec};
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
@@ -81,6 +82,7 @@ pub trait SourceFetcher {
         version: &AvailableVersion,
         source_name: &str,
         preferred_commit: Option<&str>,
+        diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
     /// Fetch a git source at a branch/commit ref (non-semver path).
@@ -90,15 +92,25 @@ pub trait SourceFetcher {
         ref_name: &str,
         source_name: &str,
         preferred_commit: Option<&str>,
+        diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
     /// Resolve a local path source into a concrete tree reference.
-    fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError>;
+    fn fetch_path(
+        &self,
+        path: &Path,
+        source_name: &str,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<ResolvedRef, MarsError>;
 }
 
 /// Reads source manifests for transitive dependency discovery.
 pub trait ManifestReader {
-    fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError>;
+    fn read_manifest(
+        &self,
+        source_tree: &Path,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<Option<Manifest>, MarsError>;
 }
 
 /// Composite trait used by `resolve()`.
@@ -173,6 +185,7 @@ pub fn resolve(
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
     let mut nodes: IndexMap<SourceName, ResolvedNode> = IndexMap::new();
     let mut id_index: HashMap<SourceId, SourceName> = HashMap::new();
@@ -239,10 +252,10 @@ pub fn resolve(
 
         // Resolve and fetch the source
         let resolved_ref =
-            resolve_single_source(&pending_src, provider, locked, options, &constraints)?;
+            resolve_single_source(&pending_src, provider, locked, options, &constraints, diag)?;
 
         // Read manifest for transitive deps
-        let manifest = provider.read_manifest(&resolved_ref.tree_path)?;
+        let manifest = provider.read_manifest(&resolved_ref.tree_path, diag)?;
 
         // Discover transitive dependencies
         let mut deps = Vec::new();
@@ -320,11 +333,12 @@ fn resolve_single_source(
     locked: Option<&LockFile>,
     options: &ResolveOptions,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     match &pending.spec {
         SourceSpec::Path(path) => {
             // Path sources: no version resolution, just use the path
-            provider.fetch_path(path, pending.name.as_ref())
+            provider.fetch_path(path, pending.name.as_ref(), diag)
         }
         SourceSpec::Git(git) => resolve_git_source(
             &pending.name,
@@ -336,6 +350,7 @@ fn resolve_single_source(
             provider,
             locked,
             options,
+            diag,
         ),
     }
 }
@@ -348,6 +363,7 @@ fn resolve_git_source(
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     // If all constraints are ref pins, use the first one
     // (multiple ref pins for the same source is likely an error, but we'll use first)
@@ -357,7 +373,7 @@ fn resolve_git_source(
     if has_ref_pin {
         for (_, constraint) in constraints {
             if let VersionConstraint::RefPin(ref_name) = constraint {
-                return provider.fetch_git_ref(url, ref_name, name.as_ref(), None);
+                return provider.fetch_git_ref(url, ref_name, name.as_ref(), None, diag);
             }
         }
     }
@@ -389,7 +405,7 @@ fn resolve_git_source(
         } else {
             None
         };
-        match provider.fetch_git_ref(url, "HEAD", name.as_ref(), preferred_commit) {
+        match provider.fetch_git_ref(url, "HEAD", name.as_ref(), preferred_commit, diag) {
             Ok(resolved) => return Ok(resolved),
             Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => {
                 return Err(err);
@@ -398,10 +414,13 @@ fn resolve_git_source(
                 commit,
                 url: source_url,
             }) => {
-                eprintln!(
-                    "warning: locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
+                diag.warn(
+                    "locked-commit-unreachable",
+                    format!(
+                        "locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
+                    ),
                 );
-                return provider.fetch_git_ref(url, "HEAD", name.as_ref(), None);
+                return provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag);
             }
             Err(err) => return Err(err),
         }
@@ -446,17 +465,20 @@ fn resolve_git_source(
         None
     };
 
-    match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit) {
+    match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit, diag) {
         Ok(resolved) => Ok(resolved),
         Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => Err(err),
         Err(MarsError::LockedCommitUnreachable {
             commit,
             url: source_url,
         }) => {
-            eprintln!(
-                "warning: locked commit {commit} for {source_url} is unreachable; re-resolving from tag"
+            diag.warn(
+                "locked-commit-unreachable",
+                format!(
+                    "locked commit {commit} for {source_url} is unreachable; re-resolving from tag"
+                ),
             );
-            provider.fetch_git_version(url, selected, name.as_ref(), None)
+            provider.fetch_git_version(url, selected, name.as_ref(), None, diag)
         }
         Err(err) => Err(err),
     }
@@ -640,7 +662,7 @@ fn topological_sort(
 mod tests {
     use super::*;
     use crate::config::{
-        EffectiveConfig, EffectiveDependency, FilterMode, GitSpec, ManifestDep, Manifest,
+        EffectiveConfig, EffectiveDependency, FilterMode, GitSpec, Manifest, ManifestDep,
         PackageInfo, Settings, SourceSpec,
     };
     use crate::types::{RenameMap, SourceId, SourceUrl};
@@ -723,6 +745,7 @@ mod tests {
             version: &AvailableVersion,
             source_name: &str,
             preferred_commit: Option<&str>,
+            _diag: &mut DiagnosticCollector,
         ) -> Result<ResolvedRef, MarsError> {
             self.seen_preferred_commits
                 .borrow_mut()
@@ -757,6 +780,7 @@ mod tests {
             ref_name: &str,
             source_name: &str,
             preferred_commit: Option<&str>,
+            _diag: &mut DiagnosticCollector,
         ) -> Result<ResolvedRef, MarsError> {
             self.seen_preferred_commits
                 .borrow_mut()
@@ -785,7 +809,12 @@ mod tests {
             })
         }
 
-        fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
+        fn fetch_path(
+            &self,
+            path: &Path,
+            source_name: &str,
+            _diag: &mut DiagnosticCollector,
+        ) -> Result<ResolvedRef, MarsError> {
             Ok(ResolvedRef {
                 source_name: source_name.into(),
                 version: None,
@@ -797,7 +826,11 @@ mod tests {
     }
 
     impl ManifestReader for MockProvider {
-        fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError> {
+        fn read_manifest(
+            &self,
+            source_tree: &Path,
+            _diag: &mut DiagnosticCollector,
+        ) -> Result<Option<Manifest>, MarsError> {
             Ok(self.manifests.get(source_tree).cloned().unwrap_or(None))
         }
     }
@@ -856,6 +889,16 @@ mod tests {
 
     fn default_options() -> ResolveOptions {
         ResolveOptions::default()
+    }
+
+    fn resolve(
+        config: &EffectiveConfig,
+        provider: &dyn SourceProvider,
+        locked: Option<&LockFile>,
+        options: &ResolveOptions,
+    ) -> Result<ResolvedGraph, MarsError> {
+        let mut diag = DiagnosticCollector::new();
+        super::resolve(config, provider, locked, options, &mut diag)
     }
 
     fn source_id_for_spec(spec: &SourceSpec) -> SourceId {

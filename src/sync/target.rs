@@ -10,7 +10,9 @@ use crate::hash;
 use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
-use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceId, SourceName};
+use crate::types::{
+    ContentHash, DestPath, ItemName, Materialization, RenameMap, SourceId, SourceName, SourceOrigin,
+};
 
 /// What `.agents/` should look like after sync.
 ///
@@ -26,6 +28,8 @@ pub struct TargetState {
 pub struct TargetItem {
     pub id: ItemId,
     pub source_name: SourceName,
+    pub origin: SourceOrigin,
+    pub materialization: Materialization,
     pub source_id: SourceId,
     /// Path to content in fetched source tree.
     pub source_path: PathBuf,
@@ -102,6 +106,8 @@ pub fn build_with_collisions(
                     name: dest_name,
                 },
                 source_name: source_name.clone(),
+                origin: SourceOrigin::Dependency(source_name.clone()),
+                materialization: Materialization::Copy,
                 source_id: source_id.clone(),
                 source_path: source_content_path,
                 dest_path,

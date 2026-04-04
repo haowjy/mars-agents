@@ -104,6 +104,33 @@ string_newtype!(SourceUrl);
 string_newtype!(CommitHash);
 string_newtype!(ContentHash);
 
+/// Where an item came from — used for lock provenance and display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceOrigin {
+    /// From a dependency (git or path source).
+    Dependency(SourceName),
+    /// From the local project's [package] declaration.
+    LocalPackage,
+}
+
+impl fmt::Display for SourceOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dependency(name) => write!(f, "{name}"),
+            Self::LocalPackage => write!(f, "_self"),
+        }
+    }
+}
+
+/// How an item should be materialized in the managed root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Materialization {
+    /// Copy source content to destination (standard for dependency items).
+    Copy,
+    /// Create a symlink to the source (for local package items — edits propagate).
+    Symlink { source_abs: PathBuf },
+}
+
 /// Kind of installable item.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use crate::config::Manifest;
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::resolve::{ManifestReader, SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
@@ -35,6 +36,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
         version: &AvailableVersion,
         source_name: &str,
         preferred_commit: Option<&str>,
+        diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         let fetch_options = source::git::FetchOptions {
             preferred_commit: preferred_commit.map(CommitHash::from),
@@ -45,6 +47,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
             source_name,
             self.cache,
             &fetch_options,
+            diag,
         )
     }
 
@@ -54,6 +57,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
         ref_name: &str,
         source_name: &str,
         preferred_commit: Option<&str>,
+        diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         let fetch_options = source::git::FetchOptions {
             preferred_commit: preferred_commit.map(CommitHash::from),
@@ -64,16 +68,28 @@ impl SourceFetcher for RealSourceProvider<'_> {
             source_name,
             self.cache,
             &fetch_options,
+            diag,
         )
     }
 
-    fn fetch_path(&self, path: &Path, source_name: &str) -> Result<ResolvedRef, MarsError> {
+    fn fetch_path(
+        &self,
+        path: &Path,
+        source_name: &str,
+        _diag: &mut DiagnosticCollector,
+    ) -> Result<ResolvedRef, MarsError> {
         source::path::fetch_path(path, self.project_root, source_name)
     }
 }
 
 impl ManifestReader for RealSourceProvider<'_> {
-    fn read_manifest(&self, source_tree: &Path) -> Result<Option<Manifest>, MarsError> {
-        crate::config::load_manifest(source_tree)
+    fn read_manifest(
+        &self,
+        source_tree: &Path,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<Option<Manifest>, MarsError> {
+        let (manifest, diagnostics) = crate::config::load_manifest(source_tree)?;
+        diag.extend(diagnostics);
+        Ok(manifest)
     }
 }

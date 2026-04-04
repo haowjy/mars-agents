@@ -8,9 +8,9 @@ use std::io::Write;
 use serde::Serialize;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
+use crate::diagnostic::Diagnostic;
 use crate::sync::SyncReport;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
-use crate::validate::ValidationWarning;
 
 /// Check if colored output should be used.
 ///
@@ -112,7 +112,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts: usize,
         kept: usize,
         skipped: usize,
-        warnings: Vec<String>,
+        diagnostics: Vec<Diagnostic>,
     }
 
     let mut installed = 0;
@@ -140,8 +140,6 @@ fn print_sync_report_json(report: &SyncReport) {
         }
     }
 
-    let warnings: Vec<String> = report.warnings.iter().map(format_warning).collect();
-
     let json_report = JsonReport {
         ok: conflicts == 0,
         dry_run: report.dry_run,
@@ -151,7 +149,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts,
         kept,
         skipped,
-        warnings,
+        diagnostics: report.diagnostics.clone(),
     };
 
     println!(
@@ -244,11 +242,16 @@ fn print_sync_report_human(report: &SyncReport) {
         let _ = stdout.reset();
     }
 
-    // Print warnings
-    for warning in &report.warnings {
-        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
-        let _ = writeln!(stdout, "  warning: {}", format_warning(warning));
-        let _ = stdout.reset();
+    // Print diagnostics to stderr so machine-readable stdout remains stable.
+    let mut stderr = StandardStream::stderr(color_choice());
+    for diag in &report.diagnostics {
+        let color = match diag.level {
+            crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,
+            crate::diagnostic::DiagnosticLevel::Info => Color::Cyan,
+        };
+        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
+        let _ = writeln!(stderr, "  {diag}");
+        let _ = stderr.reset();
     }
 }
 
@@ -267,25 +270,6 @@ fn print_action_line(
         outcome.dest_path.display(),
         outcome.item_id.kind
     );
-}
-
-fn format_warning(w: &ValidationWarning) -> String {
-    match w {
-        ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } => {
-            let base = format!(
-                "agent `{}` references missing skill `{}`",
-                agent.name, skill_name
-            );
-            match suggestion {
-                Some(s) => format!("{base} (did you mean `{s}`?)"),
-                None => base,
-            }
-        }
-    }
 }
 
 /// Print a list of items as a table or JSON.

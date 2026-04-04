@@ -5,23 +5,29 @@ pub mod mutation;
 pub mod plan;
 pub mod provider;
 pub mod rewrite;
-pub mod self_package;
 pub mod target;
 pub mod types;
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector};
+use crate::discover;
 use crate::error::MarsError;
 use crate::fs::FileLock;
+use crate::hash;
 use crate::lock::LockFile;
+use crate::lock::{ItemId, ItemKind};
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::target::{RenameAction, TargetState};
-use crate::types::{DestPath, MarsContext, SourceName};
+use crate::sync::target::{RenameAction, TargetItem, TargetState};
+use crate::types::{
+    ContentHash, DestPath, MarsContext, Materialization, SourceId, SourceName, SourceOrigin,
+};
 use crate::validate::ValidationWarning;
 
 // Re-export mutation types for public API compatibility.
@@ -34,7 +40,7 @@ pub use crate::sync::mutation::{
 pub struct SyncReport {
     pub applied: ApplyResult,
     pub pruned: Vec<apply::ActionOutcome>,
-    pub warnings: Vec<ValidationWarning>,
+    pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Whether this was a dry run (`--diff`). Affects output wording only.
     pub dry_run: bool,
@@ -103,9 +109,6 @@ pub struct TargetedState {
 pub struct PlannedState {
     pub targeted: TargetedState,
     pub plan: plan::SyncPlan,
-    /// Destinations skipped during _self injection (unmanaged collision avoidance).
-    /// Used by finalize to exclude these from the lock file.
-    pub skipped_self_dests: HashSet<DestPath>,
 }
 
 /// Phase 5: Applied results.
@@ -119,15 +122,16 @@ pub struct AppliedState {
 /// Orchestrates phase functions, each consuming the prior phase's output struct.
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
-    let loaded = load_config(ctx, request)?;
-    let resolved = resolve_graph(ctx, loaded, request)?;
-    let targeted = build_target(ctx, resolved, request)?;
-    let planned = create_plan(ctx, targeted, request)?;
+    let mut diag = DiagnosticCollector::new();
+    let loaded = load_config(ctx, request, &mut diag)?;
+    let resolved = resolve_graph(ctx, loaded, request, &mut diag)?;
+    let targeted = build_target(ctx, resolved, request, &mut diag)?;
+    let planned = create_plan(ctx, targeted, request, &mut diag)?;
     if request.options.frozen {
         check_frozen_gate(&planned)?;
     }
     let applied = apply_plan(ctx, planned, request)?;
-    let report = finalize(ctx, applied, request)?;
+    let report = finalize(ctx, applied, request, &mut diag)?;
     Ok(report)
 }
 
@@ -137,7 +141,11 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
 
 /// Phase 1: Acquire sync lock, load config, apply mutations, merge effective config,
 /// and load the existing lock file.
-fn load_config(ctx: &MarsContext, request: &SyncRequest) -> Result<LoadedConfig, MarsError> {
+fn load_config(
+    ctx: &MarsContext,
+    request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
+) -> Result<LoadedConfig, MarsError> {
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
@@ -171,7 +179,9 @@ fn load_config(ctx: &MarsContext, request: &SyncRequest) -> Result<LoadedConfig,
     }
 
     // Build effective config.
-    let effective = crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
+    let (effective, config_diagnostics) =
+        crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
+    diag.extend(config_diagnostics);
 
     // Load existing lock file.
     let old_lock = crate::lock::load(project_root)?;
@@ -191,6 +201,7 @@ fn resolve_graph(
     ctx: &MarsContext,
     loaded: LoadedConfig,
     request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedState, MarsError> {
     validate_targets(&request.resolution, &loaded.effective)?;
 
@@ -205,6 +216,7 @@ fn resolve_graph(
         &source_provider,
         Some(&loaded.old_lock),
         &resolve_options,
+        diag,
     )?;
 
     Ok(ResolvedState { loaded, graph })
@@ -215,6 +227,7 @@ fn build_target(
     ctx: &MarsContext,
     resolved: ResolvedState,
     _request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     let managed_root = &ctx.managed_root;
 
@@ -222,12 +235,88 @@ fn build_target(
     let (mut target_state, renames) =
         target::build_with_collisions(&resolved.graph, &resolved.loaded.effective)?;
 
+    if resolved.loaded.config.package.is_some() {
+        let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
+        let local_source_id = SourceId::Path {
+            canonical: ctx
+                .project_root
+                .canonicalize()
+                .unwrap_or_else(|_| ctx.project_root.clone()),
+        };
+
+        let local_items =
+            discover::discover_source(&ctx.project_root, Some(local_source_name.as_str()))?;
+        for item in local_items {
+            let source_path = ctx.project_root.join(&item.source_path);
+            let is_flat_skill =
+                item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
+            let source_hash = if is_flat_skill {
+                ContentHash::from(hash::compute_skill_hash_filtered(
+                    &source_path,
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+                )?)
+            } else {
+                ContentHash::from(hash::compute_hash(&source_path, item.id.kind)?)
+            };
+            let dest_path = default_dest_path(item.id.kind, item.id.name.as_str());
+
+            if let Some(existing) = target_state.items.shift_remove(&dest_path) {
+                diag.warn(
+                    "local-shadow",
+                    format!(
+                        "local {} `{}` shadows dependency `{}` {} `{}`",
+                        item.id.kind,
+                        item.id.name,
+                        existing.source_name,
+                        existing.id.kind,
+                        existing.id.name
+                    ),
+                );
+            }
+
+            let disk_path = managed_root.join(dest_path.as_path());
+            if !resolved.loaded.old_lock.items.contains_key(&dest_path)
+                && disk_path.symlink_metadata().is_ok()
+            {
+                diag.warn(
+                    "unmanaged-collision",
+                    format!(
+                        "local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+                        item.id.kind, item.id.name, dest_path
+                    ),
+                );
+                continue;
+            }
+
+            target_state.items.insert(
+                dest_path.clone(),
+                TargetItem {
+                    id: ItemId {
+                        kind: item.id.kind,
+                        name: item.id.name.clone(),
+                    },
+                    source_name: local_source_name.clone(),
+                    origin: SourceOrigin::LocalPackage,
+                    materialization: Materialization::Symlink {
+                        source_abs: source_path.clone(),
+                    },
+                    source_id: local_source_id.clone(),
+                    source_path,
+                    dest_path,
+                    source_hash,
+                    is_flat_skill,
+                    rewritten_content: None,
+                },
+            );
+        }
+    }
+
     // Handle collisions + rewrite frontmatter refs.
     if !renames.is_empty() {
         let rewrite_warnings =
             target::rewrite_skill_refs(&mut target_state, &renames, &resolved.graph)?;
         for w in &rewrite_warnings {
-            eprintln!("{w}");
+            diag.warn("rewrite-warning", w.to_string());
         }
     }
 
@@ -235,15 +324,15 @@ fn build_target(
     let warnings = validate_skill_refs(managed_root, &target_state);
 
     // Prevent managed installs from overwriting unmanaged files.
-    let unmanaged_collisions = target::check_unmanaged_collisions(
-        managed_root,
-        &resolved.loaded.old_lock,
-        &target_state,
-    );
+    let unmanaged_collisions =
+        target::check_unmanaged_collisions(managed_root, &resolved.loaded.old_lock, &target_state);
     for collision in &unmanaged_collisions {
-        eprintln!(
-            "warning: source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-            collision.source_name, collision.path
+        diag.warn(
+            "unmanaged-collision",
+            format!(
+                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+                collision.source_name, collision.path
+            ),
         );
         target_state.items.shift_remove(&collision.path);
     }
@@ -256,17 +345,15 @@ fn build_target(
     })
 }
 
-/// Phase 4: Compute diff, create plan, inject _self items.
-///
-/// NOTE: _self injection stays here for now — Phase 3 (A2) will move it into build_target.
+/// Phase 4: Compute diff, create plan.
 fn create_plan(
     ctx: &MarsContext,
-    mut targeted: TargetedState,
+    targeted: TargetedState,
     request: &SyncRequest,
+    _diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
-    let project_root = &ctx.project_root;
     let managed_root = &ctx.managed_root;
-    let mars_dir = project_root.join(".mars");
+    let mars_dir = ctx.project_root.join(".mars");
     let cache_bases_dir = mars_dir.join("cache").join("bases");
 
     // Compute diff.
@@ -278,22 +365,11 @@ fn create_plan(
     )?;
 
     // Create plan.
-    let mut sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
-
-    // Inject local package symlinks and handle _self lifecycle.
-    let skipped_self_dests = self_package::inject_self_items(
-        targeted.resolved.loaded.config.package.is_some(),
-        project_root,
-        managed_root,
-        &targeted.resolved.loaded.old_lock,
-        &mut targeted.target,
-        &mut sync_plan,
-    )?;
+    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
 
     Ok(PlannedState {
         targeted,
         plan: sync_plan,
-        skipped_self_dests,
     })
 }
 
@@ -330,10 +406,7 @@ fn apply_plan(
     if has_mutation && !request.options.dry_run {
         match &request.mutation {
             Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
-                crate::config::save_local(
-                    project_root,
-                    &planned.targeted.resolved.loaded.local,
-                )?;
+                crate::config::save_local(project_root, &planned.targeted.resolved.loaded.local)?;
             }
             Some(
                 ConfigMutation::UpsertDependency { .. }
@@ -341,18 +414,19 @@ fn apply_plan(
                 | ConfigMutation::RemoveDependency { .. }
                 | ConfigMutation::SetRename { .. },
             ) => {
-                crate::config::save(
-                    project_root,
-                    &planned.targeted.resolved.loaded.config,
-                )?;
+                crate::config::save(project_root, &planned.targeted.resolved.loaded.config)?;
             }
             None => {}
         }
     }
 
     // Apply plan.
-    let applied =
-        apply::execute(managed_root, &planned.plan, &request.options, &cache_bases_dir)?;
+    let applied = apply::execute(
+        managed_root,
+        &planned.plan,
+        &request.options,
+        &cache_bases_dir,
+    )?;
 
     Ok(AppliedState { planned, applied })
 }
@@ -362,42 +436,57 @@ fn finalize(
     ctx: &MarsContext,
     state: AppliedState,
     request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
     let project_root = &ctx.project_root;
-    let config = &state.planned.targeted.resolved.loaded.config;
     let old_lock = &state.planned.targeted.resolved.loaded.old_lock;
     let graph = &state.planned.targeted.resolved.graph;
 
-    let skipped_self_dests = &state.planned.skipped_self_dests;
-
     // Write lock file.
     if !request.options.dry_run {
-        let self_lock_items = if config.package.is_some() {
-            let self_items = self_package::discover_local_items(project_root)?;
-            let filtered: Vec<_> = self_items
-                .into_iter()
-                .filter(|item| !skipped_self_dests.contains(&item.dest_rel))
-                .collect();
-            self_package::build_self_lock_items(&filtered)?
-        } else {
-            Vec::new()
-        };
-        let self_items_for_lock =
-            (!self_lock_items.is_empty()).then_some(self_lock_items.as_slice());
-        let new_lock = crate::lock::build(graph, &state.applied, old_lock, self_items_for_lock)?;
+        let new_lock = crate::lock::build(graph, &state.applied, old_lock)?;
         crate::lock::write(project_root, &new_lock)?;
     }
 
+    for w in &state.planned.targeted.warnings {
+        match w {
+            ValidationWarning::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => {
+                let msg = match suggestion {
+                    Some(s) => format!(
+                        "agent `{}` references missing skill `{}` (did you mean `{}`?)",
+                        agent.name, skill_name, s
+                    ),
+                    None => {
+                        format!(
+                            "agent `{}` references missing skill `{}`",
+                            agent.name, skill_name
+                        )
+                    }
+                };
+                diag.warn("missing-skill", msg);
+            }
+        }
+    }
     let dependency_changes = state.planned.targeted.resolved.loaded.dependency_changes;
-    let warnings = state.planned.targeted.warnings;
 
     Ok(SyncReport {
         applied: state.applied,
         pruned: Vec::new(),
-        warnings,
+        diagnostics: diag.drain(),
         dependency_changes,
         dry_run: request.options.dry_run,
     })
+}
+
+fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
+    match kind {
+        ItemKind::Agent => DestPath::from(PathBuf::from("agents").join(format!("{name}.md"))),
+        ItemKind::Skill => DestPath::from(PathBuf::from("skills").join(name)),
+    }
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
@@ -784,7 +873,7 @@ mod tests {
         );
 
         // Build lock
-        let new_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let new_lock = crate::lock::build(&graph, &result, &lock).unwrap();
         assert_eq!(new_lock.items.len(), 2);
         assert!(new_lock.items.contains_key("agents/coder.md"));
         assert!(new_lock.items.contains_key("skills/planning"));
@@ -811,7 +900,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Second sync with same content
         let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
@@ -852,7 +941,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Update source content
         let agents_dir = fixture.tree_path(src_idx).join("agents");
@@ -891,7 +980,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Locally modify the installed file
         fs::write(
@@ -940,7 +1029,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         // Locally modify the installed file
         fs::write(
@@ -1009,7 +1098,7 @@ mod tests {
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
 
         assert!(fixture.managed_root().join("agents/coder.md").exists());
         assert!(fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1098,7 +1187,7 @@ mod tests {
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
 
-        let new_lock = crate::lock::build(&graph, &result, &lock, None).unwrap();
+        let new_lock = crate::lock::build(&graph, &result, &lock).unwrap();
         crate::lock::write(fixture.project_root(), &new_lock).unwrap();
 
         // Verify lock file exists and is valid

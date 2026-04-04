@@ -148,6 +148,8 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
                 },
@@ -166,6 +168,8 @@ mod tests {
                     name: "plan__org_base".into(),
                 },
                 source_name: "source-a".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: skill_path.clone(),
                 },
@@ -217,6 +221,8 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
                 },
@@ -268,6 +274,8 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
                 },
@@ -286,6 +294,8 @@ mod tests {
                     name: "planning__org_b".into(),
                 },
                 source_name: "source-b".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-b".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: skill_b_path.clone(),
                 },
@@ -306,6 +316,8 @@ mod tests {
                     name: "planning__org_c".into(),
                 },
                 source_name: "source-c".into(),
+                origin: crate::types::SourceOrigin::Dependency("source-c".into()),
+                materialization: crate::types::Materialization::Copy,
                 source_id: SourceId::Path {
                     canonical: skill_c_path.clone(),
                 },

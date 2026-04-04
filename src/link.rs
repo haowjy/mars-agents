@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::hash;
+use crate::reconcile::fs_ops;
 
 /// Result of scanning a single subdir (agents/ or skills/) in the target.
 pub(crate) enum ScanResult {
@@ -222,27 +223,7 @@ pub(crate) fn remove_dir_contents_and_tree(dir: &Path) -> Result<(), MarsError> 
 
 /// Create a symlink. Unix-only.
 pub(crate) fn create_symlink(link_path: &Path, link_target: &Path) -> Result<(), MarsError> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(link_target, link_path).map_err(|e| MarsError::Link {
-            target: link_path.display().to_string(),
-            message: format!(
-                "failed to create symlink {} -> {}: {e}",
-                link_path.display(),
-                link_target.display()
-            ),
-        })?;
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (link_path, link_target);
-        Err(MarsError::Link {
-            target: String::new(),
-            message: "symlinks are only supported on Unix".to_string(),
-        })
-    }
+    fs_ops::atomic_symlink(link_path, link_target)
 }
 
 /// Normalize and validate a link target name.

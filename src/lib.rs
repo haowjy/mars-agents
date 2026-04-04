@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod config;
+pub mod diagnostic;
 pub mod discover;
 pub mod error;
 pub mod frontmatter;
@@ -8,6 +9,7 @@ pub mod hash;
 pub mod link;
 pub mod lock;
 pub mod merge;
+pub mod reconcile;
 pub mod resolve;
 pub mod source;
 pub mod sync;

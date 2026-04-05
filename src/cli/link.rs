@@ -10,6 +10,8 @@ use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ItemName;
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 use super::output;
 
@@ -75,6 +77,11 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
 
     let lock = crate::lock::load(&ctx.project_root)?;
     let outcomes = lock_items_as_sync_outcomes(&lock);
+    let previous_managed_paths = lock
+        .items
+        .keys()
+        .map(|dest_path| dest_path.as_path().to_path_buf())
+        .collect::<HashSet<PathBuf>>();
 
     let mut diag = DiagnosticCollector::new();
     let target_outcomes = crate::target_sync::sync_managed_targets(
@@ -82,6 +89,7 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
         &mars_dir,
         &[target_name.to_string()],
         &outcomes,
+        &previous_managed_paths,
         true,
         &mut diag,
     );

@@ -1,162 +1,110 @@
 # Development Guide: mars-agents
 
-Mars is an agent package manager for `.agents/` directories. It installs agent profiles and skills from git/local sources, tracks ownership in `mars.lock`, and links managed content into tool directories like `.claude/`.
+Mars is an agent package manager. It installs agent profiles and skills from git/local sources into a `.mars/` cache, then copies managed content into target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
-## Core Principles
+## Critical Invariants
 
-1. **Resolve first, then act.** Validate + build full desired state before mutating files. If any conflict or error is detected during resolution, zero mutations occur.
-   - *Why*: Partial failures leave users in states that are hard to diagnose. A user who sees "3 conflicts" can fix all three and retry. A user whose command half-completed has to figure out what happened first.
+### Mars does NOT own target directories
 
-2. **Atomic writes.** Config, lock, and installed files use temp + rename. Crash mid-write leaves the old file intact.
-   - *Why*: Mars manages files that agents and tools read continuously. A half-written mars.toml breaks every tool that reads it. tmp + rename is atomic on POSIX — no recovery logic needed.
+`.agents/`, `.claude/`, `.codex/`, `.cursor/` can contain hand-written content that mars didn't create. These are shared directories — mars writes into them but doesn't own them.
 
-3. **Lock file is authority.** `mars.lock` defines managed ownership and checksums. If it's not in the lock, it's not managed.
-   - *Why*: Without a single authority, mars can't distinguish "user added this manually" from "mars installed this." The lock makes ownership explicit — safe coexistence with unmanaged files.
+**Mars must NEVER delete files it didn't create.** Orphan cleanup must only remove files whose `dest_path` was in the previous `mars.lock` but not in the current sync result. Never scan-and-delete-unknown.
 
-4. **No heuristics.** User intent is expressed through explicit flags and arguments, not inferred from string patterns.
-   - *Why*: The dot-prefix heuristic (`starts_with('.')`) classified `./my-project` as a target dir — a real bug caught by reviewers. Explicit arguments are boring but predictable, and predictable tools earn trust.
+The lock file (`mars.lock`) is the authority on what mars manages. If it's not in the lock, mars doesn't touch it.
 
-## Dev Docs
+### Atomic writes
 
-Contributor-facing architecture documentation lives in `.meridian/fs/`:
+Config, lock, and installed files use temp + rename. Crash mid-write leaves the old file intact. All target copies use the `reconcile` layer's atomic operations.
 
-- **architecture.md** — Module map, key types, sync pipeline stage contracts, code pointers
-- **edge-cases.md** — Edge case catalog per pipeline stage (resolver, target, diff, apply)
-- **extending-mars.md** — How to add new item kinds, source types, and CLI commands
+### Resolve first, then act
 
-These docs describe internals for contributors and agents working on mars. User-facing docs are in `docs/`.
+Validate + build full desired state before mutating files. If any conflict or error is detected during resolution, zero mutations occur.
 
-## Managed Layout
+### No heuristics
 
-```text
-project/
-  mars.toml                  # config: [dependencies], [settings], [package]
-  mars.lock                  # generated lock/ownership/provenance
-  mars.local.toml            # local overrides (gitignored)
-  .mars/                     # internal state (sync.lock, cache)
-  .agents/                   # managed root (default, configurable via settings.managed_root)
-    agents/                 # installed agent profiles
-    skills/                 # installed skills
-  .claude/                   # optional linked tool dir
-    agents -> ../.agents/agents
-    skills -> ../.agents/skills
+User intent is expressed through explicit flags and arguments, not inferred from string patterns.
+
+## Architecture
+
+```
+mars.toml + mars.lock (committed, project root)
+        ↓ mars sync
+    .mars/ (cache, gitignored)
+        ↓ copy
+    targets: .agents/, .claude/, .codex/, .cursor/ (committed, shared)
 ```
 
-## MarsContext Invariant
-
-`src/cli/mod.rs` defines:
-
-- `MarsContext { managed_root, project_root }`
-- Invariant enforced by `MarsContext::new`: managed root must be a subdirectory and therefore has a parent.
-- `project_root` is always `managed_root.parent()` (canonicalized when possible).
-
-This invariant is relied on by local-path resolution and link-target resolution.
-
-## CLI Surface
-
-### Global flags
-
-| Flag | Meaning |
-|---|---|
-| `--root <PATH>` | Use this managed root instead of auto-discovery. |
-| `--json` | Machine-readable output. |
-
-### Commands
-
-| Command | Purpose |
-|---|---|
-| `mars init [TARGET]` | Initialize managed root with `mars.toml` (optional `--link`). |
-| `mars add <source>` | Add/update source, then sync. |
-| `mars remove <source>` | Remove source, then prune managed items. |
-| `mars sync` | Resolve + install to match config (`--force`, `--diff`, `--frozen`). |
-| `mars upgrade [sources...]` | Maximize versions for all or selected sources. |
-| `mars outdated` | Show available updates without applying changes. |
-| `mars list` | List managed agents/skills (`--status` for checksum state). |
-| `mars why <name>` | Explain source/provenance for an installed item. |
-| `mars rename <from> <to>` | Add rename rule and sync to apply it. |
-| `mars resolve [file]` | Mark conflicts resolved by updating installed checksums. |
-| `mars override <source> --path <PATH>` | Set local dev override in `mars.local.toml`. |
-| `mars link <target>` | Link managed `agents/` + `skills/` into tool dir (`--unlink`, `--force`). |
-| `mars check [path]` | Validate a source package (structure/frontmatter/deps). |
-| `mars doctor` | Validate config/lock/filesystem/link/dependency health. |
-| `mars repair` | Force rebuild from config/sources (corrupt-lock recovery path). |
-
-### Exit codes
-
-| Code | Meaning |
-|---|---|
-| `0` | Success (or clean report). |
-| `1` | Action needed: unresolved conflicts (sync) or validation errors (check). |
-| `2` | User/config/resolution/validation/link/frozen errors. |
-| `3` | Source fetch, I/O, HTTP, or git command errors. |
+- **`.mars/`** — mars's working cache. Gitignored. Rebuilt by `mars sync` from lock + sources. Contains resolved content (`agents/`, `skills/`), merge base cache (`cache/bases/`), models cache (`models-cache.json`), sync lock.
+- **Target directories** — mars copies managed items into these. They may contain non-mars content. Mars tracks what it put there via the lock. Configured via `settings.targets` in mars.toml, defaults to `[".agents"]`.
+- **`.mars/` is NOT the source of truth** — it's a cache. The committed targets + `mars.lock` are the authority. On fresh clone (no `.mars/`), `mars sync` rebuilds the cache from sources.
 
 ## Sync Pipeline
 
-Sync is orchestrated in `src/sync/mod.rs` under `.mars/sync.lock`:
+Orchestrated in `src/sync/mod.rs` with typed phase functions (move semantics):
 
-1. Load config + local overrides; apply optional mutation.
-2. Resolve graph (versions, deps, source identities).
-3. Build target state.
-4. Compute diff.
-5. Create plan.
-6. Apply plan.
-7. Write new `mars.lock`.
+```
+load_config → resolve_graph → build_target → create_plan → apply_plan → sync_managed_targets → finalize
+```
 
-Core apply chain: `target -> diff -> plan -> apply`.
+1. **load_config** — acquire sync lock, load mars.toml + local overrides, apply mutations
+2. **resolve_graph** — resolve dependency versions, merge model aliases from dep tree
+3. **build_target** — discover items (agents/skills) from all sources including local package, detect collisions
+4. **create_plan** — diff against lock, generate sync plan
+5. **apply_plan** — write resolved content to `.mars/` (atomic writes)
+6. **sync_managed_targets** — copy from `.mars/` to each configured target (atomic copies, no orphan nuke)
+7. **finalize** — write lock, build report
 
-## Source Fetching
+### Key types
 
-- GitHub HTTPS sources: archive download (`/archive/<sha>.tar.gz`) into global cache.
-- SSH / non-GitHub HTTPS git sources: `git clone`/`git fetch` + checkout.
-- Local path sources: canonicalized filesystem paths, read directly (no copy cache).
+- `SourceOrigin::Dependency(name)` / `SourceOrigin::LocalPackage` — where an item came from
+- `InstallDep` — consumer install intent (mars.toml `[dependencies]`)
+- `ManifestDep` — package export (required URL, no path deps)
+- `Materialization::Copy` / `Materialization::Symlink` — how items land in `.mars/`
 
-Global cache root: `~/.mars/cache` (override with `MARS_CACHE_DIR`).
+## Model Catalog
+
+`mars models` commands manage model metadata:
+
+- `mars models refresh` — fetch from models.dev API, cache to `.mars/models-cache.json`
+- `mars models list` — show aliases (builtin + config)
+- `mars models resolve <alias>` — resolve against cache
+
+Two alias modes:
+- **Pinned**: `model = "claude-opus-4-6"` — explicit ID
+- **Auto-resolve**: `match = ["opus"]`, `provider = "anthropic"` — glob matching against cache, newest wins
+
+Builtin aliases: opus, sonnet, haiku, codex, gpt, gemini. Lowest priority, overridable.
 
 ## Key Modules
 
 | Module | Responsibility |
 |---|---|
-| `src/cli/` | Clap args, root discovery, command dispatch, output formatting. |
-| `src/config/` | `mars.toml` + `mars.local.toml` schemas, load/save, merge to effective config. |
-| `src/lock/` | `mars.lock` schema, load/write, lock rebuild from apply outcomes. |
-| `src/sync/` | End-to-end sync orchestration + `target/diff/plan/apply`. |
-| `src/resolve/` | Dependency + version resolution and graph ordering. |
-| `src/source/` | Source parsing/fetching (git + path) and global cache handling. |
-| `src/discover/` | Discover agents/skills by filesystem conventions. |
-| `src/validate/` | Agent-to-skill dependency validation. |
-| `src/merge/` | Three-way merge/conflict handling. |
-| `src/fs/` | Atomic writes/installs and advisory file lock (`flock`). |
-| `src/frontmatter/` | YAML frontmatter parsing for agent/skill metadata. |
-| `src/manifest/` | Optional per-source `mars.toml` manifest loading. |
-| `src/hash/` | SHA-256 hashing for files/directories. |
-| `src/types.rs` | Typed identifiers/newtypes used across modules. |
+| `src/sync/` | Pipeline orchestration + typed phases |
+| `src/target_sync/` | Copy from `.mars/` to managed targets |
+| `src/reconcile/` | Shared atomic fs operations (Layer 1) + item reconciliation (Layer 2) |
+| `src/models/` | Model catalog, auto-resolve, cache, builtin aliases |
+| `src/config/` | mars.toml + mars.local.toml schemas, load/save, merge |
+| `src/lock/` | mars.lock schema, load/write, ownership tracking |
+| `src/resolve/` | Dependency + version resolution and graph ordering |
+| `src/source/` | Source fetching (git + path) and global cache |
+| `src/discover/` | Discover agents/skills by filesystem conventions |
+| `src/diagnostic.rs` | Structured diagnostics (no eprintln! in library code) |
+| `src/cli/` | Clap args, root discovery, command dispatch, output |
 
 ## Dev Workflow
 
 ```bash
 cargo build
 cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+cargo clippy
 ```
 
-Notes:
-
-- Integration coverage is under `tests/` (CLI-level behavior).
-- Prefer keeping changes localized to one module/command path when adding features.
+Integration tests under `tests/`. Prefer keeping changes localized to one module.
 
 ## Releasing
 
-**Always use patch bumps** — mars is pre-1.0 alpha. No minor/major bumps until we're ready to declare stability.
-
 ```bash
-./scripts/release.sh patch --push    # 0.0.3 → 0.0.4, push to trigger CI
-./scripts/release.sh patch --dry     # run checks only, don't tag
+mars version patch --push    # bump, commit, tag, push → triggers CI
 ```
 
-The release script runs pre-release checks (fmt, clippy, tests, release build, version consistency between Cargo.toml and pyproject.toml), bumps both files, commits, tags, and optionally pushes. The `v*` tag triggers GitHub Actions to build platform wheels and publish to PyPI, npm, and crates.io.
-
-Prerequisites for first release:
-- Set up trusted publisher on PyPI (repo: `haowjy/mars-agents`, workflow: `release.yml`, environment: `pypi`)
-- Create `pypi` environment in GitHub repo settings
-- `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` secrets already configured
+The `v*` tag triggers GitHub Actions to build and publish to PyPI, npm, and crates.io.

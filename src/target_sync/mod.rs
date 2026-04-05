@@ -6,6 +6,7 @@
 //! All targets are managed outputs — they get copies (not symlinks) of .mars/ content.
 //! Symlinks in .mars/ (from local packages) are followed, so targets always get file copies (D26).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -46,6 +47,7 @@ pub fn sync_managed_targets(
     mars_dir: &Path,
     targets: &[String],
     outcomes: &[ActionOutcome],
+    previous_managed_paths: &HashSet<PathBuf>,
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Vec<TargetSyncOutcome> {
@@ -53,7 +55,14 @@ pub fn sync_managed_targets(
 
     for target_name in targets {
         let target_root = project_root.join(target_name);
-        match sync_one_target(mars_dir, &target_root, target_name, outcomes, force) {
+        match sync_one_target(
+            mars_dir,
+            &target_root,
+            target_name,
+            outcomes,
+            previous_managed_paths,
+            force,
+        ) {
             Ok(outcome) => {
                 if !outcome.errors.is_empty() {
                     for err in &outcome.errors {
@@ -89,6 +98,7 @@ fn sync_one_target(
     target_root: &Path,
     target_name: &str,
     outcomes: &[ActionOutcome],
+    previous_managed_paths: &HashSet<PathBuf>,
     force: bool,
 ) -> Result<TargetSyncOutcome, MarsError> {
     let mut items_synced = 0;
@@ -99,7 +109,7 @@ fn sync_one_target(
     std::fs::create_dir_all(target_root)?;
 
     // Track expected paths for orphan cleanup
-    let mut expected_paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut expected_paths: HashSet<PathBuf> = HashSet::new();
 
     for outcome in outcomes {
         let dest_rel = outcome.dest_path.as_path();
@@ -151,7 +161,12 @@ fn sync_one_target(
     }
 
     // Orphan cleanup: scan target for items not in expected set
-    let orphan_removed = cleanup_orphans(target_root, &expected_paths, &mut errors);
+    let orphan_removed = cleanup_orphans(
+        target_root,
+        &expected_paths,
+        previous_managed_paths,
+        &mut errors,
+    );
     items_removed += orphan_removed;
 
     Ok(TargetSyncOutcome {
@@ -186,11 +201,14 @@ fn copy_item_to_target(source: &Path, dest: &Path) -> Result<(), MarsError> {
 
 /// Clean up orphaned items in a target directory.
 ///
-/// Scans `agents/` and `skills/` subdirectories in the target for items
-/// that aren't in the expected set. Returns the number of items removed.
+/// Scans `agents/` and `skills/` subdirectories in the target. Removes
+/// entries only if they were previously managed by mars (present in old
+/// lock ownership) and are no longer expected in the current sync.
+/// Returns the number of items removed.
 fn cleanup_orphans(
     target_root: &Path,
-    expected: &std::collections::HashSet<PathBuf>,
+    expected: &HashSet<PathBuf>,
+    previous_managed_paths: &HashSet<PathBuf>,
     errors: &mut Vec<String>,
 ) -> usize {
     let mut removed = 0;
@@ -226,7 +244,7 @@ fn cleanup_orphans(
             }
 
             let rel_path = PathBuf::from(subdir).join(&file_name);
-            if !expected.contains(&rel_path) {
+            if previous_managed_paths.contains(&rel_path) && !expected.contains(&rel_path) {
                 let full_path = entry.path();
                 if let Err(e) = fs_ops::safe_remove(&full_path) {
                     errors.push(format!(
@@ -265,6 +283,13 @@ mod tests {
         }
     }
 
+    fn managed_paths(paths: &[&str]) -> HashSet<PathBuf> {
+        paths
+            .iter()
+            .map(|p| PathBuf::from(*p))
+            .collect::<HashSet<PathBuf>>()
+    }
+
     #[test]
     fn sync_copies_installed_items_to_target() {
         let dir = TempDir::new().unwrap();
@@ -283,6 +308,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&[]),
             false,
             &mut diag,
         );
@@ -315,6 +341,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&["agents/old.md"]),
             false,
             &mut diag,
         );
@@ -324,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_cleans_up_orphans() {
+    fn sync_cleans_up_previous_managed_orphans() {
         let dir = TempDir::new().unwrap();
         let mars_dir = dir.path().join(".mars");
         let target = dir.path().join(".agents");
@@ -345,6 +372,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&["agents/orphan.md"]),
             false,
             &mut diag,
         );
@@ -352,6 +380,36 @@ mod tests {
         assert!(target.join("agents/coder.md").exists());
         assert!(!target.join("agents/orphan.md").exists());
         assert_eq!(results[0].items_removed, 1);
+    }
+
+    #[test]
+    fn sync_preserves_unmanaged_files_in_target() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
+
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/custom.md"), "# User custom").unwrap();
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            &managed_paths(&[]),
+            false,
+            &mut diag,
+        );
+
+        assert!(target.join("agents/coder.md").exists());
+        assert!(target.join("agents/custom.md").exists());
+        assert_eq!(results[0].items_removed, 0);
     }
 
     #[test]
@@ -370,6 +428,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string(), ".claude".to_string()],
             &outcomes,
+            &managed_paths(&[]),
             false,
             &mut diag,
         );
@@ -403,6 +462,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&[]),
             false,
             &mut diag,
         );
@@ -437,6 +497,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&[]),
             false,
             &mut diag,
         );
@@ -463,6 +524,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&[]),
             false,
             &mut diag,
         );
@@ -474,6 +536,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes2,
+            &managed_paths(&["agents/coder.md"]),
             false,
             &mut diag,
         );
@@ -502,6 +565,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
+            &managed_paths(&["agents/coder.md"]),
             true,
             &mut diag,
         );

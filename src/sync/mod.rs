@@ -487,12 +487,23 @@ fn sync_targets(
         .effective
         .settings
         .managed_targets();
+    let previous_managed_paths = applied
+        .planned
+        .targeted
+        .resolved
+        .loaded
+        .old_lock
+        .items
+        .keys()
+        .map(|dest_path| dest_path.as_path().to_path_buf())
+        .collect::<HashSet<PathBuf>>();
 
     let target_outcomes = crate::target_sync::sync_managed_targets(
         &ctx.project_root,
         &mars_dir,
         &targets,
         &applied.applied.outcomes,
+        &previous_managed_paths,
         request.options.force,
         diag,
     );

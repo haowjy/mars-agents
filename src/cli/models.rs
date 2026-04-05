@@ -2,6 +2,7 @@
 #![allow(clippy::print_literal)]
 
 use clap::{Parser, Subcommand};
+use indexmap::IndexMap;
 
 use crate::error::MarsError;
 use crate::models::{self, ModelAlias, ModelSpec, ModelsCache};
@@ -279,45 +280,40 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
 fn load_merged_aliases(
     ctx: &MarsContext,
 ) -> Result<indexmap::IndexMap<String, ModelAlias>, MarsError> {
-    // Try to load config — if no mars.toml, just return builtins
+    // Try to load config — if no mars.toml, return empty
     let config = match crate::config::load(&ctx.project_root) {
         Ok(c) => c,
         Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
-            return Ok(models::builtin_aliases());
+            return Ok(IndexMap::new());
         }
         Err(e) => return Err(e),
     };
 
     // Read merged aliases from .mars/models-merged.json (written by mars sync).
-    // Falls back to consumer + builtins if no merged file exists (pre-sync).
+    // Falls back to consumer config only if no merged file exists (pre-sync).
     let mars_dir = ctx.project_root.join(".mars");
     let merged_path = mars_dir.join("models-merged.json");
-    if let Ok(content) = std::fs::read_to_string(&merged_path) {
-        if let Ok(merged) = serde_json::from_str::<indexmap::IndexMap<String, ModelAlias>>(&content)
-        {
-            return Ok(merged);
-        }
+    if let Ok(content) = std::fs::read_to_string(&merged_path)
+        && let Ok(merged) = serde_json::from_str::<IndexMap<String, ModelAlias>>(&content)
+    {
+        return Ok(merged);
     }
 
-    // Fallback: consumer config + builtins only (no dep models)
+    // Fallback: consumer config only (no dep models, no builtins)
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let merged = models::merge_model_config(&config.models, &[], &mut diag);
     Ok(merged)
 }
 
-/// Determine which layer provides an alias (consumer, dep, or builtin).
+/// Determine which layer provides an alias (consumer or dependency).
 fn determine_source(name: &str, ctx: &MarsContext) -> Result<String, MarsError> {
     let config = match crate::config::load(&ctx.project_root) {
         Ok(c) => c,
-        Err(_) => return Ok("builtin".to_string()),
+        Err(_) => return Ok("unknown".to_string()),
     };
 
     if config.models.contains_key(name) {
         return Ok("consumer (mars.toml)".to_string());
-    }
-
-    if models::builtin_aliases().contains_key(name) {
-        return Ok("builtin".to_string());
     }
 
     Ok("dependency".to_string())

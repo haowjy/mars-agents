@@ -407,116 +407,9 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 // Builtin aliases & fallbacks
 // ---------------------------------------------------------------------------
 
-/// Default auto-resolve specs for common model families.
-/// Lowest priority — overridden by packages and consumer config.
-pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
-    let mut aliases = IndexMap::new();
-
-    aliases.insert(
-        "opus".to_string(),
-        ModelAlias {
-            harness: "claude".to_string(),
-            description: None,
-            spec: ModelSpec::AutoResolve {
-                provider: "Anthropic".to_string(),
-                match_patterns: vec!["claude-opus-*".to_string()],
-                exclude_patterns: vec![],
-            },
-        },
-    );
-
-    aliases.insert(
-        "sonnet".to_string(),
-        ModelAlias {
-            harness: "claude".to_string(),
-            description: None,
-            spec: ModelSpec::AutoResolve {
-                provider: "Anthropic".to_string(),
-                match_patterns: vec!["claude-sonnet-*".to_string()],
-                exclude_patterns: vec![],
-            },
-        },
-    );
-
-    aliases.insert(
-        "haiku".to_string(),
-        ModelAlias {
-            harness: "claude".to_string(),
-            description: None,
-            spec: ModelSpec::AutoResolve {
-                provider: "Anthropic".to_string(),
-                match_patterns: vec!["claude-haiku-*".to_string()],
-                exclude_patterns: vec![],
-            },
-        },
-    );
-
-    aliases.insert(
-        "codex".to_string(),
-        ModelAlias {
-            harness: "codex".to_string(),
-            description: None,
-            spec: ModelSpec::AutoResolve {
-                provider: "OpenAI".to_string(),
-                match_patterns: vec!["codex-*".to_string()],
-                exclude_patterns: vec![],
-            },
-        },
-    );
-
-    aliases.insert(
-        "gpt".to_string(),
-        ModelAlias {
-            harness: "codex".to_string(),
-            description: None,
-            spec: ModelSpec::AutoResolve {
-                provider: "OpenAI".to_string(),
-                match_patterns: vec!["gpt-*".to_string()],
-                exclude_patterns: vec![
-                    "gpt-3*".to_string(),
-                    "gpt-4*".to_string(),
-                    "*-mini*".to_string(),
-                    "*-nano*".to_string(),
-                    "*-chat*".to_string(),
-                    "*-audio*".to_string(),
-                    "*-codex*".to_string(),
-                    "*-image*".to_string(),
-                    "*-oss*".to_string(),
-                    "*-pro*".to_string(),
-                    "*:*".to_string(),
-                ],
-            },
-        },
-    );
-
-    aliases.insert(
-        "gemini".to_string(),
-        ModelAlias {
-            harness: "gemini".to_string(),
-            description: Some("Google Gemini flagship".to_string()),
-            spec: ModelSpec::AutoResolve {
-                provider: "Google".to_string(),
-                match_patterns: vec!["gemini-*-pro".to_string()],
-                exclude_patterns: vec!["gemini-1*".to_string(), "*-preview*".to_string()],
-            },
-        },
-    );
-
-    aliases
-}
-
-/// Fallback model IDs when cache is empty (first run, no network).
-/// Returns (alias_name → model_id).
-pub fn fallback_model_ids() -> IndexMap<&'static str, &'static str> {
-    let mut fallbacks = IndexMap::new();
-    fallbacks.insert("opus", "claude-opus-4");
-    fallbacks.insert("sonnet", "claude-sonnet-4");
-    fallbacks.insert("haiku", "claude-haiku-4");
-    fallbacks.insert("codex", "codex-mini-latest");
-    fallbacks.insert("gpt", "gpt-5");
-    fallbacks.insert("gemini", "gemini-2.5-pro");
-    fallbacks
-}
+// No builtin aliases — model aliases come from packages and consumer config.
+// If you want aliases, install a package that provides them (e.g. meridian-dev-workflow)
+// or define them in your mars.toml [models] section.
 
 // ---------------------------------------------------------------------------
 // Dependency-tree merge
@@ -530,9 +423,9 @@ pub struct ResolvedDepModels {
 
 /// Merge model aliases from dependency tree.
 ///
-/// Precedence: consumer > deps (declaration order) > builtins > fallback IDs.
-/// When a dep overrides a builtin, no warning. When two deps define the same
-/// alias, the first in declaration order wins with a diagnostic warning.
+/// Precedence: consumer > deps (declaration order).
+/// When two deps define the same alias, first in declaration order wins
+/// with a diagnostic warning.
 pub fn merge_model_config(
     consumer: &IndexMap<String, ModelAlias>,
     deps: &[ResolvedDepModels],
@@ -540,41 +433,30 @@ pub fn merge_model_config(
 ) -> IndexMap<String, ModelAlias> {
     let mut merged = IndexMap::new();
 
-    // Layer 1 (lowest): builtins
-    for (name, alias) in builtin_aliases() {
-        merged.insert(name, alias);
-    }
-
-    // Layer 2: dependencies (declaration order — first wins)
+    // Layer 1 (lowest): dependencies (declaration order — first wins)
     for dep in deps {
         for (name, alias) in &dep.models {
             if consumer.contains_key(name) {
                 // Consumer will override — skip dep's version silently
                 continue;
             }
-            if let Some(existing) = merged.get(name) {
-                // Check if it's a builtin being overridden (fine) or a dep conflict
-                if builtin_aliases().contains_key(name) {
-                    // Dep overrides builtin — fine, replace
-                    merged.insert(name.clone(), alias.clone());
-                } else if *existing != *alias {
-                    // Two deps define same alias — first wins, warn
-                    diag.warn_with_context(
-                        "model-alias-conflict",
-                        format!(
-                            "model alias `{name}` defined by both `{}` and earlier dependency — using earlier definition",
-                            dep.source_name
-                        ),
-                        dep.source_name.clone(),
-                    );
-                }
+            if let Some(_existing) = merged.get(name) {
+                // Two deps define same alias — first wins, warn
+                diag.warn_with_context(
+                    "model-alias-conflict",
+                    format!(
+                        "model alias `{name}` defined by both `{}` and earlier dependency — using earlier definition",
+                        dep.source_name
+                    ),
+                    dep.source_name.clone(),
+                );
             } else {
                 merged.insert(name.clone(), alias.clone());
             }
         }
     }
 
-    // Layer 3 (highest): consumer config
+    // Layer 2 (highest): consumer config
     for (name, alias) in consumer {
         merged.insert(name.clone(), alias.clone());
     }
@@ -584,42 +466,24 @@ pub fn merge_model_config(
 
 /// Resolve all aliases in a merged config, returning (alias → resolved_model_id).
 /// For pinned aliases, returns the model ID directly. For auto-resolve, runs
-/// the resolution algorithm against the cache, falling back to fallback IDs.
+/// the resolution algorithm against the cache. Unresolvable aliases are omitted.
 pub fn resolve_all(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> IndexMap<String, String> {
-    let fallbacks = fallback_model_ids();
     let mut resolved = IndexMap::new();
 
     for (name, alias) in aliases {
         let model_id = match &alias.spec {
-            ModelSpec::Pinned { model } => model.clone(),
+            ModelSpec::Pinned { model } => Some(model.clone()),
             ModelSpec::AutoResolve {
                 provider,
                 match_patterns,
                 exclude_patterns,
-            } => {
-                if cache.models.is_empty() {
-                    // No cache — use fallback if available
-                    fallbacks
-                        .get(name.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default()
-                } else {
-                    auto_resolve(provider, match_patterns, exclude_patterns, cache).unwrap_or_else(
-                        || {
-                            fallbacks
-                                .get(name.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_default()
-                        },
-                    )
-                }
-            }
+            } => auto_resolve(provider, match_patterns, exclude_patterns, cache),
         };
-        if !model_id.is_empty() {
-            resolved.insert(name.clone(), model_id);
+        if let Some(id) = model_id {
+            resolved.insert(name.clone(), id);
         }
     }
 
@@ -794,15 +658,10 @@ mod tests {
     }
 
     #[test]
-    fn merge_builtins_present_by_default() {
+    fn merge_empty_returns_empty() {
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[], &mut diag);
-        assert!(merged.contains_key("opus"));
-        assert!(merged.contains_key("sonnet"));
-        assert!(merged.contains_key("haiku"));
-        assert!(merged.contains_key("codex"));
-        assert!(merged.contains_key("gpt"));
-        assert!(merged.contains_key("gemini"));
+        assert!(merged.is_empty());
     }
 
     #[test]
@@ -821,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_dep_overrides_builtin() {
+    fn merge_dep_provides_alias() {
         let dep = ResolvedDepModels {
             source_name: "my-pkg".to_string(),
             models: {
@@ -916,16 +775,28 @@ mod tests {
     }
 
     #[test]
-    fn resolve_all_fallback_on_empty_cache() {
-        let aliases = builtin_aliases();
+    fn resolve_all_empty_cache_omits_unresolvable() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            ModelAlias {
+                harness: "claude".to_string(),
+                description: None,
+                spec: ModelSpec::AutoResolve {
+                    provider: "Anthropic".to_string(),
+                    match_patterns: vec!["claude-opus-*".to_string()],
+                    exclude_patterns: vec![],
+                },
+            },
+        );
         let cache = ModelsCache {
             models: Vec::new(),
             fetched_at: None,
         };
 
         let resolved = resolve_all(&aliases, &cache);
-        assert_eq!(resolved.get("opus").unwrap(), "claude-opus-4");
-        assert_eq!(resolved.get("sonnet").unwrap(), "claude-sonnet-4");
+        // No cache → auto-resolve can't match → alias omitted from results
+        assert!(!resolved.contains_key("opus"));
     }
 
     // -- serde roundtrip tests --

@@ -8,6 +8,7 @@
 //!
 //! Merge precedence: consumer > deps (declaration order).
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -48,6 +49,28 @@ pub enum ModelSpec {
         match_patterns: Vec<String>,
         exclude_patterns: Vec<String>,
     },
+}
+
+/// How the harness was determined.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessSource {
+    Explicit,
+    AutoDetected,
+    Unavailable,
+}
+
+/// Fully resolved model alias — everything a consumer needs to launch.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedAlias {
+    pub name: String,
+    pub model_id: String,
+    pub provider: String,
+    pub harness: Option<String>,
+    pub harness_source: HarnessSource,
+    pub harness_candidates: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 // Custom Serialize for ModelSpec to flatten into parent
@@ -547,30 +570,78 @@ pub fn merge_model_config(
     merged
 }
 
-/// Resolve all aliases in a merged config, returning (alias → resolved_model_id).
-/// For pinned aliases, returns the model ID directly. For auto-resolve, runs
-/// the resolution algorithm against the cache. Unresolvable aliases are omitted.
+/// Resolve all aliases to concrete model IDs + harnesses.
+///
+/// Harness detection is encapsulated — callers don't pass installed harnesses.
 pub fn resolve_all(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
-) -> IndexMap<String, String> {
+) -> IndexMap<String, ResolvedAlias> {
+    let installed = harness::detect_installed_harnesses();
     let mut resolved = IndexMap::new();
 
     for (name, alias) in aliases {
-        let model_id = match &alias.spec {
-            ModelSpec::Pinned { model, provider: _ } => Some(model.clone()),
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => auto_resolve(provider, match_patterns, exclude_patterns, cache),
+        let Some((model_id, provider)) = resolve_model_and_provider(alias, cache) else {
+            continue; // unresolvable — omit
         };
-        if let Some(id) = model_id {
-            resolved.insert(name.clone(), id);
-        }
+
+        let candidates = harness::harness_candidates_for_provider(&provider);
+        let (h, source) = resolve_harness(alias, &provider, &installed);
+
+        resolved.insert(
+            name.clone(),
+            ResolvedAlias {
+                name: name.clone(),
+                model_id,
+                provider,
+                harness: h,
+                harness_source: source,
+                harness_candidates: candidates,
+                description: alias.description.clone(),
+            },
+        );
     }
 
     resolved
+}
+
+fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option<(String, String)> {
+    match &alias.spec {
+        ModelSpec::Pinned { model, provider } => {
+            let p = provider
+                .clone()
+                .or_else(|| infer_provider_from_model_id(model).map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            Some((model.clone(), p))
+        }
+        ModelSpec::AutoResolve {
+            provider,
+            match_patterns,
+            exclude_patterns,
+        } => {
+            let id = auto_resolve(provider, match_patterns, exclude_patterns, cache)?;
+            Some((id, provider.clone()))
+        }
+    }
+}
+
+fn resolve_harness(
+    alias: &ModelAlias,
+    provider: &str,
+    installed: &HashSet<String>,
+) -> (Option<String>, HarnessSource) {
+    if let Some(h) = &alias.harness {
+        if installed.contains(h) {
+            (Some(h.clone()), HarnessSource::Explicit)
+        } else {
+            (Some(h.clone()), HarnessSource::Unavailable)
+        }
+    } else {
+        match harness::resolve_harness_for_provider(provider, installed) {
+            Some(h) => (Some(h), HarnessSource::AutoDetected),
+            None => (None, HarnessSource::Unavailable),
+        }
+    }
 }
 
 /// Best-effort provider inference from model ID prefixes.
@@ -614,6 +685,7 @@ fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn parse_models_dev_catalog_maps_fields_and_filters_providers() {
@@ -958,7 +1030,7 @@ mod tests {
         let mut aliases = IndexMap::new();
         aliases.insert(
             "fast".to_string(),
-            pinned_alias(Some("claude"), "claude-haiku-4"),
+            pinned_alias(Some("claude"), "claude-haiku-4-5"),
         );
 
         let cache = ModelsCache {
@@ -967,7 +1039,9 @@ mod tests {
         };
 
         let resolved = resolve_all(&aliases, &cache);
-        assert_eq!(resolved.get("fast").unwrap(), "claude-haiku-4");
+        let entry = resolved.get("fast").unwrap();
+        assert_eq!(entry.model_id, "claude-haiku-4-5");
+        assert_eq!(entry.provider, "anthropic");
     }
 
     #[test]
@@ -991,7 +1065,39 @@ mod tests {
         };
 
         let resolved = resolve_all(&aliases, &cache);
-        assert_eq!(resolved.get("fast").unwrap(), "gpt-5.3-codex");
+        let entry = resolved.get("fast").unwrap();
+        assert_eq!(entry.model_id, "gpt-5.3-codex");
+        assert_eq!(entry.provider, "openai");
+        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+    }
+
+    #[test]
+    fn resolve_all_auto_detect_harness() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "gpt".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                spec: ModelSpec::AutoResolve {
+                    provider: "openai".to_string(),
+                    match_patterns: vec!["gpt-5*".to_string()],
+                    exclude_patterns: vec![],
+                },
+            },
+        );
+        let cache = make_cache(vec![("gpt-5", "OpenAI", Some("2025-06-01"))]);
+
+        let resolved = resolve_all(&aliases, &cache);
+        let entry = resolved.get("gpt").unwrap();
+        assert_eq!(entry.model_id, "gpt-5");
+        assert_eq!(entry.provider, "openai");
+        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+        match entry.harness_source {
+            HarnessSource::AutoDetected => assert!(entry.harness.is_some()),
+            HarnessSource::Unavailable => assert!(entry.harness.is_none()),
+            HarnessSource::Explicit => panic!("unexpected explicit harness source"),
+        }
     }
 
     #[test]
@@ -1017,6 +1123,145 @@ mod tests {
         let resolved = resolve_all(&aliases, &cache);
         // No cache → auto-resolve can't match → alias omitted from results
         assert!(!resolved.contains_key("opus"));
+    }
+
+    #[test]
+    fn resolve_model_and_provider_pinned_explicit_provider() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "claude-opus-4-6".to_string(),
+                provider: Some("anthropic".to_string()),
+            },
+        };
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
+        assert_eq!(
+            resolved,
+            ("claude-opus-4-6".to_string(), "anthropic".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_model_and_provider_pinned_inferred() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "claude-opus-4-6".to_string(),
+                provider: None,
+            },
+        };
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
+        assert_eq!(
+            resolved,
+            ("claude-opus-4-6".to_string(), "anthropic".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_model_and_provider_pinned_unknown() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "my-custom-model".to_string(),
+                provider: None,
+            },
+        };
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
+        assert_eq!(
+            resolved,
+            ("my-custom-model".to_string(), "unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_harness_explicit_installed() {
+        let alias = ModelAlias {
+            harness: Some("claude".to_string()),
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "claude-opus-4-6".to_string(),
+                provider: None,
+            },
+        };
+        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
+
+        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        assert_eq!(
+            resolved,
+            (Some("claude".to_string()), HarnessSource::Explicit)
+        );
+    }
+
+    #[test]
+    fn resolve_harness_explicit_not_installed() {
+        let alias = ModelAlias {
+            harness: Some("claude".to_string()),
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "claude-opus-4-6".to_string(),
+                provider: None,
+            },
+        };
+        let installed = HashSet::new();
+
+        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        assert_eq!(
+            resolved,
+            (Some("claude".to_string()), HarnessSource::Unavailable)
+        );
+    }
+
+    #[test]
+    fn resolve_harness_auto_detected() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "claude-opus-4-6".to_string(),
+                provider: Some("anthropic".to_string()),
+            },
+        };
+        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
+
+        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        assert_eq!(
+            resolved,
+            (Some("claude".to_string()), HarnessSource::AutoDetected)
+        );
+    }
+
+    #[test]
+    fn resolve_harness_unavailable() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "gemini-2.5-pro".to_string(),
+                provider: Some("google".to_string()),
+            },
+        };
+        let installed = HashSet::new();
+
+        let resolved = resolve_harness(&alias, "google", &installed);
+        assert_eq!(resolved, (None, HarnessSource::Unavailable));
     }
 
     // -- serde roundtrip tests --
@@ -1236,7 +1481,10 @@ harness = "claude"
             infer_provider_from_model_id("codex-mini-latest"),
             Some("openai")
         );
-        assert_eq!(infer_provider_from_model_id("mistral-large"), Some("mistral"));
+        assert_eq!(
+            infer_provider_from_model_id("mistral-large"),
+            Some("mistral")
+        );
         assert_eq!(
             infer_provider_from_model_id("codestral-latest"),
             Some("mistral")
@@ -1245,7 +1493,10 @@ harness = "claude"
             infer_provider_from_model_id("deepseek-chat"),
             Some("deepseek")
         );
-        assert_eq!(infer_provider_from_model_id("command-r-plus"), Some("cohere"));
+        assert_eq!(
+            infer_provider_from_model_id("command-r-plus"),
+            Some("cohere")
+        );
     }
 
     #[test]
@@ -1264,7 +1515,13 @@ harness = "claude"
             infer_provider_from_model_id("CLAUDE-OPUS-4-6"),
             Some("anthropic")
         );
-        assert_eq!(infer_provider_from_model_id("GPT-5.3-codex"), Some("openai"));
-        assert_eq!(infer_provider_from_model_id("CoDeStRaL-latest"), Some("mistral"));
+        assert_eq!(
+            infer_provider_from_model_id("GPT-5.3-codex"),
+            Some("openai")
+        );
+        assert_eq!(
+            infer_provider_from_model_id("CoDeStRaL-latest"),
+            Some("mistral")
+        );
     }
 }

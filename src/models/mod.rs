@@ -6,7 +6,7 @@
 //! - **Pinned**: explicit model ID, no resolution needed.
 //! - **AutoResolve**: pattern-based resolution against a cached model catalog.
 //!
-//! Merge precedence: consumer > deps (declaration order) > builtins > fallback IDs.
+//! Merge precedence: consumer > deps (declaration order).
 
 use std::path::Path;
 
@@ -402,14 +402,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 
     pos <= end
 }
-
-// ---------------------------------------------------------------------------
-// Builtin aliases & fallbacks
-// ---------------------------------------------------------------------------
-
-// No builtin aliases — model aliases come from packages and consumer config.
-// If you want aliases, install a package that provides them (e.g. meridian-dev-workflow)
-// or define them in your mars.toml [models] section.
 
 // ---------------------------------------------------------------------------
 // Dependency-tree merge

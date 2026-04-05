@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
+pub mod harness;
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -969,6 +971,30 @@ mod tests {
     }
 
     #[test]
+    fn resolve_all_pinned_with_provider() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "fast".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                spec: ModelSpec::Pinned {
+                    model: "gpt-5.3-codex".to_string(),
+                    provider: Some("openai".to_string()),
+                },
+            },
+        );
+
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_all(&aliases, &cache);
+        assert_eq!(resolved.get("fast").unwrap(), "gpt-5.3-codex");
+    }
+
+    #[test]
     fn resolve_all_empty_cache_omits_unresolvable() {
         let mut aliases = IndexMap::new();
         aliases.insert(
@@ -1092,6 +1118,29 @@ provider = "anthropic"
     }
 
     #[test]
+    fn model_alias_pinned_json_roundtrip_with_provider() {
+        let json = r#"{
+            "model": "gpt-5.3-codex",
+            "provider": "openai"
+        }"#;
+
+        let alias: ModelAlias = serde_json::from_str(json).unwrap();
+        assert_eq!(alias.harness, None);
+        assert_eq!(alias.description, None);
+        assert_eq!(
+            alias.spec,
+            ModelSpec::Pinned {
+                model: "gpt-5.3-codex".to_string(),
+                provider: Some("openai".to_string())
+            }
+        );
+
+        let encoded = serde_json::to_string(&alias).unwrap();
+        let roundtripped: ModelAlias = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(roundtripped, alias);
+    }
+
+    #[test]
     fn model_alias_auto_resolve_toml_roundtrip() {
         let toml_str = r#"
 [models.opus]
@@ -1180,10 +1229,42 @@ harness = "claude"
             infer_provider_from_model_id("llama-4-maverick"),
             Some("meta")
         );
+        assert_eq!(infer_provider_from_model_id("o1-preview"), Some("openai"));
+        assert_eq!(infer_provider_from_model_id("o3-mini"), Some("openai"));
+        assert_eq!(infer_provider_from_model_id("o4-mini"), Some("openai"));
+        assert_eq!(
+            infer_provider_from_model_id("codex-mini-latest"),
+            Some("openai")
+        );
+        assert_eq!(infer_provider_from_model_id("mistral-large"), Some("mistral"));
+        assert_eq!(
+            infer_provider_from_model_id("codestral-latest"),
+            Some("mistral")
+        );
+        assert_eq!(
+            infer_provider_from_model_id("deepseek-chat"),
+            Some("deepseek")
+        );
+        assert_eq!(infer_provider_from_model_id("command-r-plus"), Some("cohere"));
     }
 
     #[test]
     fn infer_provider_from_model_id_returns_none_for_unknown_model() {
         assert_eq!(infer_provider_from_model_id("unknown-model"), None);
+    }
+
+    #[test]
+    fn infer_provider_from_model_id_returns_none_for_empty_string() {
+        assert_eq!(infer_provider_from_model_id(""), None);
+    }
+
+    #[test]
+    fn infer_provider_from_model_id_is_case_insensitive() {
+        assert_eq!(
+            infer_provider_from_model_id("CLAUDE-OPUS-4-6"),
+            Some("anthropic")
+        );
+        assert_eq!(infer_provider_from_model_id("GPT-5.3-codex"), Some("openai"));
+        assert_eq!(infer_provider_from_model_id("CoDeStRaL-latest"), Some("mistral"));
     }
 }

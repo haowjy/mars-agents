@@ -1,6 +1,6 @@
 # Mars Documentation
 
-Mars is a package manager for `.agents/` directories. It installs agent profiles and skills from git and local sources into one managed root, tracks ownership in `mars.lock`, and links managed content into tool-specific directories like `.claude/` or `.cursor/`.
+Mars is a package manager for agent directories. It installs agent profiles and skills from git and local sources into a `.mars/` canonical store, tracks ownership in `mars.lock`, and copies managed content into configured target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
 ## Core Concepts
 
@@ -8,13 +8,13 @@ Mars is a package manager for `.agents/` directories. It installs agent profiles
 
 **Project root** is the directory containing `mars.toml` and `mars.lock` (typically your repo root).
 
-**Managed root** is the directory Mars installs into (default: `.agents/`, configurable via `settings.managed_root`). It contains installed `agents/` and `skills/`.
+**Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**`--root`** points at the managed root to override auto-detection. Mars then resolves the corresponding project root (the parent containing `mars.toml`).
+**Managed targets** are directories Mars copies content into from `.mars/` (default: `[".agents"]`, configurable via `settings.targets`). Targets may contain non-mars content — mars only manages files it created (tracked in the lock).
+
+**`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
 **Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. It is the authority for what Mars manages. See [lock-file.md](lock-file.md) for format details.
-
-**Links** are symlinks from tool directories (`.claude/agents`, `.cursor/skills`) into the managed root. This lets multiple tools share one set of installed agents and skills without copying.
 
 **Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [configuration.md](configuration.md).
 
@@ -49,13 +49,17 @@ project/
   mars.toml              # Dependency config (committed)
   mars.lock              # Ownership registry (committed)
   mars.local.toml        # Dev overrides (gitignored)
-  .mars/                 # Internal state (gitignored)
-  .agents/               # Managed root
+  .mars/                 # Canonical store (gitignored)
+    agents/              # Resolved agent profiles
+    skills/              # Resolved skills
+    models-cache.json    # Cached model catalog
+    models-merged.json   # Dependency-sourced model aliases
+  .agents/               # Target directory (committed)
     agents/
     skills/
-  .claude/               # Tool directory
-    agents -> ../.agents/agents
-    skills -> ../.agents/skills
+  .claude/               # Another target (committed)
+    agents/
+    skills/
 ```
 
 ## Source Inputs
@@ -75,7 +79,7 @@ Mars accepts several source forms:
 |---|---|
 | [configuration.md](configuration.md) | `mars.toml` reference: all fields, filter modes, settings |
 | [commands.md](commands.md) | Full CLI reference: every subcommand with flags and examples |
-| [sync-pipeline.md](sync-pipeline.md) | How sync works: resolve, target, diff, apply |
+| [sync-pipeline.md](sync-pipeline.md) | How sync works: resolve → target → diff → apply → sync targets → finalize |
 | [conflicts.md](conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
 | [lock-file.md](lock-file.md) | Lock file format and semantics |
 | [local-development.md](local-development.md) | Dev workflows: overrides, local paths, submodules |

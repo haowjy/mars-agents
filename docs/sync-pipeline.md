@@ -4,64 +4,61 @@ Every mutating command (`add`, `remove`, `sync`, `upgrade`, `override`, `rename`
 
 ## Pipeline Overview
 
+The pipeline is implemented as typed phase functions in `src/sync/mod.rs`. Each phase consumes the prior phase's output struct by value (move semantics, no cloning).
+
 ```
 mars.toml + mars.local.toml
         │
         ▼
 ┌─────────────────┐
-│  1. Sync Lock   │  Acquire .mars/sync.lock (fcntl flock)
+│  1. Load Config │  Acquire sync lock, load config, apply mutations, merge effective config
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  2. Load Config │  Load mars.toml + mars.local.toml
+│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  3. Mutate      │  Apply ConfigMutation (UpsertDependency, Remove, etc.)
+│  3. Build Target│  Discover items, apply filters, detect collisions
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  4. Merge       │  Build EffectiveConfig (config + overrides → resolved deps)
+│  4. Create Plan │  Diff target vs lock + disk → Add/Update/Conflict/Orphan → actions
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  5. Resolve     │  Fetch sources, discover transitive deps, select versions
+│  5. Apply Plan  │  Write resolved content to .mars/ canonical store (atomic writes)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  6. Target      │  Build desired state: discover items, apply filters, detect collisions
+│  6. Sync Targets│  Copy from .mars/ to each configured target directory
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  7. Diff        │  Compare target vs lock + disk → Add/Update/Conflict/Orphan
-└────────┬────────┘
-         ▼
-┌─────────────────┐
-│  8. Plan        │  Convert diff entries into executable actions
-└────────┬────────┘
-         ▼
-┌─────────────────┐
-│  9. Apply       │  Execute actions: install, update, merge, remove, symlink
-└────────┬────────┘
-         ▼
-┌─────────────────┐
-│ 10. Lock Build  │  Build new mars.lock from graph + apply outcomes
+│  7. Finalize    │  Write lock, persist dep model aliases, build report
 └─────────────────┘
 ```
 
+### Phase handoff structs
+
+| Phase | Struct | Key contents |
+|---|---|---|
+| 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `_sync_lock` |
+| 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + `model_aliases` |
+| 3 | `TargetedState` | `ResolvedState` + `TargetState` + renames + validation warnings |
+| 4 | `PlannedState` | `TargetedState` + `SyncPlan` |
+| 5 | `AppliedState` | `PlannedState` + `ApplyResult` |
+| 6 | `SyncedState` | `AppliedState` + `Vec<TargetSyncOutcome>` |
+
+A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in library code — all warnings/info go through structured diagnostics.
+
 ## Step Details
 
-### 1. Sync Lock
+### 1. Load Config (`load_config`)
 
-All sync operations acquire `.mars/sync.lock` via `fcntl` file locking. This prevents concurrent mars processes from racing on config reads and disk writes.
+Acquires `.mars/sync.lock` via `fcntl` file locking, then loads `mars.toml` and `mars.local.toml`. If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
 
-### 2. Load Config
-
-Loads `mars.toml` and `mars.local.toml`. If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
-
-### 3. Mutate Config
-
-Applies the command's mutation atomically under the sync lock:
+Under the sync lock, applies the command's mutation atomically:
 
 | Mutation | Source |
 |---|---|
@@ -73,9 +70,7 @@ Applies the command's mutation atomically under the sync lock:
 
 For `UpsertDependency`, filter replacement is atomic: if any filter field is present in the new entry, the entire filter config replaces the existing one. If no filter fields are set (e.g., version bump only), existing filters are preserved.
 
-### 4. Merge Effective Config
-
-Merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`. For each dependency:
+Then merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`. For each dependency:
 
 - Validates `url` XOR `path` (exactly one required)
 - Validates filter combinations (see [configuration.md](configuration.md#filter-mode-rules))
@@ -83,7 +78,7 @@ Merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`. For 
 - Computes `SourceId` for each dependency (git URL or canonical path)
 - Rejects `_self` as a dependency name (`_self` is reserved for local package items from the current project)
 
-### 5. Resolve
+### 2. Resolve (`resolve_graph`)
 
 Fetches sources and resolves concrete versions.
 
@@ -114,9 +109,11 @@ Fetches sources and resolves concrete versions.
 | Git with ref pin | Fetch the specific branch/commit ref |
 | Local path | Resolve to canonical path, no version logic |
 
-### 6. Build Target State
+Additionally, this phase merges model aliases from the dependency tree. Each resolved dependency's `[models]` config is collected in declaration order. `merge_model_config()` applies two layers: dependencies first (first-dep wins on conflicts), consumer config on top (always wins).
 
-Constructs the desired state of `.agents/` from the resolved graph.
+### 3. Build Target (`build_target`)
+
+Constructs the desired target state from the resolved graph.
 
 For each source in topological order:
 1. **Discover** items in the source tree (`agents/*.md`, `skills/*/SKILL.md`, flat `SKILL.md`)
@@ -130,7 +127,9 @@ After building all items:
 7. **Rewrite frontmatter** — update skill references in agents to match renamed skill names (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
 8. **Check unmanaged collisions** — items that would overwrite files not tracked in the lock
 
-### 7. Compute Diff
+### 4. Create Plan (`create_plan`)
+
+Computes diff and converts to executable actions.
 
 Compares target state against the lock file and disk to produce diff entries.
 
@@ -151,15 +150,11 @@ The diff matrix:
 
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
-### 8. Create Plan
+Also injects local package symlinks when the project has a `[package]` section — the project's own agents/skills are symlinked into `.mars/` under the `_self` source name (`_self` is the reserved local-project source identifier).
 
-Converts diff entries into executable actions: Install, Overwrite, Merge, Remove, Skip, KeepLocal, Symlink.
+### 5. Apply Plan (`apply_plan`)
 
-Also injects local package symlinks when the project has a `[package]` section — the project's own agents/skills are symlinked into the managed root under the `_self` source name (`_self` is the reserved local-project source identifier).
-
-### 9. Apply
-
-Executes planned actions against the filesystem:
+Executes planned actions against the `.mars/` canonical store:
 
 | Action | Behavior |
 |---|---|
@@ -172,9 +167,24 @@ Executes planned actions against the filesystem:
 
 In `--diff` (dry run) mode, actions are computed but not executed.
 
-### 10. Build Lock
+### 6. Sync Targets (`sync_targets`)
 
-Constructs the new `mars.lock` from the resolved graph (source provenance) and apply outcomes (checksums). Keys are sorted deterministically for clean git diffs.
+Copies content from `.mars/` canonical store to each configured target directory (`.agents/`, `.claude/`, etc.). Implemented in `src/target_sync/mod.rs`.
+
+- Targets configured via `settings.targets` in `mars.toml` (default: `[".agents"]`)
+- All targets get file copies, never symlinks — symlinks in `.mars/` (from local packages) are followed during copy
+- Uses `reconcile::fs_ops` for atomic operations (tmp+rename)
+- Orphan cleanup: uses the previous lock to identify mars-managed files in each target, removes only those that are no longer in the current apply outcomes
+- Non-fatal per-target: errors on one target are recorded in `TargetSyncOutcome` but don't stop other targets from syncing
+
+### 7. Finalize (`finalize`)
+
+Writes lock and constructs the final `SyncReport`.
+
+- **Lock write**: constructs new `mars.lock` from resolved graph + apply outcomes (checksums). Keys sorted deterministically for clean git diffs. Lock is written **regardless of target sync outcome** — this ensures the lock always reflects what's in `.mars/`, even if a target sync failed.
+- **Model aliases**: persists dependency-only model aliases to `.mars/models-merged.json`. Uses an empty consumer map so the cache contains only dep-sourced aliases — `mars models list` can then overlay the current consumer config at read time without stale consumer aliases from prior syncs.
+- **Validation warnings**: emits diagnostics for missing skill references in agents.
+- **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 
 ## Local Package Items (`_self`)
 

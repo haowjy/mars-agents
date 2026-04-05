@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 
 use crate::error::MarsError;
-use crate::models::{self, ModelAlias, ModelSpec, ModelsCache};
+use crate::models::{self, HarnessSource, ModelAlias, ModelSpec, ModelsCache};
 use crate::types::MarsContext;
 
 /// Manage model aliases and the models cache.
@@ -20,11 +20,18 @@ pub enum ModelsCommand {
     /// Fetch models from API and update the local cache.
     Refresh,
     /// List all model aliases (consumer + deps) with resolved IDs.
-    List,
+    List(ListArgs),
     /// Show resolution chain for a specific alias.
     Resolve(ResolveAliasArgs),
     /// Quick-add a pinned alias to mars.toml [models].
     Alias(AddAliasArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct ListArgs {
+    /// Show all aliases including those without an available harness.
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -50,7 +57,7 @@ pub struct AddAliasArgs {
 pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         ModelsCommand::Refresh => run_refresh(ctx, json),
-        ModelsCommand::List => run_list(ctx, json),
+        ModelsCommand::List(args) => run_list(args, ctx, json),
         ModelsCommand::Resolve(a) => run_resolve(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
     }
@@ -87,7 +94,7 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     Ok(0)
 }
 
-fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
     let cache = models::read_cache(&mars)?;
 
@@ -96,22 +103,25 @@ fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let resolved = models::resolve_all(&merged, &cache);
 
     if json {
-        let entries: Vec<serde_json::Value> = merged
-            .iter()
-            .map(|(name, alias)| {
-                let resolved_id = resolved.get(name).cloned().unwrap_or_default();
-                let mode = match &alias.spec {
-                    ModelSpec::Pinned { .. } => "pinned",
-                    ModelSpec::AutoResolve { .. } => "auto-resolve",
-                };
-                let harness = alias.harness.as_deref().unwrap_or("");
-                serde_json::json!({
-                    "name": name,
-                    "harness": harness,
+        let entries: Vec<serde_json::Value> = resolved
+            .values()
+            .map(|r| {
+                let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
+                let mut obj = serde_json::json!({
+                    "name": r.name,
+                    "harness": r.harness,
+                    "harness_source": r.harness_source,
+                    "harness_candidates": r.harness_candidates,
+                    "provider": r.provider,
                     "mode": mode,
-                    "resolved_model": resolved_id,
-                    "description": alias.description,
-                })
+                    "model_id": r.model_id,
+                    "resolved_model": r.model_id,
+                    "description": r.description,
+                });
+                if let Some(error) = unavailable_harness_error(r) {
+                    obj["error"] = serde_json::json!(error);
+                }
+                obj
             })
             .collect();
         println!(
@@ -134,20 +144,20 @@ fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
             "{:<12} {:<10} {:<14} {:<30} {}",
             "ALIAS", "HARNESS", "MODE", "RESOLVED", "DESCRIPTION"
         );
-        for (name, alias) in &merged {
-            let resolved_id = resolved
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| "—".to_string());
-            let mode = match &alias.spec {
-                ModelSpec::Pinned { .. } => "pinned",
-                ModelSpec::AutoResolve { .. } => "auto-resolve",
+        for r in resolved.values() {
+            if !args.all && r.harness_source == HarnessSource::Unavailable {
+                continue;
+            }
+            let harness = r.harness.as_deref().unwrap_or("—");
+            let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
+            let desc = if r.harness_source == HarnessSource::Unavailable {
+                format!("(install: {})", r.harness_candidates.join(", "))
+            } else {
+                r.description.clone().unwrap_or_default()
             };
-            let desc = alias.description.as_deref().unwrap_or("");
-            let harness = alias.harness.as_deref().unwrap_or("");
             println!(
                 "{:<12} {:<10} {:<14} {:<30} {}",
-                name, harness, mode, resolved_id, desc
+                r.name, harness, mode, r.model_id, desc
             );
         }
     }
@@ -177,54 +187,73 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 
     // Determine source layer
     let source = determine_source(&args.name, ctx)?;
-    let resolved_id = models::resolve_all(&merged, &cache)
-        .get(&args.name)
-        .cloned()
-        .unwrap_or_default();
+    let resolved_map = models::resolve_all(&merged, &cache);
+    let resolved_entry = resolved_map.get(&args.name);
 
     if json {
-        let harness = alias.harness.as_deref().unwrap_or("");
-        let out = serde_json::json!({
-            "name": args.name,
-            "source": source,
-            "harness": harness,
-            "spec": format_spec(&alias.spec),
-            "resolved_model": resolved_id,
-            "description": alias.description,
-        });
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        if let Some(r) = resolved_entry {
+            let mut out = serde_json::json!({
+                "name": r.name,
+                "source": source,
+                "provider": r.provider,
+                "harness": r.harness,
+                "harness_source": r.harness_source,
+                "harness_candidates": r.harness_candidates,
+                "model_id": r.model_id,
+                "resolved_model": r.model_id,
+                "spec": format_spec(&alias.spec),
+                "description": r.description,
+            });
+            if let Some(error) = unavailable_harness_error(r) {
+                out["error"] = serde_json::json!(error);
+            }
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "error": format!("alias `{}` did not resolve to a model ID", args.name),
+                }))
+                .unwrap()
+            );
+            return Ok(1);
+        }
     } else {
-        let harness = alias.harness.as_deref().unwrap_or("");
+        let Some(r) = resolved_entry else {
+            eprintln!("error: alias `{}` did not resolve to a model ID", args.name);
+            return Ok(1);
+        };
+        let harness = r.harness.as_deref().unwrap_or("—");
         println!("Alias:    {}", args.name);
         println!("Source:   {}", source);
-        println!("Harness:  {}", harness);
+        println!(
+            "Harness:  {} ({})",
+            harness,
+            harness_source_label(&r.harness_source)
+        );
+        println!("Provider: {}", r.provider);
         match &alias.spec {
             ModelSpec::Pinned { model, provider: _ } => {
                 println!("Mode:     pinned");
                 println!("Model:    {}", model);
             }
             ModelSpec::AutoResolve {
-                provider,
+                provider: _,
                 match_patterns,
                 exclude_patterns,
             } => {
                 println!("Mode:     auto-resolve");
-                println!("Provider: {}", provider);
                 println!("Match:    {}", match_patterns.join(", "));
                 if !exclude_patterns.is_empty() {
                     println!("Exclude:  {}", exclude_patterns.join(", "));
                 }
-                println!(
-                    "Resolved: {}",
-                    if resolved_id.is_empty() {
-                        "—"
-                    } else {
-                        &resolved_id
-                    }
-                );
+                println!("Resolved: {}", r.model_id);
             }
         }
-        if let Some(desc) = &alias.description {
+        if let Some(error) = unavailable_harness_error(r) {
+            println!("Error:    {}", error);
+        }
+        if let Some(desc) = &r.description {
             println!("Desc:     {}", desc);
         }
     }
@@ -238,10 +267,14 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
     // Read existing config
     let content = std::fs::read_to_string(&config_path).unwrap_or_default();
 
+    let harness = Some(args.harness.clone());
+
     // Build the TOML entry
     let mut entry = format!(
         "\n[models.{}]\nharness = {:?}\nmodel = {:?}\n",
-        args.name, args.harness, args.model_id
+        args.name,
+        harness.as_deref().unwrap_or("claude"),
+        args.model_id
     );
     if let Some(desc) = &args.description {
         entry.push_str(&format!("description = {:?}\n", desc));
@@ -324,8 +357,12 @@ fn determine_source(name: &str, ctx: &MarsContext) -> Result<String, MarsError> 
 
 fn format_spec(spec: &ModelSpec) -> serde_json::Value {
     match spec {
-        ModelSpec::Pinned { model, provider: _ } => {
-            serde_json::json!({ "mode": "pinned", "model": model })
+        ModelSpec::Pinned { model, provider } => {
+            let mut out = serde_json::json!({ "mode": "pinned", "model": model });
+            if let Some(provider) = provider {
+                out["provider"] = serde_json::json!(provider);
+            }
+            out
         }
         ModelSpec::AutoResolve {
             provider,
@@ -337,6 +374,37 @@ fn format_spec(spec: &ModelSpec) -> serde_json::Value {
             "match": match_patterns,
             "exclude": exclude_patterns,
         }),
+    }
+}
+
+fn mode_for_alias(spec: Option<&ModelSpec>) -> &'static str {
+    match spec {
+        Some(ModelSpec::Pinned { .. }) => "pinned",
+        Some(ModelSpec::AutoResolve { .. }) => "auto-resolve",
+        None => "unknown",
+    }
+}
+
+fn harness_source_label(source: &HarnessSource) -> &'static str {
+    match source {
+        HarnessSource::Explicit => "explicit",
+        HarnessSource::AutoDetected => "auto-detected",
+        HarnessSource::Unavailable => "unavailable",
+    }
+}
+
+fn unavailable_harness_error(resolved: &models::ResolvedAlias) -> Option<String> {
+    if resolved.harness_source != HarnessSource::Unavailable {
+        return None;
+    }
+    if let Some(h) = &resolved.harness {
+        Some(format!("Harness '{}' is not installed", h))
+    } else {
+        Some(format!(
+            "No installed harness for provider '{}'. Install one of: {}",
+            resolved.provider,
+            resolved.harness_candidates.join(", ")
+        ))
     }
 }
 

@@ -124,7 +124,7 @@ fn run_list(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     } else {
         if cache.fetched_at.is_none() {
             eprintln!(
-                "hint: no models cache — run `mars models refresh` for auto-resolve. Using fallback IDs."
+                "hint: no models cache — run `mars models refresh` for auto-resolve support."
             );
             eprintln!();
         }
@@ -290,18 +290,23 @@ fn load_merged_aliases(
     };
 
     // Read merged aliases from .mars/models-merged.json (written by mars sync).
-    // Falls back to consumer config only if no merged file exists (pre-sync).
+    // Contains dep models from last sync. Consumer config is always overlaid on top
+    // so edits to mars.toml [models] take effect immediately without re-syncing.
     let mars_dir = ctx.project_root.join(".mars");
     let merged_path = mars_dir.join("models-merged.json");
-    if let Ok(content) = std::fs::read_to_string(&merged_path)
-        && let Ok(merged) = serde_json::from_str::<IndexMap<String, ModelAlias>>(&content)
+    let mut merged = if let Ok(content) = std::fs::read_to_string(&merged_path)
+        && let Ok(cached) = serde_json::from_str::<IndexMap<String, ModelAlias>>(&content)
     {
-        return Ok(merged);
+        cached
+    } else {
+        IndexMap::new()
+    };
+
+    // Overlay consumer config on top — consumer models always win
+    for (name, alias) in &config.models {
+        merged.insert(name.clone(), alias.clone());
     }
 
-    // Fallback: consumer config only (no dep models, no builtins)
-    let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let merged = models::merge_model_config(&config.models, &[], &mut diag);
     Ok(merged)
 }
 

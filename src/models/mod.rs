@@ -1072,6 +1072,43 @@ mod tests {
     }
 
     #[test]
+    fn resolve_all_pinned_auto_detect_harness() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-opus-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                },
+            },
+        );
+
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_all(&aliases, &cache);
+        let entry = resolved.get("opus").unwrap();
+        assert_eq!(entry.model_id, "claude-opus-4-6");
+        assert_eq!(entry.provider, "anthropic");
+
+        let installed = harness::detect_installed_harnesses();
+        let expected_harness = harness::resolve_harness_for_provider("anthropic", &installed);
+        let expected_source = if expected_harness.is_some() {
+            HarnessSource::AutoDetected
+        } else {
+            HarnessSource::Unavailable
+        };
+
+        assert_eq!(entry.harness, expected_harness);
+        assert_eq!(entry.harness_source, expected_source);
+    }
+
+    #[test]
     fn resolve_all_auto_detect_harness() {
         let mut aliases = IndexMap::new();
         aliases.insert(
@@ -1098,6 +1135,34 @@ mod tests {
             HarnessSource::Unavailable => assert!(entry.harness.is_none()),
             HarnessSource::Explicit => panic!("unexpected explicit harness source"),
         }
+    }
+
+    #[test]
+    fn resolve_all_unavailable_harness_still_included() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            ModelAlias {
+                harness: Some("missing-harness-xyz".to_string()),
+                description: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-opus-4-6".to_string(),
+                    provider: None,
+                },
+            },
+        );
+
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved = resolve_all(&aliases, &cache);
+        let entry = resolved.get("opus").unwrap();
+        assert_eq!(entry.model_id, "claude-opus-4-6");
+        assert_eq!(entry.provider, "anthropic");
+        assert_eq!(entry.harness.as_deref(), Some("missing-harness-xyz"));
+        assert_eq!(entry.harness_source, HarnessSource::Unavailable);
     }
 
     #[test]
@@ -1192,6 +1257,26 @@ mod tests {
     }
 
     #[test]
+    fn resolve_model_and_provider_auto_resolve() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::AutoResolve {
+                provider: "openai".to_string(),
+                match_patterns: vec!["gpt-5*".to_string()],
+                exclude_patterns: vec![],
+            },
+        };
+        let cache = make_cache(vec![
+            ("gpt-4o", "OpenAI", Some("2024-06-01")),
+            ("gpt-5", "OpenAI", Some("2025-06-01")),
+        ]);
+
+        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
+        assert_eq!(resolved, ("gpt-5".to_string(), "openai".to_string()));
+    }
+
+    #[test]
     fn resolve_harness_explicit_installed() {
         let alias = ModelAlias {
             harness: Some("claude".to_string()),
@@ -1254,17 +1339,49 @@ mod tests {
             harness: None,
             description: None,
             spec: ModelSpec::Pinned {
-                model: "gemini-2.5-pro".to_string(),
-                provider: Some("google".to_string()),
+                model: "claude-opus-4-6".to_string(),
+                provider: Some("anthropic".to_string()),
             },
         };
         let installed = HashSet::new();
 
-        let resolved = resolve_harness(&alias, "google", &installed);
+        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        assert_eq!(resolved, (None, HarnessSource::Unavailable));
+    }
+
+    #[test]
+    fn resolve_harness_unavailable_no_provider_match() {
+        let alias = ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::Pinned {
+                model: "my-custom-model".to_string(),
+                provider: Some("unknown".to_string()),
+            },
+        };
+        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
+
+        let resolved = resolve_harness(&alias, "unknown", &installed);
         assert_eq!(resolved, (None, HarnessSource::Unavailable));
     }
 
     // -- serde roundtrip tests --
+
+    #[test]
+    fn harness_source_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&HarnessSource::Explicit).unwrap(),
+            "\"explicit\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HarnessSource::AutoDetected).unwrap(),
+            "\"auto_detected\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HarnessSource::Unavailable).unwrap(),
+            "\"unavailable\""
+        );
+    }
 
     #[test]
     fn model_alias_pinned_toml_roundtrip_backwards_compat_harness() {

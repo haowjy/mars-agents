@@ -78,7 +78,10 @@ mod tests {
     #[test]
     fn resolve_harness_unknown_provider() {
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(resolve_harness_for_provider("unknown-provider", &installed), None);
+        assert_eq!(
+            resolve_harness_for_provider("unknown-provider", &installed),
+            None
+        );
     }
 
     #[test]

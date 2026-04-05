@@ -416,7 +416,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
         "opus".to_string(),
         ModelAlias {
             harness: "claude".to_string(),
-            description: Some("Best reasoning model".to_string()),
+            description: None,
             spec: ModelSpec::AutoResolve {
                 provider: "Anthropic".to_string(),
                 match_patterns: vec!["claude-opus-*".to_string()],
@@ -429,7 +429,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
         "sonnet".to_string(),
         ModelAlias {
             harness: "claude".to_string(),
-            description: Some("Balanced performance and cost".to_string()),
+            description: None,
             spec: ModelSpec::AutoResolve {
                 provider: "Anthropic".to_string(),
                 match_patterns: vec!["claude-sonnet-*".to_string()],
@@ -442,7 +442,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
         "haiku".to_string(),
         ModelAlias {
             harness: "claude".to_string(),
-            description: Some("Fast and affordable".to_string()),
+            description: None,
             spec: ModelSpec::AutoResolve {
                 provider: "Anthropic".to_string(),
                 match_patterns: vec!["claude-haiku-*".to_string()],
@@ -455,7 +455,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
         "codex".to_string(),
         ModelAlias {
             harness: "codex".to_string(),
-            description: Some("OpenAI Codex agent".to_string()),
+            description: None,
             spec: ModelSpec::AutoResolve {
                 provider: "OpenAI".to_string(),
                 match_patterns: vec!["codex-*".to_string()],
@@ -468,7 +468,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
         "gpt".to_string(),
         ModelAlias {
             harness: "codex".to_string(),
-            description: Some("OpenAI GPT flagship".to_string()),
+            description: None,
             spec: ModelSpec::AutoResolve {
                 provider: "OpenAI".to_string(),
                 match_patterns: vec!["gpt-*".to_string()],

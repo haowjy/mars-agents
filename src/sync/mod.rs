@@ -531,6 +531,14 @@ fn finalize(
     if !request.options.dry_run {
         let new_lock = crate::lock::build(graph, &state.applied.applied, old_lock)?;
         crate::lock::write(project_root, &new_lock)?;
+
+        // Persist merged model aliases so `mars models list` can read them
+        // without running full resolution.
+        let model_aliases = &state.applied.planned.targeted.resolved.model_aliases;
+        if let Ok(json) = serde_json::to_string_pretty(model_aliases) {
+            let merged_path = ctx.project_root.join(".mars").join("models-merged.json");
+            let _ = crate::fs::atomic_write(&merged_path, json.as_bytes());
+        }
     }
 
     for w in &state.applied.planned.targeted.warnings {

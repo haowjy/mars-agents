@@ -288,10 +288,18 @@ fn load_merged_aliases(
         Err(e) => return Err(e),
     };
 
-    // We don't run full resolution here — just merge consumer + builtins
-    // (running full sync for a `models list` would be too heavy).
-    // If the user has run sync before, we could read from lock, but for now
-    // just use consumer config + builtins.
+    // Read merged aliases from .mars/models-merged.json (written by mars sync).
+    // Falls back to consumer + builtins if no merged file exists (pre-sync).
+    let mars_dir = ctx.project_root.join(".mars");
+    let merged_path = mars_dir.join("models-merged.json");
+    if let Ok(content) = std::fs::read_to_string(&merged_path) {
+        if let Ok(merged) = serde_json::from_str::<indexmap::IndexMap<String, ModelAlias>>(&content)
+        {
+            return Ok(merged);
+        }
+    }
+
+    // Fallback: consumer config + builtins only (no dep models)
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let merged = models::merge_model_config(&config.models, &[], &mut diag);
     Ok(merged)

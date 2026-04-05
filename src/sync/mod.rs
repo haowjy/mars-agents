@@ -535,9 +535,22 @@ fn finalize(
         // Persist merged model aliases so `mars models list` can read them
         // without running full resolution.
         let model_aliases = &state.applied.planned.targeted.resolved.model_aliases;
-        if let Ok(json) = serde_json::to_string_pretty(model_aliases) {
-            let merged_path = ctx.project_root.join(".mars").join("models-merged.json");
-            let _ = crate::fs::atomic_write(&merged_path, json.as_bytes());
+        match serde_json::to_string_pretty(model_aliases) {
+            Ok(json) => {
+                let merged_path = ctx.project_root.join(".mars").join("models-merged.json");
+                if let Err(err) = crate::fs::atomic_write(&merged_path, json.as_bytes()) {
+                    diag.warn(
+                        "models-merge-write",
+                        format!("failed to write models-merged.json: {err}"),
+                    );
+                }
+            }
+            Err(err) => {
+                diag.warn(
+                    "models-merge-write",
+                    format!("failed to serialize merged model aliases: {err}"),
+                );
+            }
         }
     }
 

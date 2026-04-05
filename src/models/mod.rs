@@ -1,4 +1,4 @@
-//! Model catalog — two-mode aliases (pinned + auto-resolve), builtin defaults,
+//! Model catalog — two-mode aliases (pinned + auto-resolve),
 //! dependency-tree config merge, and models cache lifecycle.
 //!
 //! Model aliases map short names (opus, sonnet, codex) to concrete model IDs.
@@ -198,7 +198,7 @@ pub fn write_cache(mars_dir: &Path, cache: &ModelsCache) -> Result<(), MarsError
 /// Fetch models from the OpenRouter API.
 ///
 /// Returns a list of cached model entries. On network failure, returns an error
-/// (callers should fall back to existing cache or fallback IDs).
+/// (callers should fall back to existing cache or explicit pinned IDs).
 pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
     let url = "https://openrouter.ai/api/v1/models";
     let response = ureq::get(url).call().map_err(|e| MarsError::Http {
@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_consumer_overrides_builtin() {
+    fn merge_consumer_overrides_dependency_alias() {
         let mut consumer = IndexMap::new();
         consumer.insert("opus".to_string(), pinned_alias("custom", "my-opus-model"));
 

@@ -1244,7 +1244,10 @@ mod tests {
         let mut aliases = IndexMap::new();
         aliases.insert("opus".to_string(), make_resolved_alias("opus"));
         aliases.insert("test-opus".to_string(), make_resolved_alias("test-opus"));
-        aliases.insert("deprecated-gpt".to_string(), make_resolved_alias("deprecated-gpt"));
+        aliases.insert(
+            "deprecated-gpt".to_string(),
+            make_resolved_alias("deprecated-gpt"),
+        );
 
         let filtered = filter_by_visibility(
             aliases,

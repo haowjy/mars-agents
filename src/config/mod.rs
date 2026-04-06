@@ -1577,16 +1577,20 @@ only_skills = true
     #[test]
     fn model_visibility_is_empty_reports_state() {
         assert!(ModelVisibility::default().is_empty());
-        assert!(!ModelVisibility {
-            include: Some(vec!["opus*".into()]),
-            exclude: None,
-        }
-        .is_empty());
-        assert!(!ModelVisibility {
-            include: None,
-            exclude: Some(vec!["test*".into()]),
-        }
-        .is_empty());
+        assert!(
+            !ModelVisibility {
+                include: Some(vec!["opus*".into()]),
+                exclude: None,
+            }
+            .is_empty()
+        );
+        assert!(
+            !ModelVisibility {
+                include: None,
+                exclude: Some(vec!["test*".into()]),
+            }
+            .is_empty()
+        );
     }
 
     #[test]

@@ -83,6 +83,35 @@ pub struct FilterConfig {
     pub only_agents: bool,
 }
 
+/// Display visibility filter for `mars models list`.
+/// Consumer-only — lives under [settings], not [models].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ModelVisibility {
+    /// Show only aliases matching these glob patterns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    /// Hide aliases matching these glob patterns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
+}
+
+impl ModelVisibility {
+    pub fn validate(&self) -> Result<(), MarsError> {
+        if self.include.is_some() && self.exclude.is_some() {
+            return Err(ConfigError::Invalid {
+                message: "[settings.model_visibility] cannot have both 'include' and 'exclude'"
+                    .into(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.include.is_none() && self.exclude.is_none()
+    }
+}
+
 fn is_false(v: &bool) -> bool {
     !v
 }
@@ -113,6 +142,8 @@ pub struct Settings {
     /// When set, only listed targets are populated. When unset, defaults to [".agents"].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "ModelVisibility::is_empty")]
+    pub model_visibility: ModelVisibility,
 }
 
 impl Settings {
@@ -200,6 +231,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = toml::from_str(&content).map_err(ConfigError::Parse)?;
     migrate_legacy_source_urls(&mut config);
+    config.settings.model_visibility.validate()?;
     Ok(config)
 }
 
@@ -292,6 +324,7 @@ pub fn merge_with_root(
     local: LocalConfig,
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
+    config.settings.model_visibility.validate()?;
     let mut dependencies = IndexMap::new();
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
@@ -520,6 +553,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.managed_root changed during roundtrip ({:?} -> {:?})",
                 original.settings.managed_root, reparsed.settings.managed_root
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.model_visibility != original.settings.model_visibility {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.model_visibility changed during roundtrip ({:?} -> {:?})",
+                original.settings.model_visibility, reparsed.settings.model_visibility
             ),
         }
         .into());
@@ -1059,6 +1101,7 @@ url = "https://github.com/org/base.git"
             settings: Settings {
                 managed_root: Some(".claude".into()),
                 targets: None,
+                ..Settings::default()
             },
             ..Config::default()
         };
@@ -1255,6 +1298,7 @@ only_agents = true
             settings: Settings {
                 managed_root: Some(".agents".into()),
                 targets: None,
+                ..Settings::default()
             },
             ..Config::default()
         };
@@ -1494,8 +1538,114 @@ only_skills = true
         let settings = Settings {
             managed_root: Some(".cursor".to_string()),
             targets: Some(vec![".codex".to_string()]),
+            ..Settings::default()
         };
         // targets takes precedence over managed_root
         assert_eq!(settings.managed_targets(), vec![".codex"]);
+    }
+
+    #[test]
+    fn model_visibility_validate_rejects_include_and_exclude() {
+        let visibility = ModelVisibility {
+            include: Some(vec!["opus*".into()]),
+            exclude: Some(vec!["test*".into()]),
+        };
+        let err = visibility.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("[settings.model_visibility]"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn model_visibility_validate_allows_include_only_exclude_only_and_empty() {
+        ModelVisibility {
+            include: Some(vec!["opus*".into()]),
+            exclude: None,
+        }
+        .validate()
+        .unwrap();
+        ModelVisibility {
+            include: None,
+            exclude: Some(vec!["test*".into()]),
+        }
+        .validate()
+        .unwrap();
+        ModelVisibility::default().validate().unwrap();
+    }
+
+    #[test]
+    fn model_visibility_is_empty_reports_state() {
+        assert!(ModelVisibility::default().is_empty());
+        assert!(!ModelVisibility {
+            include: Some(vec!["opus*".into()]),
+            exclude: None,
+        }
+        .is_empty());
+        assert!(!ModelVisibility {
+            include: None,
+            exclude: Some(vec!["test*".into()]),
+        }
+        .is_empty());
+    }
+
+    #[test]
+    fn load_rejects_model_visibility_with_include_and_exclude() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[settings.model_visibility]
+include = ["opus*"]
+exclude = ["test*"]
+"#,
+        )
+        .unwrap();
+
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("[settings.model_visibility]"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_accepts_model_visibility_include_only() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[settings.model_visibility]
+include = ["opus*", "gpt-*"]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        assert_eq!(
+            config.settings.model_visibility.include,
+            Some(vec!["opus*".into(), "gpt-*".into()])
+        );
+        assert!(config.settings.model_visibility.exclude.is_none());
+    }
+
+    #[test]
+    fn load_accepts_model_visibility_exclude_only() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[settings.model_visibility]
+exclude = ["test-*", "deprecated-*"]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        assert_eq!(
+            config.settings.model_visibility.exclude,
+            Some(vec!["test-*".into(), "deprecated-*".into()])
+        );
+        assert!(config.settings.model_visibility.include.is_none());
     }
 }

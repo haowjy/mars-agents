@@ -605,6 +605,22 @@ pub fn resolve_all(
     resolved
 }
 
+/// Filter resolved aliases by visibility config.
+/// - `include` patterns: keep only aliases where at least one pattern matches
+/// - `exclude` patterns: remove aliases where any pattern matches
+/// - No config (both None): return all aliases unchanged
+pub fn filter_by_visibility(
+    mut aliases: IndexMap<String, ResolvedAlias>,
+    visibility: &crate::config::ModelVisibility,
+) -> IndexMap<String, ResolvedAlias> {
+    if let Some(includes) = &visibility.include {
+        aliases.retain(|name, _| includes.iter().any(|p| glob_match(p, name)));
+    } else if let Some(excludes) = &visibility.exclude {
+        aliases.retain(|name, _| !excludes.iter().any(|p| glob_match(p, name)));
+    }
+    aliases
+}
+
 fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option<(String, String)> {
     match &alias.spec {
         ModelSpec::Pinned { model, provider } => {
@@ -1188,6 +1204,71 @@ mod tests {
         let resolved = resolve_all(&aliases, &cache);
         // No cache → auto-resolve can't match → alias omitted from results
         assert!(!resolved.contains_key("opus"));
+    }
+
+    fn make_resolved_alias(name: &str) -> ResolvedAlias {
+        ResolvedAlias {
+            name: name.to_string(),
+            model_id: format!("model-{name}"),
+            provider: "openai".to_string(),
+            harness: Some("codex".to_string()),
+            harness_source: HarnessSource::Explicit,
+            harness_candidates: vec!["codex".to_string()],
+            description: None,
+        }
+    }
+
+    #[test]
+    fn filter_by_visibility_include_mode_keeps_matches_only() {
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), make_resolved_alias("opus"));
+        aliases.insert("sonnet".to_string(), make_resolved_alias("sonnet"));
+        aliases.insert("gpt-5".to_string(), make_resolved_alias("gpt-5"));
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: Some(vec!["opus*".to_string(), "gpt-*".to_string()]),
+                exclude: None,
+            },
+        );
+
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains_key("opus"));
+        assert!(filtered.contains_key("gpt-5"));
+        assert!(!filtered.contains_key("sonnet"));
+    }
+
+    #[test]
+    fn filter_by_visibility_exclude_mode_removes_matches() {
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), make_resolved_alias("opus"));
+        aliases.insert("test-opus".to_string(), make_resolved_alias("test-opus"));
+        aliases.insert("deprecated-gpt".to_string(), make_resolved_alias("deprecated-gpt"));
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: Some(vec!["test-*".to_string(), "deprecated-*".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("opus"));
+        assert!(!filtered.contains_key("test-opus"));
+        assert!(!filtered.contains_key("deprecated-gpt"));
+    }
+
+    #[test]
+    fn filter_by_visibility_empty_config_returns_all() {
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), make_resolved_alias("opus"));
+        aliases.insert("sonnet".to_string(), make_resolved_alias("sonnet"));
+        let filtered = filter_by_visibility(aliases, &crate::config::ModelVisibility::default());
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains_key("opus"));
+        assert!(filtered.contains_key("sonnet"));
     }
 
     #[test]

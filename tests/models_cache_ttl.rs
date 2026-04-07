@@ -267,7 +267,7 @@ fn scenario_b_fresh_cache_skips_fetch() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list"]);
+    cmd.args(["models", "list", "--all"]);
     let output = cmd.assert().success().get_output().clone();
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     assert!(
@@ -294,7 +294,7 @@ fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list"]);
+    cmd.args(["models", "list", "--all"]);
 
     let output = cmd.assert().success().get_output().clone();
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");

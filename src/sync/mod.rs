@@ -556,6 +556,31 @@ fn finalize(
         let dep_model_aliases =
             crate::models::merge_model_config(&empty_consumer, &dep_models, &mut ignored_diag);
 
+        // Best-effort models cache refresh: ensure the catalog covers any
+        // new aliases we're about to persist. Sync never aborts on refresh
+        // failure — warn and continue. Skip on dry_run (side-effect-free).
+        if !request.options.dry_run {
+            let mars_path = ctx.project_root.join(".mars");
+            let ttl = crate::models::load_models_cache_ttl(ctx);
+            let mode = crate::models::resolve_refresh_mode(request.options.no_refresh_models);
+            match crate::models::ensure_fresh(&mars_path, ttl, mode) {
+                Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
+                    diag.warn(
+                        "models-cache-refresh",
+                        format!("using stale models cache: {reason}"),
+                    );
+                }
+                Ok((_, crate::models::RefreshOutcome::Offline)) => {}
+                Ok(_) => {}
+                Err(err) => {
+                    diag.warn(
+                        "models-cache-refresh",
+                        format!("failed to refresh models cache: {err}"),
+                    );
+                }
+            }
+        }
+
         match serde_json::to_string_pretty(&dep_model_aliases) {
             Ok(json) => {
                 let merged_path = ctx.project_root.join(".mars").join("models-merged.json");
@@ -856,6 +881,7 @@ mod tests {
                 force: false,
                 dry_run: false,
                 frozen: true,
+                no_refresh_models: false,
             },
         };
 
@@ -875,6 +901,7 @@ mod tests {
                 force: false,
                 dry_run: false,
                 frozen: true,
+                no_refresh_models: false,
             },
         };
 
@@ -939,6 +966,7 @@ mod tests {
                 force: false,
                 dry_run: true,
                 frozen: false,
+                no_refresh_models: false,
             },
         };
 
@@ -985,6 +1013,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         assert_eq!(sync_plan.actions.len(), 2);
@@ -1030,6 +1059,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1071,6 +1101,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1110,6 +1141,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1159,6 +1191,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1185,6 +1218,7 @@ mod tests {
             force: true,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan2 = plan::create(&sync_diff2, &force_options, &cache_dir);
         assert!(matches!(
@@ -1228,6 +1262,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1286,6 +1321,7 @@ mod tests {
             force: false,
             dry_run: true,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let sync_plan = plan::create(&sync_diff, &dry_options, &cache_dir);
@@ -1316,6 +1352,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =
@@ -1360,6 +1397,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
         let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
         let result =

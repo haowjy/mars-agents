@@ -32,6 +32,9 @@ pub struct ListArgs {
     /// Show all aliases including those without an available harness.
     #[arg(long)]
     all: bool,
+    /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
+    #[arg(long)]
+    no_refresh_models: bool,
     /// Only show aliases matching these patterns (overrides config).
     #[arg(long, value_delimiter = ',', conflicts_with = "exclude")]
     include: Option<Vec<String>>,
@@ -44,6 +47,9 @@ pub struct ListArgs {
 pub struct ResolveAliasArgs {
     /// Alias name to resolve.
     pub name: String,
+    /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
+    #[arg(long)]
+    no_refresh_models: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -78,8 +84,15 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let ttl = models::load_models_cache_ttl(ctx);
     eprint!("Fetching models catalog... ");
 
-    let (cache, _outcome) = models::ensure_fresh(&mars, ttl, models::RefreshMode::Force)?;
+    let (cache, outcome) = models::ensure_fresh(&mars, ttl, models::RefreshMode::Force)?;
     let count = cache.models.len();
+    let cache_warning = cache_warning(&outcome);
+
+    if let Some(warning) = cache_warning.as_deref() {
+        eprintln!("warning: {warning}");
+    } else if !json {
+        eprintln!("done.");
+    }
 
     if json {
         let out = serde_json::json!({
@@ -87,10 +100,20 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
             "models_count": count,
             "fetched_at": cache.fetched_at,
         });
+        let mut out = out;
+        if let Some(warning) = cache_warning.as_deref() {
+            out["cache_warning"] = serde_json::json!(warning);
+        }
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
-        eprintln!("done.");
-        println!("Cached {} models in .mars/models-cache.json", count);
+        if cache_warning.is_some() {
+            println!(
+                "Using stale models cache with {} models in .mars/models-cache.json",
+                count
+            );
+        } else {
+            println!("Cached {} models in .mars/models-cache.json", count);
+        }
     }
 
     Ok(0)
@@ -98,7 +121,23 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
 
 fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
-    let cache = models::read_cache(&mars)?;
+    let ttl = models::load_models_cache_ttl(ctx);
+    let mode = models::resolve_refresh_mode(args.no_refresh_models);
+    let (cache, outcome) = match models::ensure_fresh(&mars, ttl, mode) {
+        Ok(ok) => ok,
+        Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "error": format!("{err}"),
+                }))
+                .unwrap()
+            );
+            return Ok(1);
+        }
+        Err(err) => return Err(err),
+    };
+    let cache_warning = cache_warning(&outcome);
 
     // Load config to get consumer models + trigger merge
     let merged = load_merged_aliases(ctx)?;
@@ -142,20 +181,17 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 obj
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "aliases": entries,
-                "cache_available": cache.fetched_at.is_some(),
-            }))
-            .unwrap()
-        );
+        let mut out = serde_json::json!({
+            "aliases": entries,
+            "cache_available": cache.fetched_at.is_some(),
+        });
+        if let Some(warning) = cache_warning.as_deref() {
+            out["cache_warning"] = serde_json::json!(warning);
+        }
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
-        if cache.fetched_at.is_none() {
-            eprintln!(
-                "hint: no models cache — run `mars models refresh` for auto-resolve support."
-            );
-            eprintln!();
+        if let Some(warning) = cache_warning.as_deref() {
+            eprintln!("warning: {warning}");
         }
         // Table output
         println!(
@@ -184,10 +220,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
 }
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let mars = mars_dir(ctx);
-    let cache = models::read_cache(&mars)?;
     let merged = load_merged_aliases(ctx)?;
-
     let Some(alias) = merged.get(&args.name) else {
         if json {
             println!(
@@ -202,6 +235,31 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         }
         return Ok(1);
     };
+
+    let mars = mars_dir(ctx);
+    let ttl = models::load_models_cache_ttl(ctx);
+    let mode = models::resolve_refresh_mode(args.no_refresh_models);
+    let (cache, outcome) = match models::ensure_fresh(&mars, ttl, mode) {
+        Ok(ok) => ok,
+        Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "error": format!("{err}"),
+                }))
+                .unwrap()
+            );
+            return Ok(1);
+        }
+        Err(err) => return Err(err),
+    };
+    let cache_warning = cache_warning(&outcome);
+
+    if let Some(warning) = cache_warning.as_deref()
+        && !json
+    {
+        eprintln!("warning: {warning}");
+    }
 
     // Determine source layer
     let source = determine_source(&args.name, ctx)?;
@@ -225,15 +283,18 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             if let Some(error) = unavailable_harness_error(r) {
                 out["error"] = serde_json::json!(error);
             }
+            if let Some(warning) = cache_warning.as_deref() {
+                out["cache_warning"] = serde_json::json!(warning);
+            }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "error": format!("alias `{}` did not resolve to a model ID", args.name),
-                }))
-                .unwrap()
-            );
+            let mut out = serde_json::json!({
+                "error": format!("alias `{}` did not resolve to a model ID", args.name),
+            });
+            if let Some(warning) = cache_warning.as_deref() {
+                out["cache_warning"] = serde_json::json!(warning);
+            }
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
             return Ok(1);
         }
     } else {
@@ -423,5 +484,35 @@ fn unavailable_harness_error(resolved: &models::ResolvedAlias) -> Option<String>
             resolved.provider,
             resolved.harness_candidates.join(", ")
         ))
+    }
+}
+
+fn stale_warning(reason: &str) -> String {
+    format!("models cache refresh failed: {reason}; using stale cache")
+}
+
+fn cache_warning(outcome: &models::RefreshOutcome) -> Option<String> {
+    match outcome {
+        models::RefreshOutcome::StaleFallback { reason } => Some(stale_warning(reason)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn list_args_parses_no_refresh_models() {
+        let args = ListArgs::try_parse_from(["mars", "--no-refresh-models"]).unwrap();
+        assert!(args.no_refresh_models);
+    }
+
+    #[test]
+    fn resolve_alias_args_parses_no_refresh_models() {
+        let args =
+            ResolveAliasArgs::try_parse_from(["mars", "opus", "--no-refresh-models"]).unwrap();
+        assert!(args.no_refresh_models);
     }
 }

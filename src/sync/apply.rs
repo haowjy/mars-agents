@@ -550,6 +550,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -590,6 +591,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -627,6 +629,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -666,6 +669,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -701,6 +705,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -729,6 +734,7 @@ mod tests {
             force: false,
             dry_run: true,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -763,6 +769,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -795,6 +802,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -849,6 +857,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -912,6 +921,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         };
 
         execute(root.path(), &plan, &options, &bases_dir).unwrap();

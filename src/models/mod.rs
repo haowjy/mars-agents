@@ -336,6 +336,18 @@ pub fn ensure_fresh(
     ttl_hours: u32,
     mode: RefreshMode,
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
+    ensure_fresh_with_fetcher(mars_dir, ttl_hours, mode, fetch_models)
+}
+
+fn ensure_fresh_with_fetcher<F>(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    mode: RefreshMode,
+    fetcher: F,
+) -> Result<(ModelsCache, RefreshOutcome), MarsError>
+where
+    F: FnOnce() -> Result<Vec<CachedModel>, MarsError>,
+{
     std::fs::create_dir_all(mars_dir)?;
 
     // D1: apply MARS_OFFLINE coercion exactly once here.
@@ -381,7 +393,7 @@ pub fn ensure_fresh(
         }
     }
 
-    match fetch_models() {
+    match fetcher() {
         Ok(models) if !models.is_empty() => {
             let models_count = models.len();
             let cache = ModelsCache {
@@ -420,7 +432,6 @@ fn fallback_to_stale_or_error(
         if mark_fetch_failure {
             write_fetch_fail_marker(mars_dir, now_unix_secs_value());
         }
-        eprintln!("warning: models cache refresh {stale_reason}; using stale cache");
         Ok((
             under_lock,
             RefreshOutcome::StaleFallback {
@@ -964,9 +975,9 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use std::collections::HashSet;
-    use std::sync::{Arc, Barrier};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, mpsc};
     use std::thread;
-    use std::time::Duration;
     use tempfile::tempdir;
 
     use serial_test::serial;
@@ -2444,30 +2455,38 @@ harness = "claude"
             &stale_timestamp(),
         );
 
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(GET).path("/api.json");
-            then.status(200)
-                .delay(Duration::from_millis(200))
-                .json_body(sample_catalog_json());
-        });
-        let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
-
         let path = Arc::new(mars.path().to_path_buf());
         let path_a = Arc::clone(&path);
         let path_b = Arc::clone(&path);
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier_a = Arc::clone(&barrier);
-        let barrier_b = Arc::clone(&barrier);
+        let fetch_hits = Arc::new(AtomicUsize::new(0));
+        let (fetch_started_tx, fetch_started_rx) = mpsc::channel::<()>();
+        let (release_fetch_tx, release_fetch_rx) = mpsc::channel::<()>();
 
+        let fetch_hits_a = Arc::clone(&fetch_hits);
         let t1 = thread::spawn(move || {
-            barrier_a.wait();
-            ensure_fresh(&path_a, 24, RefreshMode::Auto).unwrap().1
+            ensure_fresh_with_fetcher(&path_a, 24, RefreshMode::Auto, move || {
+                fetch_hits_a.fetch_add(1, Ordering::SeqCst);
+                fetch_started_tx.send(()).unwrap();
+                release_fetch_rx.recv().unwrap();
+                Ok(vec![sample_cached_model("fresh-model")])
+            })
+            .unwrap()
+            .1
         });
+
+        fetch_started_rx.recv().unwrap();
+
+        let fetch_hits_b = Arc::clone(&fetch_hits);
         let t2 = thread::spawn(move || {
-            barrier_b.wait();
-            ensure_fresh(&path_b, 24, RefreshMode::Auto).unwrap().1
+            ensure_fresh_with_fetcher(&path_b, 24, RefreshMode::Auto, move || {
+                fetch_hits_b.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![sample_cached_model("unexpected-second-refresh")])
+            })
+            .unwrap()
+            .1
         });
+
+        release_fetch_tx.send(()).unwrap();
 
         let outcome_a = t1.join().unwrap();
         let outcome_b = t2.join().unwrap();
@@ -2484,7 +2503,7 @@ harness = "claude"
 
         assert_eq!(refreshed, 1);
         assert_eq!(already_fresh, 1);
-        assert_eq!(mock.hits(), 1);
+        assert_eq!(fetch_hits.load(Ordering::SeqCst), 1);
     }
 
     #[test]

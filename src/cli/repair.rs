@@ -38,6 +38,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             force: true,
             dry_run: false,
             frozen: false,
+            no_refresh_models: false,
         },
     };
 

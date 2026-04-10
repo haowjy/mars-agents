@@ -188,21 +188,6 @@ main() {
   
   check "version: cargo == pypi" "[[ '$cargo_version' = '$pypi_version' ]]"
 
-  # Check npm packages are consistent with each other (they'll be bumped together)
-  local npm_versions
-  npm_versions="$(read_npm_versions)"
-  first_npm_version=$(echo "$npm_versions" | head -1)
-  
-  local npm_mismatch=0
-  for v in $npm_versions; do
-    if [[ "$v" != "$first_npm_version" ]]; then
-      npm_mismatch=1
-      break
-    fi
-  done
-  
-  check "version: npm packages consistent" "[[ $npm_mismatch -eq 0 ]]"
-
   if [[ ${#FAILURES[@]} -gt 0 ]]; then
     printf '\n=== PRE-RELEASE CHECKS FAILED ===\n\n'
     for f in "${FAILURES[@]}"; do

@@ -283,7 +283,8 @@ mod tests {
     #[test]
     fn parse_full_url() {
         let parsed =
-            parse_dependency_specifier("github.com/meridian-flow/meridian-dev-workflow@v2").unwrap();
+            parse_dependency_specifier("github.com/meridian-flow/meridian-dev-workflow@v2")
+                .unwrap();
         assert_eq!(parsed.name, "meridian-dev-workflow");
         assert_eq!(
             parsed.entry.url.as_deref(),

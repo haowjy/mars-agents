@@ -434,20 +434,28 @@ mod tests {
 
     #[test]
     fn extract_github_https_url() {
-        let result = extract_owner_repo(Some("https://github.com/meridian-flow/meridian-base"), "base");
+        let result = extract_owner_repo(
+            Some("https://github.com/meridian-flow/meridian-base"),
+            "base",
+        );
         assert_eq!(result, "meridian-flow_meridian-base");
     }
 
     #[test]
     fn extract_github_https_with_git_suffix() {
-        let result =
-            extract_owner_repo(Some("https://github.com/meridian-flow/meridian-base.git"), "base");
+        let result = extract_owner_repo(
+            Some("https://github.com/meridian-flow/meridian-base.git"),
+            "base",
+        );
         assert_eq!(result, "meridian-flow_meridian-base");
     }
 
     #[test]
     fn extract_github_ssh_url() {
-        let result = extract_owner_repo(Some("git@github.com:meridian-flow/meridian-base.git"), "base");
+        let result = extract_owner_repo(
+            Some("git@github.com:meridian-flow/meridian-base.git"),
+            "base",
+        );
         assert_eq!(result, "meridian-flow_meridian-base");
     }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -73,17 +73,20 @@ pub fn build_with_collisions(
             .map(|s| s.id.clone())
             .unwrap_or_else(|| node.source_id.clone());
 
-        let filter = source_config
-            .map(|s| &s.filter)
+        let filters = graph
+            .filters
+            .get(source_name)
+            .filter(|filters| !filters.is_empty())
             .cloned()
-            .unwrap_or(FilterMode::All);
+            .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+            .unwrap_or_else(|| vec![FilterMode::All]);
 
         let renames = source_config
             .map(|s| &s.rename)
             .cloned()
             .unwrap_or_default();
 
-        let filtered = apply_filter(&discovered, &filter, &node.resolved_ref.tree_path)?;
+        let filtered = apply_filter_union(&discovered, &filters, &node.resolved_ref.tree_path)?;
 
         for item in filtered {
             let is_flat_skill =
@@ -169,6 +172,32 @@ pub fn build_with_collisions(
     }
 
     Ok((TargetState { items }, rename_actions))
+}
+
+fn apply_filter_union(
+    discovered: &[discover::DiscoveredItem],
+    filters: &[FilterMode],
+    tree_path: &Path,
+) -> Result<Vec<discover::DiscoveredItem>, MarsError> {
+    if filters.is_empty() {
+        return Ok(discovered.to_vec());
+    }
+
+    let mut union: HashSet<(ItemKind, ItemName, PathBuf)> = HashSet::new();
+    for filter in filters {
+        let filtered = apply_filter(discovered, filter, tree_path)?;
+        union.extend(
+            filtered
+                .iter()
+                .map(|item| (item.id.kind, item.id.name.clone(), item.source_path.clone())),
+        );
+    }
+
+    Ok(discovered
+        .iter()
+        .filter(|item| union.contains(&(item.id.kind, item.id.name.clone(), item.source_path.clone())))
+        .cloned()
+        .collect())
 }
 
 // Re-export for API compatibility — rewrite_skill_refs moved to sync::rewrite.
@@ -422,6 +451,7 @@ mod tests {
             nodes,
             order,
             id_index: std::collections::HashMap::new(),
+            filters: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,
@@ -622,6 +652,41 @@ mod tests {
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
+    }
+
+    #[test]
+    fn build_unions_multiple_include_filters_for_same_source() {
+        let tree = make_source_tree(
+            &[],
+            &[
+                ("skill-a", "# Skill A"),
+                ("skill-b", "# Skill B"),
+                ("skill-c", "# Skill C"),
+            ],
+        );
+
+        let (mut graph, config) =
+            make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
+        graph.filters.insert(
+            "base".into(),
+            vec![
+                FilterMode::Include {
+                    agents: vec![],
+                    skills: vec!["skill-a".into(), "skill-b".into()],
+                },
+                FilterMode::Include {
+                    agents: vec![],
+                    skills: vec!["skill-b".into(), "skill-c".into()],
+                },
+            ],
+        );
+
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
+        assert_eq!(target.items.len(), 3);
+        assert!(target.items.contains_key("skills/skill-a"));
+        assert!(target.items.contains_key("skills/skill-b"));
+        assert!(target.items.contains_key("skills/skill-c"));
     }
 
     #[test]

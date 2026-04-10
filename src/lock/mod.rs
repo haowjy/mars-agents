@@ -495,6 +495,7 @@ dest_path = "agents/helper.md"
             nodes,
             order: vec![git_name.clone(), path_name.clone()],
             id_index: HashMap::new(),
+            filters: HashMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
 
@@ -536,6 +537,7 @@ dest_path = "agents/helper.md"
             nodes: IndexMap::new(),
             order: Vec::new(),
             id_index: HashMap::new(),
+            filters: HashMap::new(),
         };
         let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
         let old_lock = LockFile {

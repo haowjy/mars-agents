@@ -853,6 +853,7 @@ mod tests {
                 nodes,
                 order,
                 id_index: std::collections::HashMap::new(),
+                filters: std::collections::HashMap::new(),
             },
             EffectiveConfig {
                 dependencies: config_dependencies,

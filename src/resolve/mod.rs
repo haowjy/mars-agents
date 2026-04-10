@@ -15,7 +15,7 @@ use std::path::Path;
 use indexmap::IndexMap;
 use semver::{Version, VersionReq};
 
-use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec};
+use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
@@ -32,6 +32,8 @@ pub struct ResolvedGraph {
     /// Topological order (deps before dependents).
     pub order: Vec<SourceName>,
     pub id_index: HashMap<SourceId, SourceName>,
+    /// All filter constraints collected for each source (direct + transitive).
+    pub filters: HashMap<SourceName, Vec<FilterMode>>,
 }
 
 /// A single node in the resolved graph.
@@ -189,6 +191,7 @@ pub fn resolve(
 ) -> Result<ResolvedGraph, MarsError> {
     let mut nodes: IndexMap<SourceName, ResolvedNode> = IndexMap::new();
     let mut id_index: HashMap<SourceId, SourceName> = HashMap::new();
+    let mut filter_constraints: HashMap<SourceName, Vec<FilterMode>> = HashMap::new();
 
     // Pending sources to process: (name, url_or_path, version_constraint, required_by)
     let mut pending: VecDeque<PendingSource> = VecDeque::new();
@@ -207,6 +210,7 @@ pub fn resolve(
             source_id: source.id.clone(),
             spec: source.spec.clone(),
             constraint,
+            filter: source.filter.clone(),
             required_by: "mars.toml".into(),
         });
     }
@@ -238,6 +242,11 @@ pub fn resolve(
                 .entry(pending_src.name.clone())
                 .or_default()
                 .push((pending_src.required_by.clone(), pending_src.constraint));
+            push_filter_constraint(
+                &mut filter_constraints,
+                &pending_src.name,
+                &pending_src.filter,
+            );
             continue;
         }
 
@@ -249,6 +258,11 @@ pub fn resolve(
                 pending_src.required_by.clone(),
                 pending_src.constraint.clone(),
             ));
+        push_filter_constraint(
+            &mut filter_constraints,
+            &pending_src.name,
+            &pending_src.filter,
+        );
 
         // Resolve and fetch the source
         let resolved_ref =
@@ -278,6 +292,7 @@ pub fn resolve(
                             version: dep_spec.version.clone(),
                         }),
                         constraint: dep_constraint,
+                        filter: dep_spec.filter.to_mode(),
                         required_by: pending_src.name.to_string(),
                     });
                 } else {
@@ -287,6 +302,11 @@ pub fn resolve(
                         .entry(SourceName::from(dep_name.clone()))
                         .or_default()
                         .push((pending_src.name.to_string(), dep_constraint));
+                    push_filter_constraint(
+                        &mut filter_constraints,
+                        &SourceName::from(dep_name.clone()),
+                        &dep_spec.filter.to_mode(),
+                    );
                 }
             }
         }
@@ -314,6 +334,7 @@ pub fn resolve(
         nodes,
         order,
         id_index,
+        filters: filter_constraints,
     })
 }
 
@@ -323,7 +344,19 @@ struct PendingSource {
     source_id: SourceId,
     spec: SourceSpec,
     constraint: VersionConstraint,
+    filter: FilterMode,
     required_by: String,
+}
+
+fn push_filter_constraint(
+    constraints: &mut HashMap<SourceName, Vec<FilterMode>>,
+    source_name: &SourceName,
+    filter: &FilterMode,
+) {
+    let entry = constraints.entry(source_name.clone()).or_default();
+    if !entry.contains(filter) {
+        entry.push(filter.clone());
+    }
 }
 
 /// Resolve a single source to a concrete version/ref.
@@ -662,8 +695,8 @@ fn topological_sort(
 mod tests {
     use super::*;
     use crate::config::{
-        EffectiveConfig, EffectiveDependency, FilterMode, GitSpec, Manifest, ManifestDep,
-        PackageInfo, Settings, SourceSpec,
+        EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest,
+        ManifestDep, PackageInfo, Settings, SourceSpec,
     };
     use crate::types::{RenameMap, SourceId, SourceUrl};
     use indexmap::IndexMap;
@@ -874,6 +907,34 @@ mod tests {
                 ManifestDep {
                     url: SourceUrl::from(dep_url),
                     version: Some(dep_ver.to_string()),
+                    filter: crate::config::FilterConfig::default(),
+                },
+            );
+        }
+        Manifest {
+            package: PackageInfo {
+                name: name.to_string(),
+                version: version.to_string(),
+                description: None,
+            },
+            dependencies,
+            models: indexmap::IndexMap::new(),
+        }
+    }
+
+    fn make_manifest_with_filters(
+        name: &str,
+        version: &str,
+        deps: Vec<(&str, &str, &str, FilterConfig)>,
+    ) -> Manifest {
+        let mut dependencies = IndexMap::new();
+        for (dep_name, dep_url, dep_ver, dep_filter) in deps {
+            dependencies.insert(
+                dep_name.to_string(),
+                ManifestDep {
+                    url: SourceUrl::from(dep_url),
+                    version: Some(dep_ver.to_string()),
+                    filter: dep_filter,
                 },
             );
         }
@@ -1134,6 +1195,123 @@ mod tests {
         let dep_pos = graph.order.iter().position(|n| n == "dep").unwrap();
         let a_pos = graph.order.iter().position(|n| n == "a").unwrap();
         assert!(dep_pos < a_pos, "dep should come before a in topo order");
+    }
+
+    #[test]
+    fn transitive_dep_filter_is_collected() {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        let tree_dep = dir.path().join("dep");
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(&tree_dep).unwrap();
+
+        let manifest_a = make_manifest_with_filters(
+            "a",
+            "1.0.0",
+            vec![(
+                "dep",
+                "https://example.com/dep.git",
+                ">=1.0.0",
+                FilterConfig {
+                    skills: Some(vec!["frontend-design".into()]),
+                    ..FilterConfig::default()
+                },
+            )],
+        );
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, Some(manifest_a));
+        provider.add_source("dep", tree_dep, None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
+
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        assert_eq!(
+            graph.filters.get(&SourceName::from("dep")),
+            Some(&vec![FilterMode::Include {
+                agents: vec![],
+                skills: vec!["frontend-design".into()],
+            }])
+        );
+    }
+
+    #[test]
+    fn direct_and_transitive_filters_are_both_collected_for_same_source() {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        let tree_dep = dir.path().join("dep");
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(&tree_dep).unwrap();
+
+        let manifest_a = make_manifest_with_filters(
+            "a",
+            "1.0.0",
+            vec![(
+                "dep",
+                "https://example.com/dep.git",
+                ">=1.0.0",
+                FilterConfig {
+                    skills: Some(vec!["skill-b".into(), "skill-c".into()]),
+                    ..FilterConfig::default()
+                },
+            )],
+        );
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, Some(manifest_a));
+        provider.add_source("dep", tree_dep, None);
+
+        let mut dependencies = IndexMap::new();
+        dependencies.insert(
+            SourceName::from("a"),
+            EffectiveDependency {
+                name: "a".into(),
+                id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
+                spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        dependencies.insert(
+            SourceName::from("dep"),
+            EffectiveDependency {
+                name: "dep".into(),
+                id: SourceId::git(SourceUrl::from("https://example.com/dep.git")),
+                spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
+                filter: FilterMode::Include {
+                    agents: vec![],
+                    skills: vec!["skill-a".into(), "skill-b".into()],
+                },
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        let config = EffectiveConfig {
+            dependencies,
+            settings: Settings::default(),
+        };
+
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        let filters = graph.filters.get(&SourceName::from("dep")).unwrap();
+        assert_eq!(filters.len(), 2);
+        assert!(filters.contains(&FilterMode::Include {
+            agents: vec![],
+            skills: vec!["skill-a".into(), "skill-b".into()],
+        }));
+        assert!(filters.contains(&FilterMode::Include {
+            agents: vec![],
+            skills: vec!["skill-b".into(), "skill-c".into()],
+        }));
     }
 
     #[test]

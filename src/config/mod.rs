@@ -52,6 +52,7 @@ pub type DependencyEntry = InstallDep;
 pub struct ManifestDep {
     pub url: SourceUrl,
     pub version: Option<String>,
+    pub filter: FilterConfig,
 }
 
 /// Source-manifest view extracted from mars.toml.
@@ -195,7 +196,7 @@ pub struct GitSpec {
 }
 
 /// How items are filtered from a source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterMode {
     /// Install everything from the source.
     All,
@@ -281,6 +282,7 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
                         ManifestDep {
                             url,
                             version: entry.version,
+                            filter: entry.filter,
                         },
                     )),
                     None => {
@@ -915,6 +917,7 @@ version = "1.2.3"
 [dependencies.base]
 url = "https://github.com/org/base.git"
 version = ">=1.0.0"
+skills = ["frontend-design"]
 "#,
         )
         .unwrap();
@@ -925,6 +928,10 @@ version = ">=1.0.0"
         assert_eq!(manifest.package.name, "pkg");
         assert_eq!(manifest.package.version, "1.2.3");
         assert!(manifest.dependencies.contains_key("base"));
+        assert_eq!(
+            manifest.dependencies["base"].filter.skills.as_deref(),
+            Some(&[ItemName::from("frontend-design")][..])
+        );
     }
 
     #[test]

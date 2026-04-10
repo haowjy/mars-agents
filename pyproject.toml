@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/meridian-flow/mars-agents"
+Repository = "https://github.com/haowjy/mars-agents"
 
 [tool.maturin]
 bindings = "bin"

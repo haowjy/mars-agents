@@ -9,7 +9,7 @@ use super::output;
 /// Arguments for `mars rename`.
 #[derive(Debug, clap::Args)]
 pub struct RenameArgs {
-    /// Current item path (e.g., agents/coder__haowjy_meridian-base.md).
+    /// Current item path (e.g., agents/coder__meridian-flow_meridian-base.md).
     pub from: String,
     /// New item path (e.g., agents/coder.md).
     pub to: String,
@@ -47,5 +47,9 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 
     output::print_sync_report(&report, json);
 
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    if report.has_conflicts() {
+        Ok(1)
+    } else {
+        Ok(0)
+    }
 }

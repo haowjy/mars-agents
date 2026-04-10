@@ -92,7 +92,7 @@ If your agent sources are git submodules:
 
 ```bash
 # Submodule at ./meridian-base/
-git submodule add https://github.com/haowjy/meridian-base
+git submodule add https://github.com/meridian-flow/meridian-base
 
 # Reference as path dependency
 # mars.toml:
@@ -105,7 +105,7 @@ Or use a git URL dependency with `mars override` for local edits:
 ```bash
 # mars.toml points at git
 # [dependencies.base]
-# url = "https://github.com/haowjy/meridian-base"
+# url = "https://github.com/meridian-flow/meridian-base"
 # version = "^1.0"
 
 # Override locally to use the submodule checkout

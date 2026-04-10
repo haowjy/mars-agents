@@ -21,7 +21,7 @@ Mars is a package manager for agent directories. It installs agent profiles and 
 ## Dependency Names vs Source Specifiers
 
 - In `mars.toml`, the key under `[dependencies.<NAME>]` is the dependency name.
-- `mars add` derives that name from the source specifier by default (for example, `haowjy/meridian-base` becomes `meridian-base`).
+- `mars add` derives that name from the source specifier by default (for example, `meridian-flow/meridian-base` becomes `meridian-base`).
 - Commands like `mars remove`, `mars override`, `mars upgrade`, and `mars why` operate on dependency names, not source URLs.
 - `mars list --status` shows a `SOURCE` column; combine with `--source <name>` to filter to one dependency.
 
@@ -32,8 +32,8 @@ Mars is a package manager for agent directories. It installs agent profiles and 
 mars init --link .claude
 
 # Add sources
-mars add haowjy/meridian-base
-mars add haowjy/meridian-dev-workflow
+mars add meridian-flow/meridian-base
+mars add meridian-flow/meridian-dev-workflow
 
 # See what's installed
 mars list

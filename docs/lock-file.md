@@ -10,7 +10,7 @@ TOML format with deterministically sorted keys for clean git diffs.
 version = 1
 
 [dependencies.base]
-url = "https://github.com/haowjy/meridian-base"
+url = "https://github.com/meridian-flow/meridian-base"
 version = "v1.2.0"
 commit = "abc123def456"
 

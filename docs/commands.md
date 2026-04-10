@@ -71,13 +71,13 @@ mars add <source...> [filter flags]
 - Source specifiers: `owner/repo`, `owner/repo@version`, URLs, local paths.
 
 Dependency naming model:
-- `mars add` uses the source specifier to derive a dependency name (for example, `haowjy/meridian-base` -> `meridian-base`).
+- `mars add` uses the source specifier to derive a dependency name (for example, `meridian-flow/meridian-base` -> `meridian-base`).
 - That dependency name is the key stored in `mars.toml` under `[dependencies.<NAME>]`.
 - Subsequent commands use that dependency name, not the source URL.
 
 ```bash
-mars add haowjy/meridian-base
-mars add haowjy/meridian-base@^1.0
+mars add meridian-flow/meridian-base
+mars add meridian-flow/meridian-base@^1.0
 mars add ../my-local-agents
 mars add acme/ops --agents deployer,monitor
 mars add acme/toolkit --only-skills
@@ -202,7 +202,7 @@ mars rename <from> <to>
 
 | Argument | Description |
 |---|---|
-| `from` | Current item path (e.g., `agents/coder__haowjy_meridian-base.md`) |
+| `from` | Current item path (e.g., `agents/coder__meridian-flow_meridian-base.md`) |
 | `to` | Desired item path (e.g., `agents/coder.md`) |
 
 Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs. Useful for resolving auto-rename collisions with preferred names.

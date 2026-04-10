@@ -1,11 +1,11 @@
 {
-  "name": "@haowjy/mars-agents-darwin-arm64",
+  "name": "@meridian-flow/mars-agents-darwin-arm64",
   "version": "0.0.1",
   "description": "mars binary for macOS ARM64 (Apple Silicon)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/haowjy/mars-agents.git"
+    "url": "git+https://github.com/meridian-flow/mars-agents.git"
   },
   "os": ["darwin"],
   "cpu": ["arm64"],

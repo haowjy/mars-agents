@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn url_to_dirname_bare_domain() {
         assert_eq!(
-            url_to_dirname("github.com/haowjy/meridian-base"),
-            "github.com_haowjy_meridian-base"
+            url_to_dirname("github.com/meridian-flow/meridian-base"),
+            "github.com_meridian-flow_meridian-base"
         );
     }
 

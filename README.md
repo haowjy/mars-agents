@@ -9,8 +9,8 @@ Mars is a package manager for agent directories. It installs agent profiles and 
 mars init --link .claude
 
 # Add sources
-mars add haowjy/meridian-base
-mars add haowjy/meridian-dev-workflow
+mars add meridian-flow/meridian-base
+mars add meridian-flow/meridian-dev-workflow
 
 # See what's installed
 mars list
@@ -44,14 +44,14 @@ Mars is not an agent runtime. It sits underneath tools like Claude Code, Cursor,
 | Method | Command |
 |---|---|
 | Cargo (crate) | `cargo install mars-agents` |
-| Cargo (latest main) | `cargo install --git https://github.com/haowjy/mars-agents` |
+| Cargo (latest main) | `cargo install --git https://github.com/meridian-flow/mars-agents` |
 | Python (pipx) | `pipx install mars-agents` |
 | Python (uv tool) | `uv tool install mars-agents` |
 | Python (pip) | `pip install mars-agents` |
-| npm | `npm install -g @haowjy/mars-agents` |
+| npm | `npm install -g @meridian-flow/mars-agents` |
 | From source | `cargo install --path .` |
 
-Prebuilt binaries: <https://github.com/haowjy/mars-agents/releases>
+Prebuilt binaries: <https://github.com/meridian-flow/mars-agents/releases>
 
 Platforms: macOS arm64/x64, Linux arm64/x64 (glibc). Others: build from source.
 
@@ -156,7 +156,7 @@ mars models resolve opus     # Resolve an alias to a concrete model ID
 
 ```toml
 [dependencies.base]
-url = "https://github.com/haowjy/meridian-base"
+url = "https://github.com/meridian-flow/meridian-base"
 version = "^1.0"
 
 [dependencies.dev]

@@ -225,23 +225,23 @@ jobs:
             )
           }
 
-          publish_platform npm/@haowjy/mars-agents-linux-x64 mars-linux-x64
-          publish_platform npm/@haowjy/mars-agents-linux-arm64 mars-linux-arm64
-          publish_platform npm/@haowjy/mars-agents-darwin-arm64 mars-darwin-arm64
-          publish_platform npm/@haowjy/mars-agents-darwin-x64 mars-darwin-x64
+          publish_platform npm/@meridian-flow/mars-agents-linux-x64 mars-linux-x64
+          publish_platform npm/@meridian-flow/mars-agents-linux-arm64 mars-linux-arm64
+          publish_platform npm/@meridian-flow/mars-agents-darwin-arm64 mars-darwin-arm64
+          publish_platform npm/@meridian-flow/mars-agents-darwin-x64 mars-darwin-x64
 
       - name: Publish CLI stub package
         run: |
           VERSION=${{ steps.version.outputs.version }}
 
           # Skip if already published
-          if npm view "@haowjy/mars-agents@$VERSION" version >/dev/null 2>&1; then
-            echo "Skipping @haowjy/mars-agents@$VERSION — already published"
+          if npm view "@meridian-flow/mars-agents@$VERSION" version >/dev/null 2>&1; then
+            echo "Skipping @meridian-flow/mars-agents@$VERSION — already published"
             exit 0
           fi
 
           (
-            cd npm/@haowjy/mars-agents
+            cd npm/@meridian-flow/mars-agents
             node -e "
               const pkg = require('./package.json');
               pkg.version = '$VERSION';

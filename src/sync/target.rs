@@ -277,7 +277,7 @@ fn dest_name_from_path(kind: ItemKind, path: &Path) -> String {
 
 /// Extract `{owner}_{repo}` from a source URL.
 ///
-/// For git URLs like `github.com/haowjy/meridian-base`, extracts `haowjy_meridian-base`.
+/// For git URLs like `github.com/meridian-flow/meridian-base`, extracts `meridian-flow_meridian-base`.
 /// For path sources, uses the source name directly.
 pub fn extract_owner_repo(url: Option<&str>, source_name: &str) -> String {
     if let Some(url) = url {
@@ -434,21 +434,21 @@ mod tests {
 
     #[test]
     fn extract_github_https_url() {
-        let result = extract_owner_repo(Some("https://github.com/haowjy/meridian-base"), "base");
-        assert_eq!(result, "haowjy_meridian-base");
+        let result = extract_owner_repo(Some("https://github.com/meridian-flow/meridian-base"), "base");
+        assert_eq!(result, "meridian-flow_meridian-base");
     }
 
     #[test]
     fn extract_github_https_with_git_suffix() {
         let result =
-            extract_owner_repo(Some("https://github.com/haowjy/meridian-base.git"), "base");
-        assert_eq!(result, "haowjy_meridian-base");
+            extract_owner_repo(Some("https://github.com/meridian-flow/meridian-base.git"), "base");
+        assert_eq!(result, "meridian-flow_meridian-base");
     }
 
     #[test]
     fn extract_github_ssh_url() {
-        let result = extract_owner_repo(Some("git@github.com:haowjy/meridian-base.git"), "base");
-        assert_eq!(result, "haowjy_meridian-base");
+        let result = extract_owner_repo(Some("git@github.com:meridian-flow/meridian-base.git"), "base");
+        assert_eq!(result, "meridian-flow_meridian-base");
     }
 
     #[test]

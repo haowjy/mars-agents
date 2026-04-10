@@ -260,14 +260,20 @@ mod tests {
     #[test]
     fn rewrite_does_not_corrupt_substrings() {
         let input = "---\nskills:\n- plan\n- planner\n- planning-extended\n---\nbody\n";
-        let renames =
-            IndexMap::from([("plan".to_string(), "plan__haowjy_meridian-base".to_string())]);
+        let renames = IndexMap::from([(
+            "plan".to_string(),
+            "plan__meridian-flow_meridian-base".to_string(),
+        )]);
 
         let rewritten = rewrite_content_skills(input, &renames).unwrap().unwrap();
         let fm = Frontmatter::parse(&rewritten).unwrap();
         assert_eq!(
             fm.skills(),
-            vec!["plan__haowjy_meridian-base", "planner", "planning-extended"]
+            vec![
+                "plan__meridian-flow_meridian-base",
+                "planner",
+                "planning-extended"
+            ]
         );
     }
 }

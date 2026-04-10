@@ -1,13 +1,13 @@
-# @haowjy/mars-agents
+# @meridian-flow/mars-agents
 
-`@haowjy/mars-agents` is the npm distribution of the `mars` CLI.
+`@meridian-flow/mars-agents` is the npm distribution of the `mars` CLI.
 
 It installs a small launcher plus the matching prebuilt binary package for the current supported platform.
 
 ## Install
 
 ```bash
-npm install -g @haowjy/mars-agents
+npm install -g @meridian-flow/mars-agents
 ```
 
 Supported prebuilt platforms:
@@ -20,8 +20,8 @@ Supported prebuilt platforms:
 If your platform is not supported, install from source instead:
 
 ```bash
-cargo install --git https://github.com/haowjy/mars-agents
+cargo install --git https://github.com/meridian-flow/mars-agents
 ```
 
 Project README:
-<https://github.com/haowjy/mars-agents>
+<https://github.com/meridian-flow/mars-agents>

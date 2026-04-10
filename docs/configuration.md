@@ -37,11 +37,11 @@ description = "Core agents and skills for meridian"  # optional
 
 Each key is the dependency name (the identifier Mars commands use). Each value specifies the source and optional filters.
 
-`mars add` derives the dependency name from the source specifier by default. Example: `mars add haowjy/meridian-base` creates `[dependencies.meridian-base]`.
+`mars add` derives the dependency name from the source specifier by default. Example: `mars add meridian-flow/meridian-base` creates `[dependencies.meridian-base]`.
 
 ```toml
 [dependencies.base]
-url = "https://github.com/haowjy/meridian-base"
+url = "https://github.com/meridian-flow/meridian-base"
 version = "^1.0"
 
 [dependencies.dev]
@@ -165,8 +165,8 @@ Renames are set via `mars rename` (which updates the dependency's `rename` field
 
 ```toml
 [dependencies.base]
-url = "https://github.com/haowjy/meridian-base"
-rename = { "agents/coder__haowjy_meridian-base.md" = "agents/coder.md" }
+url = "https://github.com/meridian-flow/meridian-base"
+rename = { "agents/coder__meridian-flow_meridian-base.md" = "agents/coder.md" }
 ```
 
 ## `mars.local.toml`

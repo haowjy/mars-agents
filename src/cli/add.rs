@@ -259,11 +259,11 @@ mod tests {
 
     #[test]
     fn parse_github_shorthand() {
-        let parsed = parse_dependency_specifier("haowjy/meridian-base").unwrap();
+        let parsed = parse_dependency_specifier("meridian-flow/meridian-base").unwrap();
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("https://github.com/haowjy/meridian-base")
+            Some("https://github.com/meridian-flow/meridian-base")
         );
         assert!(parsed.entry.path.is_none());
         assert!(parsed.entry.version.is_none());
@@ -271,11 +271,11 @@ mod tests {
 
     #[test]
     fn parse_github_shorthand_with_version() {
-        let parsed = parse_dependency_specifier("haowjy/meridian-base@v0.5.0").unwrap();
+        let parsed = parse_dependency_specifier("meridian-flow/meridian-base@v0.5.0").unwrap();
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("https://github.com/haowjy/meridian-base")
+            Some("https://github.com/meridian-flow/meridian-base")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v0.5.0"));
     }
@@ -283,11 +283,11 @@ mod tests {
     #[test]
     fn parse_full_url() {
         let parsed =
-            parse_dependency_specifier("github.com/haowjy/meridian-dev-workflow@v2").unwrap();
+            parse_dependency_specifier("github.com/meridian-flow/meridian-dev-workflow@v2").unwrap();
         assert_eq!(parsed.name, "meridian-dev-workflow");
         assert_eq!(
             parsed.entry.url.as_deref(),
-            Some("https://github.com/haowjy/meridian-dev-workflow")
+            Some("https://github.com/meridian-flow/meridian-dev-workflow")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
     }

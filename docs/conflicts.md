@@ -12,8 +12,8 @@ Both colliding items are suffixed with `__{owner}_{repo}` derived from the sourc
 
 ```
 agents/coder.md  (from base and from dev)
-  → agents/coder__haowjy_meridian-base.md
-  → agents/coder__haowjy_meridian-dev-workflow.md
+  → agents/coder__meridian-flow_meridian-base.md
+  → agents/coder__meridian-flow_meridian-dev-workflow.md
 ```
 
 Skills follow the same pattern:
@@ -35,7 +35,7 @@ The `source_checksum` in the lock file tracks the pre-rewrite hash; `installed_c
 Auto-renamed items can be given preferred names:
 
 ```bash
-mars rename agents/coder__haowjy_meridian-base.md agents/coder.md
+mars rename agents/coder__meridian-flow_meridian-base.md agents/coder.md
 ```
 
 This adds a `rename` mapping in `mars.toml` for the dependency. The rename persists across syncs. If the other colliding source is later removed, the rename mapping still works (it just applies a no-op mapping).

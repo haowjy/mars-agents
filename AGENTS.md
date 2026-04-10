@@ -160,8 +160,16 @@ Integration tests under `tests/`. Prefer keeping changes localized to one module
 
 ## Releasing
 
-```bash
-mars version patch --push    # bump, commit, tag, push → triggers CI
-```
+Two ways to release:
+
+1. **CLI** (recommended):
+   ```bash
+   mars version patch --push    # bump, commit, tag, push → triggers CI
+   ```
+
+2. **Shell script** (runs full checks):
+   ```bash
+   scripts/release.sh patch --push    # fmt, clippy, tests, build, release
+   ```
 
 The `v*` tag triggers GitHub Actions to build and publish to PyPI, npm, and crates.io.

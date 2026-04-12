@@ -23,6 +23,10 @@ pub struct SyncArgs {
     /// Skip the automatic models-cache refresh during sync.
     #[arg(long)]
     pub no_refresh_models: bool,
+
+    /// Suppress the post-sync upgrade hint line.
+    #[arg(long)]
+    pub no_upgrade_hint: bool,
 }
 
 /// Run `mars sync`.
@@ -40,9 +44,17 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 
     let report = crate::sync::execute(ctx, &request)?;
 
-    output::print_sync_report(&report, json);
+    let no_upgrade_hint = args.no_upgrade_hint || no_upgrade_hint_from_env();
+    output::print_sync_report(&report, json, no_upgrade_hint);
 
     if report.has_conflicts() { Ok(1) } else { Ok(0) }
+}
+
+fn no_upgrade_hint_from_env() -> bool {
+    match std::env::var("MARS_NO_UPGRADE_HINT") {
+        Ok(value) => value.trim() == "1",
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
@@ -57,5 +69,14 @@ mod tests {
             panic!("expected sync command");
         };
         assert!(args.no_refresh_models);
+    }
+
+    #[test]
+    fn parses_no_upgrade_hint() {
+        let cli = Cli::try_parse_from(["mars", "sync", "--no-upgrade-hint"]).unwrap();
+        let Command::Sync(args) = cli.command else {
+            panic!("expected sync command");
+        };
+        assert!(args.no_upgrade_hint);
     }
 }

@@ -28,7 +28,7 @@ pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         output::print_info(&format!("removed dependency `{}`", args.source));
     }
 
-    output::print_sync_report(&report, json);
+    output::print_sync_report(&report, json, true);
 
     if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }

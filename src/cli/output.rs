@@ -87,11 +87,11 @@ pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filt
 }
 
 /// Print sync report as human-readable text or JSON.
-pub fn print_sync_report(report: &SyncReport, json: bool) {
+pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool) {
     if json {
         print_sync_report_json(report);
     } else {
-        print_sync_report_human(report);
+        print_sync_report_human(report, no_upgrade_hint);
     }
 }
 
@@ -120,6 +120,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts: usize,
         kept: usize,
         skipped: usize,
+        upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
     }
@@ -169,6 +170,7 @@ fn print_sync_report_json(report: &SyncReport) {
         conflicts,
         kept,
         skipped,
+        upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
     };
@@ -179,7 +181,7 @@ fn print_sync_report_json(report: &SyncReport) {
     );
 }
 
-fn print_sync_report_human(report: &SyncReport) {
+fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     let mut stdout = StandardStream::stdout(color_choice());
 
     let mut installed = 0usize;
@@ -272,6 +274,21 @@ fn print_sync_report_human(report: &SyncReport) {
         };
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
         let _ = writeln!(stderr, "  {diag}");
+        let _ = stderr.reset();
+    }
+
+    if report.upgrades_available > 0 && !report.dry_run && !no_upgrade_hint {
+        let noun = if report.upgrades_available == 1 {
+            "upgrade"
+        } else {
+            "upgrades"
+        };
+        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
+        let _ = writeln!(
+            stderr,
+            "  ℹ {} {noun} available — run `mars upgrade --bump` to update",
+            report.upgrades_available
+        );
         let _ = stderr.reset();
     }
 }

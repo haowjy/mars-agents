@@ -42,6 +42,7 @@ pub struct ResolvedNode {
     pub source_name: SourceName,
     pub source_id: SourceId,
     pub resolved_ref: ResolvedRef,
+    pub latest_version: Option<Version>,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
@@ -276,7 +277,7 @@ pub fn resolve(
         );
 
         // Resolve and fetch the source
-        let resolved_ref =
+        let (resolved_ref, latest_version) =
             resolve_single_source(&pending_src, provider, locked, options, &constraints, diag)?;
 
         // Read manifest for transitive deps
@@ -328,6 +329,7 @@ pub fn resolve(
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
                 resolved_ref,
+                latest_version,
                 manifest,
                 deps,
             },
@@ -378,11 +380,13 @@ fn resolve_single_source(
     options: &ResolveOptions,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
     diag: &mut DiagnosticCollector,
-) -> Result<ResolvedRef, MarsError> {
+) -> Result<(ResolvedRef, Option<Version>), MarsError> {
     match &pending.spec {
         SourceSpec::Path(path) => {
             // Path sources: no version resolution, just use the path
-            provider.fetch_path(path, pending.name.as_ref(), diag)
+            provider
+                .fetch_path(path, pending.name.as_ref(), diag)
+                .map(|resolved_ref| (resolved_ref, None))
         }
         SourceSpec::Git(git) => resolve_git_source(
             &pending.name,
@@ -408,7 +412,7 @@ fn resolve_git_source(
     locked: Option<&LockFile>,
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
-) -> Result<ResolvedRef, MarsError> {
+) -> Result<(ResolvedRef, Option<Version>), MarsError> {
     // If all constraints are ref pins, use the first one
     // (multiple ref pins for the same source is likely an error, but we'll use first)
     let has_ref_pin = constraints
@@ -417,7 +421,9 @@ fn resolve_git_source(
     if has_ref_pin {
         for (_, constraint) in constraints {
             if let VersionConstraint::RefPin(ref_name) = constraint {
-                return provider.fetch_git_ref(url, ref_name, name.as_ref(), None, diag);
+                return provider
+                    .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
+                    .map(|resolved_ref| (resolved_ref, None));
             }
         }
     }
@@ -440,6 +446,10 @@ fn resolve_git_source(
 
     // List available versions
     let available = provider.list_versions(url)?;
+    let latest = available
+        .iter()
+        .max_by(|a, b| a.version.cmp(&b.version))
+        .map(|v| v.version.clone());
 
     if available.is_empty() {
         // No semver tags → treat as "latest commit", with locked-commit replay.
@@ -450,7 +460,7 @@ fn resolve_git_source(
             None
         };
         match provider.fetch_git_ref(url, "HEAD", name.as_ref(), preferred_commit, diag) {
-            Ok(resolved) => return Ok(resolved),
+            Ok(resolved) => return Ok((resolved, latest)),
             Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => {
                 return Err(err);
             }
@@ -464,7 +474,9 @@ fn resolve_git_source(
                         "locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
                     ),
                 );
-                return provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag);
+                return provider
+                    .fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)
+                    .map(|resolved_ref| (resolved_ref, latest));
             }
             Err(err) => return Err(err),
         }
@@ -510,7 +522,7 @@ fn resolve_git_source(
     };
 
     match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit, diag) {
-        Ok(resolved) => Ok(resolved),
+        Ok(resolved) => Ok((resolved, latest)),
         Err(err @ MarsError::LockedCommitUnreachable { .. }) if options.frozen => Err(err),
         Err(MarsError::LockedCommitUnreachable {
             commit,
@@ -522,7 +534,9 @@ fn resolve_git_source(
                     "locked commit {commit} for {source_url} is unreachable; re-resolving from tag"
                 ),
             );
-            provider.fetch_git_version(url, selected, name.as_ref(), None, diag)
+            provider
+                .fetch_git_version(url, selected, name.as_ref(), None, diag)
+                .map(|resolved_ref| (resolved_ref, latest))
         }
         Err(err) => Err(err),
     }
@@ -1792,6 +1806,7 @@ mod tests {
         // The spec says "@latest as any version (newest wins)"
         // So latest should pick the newest. Let me handle this in select_version.
         assert_eq!(node.resolved_ref.version, Some(Version::new(3, 0, 0)));
+        assert_eq!(node.latest_version, Some(Version::new(3, 0, 0)));
     }
 
     #[test]
@@ -1835,6 +1850,7 @@ mod tests {
         let graph = resolve(&config, &provider, None, &default_options()).unwrap();
         let node = &graph.nodes["a"];
         assert!(node.resolved_ref.version.is_none());
+        assert!(node.latest_version.is_none());
         assert_eq!(node.resolved_ref.commit, Some("ref:main".into()));
     }
 
@@ -1873,6 +1889,7 @@ mod tests {
         assert_eq!(graph.nodes.len(), 1);
         let node = &graph.nodes["local"];
         assert!(node.resolved_ref.version.is_none());
+        assert!(node.latest_version.is_none());
     }
 
     #[test]
@@ -2116,6 +2133,7 @@ mod tests {
                 source_name: "c".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/c")),
                 resolved_ref: dummy_ref("c"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["b".into()],
             },
@@ -2126,6 +2144,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["a".into()],
             },
@@ -2136,6 +2155,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2155,6 +2175,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["b".into(), "c".into()],
             },
@@ -2165,6 +2186,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["d".into()],
             },
@@ -2175,6 +2197,7 @@ mod tests {
                 source_name: "c".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/c")),
                 resolved_ref: dummy_ref("c"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["d".into()],
             },
@@ -2185,6 +2208,7 @@ mod tests {
                 source_name: "d".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/d")),
                 resolved_ref: dummy_ref("d"),
+                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2211,6 +2235,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2221,6 +2246,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2241,6 +2267,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["b".into()],
             },
@@ -2251,6 +2278,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                latest_version: None,
                 manifest: None,
                 deps: vec!["a".into()],
             },

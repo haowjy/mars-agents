@@ -41,6 +41,7 @@ pub struct SyncReport {
     pub pruned: Vec<apply::ActionOutcome>,
     pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
+    pub upgrades_available: usize,
     /// Per-target sync outcomes from the target sync phase.
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     /// Whether this was a dry run (`--diff`). Affects output wording only.
@@ -629,12 +630,27 @@ fn finalize(
         .resolved
         .loaded
         .dependency_changes;
+    let upgrades_available = if request.options.frozen {
+        0
+    } else {
+        graph
+            .nodes
+            .values()
+            .filter(|node| {
+                matches!(
+                    (&node.resolved_ref.version, &node.latest_version),
+                    (Some(resolved), Some(latest)) if latest > resolved
+                )
+            })
+            .count()
+    };
 
     Ok(SyncReport {
         applied: state.applied.applied,
         pruned: Vec::new(),
         diagnostics: diag.drain(),
         dependency_changes,
+        upgrades_available,
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
     })
@@ -982,6 +998,7 @@ mod tests {
                         commit: None,
                         tree_path: tree_path.clone(),
                     },
+                    latest_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -1053,6 +1070,7 @@ mod tests {
                         commit: Some("abc123".into()),
                         tree_path: PathBuf::from(format!("/tmp/{name}")),
                     },
+                    latest_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -1110,6 +1128,7 @@ mod tests {
                 commit: None,
                 tree_path: canonical,
             },
+            latest_version: None,
             manifest: with_models.then(|| manifest_with_models(name)),
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }

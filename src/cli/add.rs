@@ -104,7 +104,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             print_dependency_messages(&report.dependency_changes);
         }
 
-        output::print_sync_report(&report, json);
+        output::print_sync_report(&report, json, true);
         return if report.has_conflicts() { Ok(1) } else { Ok(0) };
     }
 
@@ -126,7 +126,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         print_dependency_messages(&report.dependency_changes);
     }
 
-    output::print_sync_report(&report, json);
+    output::print_sync_report(&report, json, true);
     if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }
 

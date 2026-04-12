@@ -36,7 +36,7 @@ pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<
             args.path.display()
         ));
     }
-    output::print_sync_report(&report, json);
+    output::print_sync_report(&report, json, true);
 
     if report.has_conflicts() { Ok(1) } else { Ok(0) }
 }

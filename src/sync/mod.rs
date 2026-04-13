@@ -378,7 +378,7 @@ fn create_plan(
     ctx: &MarsContext,
     targeted: TargetedState,
     request: &SyncRequest,
-    _diag: &mut DiagnosticCollector,
+    diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
     // Diff against .mars/ canonical store.
     let mars_dir = ctx.project_root.join(".mars");
@@ -394,7 +394,7 @@ fn create_plan(
     )?;
 
     // Create plan.
-    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir);
+    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir, diag);
 
     Ok(PlannedState {
         targeted,
@@ -1048,6 +1048,15 @@ mod tests {
         }
     }
 
+    fn create_sync_plan(
+        sync_diff: &diff::SyncDiff,
+        options: &SyncOptions,
+        cache_bases_dir: &std::path::Path,
+    ) -> plan::SyncPlan {
+        let mut diag = DiagnosticCollector::new();
+        plan::create(sync_diff, options, cache_bases_dir, &mut diag)
+    }
+
     fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
         let mut nodes = IndexMap::new();
         let mut order = Vec::new();
@@ -1551,7 +1560,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         assert_eq!(sync_plan.actions.len(), 2);
         for action in &sync_plan.actions {
             assert!(matches!(action, plan::PlannedAction::Install { .. }));
@@ -1597,7 +1606,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
@@ -1615,7 +1624,7 @@ mod tests {
             );
         }
 
-        let sync_plan2 = plan::create(&sync_diff2, &options, &cache_dir);
+        let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
         for action in &sync_plan2.actions {
             assert!(matches!(action, plan::PlannedAction::Skip { .. }));
         }
@@ -1639,7 +1648,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
@@ -1679,7 +1688,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
@@ -1704,7 +1713,7 @@ mod tests {
         ));
 
         // Plan should KeepLocal
-        let sync_plan2 = plan::create(&sync_diff2, &options, &cache_dir);
+        let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
         assert!(matches!(
             &sync_plan2.actions[0],
             plan::PlannedAction::KeepLocal { .. }
@@ -1729,7 +1738,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
@@ -1756,7 +1765,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan2 = plan::create(&sync_diff2, &force_options, &cache_dir);
+        let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
         assert!(matches!(
             &sync_plan2.actions[0],
             plan::PlannedAction::Overwrite { .. }
@@ -1800,7 +1809,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
         let first_lock = crate::lock::build(&graph, &result, &lock).unwrap();
@@ -1824,7 +1833,7 @@ mod tests {
             .count();
         assert_eq!(orphan_count, 1);
 
-        let sync_plan2 = plan::create(&sync_diff2, &options, &cache_dir);
+        let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
         let result2 =
             apply::execute(fixture.managed_root(), &sync_plan2, &options, &cache_dir).unwrap();
 
@@ -1860,7 +1869,7 @@ mod tests {
             no_refresh_models: false,
         };
 
-        let sync_plan = plan::create(&sync_diff, &dry_options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &dry_options, &cache_dir);
         assert!(!sync_plan.actions.is_empty());
 
         // Execute in dry-run mode
@@ -1890,7 +1899,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
 
@@ -1935,7 +1944,7 @@ mod tests {
             frozen: false,
             no_refresh_models: false,
         };
-        let sync_plan = plan::create(&sync_diff, &options, &cache_dir);
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
 

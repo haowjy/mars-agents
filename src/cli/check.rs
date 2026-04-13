@@ -74,7 +74,11 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         }
     }
 
-    if report.errors.is_empty() { Ok(0) } else { Ok(1) }
+    if report.errors.is_empty() {
+        Ok(0)
+    } else {
+        Ok(1)
+    }
 }
 
 fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {

@@ -9,6 +9,7 @@
 //! assumption.
 
 use std::io::Write;
+use std::path::Path;
 use std::process::Command;
 
 use crate::error::MarsError;
@@ -123,6 +124,13 @@ pub fn has_conflict_markers(content: &[u8]) -> bool {
     content
         .windows(8)
         .any(|w| w[0] == b'\n' && &w[1..] == b"<<<<<<<")
+}
+
+/// Check whether a file on disk contains unresolved conflict markers.
+pub fn file_has_conflict_markers(path: &Path) -> bool {
+    std::fs::read(path)
+        .map(|content| has_conflict_markers(&content))
+        .unwrap_or(false)
 }
 
 /// Count conflict marker regions in content.

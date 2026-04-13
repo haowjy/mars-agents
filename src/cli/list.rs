@@ -155,7 +155,7 @@ fn run_status(
         let disk_path = root.join(dest_path);
         let status = if !disk_path.exists() {
             "missing".to_string()
-        } else if has_conflict_markers(&disk_path) {
+        } else if crate::merge::file_has_conflict_markers(&disk_path) {
             "conflicted".to_string()
         } else {
             let disk_hash = hash::compute_hash(&disk_path, item.kind)?;
@@ -178,13 +178,6 @@ fn run_status(
     entries.sort_by(|a, b| (&a.source, &a.item).cmp(&(&b.source, &b.item)));
     output::print_list(&entries, json);
     Ok(0)
-}
-
-/// Quick check for conflict markers.
-fn has_conflict_markers(path: &Path) -> bool {
-    std::fs::read_to_string(path)
-        .map(|content| content.contains("<<<<<<<") && content.contains(">>>>>>>"))
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

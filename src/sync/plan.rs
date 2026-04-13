@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use crate::lock::{ItemId, LockedItem};
+use crate::diagnostic::DiagnosticCollector;
+use crate::lock::{ItemId, ItemKind, LockedItem};
 use crate::sync::diff::{DiffEntry, SyncDiff};
 use crate::sync::target::TargetItem;
 use crate::sync::types::SyncOptions;
@@ -53,6 +54,7 @@ pub fn create(
     diff: &SyncDiff,
     options: &SyncOptions,
     cache_bases_dir: &std::path::Path,
+    diag: &mut DiagnosticCollector,
 ) -> SyncPlan {
     let mut actions = Vec::new();
 
@@ -84,8 +86,19 @@ pub fn create(
                 locked,
                 local_hash: _,
             } => {
-                if options.force {
-                    // --force: source wins, overwrite local modifications
+                let is_skill_conflict = target.id.kind == ItemKind::Skill;
+                if options.force || is_skill_conflict {
+                    if is_skill_conflict && !options.force {
+                        diag.warn(
+                            "skill-conflict-overwrite",
+                            format!(
+                                "skill `{}` has local modifications — overwriting with upstream (directory contents will be replaced)",
+                                target.id.name
+                            ),
+                        );
+                    }
+
+                    // --force and skill conflicts: source wins, overwrite local modifications
                     actions.push(PlannedAction::Overwrite {
                         target: target.clone(),
                     });
@@ -147,34 +160,66 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    fn make_target(name: &str) -> TargetItem {
+    fn make_target_with_kind(name: &str, kind: ItemKind) -> TargetItem {
+        let (source_path, dest_path) = match kind {
+            ItemKind::Agent => (
+                PathBuf::from(format!("/tmp/source/agents/{name}.md")),
+                format!("agents/{name}.md"),
+            ),
+            ItemKind::Skill => (
+                PathBuf::from(format!("/tmp/source/skills/{name}")),
+                format!("skills/{name}"),
+            ),
+        };
+
         TargetItem {
             id: ItemId {
-                kind: ItemKind::Agent,
+                kind,
                 name: name.into(),
             },
             source_name: "test".into(),
             origin: crate::types::SourceOrigin::Dependency("test".into()),
             source_id: crate::types::SourceId::Path {
-                canonical: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
+                canonical: source_path.clone(),
             },
-            source_path: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
-            dest_path: format!("agents/{name}.md").into(),
+            source_path,
+            dest_path: dest_path.into(),
             source_hash: hash::hash_bytes(b"test content").into(),
             is_flat_skill: false,
             rewritten_content: None,
         }
     }
 
-    fn make_locked(name: &str) -> LockedItem {
+    fn make_target(name: &str) -> TargetItem {
+        make_target_with_kind(name, ItemKind::Agent)
+    }
+
+    fn make_skill_target(name: &str) -> TargetItem {
+        make_target_with_kind(name, ItemKind::Skill)
+    }
+
+    fn make_locked_with_kind(name: &str, kind: ItemKind) -> LockedItem {
+        let dest_path = match kind {
+            ItemKind::Agent => format!("agents/{name}.md"),
+            ItemKind::Skill => format!("skills/{name}"),
+        };
+
         LockedItem {
             source: "test".into(),
-            kind: ItemKind::Agent,
+            kind,
             version: None,
             source_checksum: hash::hash_bytes(b"old content").into(),
             installed_checksum: hash::hash_bytes(b"old content").into(),
-            dest_path: format!("agents/{name}.md").into(),
+            dest_path: dest_path.into(),
         }
+    }
+
+    fn make_locked(name: &str) -> LockedItem {
+        make_locked_with_kind(name, ItemKind::Agent)
+    }
+
+    fn make_skill_locked(name: &str) -> LockedItem {
+        make_locked_with_kind(name, ItemKind::Skill)
     }
 
     fn default_options() -> SyncOptions {
@@ -195,6 +240,15 @@ mod tests {
         }
     }
 
+    fn create_plan(
+        diff: &SyncDiff,
+        options: &SyncOptions,
+        cache_bases_dir: &std::path::Path,
+    ) -> SyncPlan {
+        let mut diag = DiagnosticCollector::new();
+        create(diff, options, cache_bases_dir, &mut diag)
+    }
+
     #[test]
     fn add_produces_install() {
         let cache_dir = TempDir::new().unwrap();
@@ -204,7 +258,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));
     }
@@ -219,7 +273,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
@@ -234,7 +288,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(
             &plan.actions[0],
@@ -256,9 +310,34 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Merge { .. }));
+    }
+
+    #[test]
+    fn skill_conflict_produces_overwrite_and_warning() {
+        let cache_dir = TempDir::new().unwrap();
+        let diff = SyncDiff {
+            items: vec![DiffEntry::Conflict {
+                target: make_skill_target("planning"),
+                locked: make_skill_locked("planning"),
+                local_hash: "sha256:local".into(),
+            }],
+        };
+        let mut diag = DiagnosticCollector::new();
+
+        let plan = create(&diff, &default_options(), cache_dir.path(), &mut diag);
+        assert_eq!(plan.actions.len(), 1);
+        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
+
+        let diagnostics = diag.drain();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "skill-conflict-overwrite");
+        assert_eq!(
+            diagnostics[0].message,
+            "skill `planning` has local modifications — overwriting with upstream (directory contents will be replaced)"
+        );
     }
 
     #[test]
@@ -272,7 +351,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &force_options(), cache_dir.path());
+        let plan = create_plan(&diff, &force_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
@@ -286,7 +365,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Remove { .. }));
     }
@@ -302,7 +381,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::KeepLocal { .. }));
     }
@@ -318,7 +397,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &force_options(), cache_dir.path());
+        let plan = create_plan(&diff, &force_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
@@ -344,7 +423,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         match &plan.actions[0] {
             PlannedAction::Merge { base_content, .. } => {
                 assert_eq!(base_content, b"installed content");
@@ -366,7 +445,7 @@ mod tests {
             }],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         match &plan.actions[0] {
             PlannedAction::Merge { base_content, .. } => {
                 assert!(
@@ -400,7 +479,7 @@ mod tests {
             ],
         };
 
-        let plan = create(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options(), cache_dir.path());
         assert_eq!(plan.actions.len(), 4);
 
         assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));

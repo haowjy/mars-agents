@@ -1,6 +1,6 @@
 //! `mars resolve` — mark conflicts as resolved after user fixes them.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::error::MarsError;
 use crate::hash;
@@ -17,6 +17,10 @@ pub struct ResolveArgs {
 
 /// Run `mars resolve`.
 pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let mars_dir = ctx.project_root.join(".mars");
+    let lock_path = mars_dir.join("sync.lock");
+    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
+
     let mut lock = crate::lock::load(&ctx.project_root)?;
     let mut resolved_files = Vec::new();
     let mut still_conflicted = Vec::new();
@@ -37,7 +41,6 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         lock.items.keys().cloned().collect()
     };
 
-    let mars_dir = ctx.project_root.join(".mars");
     for dest_path_str in &items_to_check {
         let disk_path = mars_dir.join(dest_path_str);
         if !disk_path.exists() {
@@ -45,7 +48,7 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
 
         // Check for conflict markers
-        if has_conflict_markers(&disk_path)? {
+        if crate::merge::file_has_conflict_markers(&disk_path) {
             still_conflicted.push(dest_path_str.clone());
             continue;
         }
@@ -87,10 +90,4 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     } else {
         Ok(1)
     }
-}
-
-/// Check if a file contains git conflict markers.
-fn has_conflict_markers(path: &Path) -> Result<bool, MarsError> {
-    let content = std::fs::read_to_string(path)?;
-    Ok(content.contains("<<<<<<<") && content.contains(">>>>>>>"))
 }

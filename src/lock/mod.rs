@@ -205,26 +205,14 @@ pub fn build(
                         .and_then(|n| n.resolved_ref.version_tag.clone())
                 });
 
-                let source_checksum =
-                    outcome
-                        .source_checksum
-                        .clone()
-                        .ok_or_else(|| LockError::Corrupt {
-                            message: format!(
-                                "missing source checksum for write-producing action on {}",
-                                outcome.dest_path
-                            ),
-                        })?;
-                let installed_checksum =
-                    outcome
-                        .installed_checksum
-                        .clone()
-                        .ok_or_else(|| LockError::Corrupt {
-                            message: format!(
-                                "missing checksum for write-producing action on {}",
-                                outcome.dest_path
-                            ),
-                        })?;
+                let source_checksum = outcome
+                    .source_checksum
+                    .clone()
+                    .expect("validated above: source_checksum exists for write actions");
+                let installed_checksum = outcome
+                    .installed_checksum
+                    .clone()
+                    .expect("validated above: installed_checksum exists for write actions");
 
                 items.insert(
                     dest_path.clone(),

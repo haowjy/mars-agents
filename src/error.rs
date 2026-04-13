@@ -116,7 +116,7 @@ pub enum MarsError {
     )]
     LockedCommitUnreachable { commit: String, url: String },
 
-    /// Link operation error — conflict, missing target, bad symlink.
+    /// Link operation error — conflict, missing target, or invalid link metadata.
     #[error("link error: {target}: {message}")]
     Link { target: String, message: String },
 

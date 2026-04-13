@@ -128,6 +128,7 @@ pub fn has_conflict_markers(content: &[u8]) -> bool {
 
 /// Check whether a file on disk contains unresolved conflict markers.
 pub fn file_has_conflict_markers(path: &Path) -> bool {
+    // Intentionally treat unreadable files as "no markers" so list/resolve views stay conservative.
     std::fs::read(path)
         .map(|content| has_conflict_markers(&content))
         .unwrap_or(false)

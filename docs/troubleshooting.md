@@ -19,6 +19,7 @@ mars doctor
 | Config-lock consistency | Every dependency in config has a lock entry |
 | Skill references | Every agent's declared skill deps exist on disk |
 | Link health | Symlinks exist, point to correct managed root, not broken |
+| Target divergence | Each locked item's target copy matches lock checksum |
 
 ### Exit codes
 
@@ -114,7 +115,9 @@ mars repair    # Full rebuild if sync doesn't fix it
 
 ### Conflict markers in files
 
-Edit the files to resolve conflicts, then:
+Current sync behavior is source-wins: `mars sync` overwrites local modifications with upstream content rather than producing conflict markers. Conflict markers in managed files would only come from manual edits or legacy state from an older mars version.
+
+If conflict markers are present, edit the file to remove them, then:
 
 ```bash
 mars resolve                     # Resolve all

@@ -114,7 +114,7 @@ mars override base --path ./meridian-base
 
 ## Local Package Development
 
-If your project is itself a source package (has `[package]` in `mars.toml`), its own agents and skills are symlinked into the managed root under the `_self` source name (`_self` is the reserved source identifier for items from the current project).
+If your project is itself a source package (has `[package]` in `mars.toml`), its own agents and skills are available in the managed root under the `_self` source name (`_self` is the reserved source identifier for items from the current project).
 
 ```toml
 [package]
@@ -122,7 +122,7 @@ name = "my-project-agents"
 version = "0.1.0"
 ```
 
-With this, any agents in `agents/` and skills in `skills/` at the project root are automatically available in the managed root via symlinks. This lets you develop and test agents/skills locally without installing them from an external source.
+With this, any agents in `agents/` and skills in `skills/` at the project root are automatically installed into the managed root during `mars sync`. Local package items go through the same sync pipeline as dependency items — edit a source file, then run `mars sync` to propagate changes.
 
 ### Validating Before Publishing
 

@@ -50,7 +50,7 @@ Orchestrated in `src/sync/mod.rs` with typed phase functions (move semantics —
 load_config → resolve_graph → build_target → create_plan → apply_plan → sync_targets → finalize
 ```
 
-1. **load_config** — acquire sync lock (`fcntl flock`), load `mars.toml` + local overrides, apply mutations, build `EffectiveConfig`, load existing lock
+1. **load_config** — acquire sync lock (advisory file locking: Unix `flock`, Windows `LockFileEx`), load `mars.toml` + local overrides, apply mutations, build `EffectiveConfig`, load existing lock
 2. **resolve_graph** — resolve dependency versions, merge model aliases from dependency tree (consumer > deps, declaration order)
 3. **build_target** — discover items (agents/skills) from all sources including local package, detect collisions, apply filters, rewrite frontmatter refs
 4. **create_plan** — diff desired state against lock + disk, generate sync plan (Add/Update/Conflict/Orphan)
@@ -76,7 +76,7 @@ Each phase produces a typed handoff struct consumed by the next phase:
 - `SourceOrigin::Dependency(name)` / `SourceOrigin::LocalPackage` — where an item came from
 - `InstallDep` — consumer install intent (`mars.toml [dependencies]`)
 - `ManifestDep` — package export (required URL, no path deps)
-- `Materialization::Copy` / `Materialization::Symlink` — how items land in `.mars/` (targets always get copies)
+- `_self` local package items are added as regular `TargetItem` entries during `build_target` (no special materialization — same install/copy path as dependency items)
 - `DiagnosticCollector` — threaded through entire pipeline, collects structured warnings/info
 
 ## Model Catalog
@@ -144,7 +144,7 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 | `src/diagnostic.rs` | Structured diagnostics (no `eprintln!` in library code) |
 | `src/cli/` | Clap args, root discovery, command dispatch, output formatting |
 | `src/frontmatter/` | YAML frontmatter parsing and rewriting |
-| `src/merge/` | Three-way merge for conflict resolution |
+| `src/merge/` | Text merge utilities (conflict markers supported, but sync uses source-wins overwrite — `PlannedAction::Merge` is never produced by current plan logic) |
 | `src/validate/` | Post-sync validation (e.g. missing skill references) |
 | `src/fs/` | Low-level filesystem utilities, `FileLock`, atomic write primitives |
 

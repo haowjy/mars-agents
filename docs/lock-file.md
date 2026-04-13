@@ -77,7 +77,7 @@ Each item tracks two checksums:
 
 - **`installed_checksum`**: Hash of what Mars actually wrote to disk. May differ from `source_checksum` when frontmatter rewriting occurred (`frontmatter` is the YAML metadata block at the top of Markdown agent/skill files; Mars may rewrite skill references there). Used to detect when the user has modified the file locally.
 
-This dual-checksum design enables the [three-way diff](conflicts.md#diff-matrix):
+This dual-checksum design enables the [conflict diff](conflicts.md#diff-matrix):
 - Source changed? → compare new source hash against `source_checksum`
 - Local changed? → compare current disk hash against `installed_checksum`
 
@@ -116,7 +116,7 @@ Items are categorized by their apply action:
 | Kept (local modification preserved) | Carried forward from old lock |
 | Skipped | Carried forward from old lock |
 | Removed | Excluded from new lock |
-| Symlinked (`_self`) | New entry with source checksum |
+| Installed (`_self`) | New item entry with computed checksums |
 
 ## Absent Lock File
 

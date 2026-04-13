@@ -52,9 +52,9 @@ The item is removed from the target state, so the unmanaged file is preserved. T
 
 During `mars repair` with a corrupt lock file, unmanaged collisions are handled more aggressively: the colliding path is removed and sync retries, since there's no lock to distinguish managed from unmanaged files.
 
-## Content Conflicts (Three-Way Merge)
+## Content Conflicts
 
-When both the source and local disk have changed for a managed item, Mars attempts a three-way merge using the cached base version.
+When both the source and local disk have changed for a managed item, source always wins — Mars overwrites the local file with the new source content and emits a warning.
 
 ### Diff Matrix
 
@@ -63,37 +63,30 @@ When both the source and local disk have changed for a managed item, Mars attemp
 | No | No | Skip (unchanged) |
 | Yes | No | Update (clean overwrite) |
 | No | Yes | Keep local modification |
-| Yes | Yes | **Conflict** — attempt merge |
+| Yes | Yes | **Source wins** — overwrite + warning |
 
 "Local changed" is determined by comparing the current disk hash against `installed_checksum` in the lock file. "Source changed" compares the new source hash against `source_checksum` in the lock.
 
-### Merge Process
+### Warning
 
-1. The base version (what Mars originally installed) is cached in `.mars/cache/bases/`
-2. Mars performs a three-way merge: base → local (disk) + source (new)
-3. If the merge succeeds cleanly, the merged content is installed
-4. If the merge has conflicts, conflict markers are written into the file
-
-### Conflict Markers
-
-Conflicted files contain standard git-style markers:
+When a conflict is detected, Mars emits a `conflict-overwrite` warning before overwriting:
 
 ```
-<<<<<<< local
-your local modification
-=======
-new source content
->>>>>>> source
+warning: agent `coder` has local modifications — overwriting with upstream
 ```
 
-### Resolving Conflicts
+Both agents and skills use the same strategy: source wins, no merge attempted.
 
-1. Edit the conflicted file to resolve the markers
-2. Run `mars resolve` (or `mars resolve <file>` for a specific file)
-3. Mars verifies no conflict markers remain and updates `installed_checksum` in the lock
+### Force Flag
+
+`--force` suppresses the `conflict-overwrite` warning. Since source already wins by default, `--force` primarily signals intent — it also causes `LocalModified` entries (only local changed) to be overwritten rather than preserved.
+
+### Resolving Conflict Markers
+
+If a file contains conflict markers from a manual edit or a legacy sync, use `mars resolve` to clear them once you've resolved the markers by hand:
 
 ```bash
-# Edit the file to fix conflicts
+# Edit the file to fix markers
 vim .agents/agents/coder.md
 
 # Mark as resolved
@@ -104,10 +97,6 @@ mars resolve
 ```
 
 If conflict markers are still present, `mars resolve` reports the file as still conflicted and exits with code 1.
-
-### Force Overwrite
-
-`mars sync --force` skips the merge and overwrites local modifications. The baseline shifts to `source_checksum`, so any file that differs from the original source content is treated as unmodified and overwritten. Use this when you want to discard all local changes and match the source exactly.
 
 ## Exit Codes
 

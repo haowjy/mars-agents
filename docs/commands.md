@@ -223,6 +223,8 @@ mars resolve [file]
 
 Checks for remaining conflict markers (`<<<<<<<`, `>>>>>>>`). If the file is clean, updates the lock file's `installed_checksum` to match the current disk content.
 
+> **Note:** Current sync behavior is source-wins — `mars sync` overwrites local modifications with upstream content (with a warning) rather than producing conflict markers. Conflict markers would only appear from manual edits to managed files or legacy state from an older mars version. `mars resolve` remains available to clear them when they do exist.
+
 ---
 
 ## `mars override`
@@ -387,6 +389,7 @@ Checks:
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
 - Link health: symlinks exist, point to correct managed root, not broken
+- Target divergence: each locked item's copy in the managed root matches the lock checksum (reports missing and locally modified files)
 
 Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](troubleshooting.md).
 

@@ -56,7 +56,7 @@ A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in librar
 
 ### 1. Load Config (`load_config`)
 
-Acquires `.mars/sync.lock` via `fcntl` file locking, then loads `mars.toml` and `mars.local.toml`. If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
+Acquires `.mars/sync.lock` via advisory file locking, then loads `mars.toml` and `mars.local.toml`. If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
 
 Under the sync lock, applies the command's mutation atomically:
 
@@ -144,13 +144,13 @@ The diff matrix:
 | No | No | **Unchanged** (skip) |
 | Yes | No | **Update** (clean overwrite) |
 | No | Yes | **LocalModified** (keep local) |
-| Yes | Yes | **Conflict** (needs merge) |
+| Yes | Yes | **Conflict** → source wins overwrite + warning |
 | — | — | **Add** (new item) |
 | — | — | **Orphan** (in lock but not in target → remove) |
 
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
-Also injects local package symlinks when the project has a `[package]` section — the project's own agents/skills are symlinked into `.mars/` under the `_self` source name (`_self` is the reserved local-project source identifier).
+Also injects local package items when the project has a `[package]` section — the project's own agents/skills are added to the target state under the `_self` source name (`_self` is the reserved local-project source identifier).
 
 ### 5. Apply Plan (`apply_plan`)
 
@@ -160,9 +160,9 @@ Executes planned actions against the `.mars/` canonical store:
 |---|---|
 | Install | Atomic write (tmp + rename) or atomic directory install |
 | Update | Replace with new source content |
-| Merge | Three-way merge using cached base version |
+| Overwrite | Replace with source content (conflicts: source wins) |
 | Remove | Delete file or directory |
-| Symlink | Create relative symlink for `_self` items |
+| Note | `_self` items follow the same Install path as dependency items |
 | Skip / KeepLocal | No-op, recorded in outcomes |
 
 In `--diff` (dry run) mode, actions are computed but not executed.
@@ -172,7 +172,7 @@ In `--diff` (dry run) mode, actions are computed but not executed.
 Copies content from `.mars/` canonical store to each configured target directory (`.agents/`, `.claude/`, etc.). Implemented in `src/target_sync/mod.rs`.
 
 - Target is the managed root configured via `settings.managed_root` in `mars.toml` (default: `.agents`). Additional tool directories receive symlinks via `mars link` (`settings.links`), not file copies.
-- All targets get file copies, never symlinks — symlinks in `.mars/` (from local packages) are followed during copy
+- All targets get file copies, never symlinks
 - Uses `reconcile::fs_ops` for atomic operations (tmp+rename)
 - Orphan cleanup: uses the previous lock to identify mars-managed files in each target, removes only those that are no longer in the current apply outcomes
 - Non-fatal per-target: errors on one target are recorded in `TargetSyncOutcome` but don't stop other targets from syncing
@@ -188,8 +188,8 @@ Writes lock and constructs the final `SyncReport`.
 
 ## Local Package Items (`_self`)
 
-When `mars.toml` has a `[package]` section, the project's own agents and skills are symlinked into the managed root. This lets a source package test its own items without copying.
+When `mars.toml` has a `[package]` section, the project's own agents and skills are discovered, hashed, and installed into the managed root via the normal sync pipeline — the same install/copy path as dependency items.
 
 - `_self` items shadow external items if names collide (with a warning)
-- Stale `_self` entries are pruned when items are removed from the local package
+- Removed local items are cleaned up on the next `mars sync`
 - If `[package]` is removed, all `_self` entries are cleaned up

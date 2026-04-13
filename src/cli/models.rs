@@ -341,31 +341,19 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 }
 
 fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let config_path = ctx.project_root.join("mars.toml");
-
-    // Read existing config
-    let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-
-    let harness = Some(args.harness.clone());
-
-    // Build the TOML entry
-    let mut entry = format!(
-        "\n[models.{}]\nharness = {:?}\nmodel = {:?}\n",
-        args.name,
-        harness.as_deref().unwrap_or("claude"),
-        args.model_id
+    let mut config = crate::config::load(&ctx.project_root)?;
+    config.models.insert(
+        args.name.clone(),
+        ModelAlias {
+            harness: Some(args.harness.clone()),
+            description: args.description.clone(),
+            spec: ModelSpec::Pinned {
+                model: args.model_id.clone(),
+                provider: None,
+            },
+        },
     );
-    if let Some(desc) = &args.description {
-        entry.push_str(&format!("description = {:?}\n", desc));
-    }
-
-    // Append to mars.toml
-    let new_content = if content.is_empty() {
-        entry
-    } else {
-        format!("{}{}", content.trim_end(), entry)
-    };
-    std::fs::write(&config_path, new_content)?;
+    crate::config::save(&ctx.project_root, &config)?;
 
     if json {
         println!(
@@ -557,5 +545,45 @@ model = "claude-opus-4-6"
 
         let exit = normalized_exit_code(run(&args, &ctx, false));
         assert_ne!(exit, 0);
+    }
+
+    #[test]
+    fn alias_updates_existing_model_entry() {
+        let temp = TempDir::new().unwrap();
+        write_mars_toml(
+            &temp,
+            r#"[settings]
+
+[models.fast]
+harness = "claude"
+model = "claude-3-5-sonnet"
+description = "Old alias"
+"#,
+        );
+        let ctx = MarsContext::new(temp.path().to_path_buf()).unwrap();
+
+        let args = AddAliasArgs {
+            name: "fast".to_string(),
+            model_id: "gpt-5.3-codex".to_string(),
+            harness: "codex".to_string(),
+            description: Some("Updated alias".to_string()),
+        };
+
+        let exit = run_alias(&args, &ctx, false).unwrap();
+        assert_eq!(exit, 0);
+
+        let config = crate::config::load(temp.path()).unwrap();
+        assert_eq!(config.models.len(), 1);
+
+        let alias = config.models.get("fast").unwrap();
+        assert_eq!(alias.harness.as_deref(), Some("codex"));
+        assert_eq!(alias.description.as_deref(), Some("Updated alias"));
+        match &alias.spec {
+            ModelSpec::Pinned { model, provider } => {
+                assert_eq!(model, "gpt-5.3-codex");
+                assert_eq!(provider, &None);
+            }
+            _ => panic!("expected pinned alias"),
+        }
     }
 }

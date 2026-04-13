@@ -6,7 +6,7 @@
 //! No config or lock file needed — works on raw source directories.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -50,12 +50,40 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         }));
     }
 
+    let report = check_dir(&base)?;
+
+    if json {
+        output::print_json(&report);
+    } else {
+        println!("  {} agents, {} skills", report.agents, report.skills);
+        println!();
+
+        if report.errors.is_empty() && report.warnings.is_empty() {
+            output::print_success("all checks passed");
+        } else {
+            for e in &report.errors {
+                output::print_error(e);
+            }
+            for w in &report.warnings {
+                output::print_warn(w);
+            }
+            if !report.errors.is_empty() {
+                println!();
+                println!("  {} error(s) found", report.errors.len());
+            }
+        }
+    }
+
+    if report.errors.is_empty() { Ok(0) } else { Ok(1) }
+}
+
+fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let skills_dir = base.join("skills");
 
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    let discovered = discover::discover_source(&base, None)?;
+    let discovered = discover::discover_source(base, None)?;
 
     // ── Validate discovered agents/skills ────────────────────────────
     let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
@@ -232,11 +260,12 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
     // ── Skill dependency check ───────────────────────────────────────
     let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
+    let dependency_skills = dependency_skills_from_lock(base);
     let mut external_deps: HashMap<String, Vec<String>> = HashMap::new();
 
     for (agent_name, skills) in &agent_skill_refs {
         for skill in skills {
-            if !available.contains(skill.as_str()) {
+            if !available.contains(skill.as_str()) && !dependency_skills.contains(skill.as_str()) {
                 external_deps
                     .entry(skill.clone())
                     .or_default()
@@ -257,41 +286,76 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     // ── Output ───────────────────────────────────────────────────────
-    let report = CheckReport {
+    Ok(CheckReport {
         agents: agent_count,
         skills: skill_count,
-        errors: errors.clone(),
-        warnings: warnings.clone(),
+        errors,
+        warnings,
+    })
+}
+
+fn dependency_skills_from_lock(base: &Path) -> HashSet<String> {
+    let Ok(lock) = crate::lock::load(base) else {
+        return HashSet::new();
     };
 
-    if json {
-        output::print_json(&report);
-    } else {
-        println!("  {} agents, {} skills", agent_count, skill_count);
-        println!();
+    lock.items
+        .values()
+        .filter(|item| item.kind == crate::lock::ItemKind::Skill)
+        .filter_map(|item| skill_name_from_dest_path(item.dest_path.as_path()))
+        .collect()
+}
 
-        if errors.is_empty() && warnings.is_empty() {
-            output::print_success("all checks passed");
-        } else {
-            for e in &errors {
-                output::print_error(e);
-            }
-            for w in &warnings {
-                output::print_warn(w);
-            }
-            if !errors.is_empty() {
-                println!();
-                println!("  {} error(s) found", errors.len());
-            }
-        }
+fn skill_name_from_dest_path(dest_path: &Path) -> Option<String> {
+    let mut components = dest_path.components();
+    let prefix = components.next()?.as_os_str().to_str()?;
+    if prefix != "skills" {
+        return None;
     }
 
-    if errors.is_empty() { Ok(0) } else { Ok(1) }
+    components
+        .next()
+        .and_then(|c| c.as_os_str().to_str())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use crate::lock::{ItemKind, LockFile, LockedItem};
+    use crate::types::{ContentHash, DestPath, SourceName};
     use tempfile::TempDir;
+
+    fn write_agent(path: &Path, filename: &str, skills: &[&str]) {
+        let agents = path.join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        let skills = skills.join(", ");
+        std::fs::write(
+            agents.join(format!("{filename}.md")),
+            format!(
+                "---\nname: {filename}\ndescription: test agent\nskills: [{skills}]\n---\n# Agent"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_lock_skill(path: &Path, skill_name: &str) {
+        let mut lock = LockFile::empty();
+        let dest_path = DestPath::from(format!("skills/{skill_name}"));
+        lock.items.insert(
+            dest_path.clone(),
+            LockedItem {
+                source: SourceName::from("dep-source"),
+                kind: ItemKind::Skill,
+                version: None,
+                source_checksum: ContentHash::from("source-hash"),
+                installed_checksum: ContentHash::from("installed-hash"),
+                dest_path,
+            },
+        );
+        crate::lock::write(path, &lock).unwrap();
+    }
 
     #[test]
     fn check_skips_symlinked_agent() {
@@ -363,5 +427,43 @@ mod tests {
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn check_suppresses_warning_for_dependency_provided_skill() {
+        let dir = TempDir::new().unwrap();
+        write_agent(dir.path(), "coder", &["ext-skill"]);
+        write_lock_skill(dir.path(), "ext-skill");
+
+        let report = super::check_dir(dir.path()).unwrap();
+        let has_external_warning = report
+            .warnings
+            .iter()
+            .any(|w| w.contains("external dependency: `ext-skill`"));
+
+        assert!(
+            !has_external_warning,
+            "unexpected external dependency warning: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn check_warns_for_truly_missing_external_skill() {
+        let dir = TempDir::new().unwrap();
+        write_agent(dir.path(), "coder", &["missing-skill"]);
+        write_lock_skill(dir.path(), "some-other-skill");
+
+        let report = super::check_dir(dir.path()).unwrap();
+        let has_missing_warning = report
+            .warnings
+            .iter()
+            .any(|w| w.contains("external dependency: `missing-skill`"));
+
+        assert!(
+            has_missing_warning,
+            "expected missing external dependency warning, got: {:?}",
+            report.warnings
+        );
     }
 }

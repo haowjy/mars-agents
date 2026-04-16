@@ -18,3 +18,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `mars check` no longer false-warns when agents reference skills provided by dependencies.
+
+## [0.1.2] - 2026-04-16
+
+### Added
+- Subpath source support for monorepo-style packages across local paths, GitHub sources, GitLab sources, and generic git sources.
+- Source parser coverage for GitHub aliases and tree URLs, GitLab aliases and tree URLs, generic git URLs, and explicit rejection of archive-download and direct file-download URLs.
+- Manual smoke-testing guide covering parser, discovery, transport, and sync regressions.
+- Mars project configuration for developing this repo with `meridian-dev-workflow`.
+
+### Changed
+- Discovery fallback now uses explicit manifest-declared local paths first, then deterministic logical-layer selection with first-match precedence inside the selected layer.
+- `mars add` now supports explicit `--subpath` handling and rooted-source dependency naming.
+- User-facing command and configuration docs now describe `--subpath`, supported source forms, and rejection of unsupported download URLs.
+
+### Fixed
+- Fallback discovery no longer fails on the `caveman` mirrored layout when installing `meridian-dev-workflow`.
+- GitLab-like source URLs now preserve explicit ports during normalization.
+- Source parser now satisfies clippy’s strict warning set in release preflight.

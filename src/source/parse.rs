@@ -227,7 +227,7 @@ fn parse_github_tree_url(
             format!("https://github.com/{owner}/{repo}"),
             repo,
             subpath,
-            version.or_else(|| Some(tree_ref)),
+            version.or(Some(tree_ref)),
         )));
     }
 
@@ -302,7 +302,7 @@ fn parse_gitlab_tree_url(
         format!("{}://{}/{}", url.scheme, url.authority, repo_path.join("/")),
         repo,
         subpath,
-        version.or_else(|| Some(tree_ref)),
+        version.or(Some(tree_ref)),
     )))
 }
 

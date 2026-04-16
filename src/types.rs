@@ -894,4 +894,153 @@ subpath = "plugins\\foo"
         b.hash(&mut hasher_b);
         assert_ne!(hasher_a.finish(), hasher_b.finish());
     }
+
+    // ========== RES-002: SourceId::Path hash stability with subpath ==========
+
+    /// RES-002: SourceId::Path with subpath=None and subpath=Some("plugins/foo")
+    /// must hash to distinct values — same canonical path but different subpaths
+    /// must not collide.
+    #[test]
+    fn source_id_path_none_and_some_subpath_hash_distinctly() {
+        let canonical = PathBuf::from("/tmp/my-repo");
+        let a = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: None,
+        };
+        let b = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        };
+
+        assert_ne!(a, b);
+
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        b.hash(&mut hasher_b);
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    /// RES-002: Two SourceId::Path with the same canonical and same subpath must
+    /// be equal and hash equally.
+    #[test]
+    fn source_id_path_same_canonical_same_subpath_are_equal() {
+        let canonical = PathBuf::from("/tmp/my-repo");
+        let a = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        };
+        let b = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        };
+
+        assert_eq!(a, b);
+
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        b.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    /// RES-002: Two SourceId::Path with same canonical but different subpaths must
+    /// not be equal and must hash differently.
+    #[test]
+    fn source_id_path_same_canonical_different_subpaths_are_distinct() {
+        let canonical = PathBuf::from("/tmp/my-repo");
+        let a = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        };
+        let b = SourceId::Path {
+            canonical: canonical.clone(),
+            subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+        };
+
+        assert_ne!(a, b);
+
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        b.hash(&mut hasher_b);
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    // ========== RES-001: lock file write + load round-trip via lock::write/load ==========
+
+    /// RES-001: A lock file written with lock::write and re-loaded with lock::load
+    /// must preserve the subpath field exactly. This exercises the full atomic
+    /// write path, not just toml::to_string.
+    #[test]
+    fn lock_write_and_load_roundtrip_preserves_subpath() {
+        use crate::lock::{LockFile, LockedSource};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let lock = LockFile {
+            version: 1,
+            dependencies: indexmap::IndexMap::from([(
+                SourceName::from("dep"),
+                LockedSource {
+                    url: Some(SourceUrl::from("https://github.com/org/repo.git")),
+                    path: None,
+                    subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+                    version: Some("v1.2.3".to_string()),
+                    commit: Some(CommitHash::from("deadbeef")),
+                    tree_hash: None,
+                },
+            )]),
+            items: indexmap::IndexMap::new(),
+        };
+
+        crate::lock::write(dir.path(), &lock).unwrap();
+        let loaded = crate::lock::load(dir.path()).unwrap();
+
+        assert_eq!(
+            loaded.dependencies["dep"]
+                .subpath
+                .as_ref()
+                .map(SourceSubpath::as_str),
+            Some("plugins/foo")
+        );
+        assert_eq!(
+            loaded.dependencies["dep"].url.as_deref(),
+            Some("https://github.com/org/repo.git")
+        );
+        assert_eq!(
+            loaded.dependencies["dep"].version.as_deref(),
+            Some("v1.2.3")
+        );
+    }
+
+    // ========== RES-001: EffectiveDependency carries subpath after merge ==========
+
+    /// RES-001 (config side): after merge_with_root the EffectiveDependency.subpath
+    /// matches what was in the Config.  This confirms the subpath survives the
+    /// config-load → merge step.
+    #[test]
+    fn effective_dependency_subpath_preserved_through_merge() {
+        use crate::config::{Config, merge};
+
+        let toml_str = r#"
+[dependencies.dep]
+url = "https://github.com/org/repo.git"
+subpath = "plugins/foo"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let effective = merge(config, crate::config::LocalConfig::default()).unwrap();
+        assert_eq!(
+            effective.dependencies["dep"]
+                .subpath
+                .as_ref()
+                .map(SourceSubpath::as_str),
+            Some("plugins/foo")
+        );
+        // SourceId must embed the same subpath
+        assert!(matches!(
+            &effective.dependencies["dep"].id,
+            SourceId::Git { subpath: Some(sp), .. } if sp.as_str() == "plugins/foo"
+        ));
+    }
 }

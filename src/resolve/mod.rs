@@ -10,7 +10,7 @@
 //! Uses `semver` crate for all version parsing. No custom version logic.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 use semver::{Version, VersionReq};
@@ -20,7 +20,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
-use crate::types::{SourceId, SourceName, SourceUrl};
+use crate::types::{SourceId, SourceName, SourceSubpath, SourceUrl};
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
@@ -41,12 +41,20 @@ pub struct ResolvedGraph {
 pub struct ResolvedNode {
     pub source_name: SourceName,
     pub source_id: SourceId,
+    pub rooted_ref: RootedSourceRef,
     pub resolved_ref: ResolvedRef,
     pub latest_version: Option<Version>,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
     pub deps: Vec<SourceName>,
+}
+
+/// Source checkout provenance and rooted package boundary.
+#[derive(Debug, Clone)]
+pub struct RootedSourceRef {
+    pub checkout_root: PathBuf,
+    pub package_root: PathBuf,
 }
 
 /// How a version constraint was specified.
@@ -221,6 +229,7 @@ pub fn resolve(
             name: name.clone(),
             source_id: source.id.clone(),
             spec: source.spec.clone(),
+            subpath: source.subpath.clone(),
             constraint,
             filter: source.filter.clone(),
             required_by: "mars.toml".into(),
@@ -279,9 +288,14 @@ pub fn resolve(
         // Resolve and fetch the source
         let (resolved_ref, latest_version) =
             resolve_single_source(&pending_src, provider, locked, options, &constraints, diag)?;
+        let rooted_ref = apply_subpath(
+            &pending_src.name,
+            &resolved_ref.tree_path,
+            pending_src.subpath.as_ref(),
+        )?;
 
         // Read manifest for transitive deps
-        let manifest = provider.read_manifest(&resolved_ref.tree_path, diag)?;
+        let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
 
         // Discover transitive dependencies
         let mut deps = Vec::new();
@@ -298,11 +312,15 @@ pub fn resolve(
                     let dep_name_typed = SourceName::from(dep_name.clone());
                     pending.push_back(PendingSource {
                         name: dep_name_typed,
-                        source_id: SourceId::git(dep_url.clone()),
+                        source_id: SourceId::git_with_subpath(
+                            dep_url.clone(),
+                            dep_spec.subpath.clone(),
+                        ),
                         spec: SourceSpec::Git(GitSpec {
                             url: dep_url,
                             version: dep_spec.version.clone(),
                         }),
+                        subpath: dep_spec.subpath.clone(),
                         constraint: dep_constraint,
                         filter: dep_spec.filter.to_mode(),
                         required_by: pending_src.name.to_string(),
@@ -328,6 +346,7 @@ pub fn resolve(
             ResolvedNode {
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
+                rooted_ref,
                 resolved_ref,
                 latest_version,
                 manifest,
@@ -356,6 +375,7 @@ struct PendingSource {
     name: SourceName,
     source_id: SourceId,
     spec: SourceSpec,
+    subpath: Option<SourceSubpath>,
     constraint: VersionConstraint,
     filter: FilterMode,
     required_by: String,
@@ -370,6 +390,86 @@ fn push_filter_constraint(
     if !entry.contains(filter) {
         entry.push(filter.clone());
     }
+}
+
+fn apply_subpath(
+    source_name: &SourceName,
+    checkout_root: &Path,
+    subpath: Option<&SourceSubpath>,
+) -> Result<RootedSourceRef, MarsError> {
+    let package_root = match subpath {
+        Some(subpath) => subpath
+            .join_under(checkout_root)
+            .map_err(|e| MarsError::Source {
+                source_name: source_name.to_string(),
+                message: format!(
+                    "invalid subpath `{subpath}` under checkout root `{}`: {e}",
+                    checkout_root.display()
+                ),
+            })?,
+        None => checkout_root.to_path_buf(),
+    };
+
+    if !package_root.exists() {
+        let detail = subpath
+            .map(|s| format!("subpath `{s}`"))
+            .unwrap_or_else(|| "package root".to_string());
+        return Err(MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!(
+                "{detail} does not exist under checkout root `{}`",
+                checkout_root.display()
+            ),
+        });
+    }
+
+    if !package_root.is_dir() {
+        let detail = subpath
+            .map(|s| format!("subpath `{s}`"))
+            .unwrap_or_else(|| "package root".to_string());
+        return Err(MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!(
+                "{detail} is not a directory under checkout root `{}`",
+                checkout_root.display()
+            ),
+        });
+    }
+
+    let canonical_checkout = checkout_root
+        .canonicalize()
+        .map_err(|e| MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!(
+                "failed to canonicalize checkout root `{}`: {e}",
+                checkout_root.display()
+            ),
+        })?;
+    let canonical_package = package_root.canonicalize().map_err(|e| MarsError::Source {
+        source_name: source_name.to_string(),
+        message: format!(
+            "failed to canonicalize package root `{}`: {e}",
+            package_root.display()
+        ),
+    })?;
+
+    if !canonical_package.starts_with(&canonical_checkout) {
+        let detail = subpath
+            .map(|s| format!("subpath `{s}`"))
+            .unwrap_or_else(|| "package root".to_string());
+        return Err(MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!(
+                "{detail} escapes checkout root `{}`",
+                checkout_root.display()
+            ),
+        });
+    }
+
+    Ok(RootedSourceRef {
+        checkout_root: checkout_root.to_path_buf(),
+        package_root,
+    })
 }
 
 /// Resolve a single source to a concrete version/ref.
@@ -723,7 +823,7 @@ mod tests {
         EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest,
         ManifestDep, PackageInfo, Settings, SourceSpec,
     };
-    use crate::types::{RenameMap, SourceId, SourceName, SourceUrl};
+    use crate::types::{RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
     use indexmap::IndexMap;
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
@@ -902,8 +1002,9 @@ mod tests {
                 name.into(),
                 EffectiveDependency {
                     name: name.into(),
-                    id: source_id_for_spec(&spec),
+                    id: source_id_for_spec(&spec, None),
                     spec,
+                    subpath: None,
                     filter: FilterMode::All,
                     rename: RenameMap::new(),
                     is_overridden: false,
@@ -990,13 +1091,76 @@ mod tests {
         super::resolve(config, provider, locked, options, &mut diag)
     }
 
-    fn source_id_for_spec(spec: &SourceSpec) -> SourceId {
+    fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
         match spec {
-            SourceSpec::Git(g) => SourceId::git(g.url.clone()),
+            SourceSpec::Git(g) => SourceId::git_with_subpath(g.url.clone(), subpath),
             SourceSpec::Path(path) => SourceId::Path {
                 canonical: path.clone(),
+                subpath,
             },
         }
+    }
+
+    #[test]
+    fn apply_subpath_success_case() {
+        let dir = TempDir::new().unwrap();
+        let package_root = dir.path().join("plugins/foo");
+        std::fs::create_dir_all(&package_root).unwrap();
+
+        let subpath = SourceSubpath::new("plugins/foo").unwrap();
+        let rooted = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath)).unwrap();
+
+        assert_eq!(rooted.checkout_root, dir.path());
+        assert_eq!(rooted.package_root, package_root);
+    }
+
+    #[test]
+    fn apply_subpath_missing_directory_rejection() {
+        let dir = TempDir::new().unwrap();
+        let subpath = SourceSubpath::new("plugins/missing").unwrap();
+
+        let err = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("does not exist"),
+            "missing directory should be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_subpath_file_not_dir_rejection() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("plugins");
+        std::fs::write(&file_path, "not a directory").unwrap();
+        let subpath = SourceSubpath::new("plugins").unwrap();
+
+        let err = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not a directory"),
+            "file subpath should be rejected: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_subpath_traversal_rejection() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let outside_pkg = outside.path().join("pkg");
+        std::fs::create_dir_all(&outside_pkg).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("escape")).unwrap();
+        let subpath = SourceSubpath::new("escape").unwrap();
+
+        let err = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("escapes checkout root"),
+            "symlink traversal should be rejected: {err}"
+        );
     }
 
     // ========== parse_version_constraint tests ==========
@@ -1225,6 +1389,197 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_source_identity_detects_same_url_and_subpath() {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        std::fs::create_dir_all(tree_a.join("plugins/foo")).unwrap();
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, None);
+
+        let subpath = SourceSubpath::new("plugins/foo").unwrap();
+        let mut dependencies = IndexMap::new();
+        dependencies.insert(
+            SourceName::from("a"),
+            EffectiveDependency {
+                name: "a".into(),
+                id: SourceId::git_with_subpath(
+                    SourceUrl::from("https://example.com/shared.git"),
+                    Some(subpath.clone()),
+                ),
+                spec: git_spec("https://example.com/shared.git", Some("v1.0.0")),
+                subpath: Some(subpath.clone()),
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        dependencies.insert(
+            SourceName::from("b"),
+            EffectiveDependency {
+                name: "b".into(),
+                id: SourceId::git_with_subpath(
+                    SourceUrl::from("https://example.com/shared.git"),
+                    Some(subpath.clone()),
+                ),
+                spec: git_spec("https://example.com/shared.git", Some("v1.0.0")),
+                subpath: Some(subpath),
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        let config = EffectiveConfig {
+            dependencies,
+            settings: Settings::default(),
+        };
+
+        let err = resolve(&config, &provider, None, &default_options())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("duplicate source identity"),
+            "expected duplicate identity error: {err}"
+        );
+    }
+
+    #[test]
+    fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        let tree_dep = dir.path().join("dep");
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(tree_dep.join("plugins/foo")).unwrap();
+        std::fs::create_dir_all(tree_dep.join("plugins/bar")).unwrap();
+
+        let mut manifest_deps = IndexMap::new();
+        manifest_deps.insert(
+            "dep".to_string(),
+            ManifestDep {
+                url: SourceUrl::from("https://example.com/dep.git"),
+                subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+                version: Some(">=1.0.0".to_string()),
+                filter: FilterConfig::default(),
+            },
+        );
+        let manifest_a = Manifest {
+            package: PackageInfo {
+                name: "a".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+            },
+            dependencies: manifest_deps,
+            models: IndexMap::new(),
+        };
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, Some(manifest_a));
+        provider.add_source("dep", tree_dep, None);
+
+        let mut dependencies = IndexMap::new();
+        dependencies.insert(
+            SourceName::from("a"),
+            EffectiveDependency {
+                name: "a".into(),
+                id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
+                spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+                subpath: None,
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        dependencies.insert(
+            SourceName::from("dep"),
+            EffectiveDependency {
+                name: "dep".into(),
+                id: SourceId::git_with_subpath(
+                    SourceUrl::from("https://example.com/dep.git"),
+                    Some(SourceSubpath::new("plugins/foo").unwrap()),
+                ),
+                spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
+                subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        let config = EffectiveConfig {
+            dependencies,
+            settings: Settings::default(),
+        };
+
+        let err = resolve(&config, &provider, None, &default_options())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("conflicting identities"),
+            "expected identity mismatch error: {err}"
+        );
+    }
+
+    #[test]
+    fn transitive_dep_propagates_subpath_into_source_identity() {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        let tree_dep = dir.path().join("dep");
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(tree_dep.join("plugins/foo")).unwrap();
+
+        let mut manifest_deps = IndexMap::new();
+        manifest_deps.insert(
+            "dep".to_string(),
+            ManifestDep {
+                url: SourceUrl::from("https://example.com/dep.git"),
+                subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+                version: Some(">=1.0.0".to_string()),
+                filter: FilterConfig::default(),
+            },
+        );
+        let manifest_a = Manifest {
+            package: PackageInfo {
+                name: "a".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+            },
+            dependencies: manifest_deps,
+            models: IndexMap::new(),
+        };
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, Some(manifest_a));
+        provider.add_source("dep", tree_dep.clone(), None);
+
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+
+        let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
+        assert_eq!(
+            dep_node.source_id,
+            SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/dep.git"),
+                Some(SourceSubpath::new("plugins/foo").unwrap())
+            )
+        );
+        assert_eq!(
+            dep_node.rooted_ref.package_root,
+            tree_dep.join("plugins/foo")
+        );
+    }
+
+    #[test]
     fn transitive_dep_filter_is_collected() {
         let dir = TempDir::new().unwrap();
         let tree_a = dir.path().join("a");
@@ -1302,6 +1657,7 @@ mod tests {
                 name: "a".into(),
                 id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
                 spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+                subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
                 is_overridden: false,
@@ -1314,6 +1670,7 @@ mod tests {
                 name: "dep".into(),
                 id: SourceId::git(SourceUrl::from("https://example.com/dep.git")),
                 spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
+                subpath: None,
                 filter: FilterMode::Include {
                     agents: vec![],
                     skills: vec!["skill-a".into(), "skill-b".into()],
@@ -2144,6 +2501,7 @@ mod tests {
                 source_name: "c".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/c")),
                 resolved_ref: dummy_ref("c"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["b".into()],
@@ -2155,6 +2513,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["a".into()],
@@ -2166,6 +2525,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec![],
@@ -2186,6 +2546,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["b".into(), "c".into()],
@@ -2197,6 +2558,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["d".into()],
@@ -2208,6 +2570,7 @@ mod tests {
                 source_name: "c".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/c")),
                 resolved_ref: dummy_ref("c"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["d".into()],
@@ -2219,6 +2582,7 @@ mod tests {
                 source_name: "d".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/d")),
                 resolved_ref: dummy_ref("d"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec![],
@@ -2246,6 +2610,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec![],
@@ -2257,6 +2622,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec![],
@@ -2278,6 +2644,7 @@ mod tests {
                 source_name: "a".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/a")),
                 resolved_ref: dummy_ref("a"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["b".into()],
@@ -2289,6 +2656,7 @@ mod tests {
                 source_name: "b".into(),
                 source_id: SourceId::git(SourceUrl::from("example.com/b")),
                 resolved_ref: dummy_ref("b"),
+                rooted_ref: dummy_rooted_ref(),
                 latest_version: None,
                 manifest: None,
                 deps: vec!["a".into()],
@@ -2308,6 +2676,13 @@ mod tests {
             version_tag: None,
             commit: None,
             tree_path: PathBuf::new(),
+        }
+    }
+
+    fn dummy_rooted_ref() -> RootedSourceRef {
+        RootedSourceRef {
+            checkout_root: PathBuf::new(),
+            package_root: PathBuf::new(),
         }
     }
 }

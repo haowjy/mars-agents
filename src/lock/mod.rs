@@ -279,15 +279,19 @@ fn checksum_is_empty(checksum: &ContentHash) -> bool {
 }
 
 fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
-    let (url, path) = match &node.source_id {
-        SourceId::Git { url } => (Some(url.clone()), None),
-        SourceId::Path { canonical } => (None, Some(canonical.to_string_lossy().to_string())),
+    let (url, path, subpath) = match &node.source_id {
+        SourceId::Git { url, subpath } => (Some(url.clone()), None, subpath.clone()),
+        SourceId::Path { canonical, subpath } => (
+            None,
+            Some(canonical.to_string_lossy().to_string()),
+            subpath.clone(),
+        ),
     };
 
     LockedSource {
         url,
         path,
-        subpath: None,
+        subpath,
         version: node.resolved_ref.version_tag.clone(),
         commit: node.resolved_ref.commit.clone(),
         tree_hash: None,
@@ -509,7 +513,14 @@ dest_path = "agents/helper.md"
             git_name.clone(),
             ResolvedNode {
                 source_name: git_name.clone(),
-                source_id: SourceId::git(git_url.clone()),
+                source_id: SourceId::git_with_subpath(
+                    git_url.clone(),
+                    Some(crate::types::SourceSubpath::new("plugins/base").unwrap()),
+                ),
+                rooted_ref: crate::resolve::RootedSourceRef {
+                    checkout_root: PathBuf::from("/tmp/cache/base"),
+                    package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
+                },
                 resolved_ref: ResolvedRef {
                     source_name: git_name.clone(),
                     version: Some(semver::Version::new(1, 2, 3)),
@@ -528,6 +539,11 @@ dest_path = "agents/helper.md"
                 source_name: path_name.clone(),
                 source_id: SourceId::Path {
                     canonical: path_canonical.clone(),
+                    subpath: Some(crate::types::SourceSubpath::new("plugins/local").unwrap()),
+                },
+                rooted_ref: crate::resolve::RootedSourceRef {
+                    checkout_root: PathBuf::from("/tmp/cache/local"),
+                    package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                 },
                 resolved_ref: ResolvedRef {
                     source_name: path_name.clone(),
@@ -572,11 +588,24 @@ dest_path = "agents/helper.md"
 
         let base = &new_lock.dependencies["base"];
         assert_eq!(base.url.as_ref(), Some(&git_url));
+        assert_eq!(
+            base.subpath
+                .as_ref()
+                .map(crate::types::SourceSubpath::as_str),
+            Some("plugins/base")
+        );
         assert_eq!(base.version.as_deref(), Some("v1.2.3"));
         assert_eq!(base.commit.as_deref(), Some("abc123"));
 
         let local = &new_lock.dependencies["local"];
         assert!(local.url.is_none());
+        assert_eq!(
+            local
+                .subpath
+                .as_ref()
+                .map(crate::types::SourceSubpath::as_str),
+            Some("plugins/local")
+        );
         assert_eq!(
             local.path.as_deref(),
             Some(path_canonical.to_string_lossy().as_ref())

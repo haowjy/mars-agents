@@ -273,6 +273,7 @@ fn build_target(
                 .project_root
                 .canonicalize()
                 .unwrap_or_else(|_| ctx.project_root.clone()),
+            subpath: None,
         };
 
         let local_items =
@@ -999,6 +1000,11 @@ mod tests {
                     source_name: name.into(),
                     source_id: crate::types::SourceId::Path {
                         canonical: tree_path.clone(),
+                        subpath: None,
+                    },
+                    rooted_ref: crate::resolve::RootedSourceRef {
+                        checkout_root: tree_path.clone(),
+                        package_root: tree_path.clone(),
                     },
                     resolved_ref: crate::source::ResolvedRef {
                         source_name: name.into(),
@@ -1020,8 +1026,10 @@ mod tests {
                     name: name.into(),
                     id: crate::types::SourceId::Path {
                         canonical: tree_path.clone(),
+                        subpath: None,
                     },
                     spec: SourceSpec::Path(tree_path),
+                    subpath: None,
                     filter,
                     rename: crate::types::RenameMap::new(),
                     is_overridden: false,
@@ -1083,6 +1091,10 @@ mod tests {
                 ResolvedNode {
                     source_name: (*name).into(),
                     source_id: crate::types::SourceId::git(crate::types::SourceUrl::from(*url)),
+                    rooted_ref: crate::resolve::RootedSourceRef {
+                        checkout_root: PathBuf::from(format!("/tmp/{name}")),
+                        package_root: PathBuf::from(format!("/tmp/{name}")),
+                    },
                     resolved_ref: crate::source::ResolvedRef {
                         source_name: (*name).into(),
                         version: Some(version),
@@ -1140,6 +1152,11 @@ mod tests {
             source_name: name.into(),
             source_id: crate::types::SourceId::Path {
                 canonical: canonical.clone(),
+                subpath: None,
+            },
+            rooted_ref: crate::resolve::RootedSourceRef {
+                checkout_root: canonical.clone(),
+                package_root: canonical.clone(),
             },
             resolved_ref: crate::source::ResolvedRef {
                 source_name: name.into(),
@@ -1164,8 +1181,10 @@ mod tests {
                     name: (*name).into(),
                     id: crate::types::SourceId::Path {
                         canonical: canonical.clone(),
+                        subpath: None,
                     },
                     spec: SourceSpec::Path(canonical),
+                    subpath: None,
                     filter: FilterMode::All,
                     rename: crate::types::RenameMap::new(),
                     is_overridden: false,

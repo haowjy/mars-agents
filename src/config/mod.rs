@@ -233,6 +233,7 @@ pub struct EffectiveDependency {
     pub name: SourceName,
     pub id: SourceId,
     pub spec: SourceSpec,
+    pub subpath: Option<SourceSubpath>,
     pub filter: FilterMode,
     pub rename: RenameMap,
     pub is_overridden: bool,
@@ -403,7 +404,8 @@ pub fn merge_with_root(
         } else {
             (base_spec, false, None)
         };
-        let id = source_id_for_spec(root, &spec);
+        let subpath = entry.subpath.clone();
+        let id = source_id_for_spec(root, &spec, subpath.clone());
 
         dependencies.insert(
             name.clone(),
@@ -411,6 +413,7 @@ pub fn merge_with_root(
                 name: name.clone(),
                 id,
                 spec,
+                subpath,
                 filter,
                 rename,
                 is_overridden,
@@ -516,10 +519,10 @@ impl FilterConfig {
     }
 }
 
-fn source_id_for_spec(root: &Path, spec: &SourceSpec) -> SourceId {
+fn source_id_for_spec(root: &Path, spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
     match spec {
-        SourceSpec::Git(git) => SourceId::git(git.url.clone()),
-        SourceSpec::Path(path) => match SourceId::path(root, path) {
+        SourceSpec::Git(git) => SourceId::git_with_subpath(git.url.clone(), subpath.clone()),
+        SourceSpec::Path(path) => match SourceId::path_with_subpath(root, path, subpath.clone()) {
             Ok(id) => id,
             Err(_) => {
                 let canonical = if path.is_absolute() {
@@ -527,7 +530,7 @@ fn source_id_for_spec(root: &Path, spec: &SourceSpec) -> SourceId {
                 } else {
                     root.join(path)
                 };
-                SourceId::Path { canonical }
+                SourceId::Path { canonical, subpath }
             }
         },
     }
@@ -1042,6 +1045,60 @@ path = "/home/dev/local-base"
         let orig = source.original_git.as_ref().unwrap();
         assert_eq!(orig.url, "https://github.com/org/base.git");
         assert_eq!(orig.version.as_deref(), Some("v1.0"));
+    }
+
+    #[test]
+    fn merge_override_retains_subpath_coordinate() {
+        let temp = TempDir::new().unwrap();
+        let override_path = temp.path().join("local-base");
+        std::fs::create_dir_all(&override_path).unwrap();
+
+        let config = Config {
+            dependencies: {
+                let mut m = IndexMap::new();
+                m.insert(
+                    "base".into(),
+                    DependencyEntry {
+                        url: Some("https://github.com/org/base.git".into()),
+                        path: None,
+                        subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+                        version: Some("v1.0".into()),
+                        filter: FilterConfig::default(),
+                    },
+                );
+                m
+            },
+            settings: Settings::default(),
+            ..Config::default()
+        };
+        let local = LocalConfig {
+            overrides: {
+                let mut m = IndexMap::new();
+                m.insert(
+                    "base".into(),
+                    OverrideEntry {
+                        path: override_path.clone(),
+                    },
+                );
+                m
+            },
+        };
+
+        let (effective, _) = merge_with_root(config, local, temp.path()).unwrap();
+        let source = &effective.dependencies["base"];
+        assert!(source.is_overridden);
+        assert_eq!(
+            source.subpath.as_ref().map(SourceSubpath::as_str),
+            Some("plugins/foo")
+        );
+        assert!(matches!(&source.spec, SourceSpec::Path(p) if p == &override_path));
+        assert!(matches!(
+            &source.id,
+            SourceId::Path {
+                canonical,
+                subpath: Some(sp)
+            } if canonical == &override_path && sp.as_str() == "plugins/foo"
+        ));
     }
 
     #[test]

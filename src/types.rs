@@ -414,33 +414,65 @@ impl MarsContext {
 }
 
 /// Stable source identity used for resolver deduplication.
-#[derive(Hash, Eq, PartialEq, Clone, Debug, Ord, PartialOrd)]
+#[derive(Hash, Eq, PartialEq, Clone, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum SourceId {
-    Git { url: SourceUrl },
-    Path { canonical: PathBuf },
+    Git {
+        url: SourceUrl,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subpath: Option<SourceSubpath>,
+    },
+    Path {
+        canonical: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subpath: Option<SourceSubpath>,
+    },
 }
 
 impl SourceId {
     pub fn git(url: SourceUrl) -> Self {
-        Self::Git { url }
+        Self::Git { url, subpath: None }
+    }
+
+    pub fn git_with_subpath(url: SourceUrl, subpath: Option<SourceSubpath>) -> Self {
+        Self::Git { url, subpath }
     }
 
     pub fn path(base: &Path, relative_or_absolute: &Path) -> std::io::Result<Self> {
+        Self::path_with_subpath(base, relative_or_absolute, None)
+    }
+
+    pub fn path_with_subpath(
+        base: &Path,
+        relative_or_absolute: &Path,
+        subpath: Option<SourceSubpath>,
+    ) -> std::io::Result<Self> {
         let candidate = if relative_or_absolute.is_absolute() {
             relative_or_absolute.to_path_buf()
         } else {
             base.join(relative_or_absolute)
         };
         let canonical = candidate.canonicalize()?;
-        Ok(Self::Path { canonical })
+        Ok(Self::Path { canonical, subpath })
     }
 }
 
 impl fmt::Display for SourceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Git { url } => write!(f, "git:{url}"),
-            Self::Path { canonical } => write!(f, "path:{}", canonical.display()),
+            Self::Git { url, subpath } => {
+                write!(f, "git:{url}")?;
+                if let Some(subpath) = subpath {
+                    write!(f, "@{subpath}")?;
+                }
+                Ok(())
+            }
+            Self::Path { canonical, subpath } => {
+                write!(f, "path:{}", canonical.display())?;
+                if let Some(subpath) = subpath {
+                    write!(f, "@{subpath}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -821,5 +853,45 @@ subpath = "plugins\\foo"
                 .map(SourceSubpath::as_str),
             Some("plugins/foo")
         );
+    }
+
+    #[test]
+    fn source_id_git_same_url_same_subpath_are_equal_and_hash_equal() {
+        let a = SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/repo.git"),
+            Some(SourceSubpath::new("plugins/foo").unwrap()),
+        );
+        let b = SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/repo.git"),
+            Some(SourceSubpath::new("plugins/foo").unwrap()),
+        );
+
+        assert_eq!(a, b);
+
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        b.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn source_id_git_same_url_different_subpaths_are_distinct() {
+        let a = SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/repo.git"),
+            Some(SourceSubpath::new("plugins/foo").unwrap()),
+        );
+        let b = SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/repo.git"),
+            Some(SourceSubpath::new("plugins/bar").unwrap()),
+        );
+
+        assert_ne!(a, b);
+
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut hasher_a);
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        b.hash(&mut hasher_b);
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
     }
 }

@@ -21,7 +21,7 @@ use crate::validate;
 pub(crate) fn apply_filter(
     discovered: &[discover::DiscoveredItem],
     filter: &FilterMode,
-    tree_path: &Path,
+    package_root: &Path,
 ) -> Result<Vec<discover::DiscoveredItem>, MarsError> {
     match filter {
         FilterMode::All => Ok(discovered.to_vec()),
@@ -51,7 +51,7 @@ pub(crate) fn apply_filter(
             }
 
             // Resolve transitive skill deps from agent frontmatter
-            resolve_agent_skill_deps(discovered, agents, tree_path, &mut include_set);
+            resolve_agent_skill_deps(discovered, agents, package_root, &mut include_set);
 
             Ok(discovered
                 .iter()
@@ -77,7 +77,7 @@ pub(crate) fn apply_filter(
             // Resolve transitive skill deps from all agent frontmatter
             let agent_names: Vec<ItemName> = agents.iter().map(|a| a.id.name.clone()).collect();
             let mut skill_deps: HashSet<ItemName> = HashSet::new();
-            resolve_agent_skill_deps(discovered, &agent_names, tree_path, &mut skill_deps);
+            resolve_agent_skill_deps(discovered, &agent_names, package_root, &mut skill_deps);
 
             // Include agents + their transitive skill deps only
             let skills: Vec<_> = discovered
@@ -102,7 +102,7 @@ pub(crate) fn apply_filter(
 fn resolve_agent_skill_deps(
     discovered: &[discover::DiscoveredItem],
     agent_names: &[ItemName],
-    tree_path: &Path,
+    package_root: &Path,
     skill_deps: &mut HashSet<ItemName>,
 ) {
     for agent_name in agent_names {
@@ -110,7 +110,7 @@ fn resolve_agent_skill_deps(
             .iter()
             .find(|i| i.id.kind == ItemKind::Agent && i.id.name == *agent_name)
         {
-            let agent_path = tree_path.join(&agent_item.source_path);
+            let agent_path = package_root.join(&agent_item.source_path);
             let deps = validate::parse_agent_skills(&agent_path).unwrap_or_default();
             for skill in deps {
                 skill_deps.insert(ItemName::from(skill));

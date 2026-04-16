@@ -151,6 +151,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-a".into()),
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
+                    subpath: None,
                 },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
@@ -170,6 +171,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-a".into()),
                 source_id: SourceId::Path {
                     canonical: skill_path.clone(),
+                    subpath: None,
                 },
                 source_path: skill_path.clone(),
                 dest_path: "skills/plan__org_base".into(),
@@ -223,6 +225,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-a".into()),
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
+                    subpath: None,
                 },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
@@ -276,6 +279,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-a".into()),
                 source_id: SourceId::Path {
                     canonical: agent_path.clone(),
+                    subpath: None,
                 },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
@@ -295,6 +299,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-b".into()),
                 source_id: SourceId::Path {
                     canonical: skill_b_path.clone(),
+                    subpath: None,
                 },
                 source_path: skill_b_path.clone(),
                 dest_path: "skills/planning__org_b".into(),
@@ -316,6 +321,7 @@ mod tests {
                 origin: crate::types::SourceOrigin::Dependency("source-c".into()),
                 source_id: SourceId::Path {
                     canonical: skill_c_path.clone(),
+                    subpath: None,
                 },
                 source_path: skill_c_path.clone(),
                 dest_path: "skills/planning__org_c".into(),
@@ -348,6 +354,11 @@ mod tests {
                 source_name: "source-a".into(),
                 source_id: SourceId::Path {
                     canonical: dir.path().to_path_buf(),
+                    subpath: None,
+                },
+                rooted_ref: crate::resolve::RootedSourceRef {
+                    checkout_root: dir.path().to_path_buf(),
+                    package_root: dir.path().to_path_buf(),
                 },
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: "source-a".into(),

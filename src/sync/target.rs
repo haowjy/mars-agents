@@ -66,7 +66,7 @@ pub fn build_with_collisions(
         let source_config = config.dependencies.get(source_name);
 
         let discovered =
-            discover::discover_source(&node.resolved_ref.tree_path, Some(source_name.as_str()))?;
+            discover::discover_source(&node.rooted_ref.package_root, Some(source_name.as_str()))?;
 
         let source_id = source_config
             .map(|s| s.id.clone())
@@ -85,12 +85,12 @@ pub fn build_with_collisions(
             .cloned()
             .unwrap_or_default();
 
-        let filtered = apply_filter_union(&discovered, &filters, &node.resolved_ref.tree_path)?;
+        let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
 
         for item in filtered {
             let is_flat_skill =
                 item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
-            let source_content_path = node.resolved_ref.tree_path.join(&item.source_path);
+            let source_content_path = node.rooted_ref.package_root.join(&item.source_path);
             let source_hash = if is_flat_skill {
                 ContentHash::from(hash::compute_skill_hash_filtered(
                     &source_content_path,
@@ -175,7 +175,7 @@ pub fn build_with_collisions(
 fn apply_filter_union(
     discovered: &[discover::DiscoveredItem],
     filters: &[FilterMode],
-    tree_path: &Path,
+    package_root: &Path,
 ) -> Result<Vec<discover::DiscoveredItem>, MarsError> {
     if filters.is_empty() {
         return Ok(discovered.to_vec());
@@ -183,7 +183,7 @@ fn apply_filter_union(
 
     let mut union: HashSet<(ItemKind, ItemName, PathBuf)> = HashSet::new();
     for filter in filters {
-        let filtered = apply_filter(discovered, filter, tree_path)?;
+        let filtered = apply_filter(discovered, filter, package_root)?;
         union.extend(
             filtered
                 .iter()
@@ -344,7 +344,7 @@ pub fn extract_owner_repo(url: Option<&str>, source_name: &str) -> String {
 
 fn extract_owner_repo_from_id(source_id: &SourceId, source_name: &str) -> String {
     match source_id {
-        SourceId::Git { url } => extract_owner_repo(Some(url.as_ref()), source_name),
+        SourceId::Git { url, .. } => extract_owner_repo(Some(url.as_ref()), source_name),
         SourceId::Path { .. } => extract_owner_repo(None, source_name),
     }
 }
@@ -400,7 +400,12 @@ mod tests {
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
+                            subpath: None,
                         }
+                    },
+                    rooted_ref: crate::resolve::RootedSourceRef {
+                        checkout_root: tree.path().to_path_buf(),
+                        package_root: tree.path().to_path_buf(),
                     },
                     resolved_ref: ResolvedRef {
                         source_name: name.into(),
@@ -434,9 +439,11 @@ mod tests {
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
+                            subpath: None,
                         }
                     },
                     spec,
+                    subpath: None,
                     filter,
                     rename: RenameMap::new(),
                     is_overridden: false,

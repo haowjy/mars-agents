@@ -472,6 +472,7 @@ mod tests {
             origin: crate::types::SourceOrigin::Dependency("test-source".into()),
             source_id: crate::types::SourceId::Path {
                 canonical: source_path.clone(),
+                subpath: None,
             },
             source_path,
             dest_path: format!("agents/{name}.md").into(),
@@ -807,6 +808,7 @@ mod tests {
             origin: crate::types::SourceOrigin::Dependency("test".into()),
             source_id: crate::types::SourceId::Path {
                 canonical: source_skill.clone(),
+                subpath: None,
             },
             source_path: source_skill,
             dest_path: "skills/planning".into(),
@@ -870,6 +872,7 @@ mod tests {
             origin: crate::types::SourceOrigin::Dependency("test".into()),
             source_id: crate::types::SourceId::Path {
                 canonical: flat_source.clone(),
+                subpath: None,
             },
             source_path: flat_source,
             dest_path: "skills/flat-skill".into(),

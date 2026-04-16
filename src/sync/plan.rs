@@ -165,6 +165,7 @@ mod tests {
             origin: crate::types::SourceOrigin::Dependency("test".into()),
             source_id: crate::types::SourceId::Path {
                 canonical: source_path.clone(),
+                subpath: None,
             },
             source_path,
             dest_path: dest_path.into(),

@@ -1,6 +1,6 @@
 # mars
 
-A package manager for AI agent profiles. Install agents and skills from git sources into Claude Code, Cursor, Codex, OpenCode — any tool that reads from a config directory.
+A package manager for AI agent profiles and skills. Install agents and skills from git sources into Claude Code, Cursor, Codex, OpenCode — any tool that reads from a config directory.
 
 ## Install
 
@@ -17,10 +17,10 @@ A package manager for AI agent profiles. Install agents and skills from git sour
 mars init
 mars add meridian-flow/meridian-dev-workflow
 mars link .claude
-mars link .cursor
+mars link .codex
 ```
 
-Your agents and skills are now installed and available in both Claude Code and Cursor. Update them with `mars upgrade`, check for drift with `mars doctor`.
+Your agents and skills are now installed and available in both Claude Code and Codex. Update them with `mars upgrade`, check for drift with `mars doctor`.
 
 ## Adding Sources
 

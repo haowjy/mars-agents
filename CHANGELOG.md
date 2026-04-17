@@ -4,20 +4,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-16
+
 ### Added
-- Target divergence detection: `mars sync` detects when `.agents/` files diverge from `.mars/` canonical state. Missing files re-copied; manual edits warned but preserved.
-- `mars doctor` target health check: compares `.agents/` against lock checksums. Reports missing and divergent files with actionable suggestions.
-- Checksum integrity enforcement: mandatory checksums for write actions, post-write verification, lock building rejects empty checksums.
+- `mars adopt` moves unmanaged target items into `.mars-src/`, then syncs.
+- `.mars-src` is now project-local source for agents and skills.
+- Non-package repos can mirror local items across `.agents`, `.claude`, and other targets.
+- Smoke coverage and docs for adopt/local source flow.
 
 ### Changed
-- Conflict strategy unified: both agents AND skills use source-wins + warn. Three-way merge no longer triggers on sync conflicts. Local modifications overwritten with diagnostic warning.
-- All items are copies, no symlinks. `_self` local package items copied to `.mars/` like dependency items. Local source edits require `mars sync` to propagate.
-- `mars resolve` acquires sync lock — concurrent resolve + sync now safe.
-- `mars models alias` uses proper config load/save instead of raw `fs::write`.
-- Cross-platform file locking: `libc::flock` on Unix, `windows_sys::LockFileEx` on Windows. No external crate.
+- Sync now reads `.mars-src` local items even without `[package]`.
+- Legacy repo-root `agents/` and `skills/` stay supported only for package repos.
+- `.mars-src` wins if both local roots define the same item.
 
 ### Fixed
-- `mars check` no longer false-warns when agents reference skills provided by dependencies.
+- `mars list` now shows adopted/local `.mars-src` items after sync.
 
 ## [0.1.2] - 2026-04-16
 

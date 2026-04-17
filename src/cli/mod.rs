@@ -8,6 +8,7 @@
 //! - Maps `MarsError` to exit codes and stderr messages
 
 pub mod add;
+pub mod adopt;
 pub mod cache;
 pub mod check;
 pub mod doctor;
@@ -111,6 +112,9 @@ pub enum Command {
     /// Add a dependency (git URL, GitHub shorthand, or local path).
     Add(add::AddArgs),
 
+    /// Adopt an unmanaged target item into `.mars-src/`, then sync.
+    Adopt(adopt::AdoptArgs),
+
     /// Remove a dependency.
     Remove(remove::RemoveArgs),
 
@@ -192,6 +196,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
 fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match cmd {
         Command::Add(args) => add::run(args, ctx, json),
+        Command::Adopt(args) => adopt::run(args, ctx, json),
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),

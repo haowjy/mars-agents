@@ -87,7 +87,9 @@ Checksums use the format `sha256:<hex>`. For agents (single files), this is the 
 
 ## The `_self` Source
 
-When a project has a `[package]` section in `mars.toml`, its own agents and skills appear in the lock under `source = "_self"` (`_self` is the reserved synthetic source name for items provided by the current project). The `_self` dependency entry uses `path = "."` to indicate the local project.
+Project-local agents and skills — those in `.mars-src/` or, for source packages with `[package]`, in the legacy repo-root `agents/`/`skills/` directories — appear in the lock under `source = "_self"`. `_self` is the reserved synthetic source name for all items provided by the current project. The `_self` dependency entry uses `path = "."` to indicate the local project.
+
+`[package]` is not required for `_self` items to appear in the lock — any project with content in `.mars-src/` will have them after sync.
 
 ```toml
 [dependencies._self]

@@ -18,7 +18,9 @@ Mars uses three config files, all at the project root:
 
 ### `[package]` (optional)
 
-Present only in source packages (repos that others depend on). Consumers don't need this section.
+Present only in source packages — repos that other projects depend on via `mars add`. Consumer projects that just install agents/skills from external packages do not need this section.
+
+To keep project-local agents and skills without publishing, use `.mars-src/` instead. See [local-development.md](local-development.md#mars-src----project-local-agents-and-skills).
 
 ```toml
 [package]
@@ -32,6 +34,8 @@ description = "Core agents and skills for meridian"  # optional
 | `name` | string | yes | Package name, used for dependency resolution |
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
+
+When `[package]` is present, Mars also reads legacy repo-root `agents/` and `skills/` directories during sync. `.mars-src/` always takes precedence over the legacy root if an item name is defined in both.
 
 ### `[dependencies]`
 
@@ -279,4 +283,4 @@ See [local-development.md](local-development.md) for workflows.
 
 ## Reserved Names
 
-- `_self` is reserved for local package items (`_self` is the synthetic source name for agents/skills coming from the current project when `[package]` is present).
+- `_self` is reserved for project-local items: agents and skills discovered from `.mars-src/` (always) and from the legacy repo-root `agents/`/`skills/` directories (only when `[package]` is present). `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.

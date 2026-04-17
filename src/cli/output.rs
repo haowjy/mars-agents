@@ -102,6 +102,10 @@ fn is_dry_run(report: &SyncReport) -> bool {
 }
 
 fn print_sync_report_json(report: &SyncReport) {
+    println!("{}", sync_report_json(report));
+}
+
+pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     #[derive(Serialize)]
     struct JsonTargetOutcome {
         name: String,
@@ -161,7 +165,7 @@ fn print_sync_report_json(report: &SyncReport) {
         })
         .collect();
 
-    let json_report = JsonReport {
+    serde_json::to_value(JsonReport {
         ok: conflicts == 0,
         dry_run: report.dry_run,
         installed,
@@ -173,12 +177,8 @@ fn print_sync_report_json(report: &SyncReport) {
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
-    };
-
-    println!(
-        "{}",
-        serde_json::to_string(&json_report).unwrap_or_default()
-    );
+    })
+    .unwrap_or_else(|_| serde_json::json!({}))
 }
 
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {

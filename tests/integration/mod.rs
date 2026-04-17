@@ -1568,3 +1568,223 @@ targets = [".claude"]
             .is_some_and(|settings| !settings.contains_key("targets"))
     );
 }
+
+#[test]
+fn sync_prefers_mars_src_local_items_over_repo_root() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args(["init", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::write(
+        project.child("mars.toml").path(),
+        "[dependencies]\n\n[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+
+    let legacy_skill = project.child("skills").child("planning");
+    legacy_skill.create_dir_all().unwrap();
+    legacy_skill
+        .child("SKILL.md")
+        .write_str("# Legacy")
+        .unwrap();
+
+    let preferred_skill = project.child(".mars-src").child("skills").child("planning");
+    preferred_skill.create_dir_all().unwrap();
+    preferred_skill
+        .child("SKILL.md")
+        .write_str("# Preferred")
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("defined in both"))
+        .stderr(predicate::str::contains(".mars-src"));
+
+    assert_eq!(
+        fs::read_to_string(
+            project
+                .child(".agents")
+                .child("skills")
+                .child("planning")
+                .child("SKILL.md")
+                .path()
+        )
+        .unwrap(),
+        "# Preferred"
+    );
+}
+
+#[test]
+fn adopt_moves_skill_into_mars_src_and_syncs_targets() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let unmanaged_skill = project
+        .child(".claude")
+        .child("skills")
+        .child("local-skill");
+    unmanaged_skill.create_dir_all().unwrap();
+    unmanaged_skill
+        .child("SKILL.md")
+        .write_str("# Local skill")
+        .unwrap();
+
+    mars()
+        .args([
+            "adopt",
+            unmanaged_skill.path().to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("adopted skill `local-skill`"));
+
+    let local_source_skill = project
+        .child(".mars-src")
+        .child("skills")
+        .child("local-skill")
+        .child("SKILL.md");
+    assert!(local_source_skill.exists());
+    assert_eq!(
+        fs::read_to_string(local_source_skill.path()).unwrap(),
+        "# Local skill"
+    );
+
+    assert!(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("local-skill")
+            .child("SKILL.md")
+            .exists()
+    );
+    assert!(
+        project
+            .child(".agents")
+            .child("skills")
+            .child("local-skill")
+            .child("SKILL.md")
+            .exists()
+    );
+    assert!(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("local-skill")
+            .child("SKILL.md")
+            .exists()
+    );
+
+    let lock_content = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock_content.contains("[dependencies._self]"));
+    assert!(lock_content.contains("[items.\"skills/local-skill\"]"));
+}
+
+#[test]
+fn sync_reads_mars_src_local_items_without_package_section() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let local_skill = project
+        .child(".mars-src")
+        .child("skills")
+        .child("local-only");
+    local_skill.create_dir_all().unwrap();
+    local_skill
+        .child("SKILL.md")
+        .write_str("# Local only")
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("local-only")
+            .child("SKILL.md")
+            .exists()
+    );
+    assert!(
+        project
+            .child(".agents")
+            .child("skills")
+            .child("local-only")
+            .child("SKILL.md")
+            .exists()
+    );
+    let lock_content = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock_content.contains("[dependencies._self]"));
+    assert!(lock_content.contains("[items.\"skills/local-only\"]"));
+}
+
+#[test]
+fn sync_ignores_repo_root_local_items_without_package_section() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args(["init", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let legacy_skill = project.child("skills").child("legacy-only");
+    legacy_skill.create_dir_all().unwrap();
+    legacy_skill
+        .child("SKILL.md")
+        .write_str("# Legacy only")
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    assert!(
+        !project
+            .child(".agents")
+            .child("skills")
+            .child("legacy-only")
+            .child("SKILL.md")
+            .exists()
+    );
+}

@@ -198,6 +198,41 @@ Expected result:
 - command fails
 - error explains that archive-download URLs are unsupported in v1
 
+## `mars adopt`
+
+Verifies that an unmanaged item is moved to `.mars-src/` and appears in the lock after sync.
+
+```bash
+tmpdir=$(mktemp -d)
+proj="$tmpdir/project"
+
+mkdir -p "$proj/.agents/skills/planning"
+
+cat > "$proj/.agents/skills/planning/SKILL.md" <<'EOF'
+---
+name: planning
+description: planning skill
+---
+# Planning
+EOF
+
+mars init --root "$proj"
+
+# Adopt the unmanaged skill
+mars adopt "$proj/.agents/skills/planning" --root "$proj"
+
+# Item should now be in .mars-src and tracked by the lock
+mars list --root "$proj"
+mars doctor --root "$proj"
+```
+
+Expected result:
+- `mars adopt` moves `planning` to `.mars-src/skills/planning/` and syncs
+- `mars list` shows `planning` as an installed skill
+- `mars doctor` exits cleanly
+
+Run this check when modifying `src/cli/adopt.rs` or `src/local_source.rs`.
+
 ## When To Run Which Checks
 
 Run this minimum set for parser-only changes:
@@ -216,5 +251,7 @@ Run this minimum set for transport or source-normalization changes:
 - generic `git://` URL
 - GitLab-style host with explicit port
 - one GitHub repo add
+
+Run the `mars adopt` check when modifying adopt or local-source discovery code.
 
 Run the full page before a release if the release includes parser, rooting, discovery, or sync behavior changes.

@@ -6,6 +6,7 @@ pub mod error;
 pub mod frontmatter;
 pub mod fs;
 pub mod hash;
+pub mod local_source;
 pub mod lock;
 pub mod merge;
 pub mod models;

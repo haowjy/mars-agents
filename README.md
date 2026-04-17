@@ -57,13 +57,16 @@ match = ["*opus*"]
 
 ```
 mars.toml + mars.lock (committed)
+.mars-src/              ← your own agents/skills (committed, editable)
     ↓ mars sync
-  .mars/ (canonical store, gitignored)
+  .mars/                ← canonical store, gitignored (rebuilt from sources)
     ↓ copy to each target
   .agents/, .claude/, .cursor/ (your tools read from here)
 ```
 
 Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files.
+
+Use `mars adopt` to bring an existing unmanaged file into `.mars-src/` in one step.
 
 ## Docs
 

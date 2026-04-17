@@ -15,10 +15,10 @@ use std::path::PathBuf;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector};
-use crate::discover;
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
+use crate::local_source;
 use crate::lock::LockFile;
 use crate::lock::{ItemId, ItemKind};
 use crate::resolve::{ResolveOptions, ResolvedGraph};
@@ -266,80 +266,81 @@ fn build_target(
     let (mut target_state, renames) =
         target::build_with_collisions(&resolved.graph, &resolved.loaded.effective)?;
 
-    if resolved.loaded.config.package.is_some() {
-        let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-        let local_source_id = SourceId::Path {
-            canonical: ctx
-                .project_root
-                .canonicalize()
-                .unwrap_or_else(|_| ctx.project_root.clone()),
-            subpath: None,
+    let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
+    let local_source_id = SourceId::Path {
+        canonical: ctx
+            .project_root
+            .canonicalize()
+            .unwrap_or_else(|_| ctx.project_root.clone()),
+        subpath: None,
+    };
+
+    let local_items = local_source::discover_local_items(
+        &ctx.project_root,
+        resolved.loaded.config.package.is_some(),
+        Some(local_source_name.as_str()),
+        diag,
+    )?;
+    for item in local_items {
+        let source_path = item.disk_path();
+        let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
+            && item.discovered.source_path == Path::new(".");
+        let source_hash = if is_flat_skill {
+            ContentHash::from(hash::compute_skill_hash_filtered(
+                &source_path,
+                crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+            )?)
+        } else {
+            ContentHash::from(hash::compute_hash(&source_path, item.discovered.id.kind)?)
         };
+        let dest_path =
+            default_dest_path(item.discovered.id.kind, item.discovered.id.name.as_str());
 
-        let local_items = discover::discover_resolved_source(
-            &ctx.project_root,
-            Some(local_source_name.as_str()),
-        )?;
-        for item in local_items {
-            let source_path = ctx.project_root.join(&item.source_path);
-            let is_flat_skill =
-                item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
-            let source_hash = if is_flat_skill {
-                ContentHash::from(hash::compute_skill_hash_filtered(
-                    &source_path,
-                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
-                )?)
-            } else {
-                ContentHash::from(hash::compute_hash(&source_path, item.id.kind)?)
-            };
-            let dest_path = default_dest_path(item.id.kind, item.id.name.as_str());
-
-            if let Some(existing) = target_state.items.shift_remove(&dest_path) {
-                diag.warn(
-                    "local-shadow",
-                    format!(
-                        "local {} `{}` shadows dependency `{}` {} `{}`",
-                        item.id.kind,
-                        item.id.name,
-                        existing.source_name,
-                        existing.id.kind,
-                        existing.id.name
-                    ),
-                );
-            }
-
-            let disk_path = managed_root.join(dest_path.as_path());
-            if !resolved.loaded.old_lock.items.contains_key(&dest_path)
-                && disk_path.symlink_metadata().is_ok()
-            {
-                diag.warn(
-                    "unmanaged-collision",
-                    format!(
-                        "local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                        item.id.kind, item.id.name, dest_path
-                    ),
-                );
-                continue;
-            }
-
-            target_state.items.insert(
-                dest_path.clone(),
-                TargetItem {
-                    id: ItemId {
-                        kind: item.id.kind,
-                        name: item.id.name.clone(),
-                    },
-                    source_name: local_source_name.clone(),
-                    origin: SourceOrigin::LocalPackage,
-                    source_id: local_source_id.clone(),
-                    source_path,
-                    dest_path,
-                    source_hash,
-                    is_flat_skill,
-                    rewritten_content: None,
-                },
+        if let Some(existing) = target_state.items.shift_remove(&dest_path) {
+            diag.warn(
+                "local-shadow",
+                format!(
+                    "local {} `{}` shadows dependency `{}` {} `{}`",
+                    item.discovered.id.kind,
+                    item.discovered.id.name,
+                    existing.source_name,
+                    existing.id.kind,
+                    existing.id.name
+                ),
             );
         }
+
+        let disk_path = managed_root.join(dest_path.as_path());
+        if !resolved.loaded.old_lock.items.contains_key(&dest_path)
+            && disk_path.symlink_metadata().is_ok()
+        {
+            diag.warn(
+                "unmanaged-collision",
+                format!(
+                    "local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+                    item.discovered.id.kind, item.discovered.id.name, dest_path
+                ),
+            );
+            continue;
+        }
+
+        target_state.items.insert(
+            dest_path.clone(),
+            TargetItem {
+                id: ItemId {
+                    kind: item.discovered.id.kind,
+                    name: item.discovered.id.name.clone(),
+                },
+                source_name: local_source_name.clone(),
+                origin: SourceOrigin::LocalPackage,
+                source_id: local_source_id.clone(),
+                source_path,
+                dest_path,
+                source_hash,
+                is_flat_skill,
+                rewritten_content: None,
+            },
+        );
     }
 
     // Handle collisions + rewrite frontmatter refs.

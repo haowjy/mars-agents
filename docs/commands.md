@@ -219,6 +219,38 @@ Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs. Us
 
 ---
 
+## `mars adopt`
+
+Move an unmanaged item from a target directory into `.mars-src/`, then sync.
+
+```bash
+mars adopt <path> [--dry-run]
+```
+
+| Argument/Flag | Description |
+|---|---|
+| `path` | Path to an unmanaged agent file or skill directory inside a managed target |
+| `--dry-run` | Show what would happen without moving anything or syncing |
+
+**Behavior:**
+- Validates that `path` is inside a managed target directory and is not already tracked by Mars
+- Agent files (`.md` inside `agents/`) are moved to `.mars-src/agents/<name>.md`
+- Skill directories (containing `SKILL.md`) are moved to `.mars-src/skills/<name>/`
+- Runs `mars sync` so the item is immediately installed back through the normal pipeline
+- Same-filesystem only in MVP; the target directory must be on the same filesystem as the project root
+
+`mars adopt` works in any project — `[package]` in `mars.toml` is not required.
+
+```bash
+mars adopt .agents/agents/my-agent.md        # adopt an agent
+mars adopt .agents/skills/my-skill           # adopt a skill
+mars adopt .agents/agents/my-agent.md --dry-run  # preview only
+```
+
+After adoption, the item lives in `.mars-src/` (your editable source) and is tracked in `mars.lock`. Edit it there and run `mars sync` to propagate changes.
+
+---
+
 ## `mars resolve`
 
 Mark conflicts as resolved after manually editing conflicted files.

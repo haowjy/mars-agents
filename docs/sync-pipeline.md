@@ -150,7 +150,10 @@ The diff matrix:
 
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
-Also injects local package items when the project has a `[package]` section — the project's own agents/skills are added to the target state under the `_self` source name (`_self` is the reserved local-project source identifier).
+Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
+- Items from `.mars-src/` are always discovered, regardless of whether `[package]` is present.
+- Items from the legacy repo-root `agents/`/`skills/` directories are discovered only when `[package]` is in `mars.toml`.
+- If the same item name exists in both `.mars-src/` and the repo root, `.mars-src/` wins (with a `duplicate-local-definition` warning).
 
 ### 5. Apply Plan (`apply_plan`)
 
@@ -162,8 +165,9 @@ Executes planned actions against the `.mars/` canonical store:
 | Update | Replace with new source content |
 | Overwrite | Replace with source content (conflicts: source wins) |
 | Remove | Delete file or directory |
-| Note | `_self` items follow the same Install path as dependency items |
 | Skip / KeepLocal | No-op, recorded in outcomes |
+
+Project-local (`_self`) items follow the same Install path as dependency items — there is no special handling for them here.
 
 In `--diff` (dry run) mode, actions are computed but not executed.
 
@@ -186,10 +190,20 @@ Writes lock and constructs the final `SyncReport`.
 - **Validation warnings**: emits diagnostics for missing skill references in agents.
 - **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 
-## Local Package Items (`_self`)
+## Project-Local Items (`_self`)
 
-When `mars.toml` has a `[package]` section, the project's own agents and skills are discovered, hashed, and installed into the managed root via the normal sync pipeline — the same install/copy path as dependency items.
+Project-local agents and skills are discovered, hashed, and installed into the managed root via the normal sync pipeline — the same install/copy path as dependency items.
 
-- `_self` items shadow external items if names collide (with a warning)
-- Removed local items are cleaned up on the next `mars sync`
-- If `[package]` is removed, all `_self` entries are cleaned up
+**Discovery sources:**
+
+| Source | When included |
+|---|---|
+| `.mars-src/agents/` and `.mars-src/skills/` | Always |
+| Repo-root `agents/` and `skills/` (legacy) | Only when `[package]` is present in `mars.toml` |
+
+`.mars-src/` is the preferred location. The repo-root directories are a legacy path retained for source packages that published content there before `.mars-src/` existed. If the same item name appears in both, `.mars-src/` wins.
+
+All `_self` items follow the same behavior:
+- Shadow external dependency items if names collide (with a warning)
+- Cleaned up on the next `mars sync` when removed from source
+- Appear in `mars list` output after sync (Mars reads from the lock + `.mars/` cache)

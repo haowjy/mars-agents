@@ -28,6 +28,11 @@ User intent is expressed through explicit flags and arguments, not inferred from
 
 The mars binary contains zero hardcoded model aliases. All aliases come from packages (via `[models]` in their `mars.toml`) or from the consumer's own `mars.toml`. This keeps the binary distribution-neutral and lets packages control the alias namespace.
 
+
+### Windows compatibility is first-class
+
+macOS, Linux, and Windows must all work. Prefer cross-platform Rust/std tooling over shell-specific or git-specific assumptions. Root discovery uses `Path::parent()` which terminates correctly at filesystem roots on all platforms (Unix `/`, Windows drive roots like `C:\`, UNC paths like `\\server\share`). Do not rely on `.git` boundaries for project discovery — walk to filesystem root.
+
 ## Architecture
 
 ```

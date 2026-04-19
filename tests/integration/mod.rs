@@ -134,6 +134,75 @@ fn add_local_source_and_sync() {
 }
 
 #[test]
+fn add_auto_inits_project_when_root_has_no_mars_toml() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "bootstrap-source", &[("coder", "# Coder agent")], &[]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auto-initialized"));
+
+    assert!(project.child("mars.toml").exists());
+    assert!(project.child(".mars").exists());
+    assert!(
+        project
+            .child(".agents")
+            .child("agents")
+            .child("coder.md")
+            .exists()
+    );
+    assert!(project.child("mars.lock").exists());
+}
+
+#[test]
+fn link_auto_inits_project_when_root_has_no_mars_toml() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auto-initialized"));
+
+    assert!(project.child("mars.toml").exists());
+    assert!(project.child(".mars").exists());
+
+    let config_content = fs::read_to_string(project.child("mars.toml").path()).unwrap();
+    assert!(
+        config_content.contains(".claude"),
+        "expected linked target to be persisted; config:\n{config_content}"
+    );
+}
+
+#[test]
+fn sync_without_project_still_errors_instead_of_auto_init() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no mars.toml found"));
+
+    assert!(!project.child("mars.toml").exists());
+}
+
+#[test]
 fn add_second_source_preserves_first_source_items_in_lock() {
     let dir = TempDir::new().unwrap();
     let source_one = create_source(&dir, "base1", &[("coder", "# Coder from base1")], &[]);

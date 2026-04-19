@@ -6,6 +6,12 @@ pub enum ConfigError {
     #[error("config file not found: {path}")]
     NotFound { path: PathBuf },
 
+    #[error(
+        "no mars.toml found from {} to filesystem root. Run `mars init` first.",
+        start.display()
+    )]
+    ProjectRootNotFound { start: PathBuf },
+
     #[error("invalid config: {message}")]
     Invalid { message: String },
 

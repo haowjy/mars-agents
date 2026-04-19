@@ -4,6 +4,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-18
+
+### Added
+- `mars add` auto-inits a missing project at `--root` or cwd before adding a source.
+- `mars link` auto-inits a missing project before managing a target directory.
+- Smoke coverage for bootstrap and root-discovery flows.
+
+### Changed
+- `mars add` and context commands walk up to filesystem root, not git root.
+- Walk-up boundary is now filesystem root on all platforms (Unix `/`, Windows `C:\`, UNC paths).
+- `mars init` creates project at cwd (or `--root` target) without walking up.
+- Auto-init applies to `mars add` and `mars link`; `mars sync` still errors on a missing project.
+- `--root` for context commands sets walk-up start path, not direct project target.
+- Error message now says "filesystem root" instead of "repository root".
+
+- Windows compatibility documented as first-class invariant in AGENTS.md.
 ## [0.1.3] - 2026-04-16
 
 ### Added

@@ -187,10 +187,34 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         Command::Cache(args) => cache::run(args, cli.json),
         // All other commands require context
         cmd => {
-            let ctx = find_agents_root(cli.root.as_deref())?;
+            let ctx = match find_agents_root(cli.root.as_deref()) {
+                Ok(ctx) => ctx,
+                Err(err) if should_auto_init_project(cmd, &err) => {
+                    let initialized = init::initialize_project(cli.root.as_deref(), None)?;
+                    if !cli.json {
+                        output::print_info(&format!(
+                            "auto-initialized {} with mars.toml",
+                            initialized.project_root.display()
+                        ));
+                    }
+                    MarsContext::from_roots(
+                        initialized.project_root.clone(),
+                        initialized.managed_root.clone(),
+                    )?
+                }
+                Err(err) => return Err(err),
+            };
             dispatch_with_root(cmd, &ctx, cli.json)
         }
     }
+}
+
+fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
+    matches!(cmd, Command::Add(_) | Command::Link(_))
+        && matches!(
+            err,
+            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
+        )
 }
 
 fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -273,27 +297,15 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
     Ok(default_root)
 }
 
-/// Walk up from cwd to find the git root, defaulting to cwd if not in a git repo.
-pub fn default_project_root() -> Result<PathBuf, MarsError> {
-    let cwd = std::env::current_dir()?;
-    let mut dir = cwd.as_path();
-    loop {
-        if dir.join(".git").exists() {
-            return Ok(dir.to_path_buf());
-        }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return Ok(cwd),
-        }
-    }
-}
-
-/// Find mars project root by walking up from cwd (or using `--root`).
+/// Find mars project root by walking up from start path to filesystem root.
 ///
-/// Walk-up checks `mars.toml` in each directory and stops at the first
-/// git root (`.git`), never crossing into parent repositories.
+/// For context commands (`add`, `sync`, etc.), this walks from the start path
+/// (cwd or `--root`) until it finds a `mars.toml`. Walk-up continues to filesystem
+/// root — git boundaries do not stop the walk.
+///
+/// If `--root` is provided, it sets the walk-up start path, not a direct target.
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
-    if let Some(root) = explicit {
+    let start = if let Some(root) = explicit {
         // Reject --root values that look like managed output directories
         if let Some(basename) = root.file_name().and_then(|f| f.to_str())
             && (WELL_KNOWN.contains(&basename) || TOOL_DIRS.contains(&basename))
@@ -308,34 +320,28 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
             }));
         }
 
-        let config_path = root.join("mars.toml");
-        if !config_path.exists() {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "{} does not contain mars.toml. Run `mars init` first.",
-                    root.display()
-                ),
-            }));
-        }
-        return MarsContext::new(root.to_path_buf());
-    }
+        root.to_path_buf()
+    } else {
+        std::env::current_dir()?
+    };
 
-    find_agents_root_from(None, &std::env::current_dir()?)
+    find_agents_root_from(&start)
 }
 
-fn find_agents_root_from(_explicit: Option<&Path>, start: &Path) -> Result<MarsContext, MarsError> {
-    let cwd_canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    let mut dir = cwd_canon.as_path();
+/// Walk up from `start` to filesystem root searching for `mars.toml`.
+///
+/// Uses `Path::parent()` which returns `None` at filesystem root on all platforms:
+/// - Unix: `/` has no parent
+/// - Windows: `C:\` or UNC roots like `\\server\share` have no parent
+fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
+    let start_canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut dir = start_canon.as_path();
 
+    // Walk up to filesystem root (Path::parent() returns None at root)
     loop {
         let config_path = dir.join("mars.toml");
         if config_path.exists() {
             return MarsContext::new(dir.to_path_buf());
-        }
-
-        // Never cross the current git root (or submodule root).
-        if dir.join(".git").exists() {
-            break;
         }
 
         match dir.parent() {
@@ -344,11 +350,8 @@ fn find_agents_root_from(_explicit: Option<&Path>, start: &Path) -> Result<MarsC
         }
     }
 
-    Err(MarsError::Config(ConfigError::Invalid {
-        message: format!(
-            "no mars.toml found from {} up to repository root. Run `mars init` first.",
-            start.display()
-        ),
+    Err(MarsError::Config(ConfigError::ProjectRootNotFound {
+        start: start.to_path_buf(),
     }))
 }
 
@@ -362,6 +365,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
 
+        // --root points to a dir with mars.toml — should find it via walk-up
         let ctx = find_agents_root(Some(dir.path())).unwrap();
         assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
         assert_eq!(ctx.managed_root, dir.path().join(".agents"));
@@ -424,6 +428,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn context_rejects_symlinked_managed_root_outside_project() {
         let project_dir = TempDir::new().unwrap();
@@ -478,40 +483,39 @@ mod tests {
         );
     }
 
-    // ── Phase 5: Walk-up discovery tests ──────────────────────────
+    // ── Walk-up discovery tests (filesystem root boundary) ──────────────────────────
 
     #[test]
-    fn walk_up_stops_at_git_boundary() {
-        // outer has .git + mars.toml, inner has .git but no mars.toml
-        // Starting from inner should NOT find outer's config
+    fn walk_up_crosses_git_boundary_to_find_config() {
+        // Outer has mars.toml, inner has .git but no mars.toml
+        // Starting from inner SHOULD find outer's config (git is irrelevant)
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");
-        std::fs::create_dir_all(outer.join(".git")).unwrap();
         std::fs::create_dir_all(outer.join(".agents")).unwrap();
         std::fs::write(outer.join("mars.toml"), "[dependencies]\n").unwrap();
 
         let inner = outer.join("inner");
         std::fs::create_dir_all(inner.join(".git")).unwrap();
 
-        let result = find_agents_root_from(None, &inner);
-        assert!(
-            result.is_err(),
-            "should not find outer config when inner has .git"
+        let ctx = find_agents_root_from(&inner).unwrap();
+        assert_eq!(
+            ctx.project_root,
+            outer.canonicalize().unwrap(),
+            "should find outer config even when inner has .git"
         );
     }
 
     #[test]
-    fn walk_up_finds_config_at_git_root() {
+    fn walk_up_finds_config_in_ancestor() {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("project");
-        std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join(".agents")).unwrap();
         std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
 
         let subdir = root.join("src").join("lib");
         std::fs::create_dir_all(&subdir).unwrap();
 
-        let ctx = find_agents_root_from(None, &subdir).unwrap();
+        let ctx = find_agents_root_from(&subdir).unwrap();
         assert_eq!(ctx.project_root, root.canonicalize().unwrap());
     }
 
@@ -520,7 +524,6 @@ mod tests {
         // child has package-only mars.toml, parent also has mars.toml
         let dir = TempDir::new().unwrap();
         let parent = dir.path().join("parent");
-        std::fs::create_dir_all(parent.join(".git")).unwrap();
         std::fs::create_dir_all(parent.join(".agents")).unwrap();
         std::fs::write(parent.join("mars.toml"), "[dependencies]\n").unwrap();
 
@@ -532,7 +535,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = find_agents_root_from(None, &child).unwrap();
+        let ctx = find_agents_root_from(&child).unwrap();
         assert_eq!(ctx.project_root, child.canonicalize().unwrap());
     }
 
@@ -540,24 +543,22 @@ mod tests {
     fn walk_up_from_deep_subdirectory() {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("repo");
-        std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join(".agents")).unwrap();
         std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
 
         let deep = root.join("src").join("foo").join("bar");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let ctx = find_agents_root_from(None, &deep).unwrap();
+        let ctx = find_agents_root_from(&deep).unwrap();
         assert_eq!(ctx.project_root, root.canonicalize().unwrap());
     }
 
     #[test]
-    fn submodule_isolation() {
-        // Outer repo has .git dir + mars.toml
-        // Inner dir has .git FILE (submodule marker) — should not see outer config
+    fn walk_up_crosses_submodule_boundary() {
+        // Outer repo has mars.toml
+        // Inner dir has .git FILE (submodule marker) — walk-up should still find outer config
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");
-        std::fs::create_dir_all(outer.join(".git")).unwrap();
         std::fs::create_dir_all(outer.join(".agents")).unwrap();
         std::fs::write(outer.join("mars.toml"), "[dependencies]\n").unwrap();
 
@@ -570,10 +571,45 @@ mod tests {
         )
         .unwrap();
 
-        let result = find_agents_root_from(None, &submodule);
-        assert!(
-            result.is_err(),
-            "should not find outer config through submodule .git file boundary"
+        let ctx = find_agents_root_from(&submodule).unwrap();
+        assert_eq!(
+            ctx.project_root,
+            outer.canonicalize().unwrap(),
+            "should find outer config through submodule .git file boundary"
         );
+    }
+
+    #[test]
+    fn walk_up_errors_when_no_config_found() {
+        let dir = TempDir::new().unwrap();
+        let deep = dir.path().join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let result = find_agents_root_from(&deep);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no mars.toml found"),
+            "should report no config found: {err}"
+        );
+        assert!(
+            err.contains("filesystem root"),
+            "should mention filesystem root: {err}"
+        );
+    }
+
+    #[test]
+    fn walk_up_with_root_flag_starts_from_specified_path() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join(".agents")).unwrap();
+        std::fs::write(project.join("mars.toml"), "[dependencies]\n").unwrap();
+
+        // --root points to subdirectory — walk up should find mars.toml in parent
+        let subdir = project.join("src");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let ctx = find_agents_root(Some(&subdir)).unwrap();
+        assert_eq!(ctx.project_root, project.canonicalize().unwrap());
     }
 }

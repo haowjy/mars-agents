@@ -3,10 +3,11 @@
 //! Creates `<project-root>/mars.toml` and `<project-root>/TARGET` (default: `.agents`).
 //! Use `--root` to select an explicit project root.
 //!
+//! Init does NOT walk up — it creates a project at cwd or the `--root` target.
 //! Idempotent: re-running is a no-op for initialization but still processes
 //! `--link` flags.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ConfigError, MarsError};
 
@@ -21,6 +22,13 @@ pub struct InitArgs {
     /// Directories to link after initialization. Repeatable.
     #[arg(long, value_name = "DIR")]
     pub link: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct InitializedProject {
+    pub project_root: PathBuf,
+    pub managed_root: PathBuf,
+    pub already_initialized: bool,
 }
 
 /// Validate that a target is a simple directory name, not a path.
@@ -53,18 +61,17 @@ fn ensure_consumer_config(project_root: &Path) -> Result<bool, MarsError> {
     Ok(false)
 }
 
-/// Run `mars init`.
-pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
-    // 1. Determine project root
-    let project_root = explicit_root.map(Path::to_path_buf).unwrap_or_else(|| {
-        super::default_project_root().unwrap_or_else(|_| std::env::current_dir().unwrap())
-    });
+pub(super) fn initialize_project(
+    explicit_root: Option<&Path>,
+    target_override: Option<&str>,
+) -> Result<InitializedProject, MarsError> {
+    let project_root = explicit_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
 
-    // 2. Determine target: argument → existing settings.managed_root → .agents
-    let target = if let Some(t) = args.target.as_deref() {
+    let target = if let Some(t) = target_override {
         t.to_string()
     } else {
-        // Check existing config for persisted managed_root
         match crate::config::load(&project_root) {
             Ok(config) => config
                 .settings
@@ -77,14 +84,28 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
     validate_target(&target)?;
     let managed_root = project_root.join(&target);
 
-    // 3. Ensure project config + managed structure
     std::fs::create_dir_all(&managed_root)?;
     std::fs::create_dir_all(project_root.join(".mars"))?;
 
     let already_initialized = ensure_consumer_config(&project_root)?;
 
-    // 4. Persist settings.managed_root.
     persist_managed_root(&project_root, &target)?;
+
+    Ok(InitializedProject {
+        project_root,
+        managed_root,
+        already_initialized,
+    })
+}
+
+/// Run `mars init`.
+///
+/// Init creates a project at cwd or `--root` target. It does NOT walk up.
+pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let initialized = initialize_project(explicit_root, args.target.as_deref())?;
+    let project_root = initialized.project_root;
+    let managed_root = initialized.managed_root;
+    let already_initialized = initialized.already_initialized;
 
     if !json {
         if already_initialized {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::GitSpec;
 use crate::lock::ItemKind;
+use crate::resolve::compat::CompatibilityResult;
 use semver::Version;
 use std::path::PathBuf;
 

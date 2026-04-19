@@ -121,7 +121,7 @@ fn direct_and_transitive_filters_are_both_collected_for_same_source() {
 }
 
 #[test]
-fn filtered_parent_dep_does_not_seed_unfiltered_child_items() {
+fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
     let dir = TempDir::new().unwrap();
     let parent_tree = dir.path().join("parent");
     let child_tree = dir.path().join("child");
@@ -166,7 +166,78 @@ fn filtered_parent_dep_does_not_seed_unfiltered_child_items() {
         settings: Settings::default(),
     };
 
+    // If child items were eagerly seeded through the filtered parent path,
+    // resolving this graph would fail with SkillNotFound for `missing-skill`.
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     assert!(graph.nodes.contains_key("parent"));
     assert!(graph.nodes.contains_key("child"));
+    assert_eq!(
+        graph
+            .nodes
+            .get("child")
+            .and_then(|node| node.resolved_ref.version_tag.as_deref()),
+        Some("v1.0.0")
+    );
+}
+
+#[test]
+fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
+    let dir = TempDir::new().unwrap();
+    let parent_tree = dir.path().join("parent");
+    let child_tree = dir.path().join("child");
+    let grandchild_tree = dir.path().join("grandchild");
+    std::fs::create_dir_all(&parent_tree).unwrap();
+    std::fs::create_dir_all(&child_tree).unwrap();
+    std::fs::create_dir_all(&grandchild_tree).unwrap();
+    write_minimal_package_marker(&parent_tree);
+    write_minimal_package_marker(&child_tree);
+    write_minimal_package_marker(&grandchild_tree);
+    write_agent(&parent_tree, "runner", &[]);
+    write_agent(&grandchild_tree, "danger", &["missing-skill"]);
+
+    let parent_manifest = make_manifest(
+        "parent",
+        "1.0.0",
+        vec![("child", "https://example.com/child.git", "v1.0.0")],
+    );
+    let child_manifest = make_manifest(
+        "child",
+        "1.0.0",
+        vec![("grandchild", "https://example.com/grandchild.git", "v1.0.0")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/parent.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/child.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/grandchild.git", vec![(1, 0, 0)]);
+    provider.add_source("parent", parent_tree, Some(parent_manifest));
+    provider.add_source("child", child_tree, Some(child_manifest));
+    provider.add_source("grandchild", grandchild_tree, None);
+
+    let mut dependencies = IndexMap::new();
+    dependencies.insert(
+        SourceName::from("parent"),
+        EffectiveDependency {
+            name: "parent".into(),
+            id: SourceId::git(SourceUrl::from("https://example.com/parent.git")),
+            spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
+            subpath: None,
+            filter: FilterMode::Include {
+                agents: vec!["runner".into()],
+                skills: vec![],
+            },
+            rename: RenameMap::new(),
+            is_overridden: false,
+            original_git: None,
+        },
+    );
+    let config = EffectiveConfig {
+        dependencies,
+        settings: Settings::default(),
+    };
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    assert!(graph.nodes.contains_key("parent"));
+    assert!(graph.nodes.contains_key("child"));
+    assert!(graph.nodes.contains_key("grandchild"));
 }

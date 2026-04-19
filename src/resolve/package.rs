@@ -198,14 +198,19 @@ pub(crate) fn resolve_package_bottom_up(
     ctx.id_index_mut()
         .insert(pending_src.source_id.clone(), pending_src.name.clone());
 
-    let seed_unfiltered_manifest_deps = seed_items && is_unfiltered_request(&pending_src.filter);
+    // Version graph expansion is always required, but transitive item seeding is
+    // only allowed when this package has at least one unfiltered materialization
+    // request and the inbound path has remained unfiltered.
+    let seed_transitive_manifest_deps = seed_items
+        && package_has_unfiltered_materialization_request(ctx, &pending_src.name);
     for request in manifest_requests
         .iter()
         .filter(|request| is_unfiltered_request(&request.filter))
     {
+        let seed_request_items = seed_transitive_manifest_deps;
         resolve_package_bottom_up(
             request,
-            seed_unfiltered_manifest_deps,
+            seed_request_items,
             provider,
             locked,
             options,
@@ -252,6 +257,15 @@ pub(crate) fn resolve_package_bottom_up(
     }
 
     Ok(())
+}
+
+fn package_has_unfiltered_materialization_request(
+    ctx: &ResolverContext,
+    package: &SourceName,
+) -> bool {
+    ctx.materialization_filters()
+        .get(package)
+        .is_some_and(|filters| filters.iter().any(is_unfiltered_request))
 }
 
 pub(crate) fn seed_items_for_request(

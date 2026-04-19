@@ -8,12 +8,13 @@ mod version_tests;
 
 use super::*;
 use crate::config::{
-    EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest,
-    ManifestDep, PackageInfo, Settings, SourceSpec,
+    EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest, ManifestDep,
+    PackageInfo, Settings, SourceSpec,
 };
 use crate::diagnostic::DiagnosticLevel;
-use crate::types::{RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
+use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
 use indexmap::IndexMap;
+use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

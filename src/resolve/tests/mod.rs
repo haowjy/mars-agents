@@ -11,7 +11,6 @@ use crate::config::{
     EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest, ManifestDep,
     PackageInfo, Settings, SourceSpec,
 };
-use crate::diagnostic::DiagnosticLevel;
 use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
 use indexmap::IndexMap;
 use semver::Version;

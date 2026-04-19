@@ -319,6 +319,53 @@ fn latest_resolves_to_newest() {
 }
 
 #[test]
+fn latest_constraint_does_not_skip_sibling_semver_validation() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "latest")],
+    );
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "^1.0")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_source("shared", tree_shared, None);
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let result = resolve(&config, &provider, None, &default_options());
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("shared"),
+        "error should mention the conflicting source: {err}"
+    );
+    assert!(
+        err.contains("^1.0"),
+        "error should mention the violated semver constraint: {err}"
+    );
+}
+
+#[test]
 fn v2_resolves_to_major_range() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("a");

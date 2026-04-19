@@ -254,9 +254,6 @@ pub(crate) fn validate_all_constraints(
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
 ) -> Result<(), MarsError> {
     for (name, constraint_list) in constraints {
-        let has_latest = constraint_list
-            .iter()
-            .any(|(_, constraint)| matches!(constraint, VersionConstraint::Latest));
         let node = match nodes.get(name) {
             Some(n) => n,
             None => continue, // Should not happen, but be safe
@@ -265,9 +262,6 @@ pub(crate) fn validate_all_constraints(
         // Only validate semver constraints against resolved versions
         if let Some(ref resolved_ver) = node.resolved_ref.version {
             for (requester, constraint) in constraint_list {
-                if has_latest {
-                    continue;
-                }
                 if let VersionConstraint::Semver(req) = constraint
                     && !req.matches(resolved_ver)
                 {

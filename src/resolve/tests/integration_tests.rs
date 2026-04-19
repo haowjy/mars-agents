@@ -641,7 +641,7 @@ fn different_version_revisit_errors() {
 }
 
 #[test]
-fn latest_and_pinned_revisit_emits_warning() {
+fn latest_and_pinned_revisit_errors_with_version_conflict() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -690,16 +690,18 @@ fn latest_and_pinned_revisit_emits_warning() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    let (result, diagnostics) =
+    let (result, _diagnostics) =
         resolve_with_diagnostics(&config, &provider, None, &default_options());
-    let graph = result.expect("resolution should succeed");
-    assert!(graph.nodes.contains_key("shared"));
-    let drift = diagnostics
-        .iter()
-        .find(|diag| diag.code == "potential-version-drift")
-        .expect("expected potential-version-drift warning");
-    assert_eq!(drift.level, DiagnosticLevel::Warning);
-    assert!(drift.message.contains("item 'common' from 'shared'"));
+    let err = result.expect_err("resolution should fail on pinned sibling constraint");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("shared"),
+        "error should mention conflicting source: {err_text}"
+    );
+    assert!(
+        err_text.contains("1.0.0"),
+        "error should mention pinned version constraint: {err_text}"
+    );
 }
 
 #[test]

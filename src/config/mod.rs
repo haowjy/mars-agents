@@ -16,6 +16,15 @@ pub struct Config {
     pub package: Option<PackageInfo>,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, InstallDep>,
+    /// Local-only dependencies — installed when syncing this repo but NOT
+    /// exported to consumers via manifest. Use for dev tooling, prompt
+    /// authoring helpers, etc.
+    #[serde(
+        default,
+        skip_serializing_if = "IndexMap::is_empty",
+        rename = "local-dependencies"
+    )]
+    pub local_dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     pub settings: Settings,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
@@ -355,11 +364,28 @@ pub fn merge_with_root(
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    for (name, entry) in &config.dependencies {
+    // Process both regular and local dependencies into the same effective map.
+    // Local deps are installed locally but not exported to consumers via manifest.
+    let all_deps = config
+        .dependencies
+        .iter()
+        .chain(config.local_dependencies.iter());
+
+    for (name, entry) in all_deps {
         // Reject reserved name
         if name.as_ref() == local_source_name.as_str() {
             return Err(ConfigError::Invalid {
                 message: "dependency name `_self` is reserved for local package items".into(),
+            }
+            .into());
+        }
+
+        // Reject duplicate names across sections
+        if dependencies.contains_key(name) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "dependency `{name}` appears in both [dependencies] and [local-dependencies]"
+                ),
             }
             .into());
         }
@@ -537,7 +563,11 @@ fn source_id_for_spec(root: &Path, spec: &SourceSpec, subpath: Option<SourceSubp
 }
 
 fn migrate_legacy_source_urls(config: &mut Config) {
-    for dep in config.dependencies.values_mut() {
+    for dep in config
+        .dependencies
+        .values_mut()
+        .chain(config.local_dependencies.values_mut())
+    {
         if let Some(url) = dep.url.as_mut() {
             let raw = url.as_str();
             if should_upgrade_legacy_git_url(raw) {
@@ -576,6 +606,17 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
         .into());
     }
 
+    if reparsed.local_dependencies.len() != original.local_dependencies.len() {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: local-dependencies count changed during roundtrip ({} -> {})",
+                original.local_dependencies.len(),
+                reparsed.local_dependencies.len()
+            ),
+        }
+        .into());
+    }
+
     if reparsed.settings.managed_root != original.settings.managed_root {
         return Err(ConfigError::Invalid {
             message: format!(
@@ -609,6 +650,26 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             return Err(ConfigError::Invalid {
                 message: format!(
                     "refusing to save config: dependency `{name}` changed during roundtrip"
+                ),
+            }
+            .into());
+        }
+    }
+
+    for (name, dep) in &original.local_dependencies {
+        let Some(reparsed_dep) = reparsed.local_dependencies.get(name) else {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "refusing to save config: local-dependency `{name}` missing after roundtrip"
+                ),
+            }
+            .into());
+        };
+
+        if reparsed_dep != dep {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "refusing to save config: local-dependency `{name}` changed during roundtrip"
                 ),
             }
             .into());
@@ -1809,5 +1870,124 @@ exclude = ["test-*", "deprecated-*"]
             Some(vec!["test-*".into(), "deprecated-*".into()])
         );
         assert!(config.settings.model_visibility.include.is_none());
+    }
+
+    // === local-dependencies tests ===
+
+    #[test]
+    fn parse_local_dependencies() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[local-dependencies.prompter]
+url = "https://github.com/org/prompter.git"
+skills = ["prompt-helper"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.dependencies.len(), 1);
+        assert_eq!(config.local_dependencies.len(), 1);
+        assert!(config.local_dependencies.contains_key("prompter"));
+        assert_eq!(
+            config.local_dependencies["prompter"].url.as_deref(),
+            Some("https://github.com/org/prompter.git")
+        );
+    }
+
+    #[test]
+    fn local_dependencies_merged_into_effective_config() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[local-dependencies.prompter]
+url = "https://github.com/org/prompter.git"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let effective = merge(config, local).unwrap();
+
+        // Both deps should be in effective config
+        assert_eq!(effective.dependencies.len(), 2);
+        assert!(effective.dependencies.contains_key("base"));
+        assert!(effective.dependencies.contains_key("prompter"));
+    }
+
+    #[test]
+    fn local_dependencies_not_exported_to_manifest() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "my-package"
+version = "1.0.0"
+
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[local-dependencies.prompter]
+url = "https://github.com/org/prompter.git"
+"#,
+        )
+        .unwrap();
+
+        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
+        assert!(diagnostics.is_empty());
+        let manifest = manifest.unwrap();
+
+        // Only base should be in manifest, not prompter
+        assert_eq!(manifest.dependencies.len(), 1);
+        assert!(manifest.dependencies.contains_key("base"));
+        assert!(!manifest.dependencies.contains_key("prompter"));
+    }
+
+    #[test]
+    fn error_on_duplicate_name_across_sections() {
+        let toml_str = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[local-dependencies.base]
+url = "https://github.com/org/base-local.git"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let local = LocalConfig::default();
+        let result = merge(config, local);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("base") && err.contains("both"),
+            "should reject duplicate name: {err}"
+        );
+    }
+
+    #[test]
+    fn local_dependencies_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let original = r#"
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[local-dependencies.prompter]
+url = "https://github.com/org/prompter.git"
+skills = ["prompt-helper"]
+"#;
+        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
+
+        let config = load(dir.path()).unwrap();
+        save(dir.path(), &config).unwrap();
+        let reloaded = load(dir.path()).unwrap();
+
+        assert_eq!(reloaded.dependencies.len(), 1);
+        assert_eq!(reloaded.local_dependencies.len(), 1);
+        assert!(reloaded.local_dependencies.contains_key("prompter"));
+        assert_eq!(
+            reloaded.local_dependencies["prompter"]
+                .filter
+                .skills
+                .as_deref(),
+            Some(&["prompt-helper".into()][..])
+        );
     }
 }

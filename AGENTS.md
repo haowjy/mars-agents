@@ -175,9 +175,11 @@ scripts/release.sh patch           # dry run (no push)
 
 The script handles:
 - Pre-release checks (fmt, clippy, tests, release build)
-- Version bump in Cargo.toml
+- Version bump in **both** Cargo.toml and pyproject.toml (keeps them in sync)
 - Commit and annotated tag creation
 - Optional push to origin
+
+**Do not manually edit version numbers** — the script keeps Cargo.toml and pyproject.toml in sync. Manual edits cause version mismatches that break PyPI publishing.
 
 The `v*` tag triggers GitHub Actions to build and publish to PyPI, npm, and crates.io.
 

@@ -21,7 +21,7 @@ use self::compat::CompatibilityResult;
 use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
-use crate::error::{MarsError, ResolutionError};
+use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::{ItemKind, LockFile};
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath, SourceUrl};
@@ -592,6 +592,15 @@ pub fn resolve(
         for skill_dep in skill_deps {
             let resolved_skill =
                 resolve_skill_ref(&skill_dep, &pending_item, &registry, &constraints)?;
+            if is_item_excluded(
+                &filter_constraints,
+                &registry,
+                &resolved_skill.package,
+                resolved_skill.kind,
+                &resolved_skill.item,
+            ) {
+                continue;
+            }
             push_filter_constraint(
                 &mut filter_constraints,
                 &resolved_skill.package,
@@ -749,30 +758,12 @@ fn resolve_package_bottom_up(
         pending_src.subpath.as_ref(),
     )?;
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
-
-    let mut deps = Vec::new();
-    let mut manifest_requests: Vec<PendingSource> = Vec::new();
-    if let Some(manifest_data) = &manifest {
-        for (dep_name, dep_spec) in &manifest_data.dependencies {
-            let dep_name_typed = SourceName::from(dep_name.clone());
-            deps.push(dep_name_typed.clone());
-            manifest_requests.push(PendingSource {
-                name: dep_name_typed,
-                source_id: SourceId::git_with_subpath(
-                    dep_spec.url.clone(),
-                    dep_spec.subpath.clone(),
-                ),
-                spec: SourceSpec::Git(GitSpec {
-                    url: dep_spec.url.clone(),
-                    version: dep_spec.version.clone(),
-                }),
-                subpath: dep_spec.subpath.clone(),
-                constraint: parse_version_constraint(dep_spec.version.as_deref()),
-                filter: dep_spec.filter.to_mode(),
-                required_by: pending_src.name.to_string(),
-            });
-        }
-    }
+    let manifest_requests =
+        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest)?;
+    let deps = manifest_requests
+        .iter()
+        .map(|request| request.name.clone())
+        .collect();
 
     let discovered = discover::discover_resolved_source(
         &rooted_ref.package_root,
@@ -810,13 +801,14 @@ fn resolve_package_bottom_up(
     );
     id_index.insert(pending_src.source_id.clone(), pending_src.name.clone());
 
+    let seed_unfiltered_manifest_deps = seed_items && is_unfiltered_request(&pending_src.filter);
     for request in manifest_requests
         .iter()
         .filter(|request| is_unfiltered_request(&request.filter))
     {
         resolve_package_bottom_up(
             request,
-            true,
+            seed_unfiltered_manifest_deps,
             provider,
             locked,
             options,
@@ -930,6 +922,160 @@ fn seed_items_for_request(
             spec: pending_src.spec.clone(),
         });
     }
+}
+
+fn collect_manifest_requests(
+    pending_src: &PendingSource,
+    package_root: &Path,
+    manifest: &Option<Manifest>,
+) -> Result<Vec<PendingSource>, MarsError> {
+    match &pending_src.spec {
+        SourceSpec::Git(_) => Ok(collect_git_manifest_requests(
+            pending_src,
+            manifest.as_ref(),
+        )),
+        SourceSpec::Path(_) => collect_path_manifest_requests(pending_src, package_root),
+    }
+}
+
+fn collect_git_manifest_requests(
+    pending_src: &PendingSource,
+    manifest: Option<&Manifest>,
+) -> Vec<PendingSource> {
+    let mut requests = Vec::new();
+    let Some(manifest_data) = manifest else {
+        return requests;
+    };
+    for (dep_name, dep_spec) in &manifest_data.dependencies {
+        let dep_name_typed = SourceName::from(dep_name.clone());
+        requests.push(PendingSource {
+            name: dep_name_typed,
+            source_id: SourceId::git_with_subpath(dep_spec.url.clone(), dep_spec.subpath.clone()),
+            spec: SourceSpec::Git(GitSpec {
+                url: dep_spec.url.clone(),
+                version: dep_spec.version.clone(),
+            }),
+            subpath: dep_spec.subpath.clone(),
+            constraint: parse_version_constraint(dep_spec.version.as_deref()),
+            filter: dep_spec.filter.to_mode(),
+            required_by: pending_src.name.to_string(),
+        });
+    }
+    requests
+}
+
+fn collect_path_manifest_requests(
+    pending_src: &PendingSource,
+    package_root: &Path,
+) -> Result<Vec<PendingSource>, MarsError> {
+    let config = match crate::config::load(package_root) {
+        Ok(config) => config,
+        Err(MarsError::Config(ConfigError::NotFound { .. })) => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+
+    let mut requests = Vec::new();
+    for (dep_name, dep_spec) in config.dependencies {
+        let dep_subpath = dep_spec.subpath.clone();
+        let dep_filter = dep_spec.filter.to_mode();
+
+        let (dep_spec_resolved, dep_constraint) = match (dep_spec.url, dep_spec.path) {
+            (Some(url), None) => (
+                SourceSpec::Git(GitSpec {
+                    url,
+                    version: dep_spec.version.clone(),
+                }),
+                parse_version_constraint(dep_spec.version.as_deref()),
+            ),
+            (None, Some(path)) => {
+                let resolved_path = if path.is_absolute() {
+                    path
+                } else {
+                    package_root.join(path)
+                };
+                (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
+            }
+            (Some(_), Some(_)) => {
+                return Err(ConfigError::Invalid {
+                    message: format!("source `{dep_name}` has both `url` and `path` — pick one"),
+                }
+                .into());
+            }
+            (None, None) => {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "source `{dep_name}` has neither `url` nor `path` — one is required"
+                    ),
+                }
+                .into());
+            }
+        };
+
+        let dep_source_id =
+            source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
+        requests.push(PendingSource {
+            name: dep_name,
+            source_id: dep_source_id,
+            spec: dep_spec_resolved,
+            subpath: dep_subpath,
+            constraint: dep_constraint,
+            filter: dep_filter,
+            required_by: pending_src.name.to_string(),
+        });
+    }
+
+    Ok(requests)
+}
+
+fn source_id_for_pending_spec(
+    base_root: &Path,
+    spec: &SourceSpec,
+    subpath: Option<SourceSubpath>,
+) -> SourceId {
+    match spec {
+        SourceSpec::Git(git) => SourceId::git_with_subpath(git.url.clone(), subpath),
+        SourceSpec::Path(path) => {
+            match SourceId::path_with_subpath(base_root, path, subpath.clone()) {
+                Ok(id) => id,
+                Err(_) => {
+                    let canonical = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        base_root.join(path)
+                    };
+                    SourceId::Path { canonical, subpath }
+                }
+            }
+        }
+    }
+}
+
+fn is_item_excluded(
+    filter_constraints: &HashMap<SourceName, Vec<FilterMode>>,
+    registry: &IndexMap<SourceName, RegisteredPackage>,
+    package: &SourceName,
+    kind: ItemKind,
+    item: &ItemName,
+) -> bool {
+    let source_path = registry
+        .get(package)
+        .and_then(|pkg| pkg.item(kind, item))
+        .map(|discovered| discovered.source_path.to_string_lossy().into_owned());
+
+    filter_constraints
+        .get(package)
+        .map(|filters| {
+            filters.iter().any(|filter| match filter {
+                FilterMode::Exclude(excluded) => excluded.iter().any(|excluded_item| {
+                    excluded_item == item
+                        || source_path
+                            .as_deref()
+                            .is_some_and(|path| excluded_item.as_ref() == path)
+                }),
+                _ => false,
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn parse_pending_item_skill_deps(
@@ -2214,6 +2360,17 @@ mod tests {
         let dir = tree.join("skills").join(name);
         std::fs::create_dir_all(&dir).expect("create skill dir");
         std::fs::write(dir.join("SKILL.md"), "---\n---\n").expect("write SKILL.md");
+    }
+
+    fn write_skill_with_deps(tree: &Path, name: &str, skills: &[&str]) {
+        let dir = tree.join("skills").join(name);
+        std::fs::create_dir_all(&dir).expect("create skill dir");
+        let frontmatter = if skills.is_empty() {
+            "---\n---\n".to_string()
+        } else {
+            format!("---\nskills: [{}]\n---\n", skills.join(", "))
+        };
+        std::fs::write(dir.join("SKILL.md"), frontmatter).expect("write SKILL.md");
     }
 
     fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
@@ -3579,6 +3736,131 @@ mod tests {
         let node = &graph.nodes["local"];
         assert!(node.resolved_ref.version.is_none());
         assert!(node.latest_version.is_none());
+    }
+
+    #[test]
+    fn local_path_source_resolves_transitive_path_dependencies() {
+        let dir = TempDir::new().unwrap();
+        let app = dir.path().join("app");
+        let shared = dir.path().join("shared");
+        let planning = dir.path().join("planning");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&planning).unwrap();
+
+        std::fs::write(
+            app.join("mars.toml"),
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies.shared]\npath = \"../shared\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            shared.join("mars.toml"),
+            "[package]\nname = \"shared\"\nversion = \"1.0.0\"\n\n[dependencies.planning]\npath = \"../planning\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            planning.join("mars.toml"),
+            "[package]\nname = \"planning\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+
+        write_agent(&app, "coder", &["planning"]);
+        write_skill(&planning, "planning");
+
+        let provider = MockProvider::new();
+        let config = make_config(vec![("app", SourceSpec::Path(app))]);
+
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        assert!(graph.nodes.contains_key("app"));
+        assert!(graph.nodes.contains_key("shared"));
+        assert!(graph.nodes.contains_key("planning"));
+    }
+
+    #[test]
+    fn filtered_parent_dep_does_not_seed_unfiltered_child_items() {
+        let dir = TempDir::new().unwrap();
+        let parent_tree = dir.path().join("parent");
+        let child_tree = dir.path().join("child");
+        std::fs::create_dir_all(&parent_tree).unwrap();
+        std::fs::create_dir_all(&child_tree).unwrap();
+        write_minimal_package_marker(&parent_tree);
+        write_minimal_package_marker(&child_tree);
+        write_agent(&parent_tree, "runner", &[]);
+        write_agent(&child_tree, "danger", &["missing-skill"]);
+
+        let parent_manifest = make_manifest(
+            "parent",
+            "1.0.0",
+            vec![("child", "https://example.com/child.git", "v1.0.0")],
+        );
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/parent.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/child.git", vec![(1, 0, 0)]);
+        provider.add_source("parent", parent_tree, Some(parent_manifest));
+        provider.add_source("child", child_tree, None);
+
+        let mut dependencies = IndexMap::new();
+        dependencies.insert(
+            SourceName::from("parent"),
+            EffectiveDependency {
+                name: "parent".into(),
+                id: SourceId::git(SourceUrl::from("https://example.com/parent.git")),
+                spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
+                subpath: None,
+                filter: FilterMode::Include {
+                    agents: vec!["runner".into()],
+                    skills: vec![],
+                },
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        let config = EffectiveConfig {
+            dependencies,
+            settings: Settings::default(),
+        };
+
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        assert!(graph.nodes.contains_key("parent"));
+        assert!(graph.nodes.contains_key("child"));
+    }
+
+    #[test]
+    fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+        write_minimal_package_marker(&tree);
+        write_agent(&tree, "coder", &["forbidden"]);
+        write_skill_with_deps(&tree, "forbidden", &["missing-skill"]);
+
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree, None);
+
+        let mut dependencies = IndexMap::new();
+        dependencies.insert(
+            SourceName::from("a"),
+            EffectiveDependency {
+                name: "a".into(),
+                id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
+                spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+                subpath: None,
+                filter: FilterMode::Exclude(vec!["forbidden".into()]),
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+        let config = EffectiveConfig {
+            dependencies,
+            settings: Settings::default(),
+        };
+
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        assert!(graph.nodes.contains_key("a"));
     }
 
     #[test]

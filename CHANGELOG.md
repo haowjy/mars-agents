@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-19
+
 ### Changed
 - `ManifestDep` unified for URL and path deps — eliminated `collect_path_manifest_requests` special case.
 - Removed dead `ResolvedGraph.id_index` field (internal `ResolverContext.id_index` kept for duplicate detection).

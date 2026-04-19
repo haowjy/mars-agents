@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[test]
 fn filtered_transitive_dep_without_seed_request_does_not_collect_materialization_filter() {
     let dir = TempDir::new().unwrap();
@@ -35,7 +34,7 @@ fn filtered_transitive_dep_without_seed_request_does_not_collect_materialization
     )]);
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert!(graph.filters.get(&SourceName::from("dep")).is_none());
+    assert!(!graph.filters.contains_key(&SourceName::from("dep")));
 }
 
 #[test]
@@ -284,9 +283,11 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     let child_filters = graph.filters.get(&SourceName::from("child")).unwrap();
-    assert!(!child_filters
-        .iter()
-        .any(|filter| matches!(filter, FilterMode::All)));
+    assert!(
+        !child_filters
+            .iter()
+            .any(|filter| matches!(filter, FilterMode::All))
+    );
     assert!(child_filters.contains(&FilterMode::Include {
         agents: vec![],
         skills: vec!["planning".into()],

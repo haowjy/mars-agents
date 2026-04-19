@@ -22,6 +22,12 @@ pub struct ResolverContext {
     package_versions: PackageVersions,
 }
 
+impl Default for ResolverContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResolverContext {
     pub fn new() -> Self {
         Self {
@@ -120,7 +126,6 @@ impl ResolverContext {
         ResolvedGraph {
             nodes,
             order,
-            id_index: self.id_index,
             filters: self.materialization_filters,
         }
     }

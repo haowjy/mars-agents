@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[test]
 fn apply_subpath_success_case() {
     let dir = TempDir::new().unwrap();
@@ -234,7 +233,8 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     manifest_deps.insert(
         "dep".to_string(),
         ManifestDep {
-            url: SourceUrl::from("https://example.com/dep.git"),
+            url: Some(SourceUrl::from("https://example.com/dep.git")),
+            path: None,
             subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
@@ -312,7 +312,8 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     manifest_deps.insert(
         "dep".to_string(),
         ManifestDep {
-            url: SourceUrl::from("https://example.com/dep.git"),
+            url: Some(SourceUrl::from("https://example.com/dep.git")),
+            path: None,
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
@@ -656,7 +657,8 @@ fn latest_and_pinned_revisit_errors_with_version_conflict() {
     deps_a.insert(
         "shared".to_string(),
         ManifestDep {
-            url: SourceUrl::from("https://example.com/shared.git"),
+            url: Some(SourceUrl::from("https://example.com/shared.git")),
+            path: None,
             subpath: None,
             version: None,
             filter: FilterConfig::default(),
@@ -1225,7 +1227,8 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     manifest_deps.insert(
         "dep".to_string(),
         ManifestDep {
-            url: SourceUrl::from("https://example.com/dep.git"),
+            url: Some(SourceUrl::from("https://example.com/dep.git")),
+            path: None,
             subpath: None,
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),

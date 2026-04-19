@@ -21,7 +21,6 @@ pub struct ResolvedGraph {
     pub nodes: IndexMap<SourceName, ResolvedNode>,
     /// Deterministic alphabetical order (prompt packages don't require dependency ordering).
     pub order: Vec<SourceName>,
-    pub id_index: HashMap<SourceId, SourceName>,
     /// All filter constraints collected for each source (direct + transitive).
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
 }
@@ -126,6 +125,12 @@ pub struct VisitedSet {
     index: HashMap<(SourceName, ItemName), ResolvedVersion>,
 }
 
+impl Default for VisitedSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VisitedSet {
     pub fn new() -> Self {
         Self {
@@ -150,10 +155,10 @@ impl VisitedSet {
     ) -> VersionCheckResult {
         match self.index.get(&Self::index_key(package, item)) {
             None => VersionCheckResult::NotSeen,
-            Some(existing) => match existing.constraint.compatible_with_resolved(
-                constraint,
-                existing.resolved_ref.version.as_ref(),
-            ) {
+            Some(existing) => match existing
+                .constraint
+                .compatible_with_resolved(constraint, existing.resolved_ref.version.as_ref())
+            {
                 CompatibilityResult::Compatible => VersionCheckResult::SameVersion,
                 CompatibilityResult::PotentiallyConflicting => {
                     VersionCheckResult::PotentiallyConflicting {
@@ -196,6 +201,12 @@ impl VisitedSet {
 pub struct PackageVersions {
     /// package -> (resolved_ref, first_constraint, first_required_by)
     versions: HashMap<SourceName, (ResolvedRef, VersionConstraint, String)>,
+}
+
+impl Default for PackageVersions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PackageVersions {

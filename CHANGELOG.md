@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `ManifestDep` unified for URL and path deps — eliminated `collect_path_manifest_requests` special case.
+- Removed dead `ResolvedGraph.id_index` field (internal `ResolverContext.id_index` kept for duplicate detection).
+
+### Fixed
+- Filtered deps now resolve version without materializing transitive items.
+- `Latest` constraint validation no longer bypassed.
+- Constraint syntax comparison uses semver semantics, not string equality.
+- Skill lookup checks same package first, then all resolved packages.
+
+### Internal
+- Resolver god module (4.4k lines) split into 10 focused modules.
+- `ResolverContext` tracks version constraints and materialization filters separately.
+
 ## [0.1.4] - 2026-04-18
 
 ### Added
@@ -18,8 +32,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Auto-init applies to `mars add` and `mars link`; `mars sync` still errors on a missing project.
 - `--root` for context commands sets walk-up start path, not direct project target.
 - Error message now says "filesystem root" instead of "repository root".
-
 - Windows compatibility documented as first-class invariant in AGENTS.md.
+
 ## [0.1.3] - 2026-04-16
 
 ### Added

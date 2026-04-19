@@ -1045,7 +1045,6 @@ mod tests {
             ResolvedGraph {
                 nodes,
                 order,
-                id_index: std::collections::HashMap::new(),
                 filters: std::collections::HashMap::new(),
             },
             EffectiveConfig {
@@ -1116,7 +1115,6 @@ mod tests {
         ResolvedGraph {
             nodes,
             order,
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         }
     }
@@ -1214,7 +1212,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["a".into(), "b".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
@@ -1233,7 +1230,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into(), "b".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
@@ -1253,7 +1249,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
@@ -1271,7 +1266,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         // D is declared after A, but topological ordering must still emit D first.
@@ -1292,7 +1286,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);

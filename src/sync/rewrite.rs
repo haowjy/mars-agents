@@ -192,7 +192,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
 
@@ -244,7 +243,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
 
@@ -375,7 +373,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["source-a".into()],
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
 

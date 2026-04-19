@@ -60,10 +60,11 @@ pub struct InstallDep {
 pub type DependencyEntry = InstallDep;
 
 /// Package manifest dependency — what a package declares its consumers need.
-/// Always has a URL (packages can't declare path deps for consumers).
+/// Supports both URL (for remote consumers) and path (for local development).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManifestDep {
-    pub url: SourceUrl,
+    pub url: Option<SourceUrl>,
+    pub path: Option<PathBuf>,
     pub subpath: Option<SourceSubpath>,
     pub version: Option<String>,
     pub filter: FilterConfig,
@@ -73,7 +74,7 @@ pub struct ManifestDep {
 ///
 /// In source repositories, `mars.toml` may include `[package]` +
 /// `[dependencies]` only, or coexist with consumer sections.
-/// Dependencies are ManifestDep (URL required, path-only deps filtered out).
+/// Dependencies are ManifestDep (URL or path, matching the source config).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
     pub package: PackageInfo,
@@ -273,11 +274,11 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 /// Returns `None` when mars.toml is absent or when it has no `[package]`
 /// section (consumer config only).
 ///
-/// Converts `InstallDep` entries to `ManifestDep` by filtering out path-only
-/// deps (which can't propagate to consumers) and requiring a URL.
+/// Converts `InstallDep` entries to `ManifestDep`, preserving both URL and
+/// path dependencies.
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let mut diagnostics = Vec::new();
+    let diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let parsed: Config =
@@ -287,32 +288,21 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
-            // Convert InstallDep → ManifestDep, filtering out path-only deps
+            // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
                 .into_iter()
-                .filter_map(|(name, entry)| match entry.url {
-                    Some(url) => Some((
+                .map(|(name, entry)| {
+                    (
                         name.to_string(),
                         ManifestDep {
-                            url,
+                            url: entry.url,
+                            path: entry.path,
                             subpath: entry.subpath,
                             version: entry.version,
                             filter: entry.filter,
                         },
-                    )),
-                    None => {
-                        // Path-only manifest deps can't propagate to consumers
-                        diagnostics.push(Diagnostic {
-                            level: DiagnosticLevel::Warning,
-                            code: "manifest-path-dep",
-                            message: format!(
-                                "manifest dependency `{name}` has no URL and will not propagate to consumers"
-                            ),
-                            context: None,
-                        });
-                        None
-                    }
+                    )
                 })
                 .collect();
             Ok((

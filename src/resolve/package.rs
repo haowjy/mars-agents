@@ -206,8 +206,8 @@ pub(crate) fn resolve_package_bottom_up(
     // Version graph expansion is always required, but transitive item seeding is
     // only allowed when this package has at least one unfiltered materialization
     // request and the inbound path has remained unfiltered.
-    let seed_transitive_manifest_deps = seed_items
-        && package_has_unfiltered_materialization_request(ctx, &pending_src.name);
+    let seed_transitive_manifest_deps =
+        seed_items && package_has_unfiltered_materialization_request(ctx, &pending_src.name);
     for request in manifest_requests
         .iter()
         .filter(|request| is_unfiltered_request(&request.filter))
@@ -299,10 +299,18 @@ pub(crate) fn seed_items_for_request(
             }));
         }
         FilterMode::OnlySkills => {
-            selected.extend(package.items().filter(|item| item.id.kind == ItemKind::Skill));
+            selected.extend(
+                package
+                    .items()
+                    .filter(|item| item.id.kind == ItemKind::Skill),
+            );
         }
         FilterMode::OnlyAgents => {
-            selected.extend(package.items().filter(|item| item.id.kind == ItemKind::Agent));
+            selected.extend(
+                package
+                    .items()
+                    .filter(|item| item.id.kind == ItemKind::Agent),
+            );
         }
     }
 
@@ -325,67 +333,26 @@ pub(crate) fn collect_manifest_requests(
     package_root: &Path,
     manifest: &Option<Manifest>,
 ) -> Result<Vec<PendingSource>, MarsError> {
-    match &pending_src.spec {
-        SourceSpec::Git(_) => Ok(collect_git_manifest_requests(
-            pending_src,
-            manifest.as_ref(),
-        )),
-        SourceSpec::Path(_) => collect_path_manifest_requests(pending_src, package_root),
-    }
-}
-
-fn collect_git_manifest_requests(
-    pending_src: &PendingSource,
-    manifest: Option<&Manifest>,
-) -> Vec<PendingSource> {
     let mut requests = Vec::new();
     let Some(manifest_data) = manifest else {
-        return requests;
+        return Ok(requests);
     };
     for (dep_name, dep_spec) in &manifest_data.dependencies {
         let dep_name_typed = SourceName::from(dep_name.clone());
-        requests.push(PendingSource {
-            name: dep_name_typed,
-            source_id: SourceId::git_with_subpath(dep_spec.url.clone(), dep_spec.subpath.clone()),
-            spec: SourceSpec::Git(GitSpec {
-                url: dep_spec.url.clone(),
-                version: dep_spec.version.clone(),
-            }),
-            subpath: dep_spec.subpath.clone(),
-            constraint: parse_version_constraint(dep_spec.version.as_deref()),
-            filter: dep_spec.filter.to_mode(),
-            required_by: pending_src.name.to_string(),
-        });
-    }
-    requests
-}
-
-fn collect_path_manifest_requests(
-    pending_src: &PendingSource,
-    package_root: &Path,
-) -> Result<Vec<PendingSource>, MarsError> {
-    let config = match crate::config::load(package_root) {
-        Ok(config) => config,
-        Err(MarsError::Config(ConfigError::NotFound { .. })) => return Ok(Vec::new()),
-        Err(err) => return Err(err),
-    };
-
-    let mut requests = Vec::new();
-    for (dep_name, dep_spec) in config.dependencies {
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
 
-        let (dep_spec_resolved, dep_constraint) = match (dep_spec.url, dep_spec.path) {
+        let (dep_spec_resolved, dep_constraint) = match (&dep_spec.url, &dep_spec.path) {
             (Some(url), None) => (
                 SourceSpec::Git(GitSpec {
-                    url,
+                    url: url.clone(),
                     version: dep_spec.version.clone(),
                 }),
                 parse_version_constraint(dep_spec.version.as_deref()),
             ),
             (None, Some(path)) => {
                 let resolved_path = if path.is_absolute() {
-                    path
+                    path.clone()
                 } else {
                     package_root.join(path)
                 };
@@ -410,7 +377,7 @@ fn collect_path_manifest_requests(
         let dep_source_id =
             source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
         requests.push(PendingSource {
-            name: dep_name,
+            name: dep_name_typed,
             source_id: dep_source_id,
             spec: dep_spec_resolved,
             subpath: dep_subpath,

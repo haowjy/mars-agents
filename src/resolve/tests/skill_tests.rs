@@ -100,7 +100,10 @@ fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
     provider.add_source("my-dep", dep_tree, None);
 
     let config = make_config(vec![
-        ("sibling", git_spec("https://example.com/sibling.git", Some("v1.0.0"))),
+        (
+            "sibling",
+            git_spec("https://example.com/sibling.git", Some("v1.0.0")),
+        ),
         (
             "requester",
             git_spec("https://example.com/requester.git", Some("v1.0.0")),

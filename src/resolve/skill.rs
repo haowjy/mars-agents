@@ -159,11 +159,12 @@ pub(crate) fn resolve_skill_ref(
         Err(err) => return Err(err.into()),
     };
 
-    let package = registry
-        .get(&resolved_skill.package)
-        .ok_or_else(|| ResolutionError::SourceNotFound {
-            name: resolved_skill.package.to_string(),
-        })?;
+    let package =
+        registry
+            .get(&resolved_skill.package)
+            .ok_or_else(|| ResolutionError::SourceNotFound {
+                name: resolved_skill.package.to_string(),
+            })?;
     let constraint = primary_package_constraint(constraints, &resolved_skill.package)
         .unwrap_or(&package.constraint)
         .clone();

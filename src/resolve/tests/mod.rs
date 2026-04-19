@@ -196,9 +196,16 @@ impl ManifestReader for MockProvider {
     fn read_manifest(
         &self,
         source_tree: &Path,
-        _diag: &mut DiagnosticCollector,
+        diag: &mut DiagnosticCollector,
     ) -> Result<Option<Manifest>, MarsError> {
-        Ok(self.manifests.get(source_tree).cloned().unwrap_or(None))
+        // If manifest is pre-populated, return it
+        if let Some(manifest) = self.manifests.get(source_tree) {
+            return Ok(manifest.clone());
+        }
+        // Otherwise, read from disk (for path sources in integration tests)
+        let (manifest, diagnostics) = crate::config::load_manifest(source_tree)?;
+        diag.extend(diagnostics);
+        Ok(manifest)
     }
 }
 
@@ -240,7 +247,8 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
         dependencies.insert(
             dep_name.to_string(),
             ManifestDep {
-                url: SourceUrl::from(dep_url),
+                url: Some(SourceUrl::from(dep_url)),
+                path: None,
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: crate::config::FilterConfig::default(),
@@ -268,7 +276,8 @@ fn make_manifest_with_filters(
         dependencies.insert(
             dep_name.to_string(),
             ManifestDep {
-                url: SourceUrl::from(dep_url),
+                url: Some(SourceUrl::from(dep_url)),
+                path: None,
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: dep_filter,

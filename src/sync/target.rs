@@ -386,7 +386,6 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order,
-            id_index: std::collections::HashMap::new(),
             filters: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {

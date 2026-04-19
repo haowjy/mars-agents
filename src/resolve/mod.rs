@@ -11,18 +11,20 @@
 
 pub mod compat;
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 use semver::{Version, VersionReq};
 
+use self::compat::CompatibilityResult;
 use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
-use crate::types::{SourceId, SourceName, SourceSubpath, SourceUrl};
+use crate::types::{ItemName, SourceId, SourceName, SourceSubpath, SourceUrl};
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
@@ -68,6 +70,150 @@ pub enum VersionConstraint {
     Latest,
     /// Branch or commit pin — no semver resolution.
     RefPin(String),
+}
+
+/// Result of checking whether an item was seen already.
+#[derive(Debug)]
+pub enum VersionCheckResult {
+    /// Item has not been visited yet.
+    NotSeen,
+    /// Item was visited with a compatible version.
+    SameVersion,
+    /// Item was visited with a conflicting version.
+    DifferentVersion {
+        existing: VersionConstraint,
+        requested: VersionConstraint,
+    },
+}
+
+/// Stable key for visited items.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct VisitedItem {
+    package: SourceName,
+    item: ItemName,
+}
+
+/// Stored version information for a visited item.
+#[derive(Debug, Clone)]
+pub struct ResolvedVersion {
+    pub constraint: VersionConstraint,
+    pub resolved_ref: ResolvedRef,
+}
+
+/// Tracks visited items with version-aware lookup for DFS traversal.
+pub struct VisitedSet {
+    /// Fast lookup by (package, item).
+    index: HashMap<(SourceName, ItemName), ResolvedVersion>,
+}
+
+impl VisitedSet {
+    pub fn new() -> Self {
+        Self {
+            index: HashMap::new(),
+        }
+    }
+
+    fn index_key(package: &SourceName, item: &ItemName) -> (SourceName, ItemName) {
+        let key = VisitedItem {
+            package: package.clone(),
+            item: item.clone(),
+        };
+        (key.package, key.item)
+    }
+
+    /// Check whether an item was visited and compare version constraints.
+    pub fn check_version(
+        &self,
+        package: &SourceName,
+        item: &ItemName,
+        constraint: &VersionConstraint,
+    ) -> VersionCheckResult {
+        match self.index.get(&Self::index_key(package, item)) {
+            None => VersionCheckResult::NotSeen,
+            Some(existing) => match existing.constraint.compatible_with(constraint) {
+                CompatibilityResult::Compatible
+                | CompatibilityResult::PotentiallyConflicting => VersionCheckResult::SameVersion,
+                CompatibilityResult::Conflicting => VersionCheckResult::DifferentVersion {
+                    existing: existing.constraint.clone(),
+                    requested: constraint.clone(),
+                },
+            },
+        }
+    }
+
+    /// Insert an item as visited.
+    pub fn insert(
+        &mut self,
+        package: SourceName,
+        item: ItemName,
+        constraint: VersionConstraint,
+        resolved_ref: ResolvedRef,
+    ) {
+        self.index.insert(
+            Self::index_key(&package, &item),
+            ResolvedVersion {
+                constraint,
+                resolved_ref,
+            },
+        );
+    }
+
+    /// Iterate all visited items for graph/output assembly.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&(SourceName, ItemName), &ResolvedVersion)> {
+        self.index.iter()
+    }
+}
+
+/// Tracks resolved version per package and rejects divergent refs.
+pub struct PackageVersions {
+    /// package -> (resolved_ref, first_required_by)
+    versions: HashMap<SourceName, (ResolvedRef, String)>,
+}
+
+impl PackageVersions {
+    pub fn new() -> Self {
+        Self {
+            versions: HashMap::new(),
+        }
+    }
+
+    /// Check existing package version or insert if first time seen.
+    pub fn check_or_insert(
+        &mut self,
+        package: &SourceName,
+        resolved: &ResolvedRef,
+        required_by: &str,
+    ) -> Result<(), ResolutionError> {
+        match self.versions.entry(package.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert((resolved.clone(), required_by.to_string()));
+                Ok(())
+            }
+            Entry::Occupied(entry) => {
+                let (existing_ref, existing_by) = entry.get();
+                if resolved_ref_matches(existing_ref, resolved) {
+                    Ok(())
+                } else {
+                    Err(ResolutionError::PackageVersionConflict {
+                        package: package.to_string(),
+                        existing: format!("{existing_ref:?} (required by {existing_by})"),
+                        requested: format!("{resolved:?} (required by {required_by})"),
+                        chain: required_by.to_string(),
+                    })
+                }
+            }
+        }
+    }
+}
+
+fn resolved_ref_matches(existing: &ResolvedRef, incoming: &ResolvedRef) -> bool {
+    existing.source_name == incoming.source_name
+        && existing.version == incoming.version
+        && existing.version_tag == incoming.version_tag
+        && existing.commit == incoming.commit
+        && existing.tree_path == incoming.tree_path
 }
 
 /// Options controlling resolution behavior.
@@ -828,6 +974,184 @@ fn topological_sort(
     }
 
     Ok(order)
+}
+
+#[cfg(test)]
+mod tracker_tests {
+    use super::*;
+    use semver::Version;
+    use std::path::PathBuf;
+
+    fn semver_constraint(req: &str) -> VersionConstraint {
+        VersionConstraint::Semver(req.parse().expect("valid semver requirement"))
+    }
+
+    fn resolved_ref(
+        package: &str,
+        version: Option<&str>,
+        version_tag: Option<&str>,
+        commit: Option<&str>,
+        tree_path: &str,
+    ) -> ResolvedRef {
+        ResolvedRef {
+            source_name: SourceName::from(package),
+            version: version.map(|v| Version::parse(v).expect("valid version")),
+            version_tag: version_tag.map(str::to_string),
+            commit: commit.map(|c| c.into()),
+            tree_path: PathBuf::from(tree_path),
+        }
+    }
+
+    #[test]
+    fn visited_set_not_seen() {
+        let visited = VisitedSet::new();
+        let package = SourceName::from("alpha");
+        let item = ItemName::from("coder");
+
+        let result = visited.check_version(&package, &item, &VersionConstraint::Latest);
+        assert!(matches!(result, VersionCheckResult::NotSeen));
+    }
+
+    #[test]
+    fn visited_set_same_version() {
+        let mut visited = VisitedSet::new();
+        let package = SourceName::from("alpha");
+        let item = ItemName::from("coder");
+        let constraint = semver_constraint("^1.2");
+        visited.insert(
+            package.clone(),
+            item.clone(),
+            constraint.clone(),
+            resolved_ref(
+                "alpha",
+                Some("1.2.3"),
+                Some("v1.2.3"),
+                Some("abc123"),
+                "/tmp/alpha",
+            ),
+        );
+
+        let result = visited.check_version(&package, &item, &constraint);
+        assert!(matches!(result, VersionCheckResult::SameVersion));
+
+        let entries: Vec<_> = visited.iter().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, &(package, item));
+    }
+
+    #[test]
+    fn visited_set_different_version() {
+        let mut visited = VisitedSet::new();
+        let package = SourceName::from("alpha");
+        let item = ItemName::from("coder");
+
+        visited.insert(
+            package.clone(),
+            item.clone(),
+            semver_constraint("^1.0"),
+            resolved_ref(
+                "alpha",
+                Some("1.4.0"),
+                Some("v1.4.0"),
+                Some("abc123"),
+                "/tmp/alpha",
+            ),
+        );
+
+        let requested = semver_constraint("^2.0");
+        let result = visited.check_version(&package, &item, &requested);
+        match result {
+            VersionCheckResult::DifferentVersion {
+                existing,
+                requested,
+            } => {
+                assert!(matches!(existing, VersionConstraint::Semver(_)));
+                assert!(matches!(requested, VersionConstraint::Semver(_)));
+                assert_eq!(
+                    existing.compatible_with(&requested),
+                    CompatibilityResult::Conflicting
+                );
+            }
+            other => panic!("expected DifferentVersion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn package_versions_first_insert() {
+        let mut versions = PackageVersions::new();
+        let package = SourceName::from("alpha");
+        let resolved = resolved_ref(
+            "alpha",
+            Some("1.0.0"),
+            Some("v1.0.0"),
+            Some("abc123"),
+            "/tmp/alpha",
+        );
+
+        assert!(versions
+            .check_or_insert(&package, &resolved, "mars.toml")
+            .is_ok());
+    }
+
+    #[test]
+    fn package_versions_same_version_reuse() {
+        let mut versions = PackageVersions::new();
+        let package = SourceName::from("alpha");
+        let resolved = resolved_ref(
+            "alpha",
+            Some("1.0.0"),
+            Some("v1.0.0"),
+            Some("abc123"),
+            "/tmp/alpha",
+        );
+        versions
+            .check_or_insert(&package, &resolved, "mars.toml")
+            .expect("initial insert should succeed");
+
+        assert!(versions.check_or_insert(&package, &resolved, "agent:coder").is_ok());
+    }
+
+    #[test]
+    fn package_versions_conflict() {
+        let mut versions = PackageVersions::new();
+        let package = SourceName::from("alpha");
+        let existing = resolved_ref(
+            "alpha",
+            Some("1.0.0"),
+            Some("v1.0.0"),
+            Some("abc123"),
+            "/tmp/alpha-v1",
+        );
+        let requested = resolved_ref(
+            "alpha",
+            Some("2.0.0"),
+            Some("v2.0.0"),
+            Some("def456"),
+            "/tmp/alpha-v2",
+        );
+        versions
+            .check_or_insert(&package, &existing, "mars.toml")
+            .expect("initial insert should succeed");
+
+        let err = versions
+            .check_or_insert(&package, &requested, "agent:coder")
+            .expect_err("second insert with different resolved ref should fail");
+
+        match err {
+            ResolutionError::PackageVersionConflict {
+                package,
+                existing,
+                requested,
+                chain,
+            } => {
+                assert_eq!(package, "alpha");
+                assert!(existing.contains("required by mars.toml"));
+                assert!(requested.contains("required by agent:coder"));
+                assert_eq!(chain, "agent:coder");
+            }
+            other => panic!("expected PackageVersionConflict, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]

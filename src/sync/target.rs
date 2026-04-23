@@ -458,6 +458,45 @@ mod tests {
     }
 
     #[test]
+    fn default_dest_path_uses_forward_slashes_for_agents_and_skills() {
+        let agent = default_dest_path(ItemKind::Agent, "coder");
+        let skill = default_dest_path(ItemKind::Skill, "planning");
+
+        assert_eq!(agent.as_str(), "agents/coder.md");
+        assert_eq!(skill.as_str(), "skills/planning");
+        assert!(!agent.as_str().contains('\\'));
+        assert!(!skill.as_str().contains('\\'));
+    }
+
+    #[test]
+    fn parse_rename_dest_normalizes_backslashes_to_forward_slashes() {
+        let source_name = SourceName::from("base");
+
+        let agent =
+            parse_rename_dest(ItemKind::Agent, r"agents\nested\renamed.md", &source_name).unwrap();
+        let skill =
+            parse_rename_dest(ItemKind::Skill, r"skills\nested\planning", &source_name).unwrap();
+
+        assert_eq!(agent.as_str(), "agents/nested/renamed.md");
+        assert_eq!(skill.as_str(), "skills/nested/planning");
+        assert!(!agent.as_str().contains('\\'));
+        assert!(!skill.as_str().contains('\\'));
+    }
+
+    #[test]
+    fn parse_rename_dest_rejects_absolute_and_escape_destinations() {
+        let source_name = SourceName::from("base");
+
+        let absolute = parse_rename_dest(ItemKind::Agent, "/tmp/escape", &source_name)
+            .expect_err("absolute rename should fail");
+        assert!(matches!(absolute, MarsError::Source { .. }));
+
+        let traversal = parse_rename_dest(ItemKind::Skill, "../escape", &source_name)
+            .expect_err("traversal rename should fail");
+        assert!(matches!(traversal, MarsError::Source { .. }));
+    }
+
+    #[test]
     fn build_with_invalid_rename_destination_returns_error() {
         let tree = make_source_tree(&[("old-name.md", "# old")], &[]);
 

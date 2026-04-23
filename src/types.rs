@@ -683,6 +683,17 @@ mod tests {
     }
 
     #[test]
+    fn source_subpath_and_dest_path_share_normalization_rules() {
+        let raw = r"./plugins\foo/bar\";
+        let subpath = SourceSubpath::new(raw).unwrap();
+        let dest = DestPath::new(raw).unwrap();
+
+        assert_eq!(subpath.as_str(), "plugins/foo/bar");
+        assert_eq!(dest.as_str(), "plugins/foo/bar");
+        assert_eq!(subpath.as_str(), dest.as_str());
+    }
+
+    #[test]
     fn source_subpath_rejects_empty() {
         let err = SourceSubpath::new("").unwrap_err();
         assert_eq!(err, SourceSubpathError::Empty);
@@ -774,6 +785,84 @@ mod tests {
     fn source_subpath_rejects_current_dir_dot() {
         let err = SourceSubpath::new(".").unwrap_err();
         assert_eq!(err, SourceSubpathError::Empty);
+    }
+
+    #[test]
+    fn dest_path_normalizes_windows_and_unix_separators() {
+        let path = DestPath::new(r"agents\foo/bar\baz.md").unwrap();
+        assert_eq!(path.as_str(), "agents/foo/bar/baz.md");
+    }
+
+    #[test]
+    fn dest_path_rejects_empty() {
+        let err = DestPath::new("").unwrap_err();
+        assert_eq!(err, DestPathError::Empty);
+    }
+
+    #[test]
+    fn dest_path_rejects_absolute() {
+        let err = DestPath::new("/abs/path").unwrap_err();
+        assert!(matches!(err, DestPathError::Absolute { .. }));
+    }
+
+    #[test]
+    fn dest_path_rejects_root_only() {
+        let err = DestPath::new("/").unwrap_err();
+        assert!(matches!(err, DestPathError::Absolute { .. }));
+    }
+
+    #[test]
+    fn dest_path_rejects_windows_absolute() {
+        let err = DestPath::new(r"C:\abs\path").unwrap_err();
+        assert!(matches!(err, DestPathError::Absolute { .. }));
+    }
+
+    #[test]
+    fn dest_path_rejects_windows_drive_relative() {
+        let err = DestPath::new("C:relative").unwrap_err();
+        assert!(matches!(err, DestPathError::Absolute { .. }));
+    }
+
+    #[test]
+    fn dest_path_rejects_escape() {
+        let err = DestPath::new("../escape").unwrap_err();
+        assert!(matches!(err, DestPathError::Escaping { .. }));
+    }
+
+    #[test]
+    fn dest_path_normalizes_trailing_slash() {
+        let path = DestPath::new("skills/planning/").unwrap();
+        assert_eq!(path.as_str(), "skills/planning");
+    }
+
+    #[test]
+    fn dest_path_normalizes_leading_dot_slash() {
+        let path = DestPath::new("./skills/planning").unwrap();
+        assert_eq!(path.as_str(), "skills/planning");
+    }
+
+    #[test]
+    fn dest_path_item_name_extracts_agent_leaf() {
+        let path = DestPath::new("agents/coder.md").unwrap();
+        assert_eq!(path.item_name(ItemKind::Agent), "coder");
+    }
+
+    #[test]
+    fn dest_path_item_name_extracts_skill_leaf() {
+        let path = DestPath::new("skills/planning").unwrap();
+        assert_eq!(path.item_name(ItemKind::Skill), "planning");
+    }
+
+    #[test]
+    fn dest_path_item_name_extracts_nested_agent_leaf() {
+        let path = DestPath::new("agents/sub/deep.md").unwrap();
+        assert_eq!(path.item_name(ItemKind::Agent), "deep");
+    }
+
+    #[test]
+    fn dest_path_item_name_handles_no_slash_edge_case() {
+        let path = DestPath::new("solo.md").unwrap();
+        assert_eq!(path.item_name(ItemKind::Agent), "solo");
     }
 
     // Edge case 11: mid-path parent escape "a/../../escape" — hits ParentDir immediately after

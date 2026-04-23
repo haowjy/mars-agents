@@ -488,6 +488,34 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_orphans_uses_forward_slash_keys_for_expected_paths() {
+        let dir = TempDir::new().unwrap();
+        let target_root = dir.path().join(".agents");
+        std::fs::create_dir_all(target_root.join("agents")).unwrap();
+        std::fs::write(target_root.join("agents/coder.md"), "# Managed").unwrap();
+        std::fs::write(target_root.join("agents/orphan.md"), "# Orphan").unwrap();
+
+        let mut expected = HashSet::new();
+        expected.insert(
+            DestPath::new(r"agents\coder.md")
+                .unwrap()
+                .as_str()
+                .to_string(),
+        );
+
+        let removed = cleanup_orphans(
+            &target_root,
+            &expected,
+            &managed_paths(&["agents/coder.md", "agents/orphan.md"]),
+            &mut Vec::new(),
+        );
+
+        assert_eq!(removed, 1);
+        assert!(target_root.join("agents/coder.md").exists());
+        assert!(!target_root.join("agents/orphan.md").exists());
+    }
+
+    #[test]
     fn sync_convergence_on_rerun() {
         let dir = TempDir::new().unwrap();
         let mars_dir = dir.path().join(".mars");

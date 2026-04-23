@@ -19,7 +19,10 @@ pub fn run_git(args: &[&str], cwd: &Path, context: &str) -> Result<String, MarsE
         .output()
         .map_err(|e| MarsError::GitCli {
             command: command_display.clone(),
-            message: format!("{context}: failed to execute git: {e}"),
+            message: format!(
+                "{context} (cwd: {}): failed to execute git: {e}",
+                cwd.display()
+            ),
         })?;
 
     if output.status.success() {
@@ -83,7 +86,10 @@ pub fn run_git_raw(
         .output()
         .map_err(|e| MarsError::GitCli {
             command: command_display,
-            message: format!("{context}: failed to execute git: {e}"),
+            message: format!(
+                "{context} (cwd: {}): failed to execute git: {e}",
+                cwd.display()
+            ),
         })
 }
 
@@ -117,6 +123,18 @@ mod tests {
             err_str.contains("not-a-real-command"),
             "error should include command"
         );
+    }
+
+    #[test]
+    fn run_git_execute_failure_includes_cwd_and_command() {
+        let missing = std::env::temp_dir().join("mars-run-git-missing-cwd");
+        let result = run_git(&["status", "--short"], &missing, "test");
+        let err = result.expect_err("missing cwd should fail before git runs");
+        let message = err.to_string();
+
+        assert!(message.contains("git status --short"));
+        assert!(message.contains("cwd:"));
+        assert!(message.contains(&missing.display().to_string()));
     }
 
     #[test]
@@ -169,5 +187,22 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("HEAD;echo shell-injected"));
         assert!(!message.contains("shell-injected\n"));
+    }
+
+    #[test]
+    fn run_git_raw_execute_failure_returns_structured_error() {
+        let missing = std::env::temp_dir().join("mars-run-git-raw-missing-cwd");
+        let result = run_git_raw(&["status"], &missing, "raw test");
+
+        let err = result.expect_err("missing cwd should fail before git runs");
+        match err {
+            MarsError::GitCli { command, message } => {
+                assert_eq!(command, "git status");
+                assert!(message.contains("raw test"));
+                assert!(message.contains("cwd:"));
+                assert!(message.contains(&missing.display().to_string()));
+            }
+            other => panic!("expected GitCli error, got {other:?}"),
+        }
     }
 }

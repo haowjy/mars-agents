@@ -564,9 +564,12 @@ fn derive_git_name(repo: &str, subpath: Option<&SourceSubpath>) -> String {
 }
 
 fn derive_path_name(path: &Path, subpath: Option<&SourceSubpath>) -> Result<String, ParseError> {
-    let base = path
-        .file_name()
-        .and_then(|name| name.to_str())
+    // Use forward-slash-only splitting for cross-platform consistency.
+    // This ensures the same input string produces the same name on any platform.
+    let path_str = path.to_string_lossy();
+    let base = path_str
+        .rsplit('/')
+        .find(|s| !s.is_empty())
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ParseError::CannotDeriveName {
             input: path.display().to_string(),

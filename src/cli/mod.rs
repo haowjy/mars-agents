@@ -47,7 +47,7 @@ impl MarsContext {
     /// Build context from project root (directory containing mars.toml).
     pub fn new(project_root: PathBuf) -> Result<Self, MarsError> {
         let project_canon = if project_root.exists() {
-            project_root.canonicalize().unwrap_or(project_root.clone())
+            dunce::canonicalize(&project_root).unwrap_or(project_root.clone())
         } else {
             project_root.clone()
         };
@@ -59,12 +59,12 @@ impl MarsContext {
     /// Build context from explicit project and managed roots.
     pub fn from_roots(project_root: PathBuf, managed_root: PathBuf) -> Result<Self, MarsError> {
         let project_canon = if project_root.exists() {
-            project_root.canonicalize().unwrap_or(project_root.clone())
+            dunce::canonicalize(&project_root).unwrap_or(project_root.clone())
         } else {
             project_root.clone()
         };
         let managed_canon = if managed_root.exists() {
-            managed_root.canonicalize().unwrap_or(managed_root.clone())
+            dunce::canonicalize(&managed_root).unwrap_or(managed_root.clone())
         } else {
             managed_root.clone()
         };
@@ -367,7 +367,7 @@ mod tests {
 
         // --root points to a dir with mars.toml — should find it via walk-up
         let ctx = find_agents_root(Some(dir.path())).unwrap();
-        assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
+        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
         assert_eq!(ctx.managed_root, dir.path().join(".agents"));
     }
 
@@ -381,7 +381,7 @@ mod tests {
         .unwrap();
 
         let ctx = find_agents_root(Some(dir.path())).unwrap();
-        assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
+        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
     }
 
     #[test]
@@ -391,10 +391,10 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
 
         let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
-        assert_eq!(ctx.project_root, dir.path().canonicalize().unwrap());
+        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
         assert_eq!(
             ctx.managed_root,
-            dir.path().join(".agents").canonicalize().unwrap()
+            dunce::canonicalize(dir.path().join(".agents")).unwrap()
         );
     }
 

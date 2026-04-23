@@ -377,7 +377,9 @@ fn cache_base_content(
     kind: ItemKind,
 ) -> Result<(), MarsError> {
     std::fs::create_dir_all(cache_bases_dir)?;
-    let cache_path = cache_bases_dir.join(installed_checksum.as_ref());
+    // Replace colon with underscore for Windows filename compatibility.
+    let safe_filename = installed_checksum.as_ref().replace(':', "_");
+    let cache_path = cache_bases_dir.join(&safe_filename);
 
     // Only cache if not already present (content-addressed = immutable)
     if cache_path.exists() {
@@ -555,7 +557,7 @@ mod tests {
         let installed_checksum = result.outcomes[0].installed_checksum.as_ref().unwrap();
 
         // Verify base content was cached
-        let cached = bases_dir.join(installed_checksum.as_ref());
+        let cached = bases_dir.join(installed_checksum.as_ref().replace(':', "_"));
         assert!(cached.exists(), "base content should be cached");
         assert_eq!(fs::read(&cached).unwrap(), content);
     }

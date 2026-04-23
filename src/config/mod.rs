@@ -1159,19 +1159,20 @@ path = "/home/dev/local-base"
         };
 
         let (effective, _) = merge_with_root(config, local, temp.path()).unwrap();
+        let canonical_override = dunce::canonicalize(&override_path).unwrap();
         let source = &effective.dependencies["base"];
         assert!(source.is_overridden);
         assert_eq!(
             source.subpath.as_ref().map(SourceSubpath::as_str),
             Some("plugins/foo")
         );
-        assert!(matches!(&source.spec, SourceSpec::Path(p) if p == &override_path));
+        assert!(matches!(&source.spec, SourceSpec::Path(p) if p == &canonical_override));
         assert!(matches!(
             &source.id,
             SourceId::Path {
                 canonical,
                 subpath: Some(sp)
-            } if canonical == &override_path && sp.as_str() == "plugins/foo"
+            } if canonical == &canonical_override && sp.as_str() == "plugins/foo"
         ));
     }
 

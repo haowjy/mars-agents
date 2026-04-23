@@ -229,7 +229,7 @@ fn apply_item_rename(
     source_name: &SourceName,
 ) -> Result<(ItemName, DestPath), MarsError> {
     let default_dest = default_dest_path(kind, item_name);
-    let default_key = default_dest.to_string_lossy().to_string();
+    let default_key = default_dest.to_string_lossy().replace("\\", "/");
 
     let rename_value = renames.get(&default_key).or_else(|| renames.get(item_name));
 
@@ -241,14 +241,16 @@ fn apply_item_rename(
 
     Ok((
         ItemName::from(dest_name),
-        DestPath::new(dest_path.to_string_lossy().as_ref()).map_err(|e| MarsError::Source {
-            source_name: source_name.to_string(),
-            message: format!(
-                "invalid rename destination `{}` for {} `{}`: {e}",
-                dest_path.display(),
-                kind,
-                item_name
-            ),
+        DestPath::new(dest_path.to_string_lossy().replace("\\", "/").as_str()).map_err(|e| {
+            MarsError::Source {
+                source_name: source_name.to_string(),
+                message: format!(
+                    "invalid rename destination `{}` for {} `{}`: {e}",
+                    dest_path.display(),
+                    kind,
+                    item_name
+                ),
+            }
         })?,
     ))
 }

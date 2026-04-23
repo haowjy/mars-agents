@@ -12,6 +12,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars rename` validates destination path before storing mutation.
 - Invalid rename destinations in config return error instead of panic.
 - `mars adopt` handles invalid target-relative paths gracefully.
+- Cache base filename uses underscore instead of colon for Windows compatibility.
+- Doctor target divergence warnings use forward-slash display paths.
+- MarsContext canonicalization uses `dunce` to avoid `\\?\\` prefix on Windows.
+- Rename destination normalization handles backslash paths.
+- Path source name derivation uses forward-slash-only splitting for cross-platform consistency.
 
 ## [0.1.10] - 2026-04-23
 

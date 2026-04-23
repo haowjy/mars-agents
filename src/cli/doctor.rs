@@ -218,7 +218,11 @@ fn check_target_divergence(
             let target_path = project_root.join(&relative_path);
 
             if !target_path.exists() && target_path.symlink_metadata().is_err() {
-                warnings.push(format!("missing in target: {}", relative_path.display()));
+                warnings.push(format!(
+                    "missing in target: {}/{}",
+                    target_name,
+                    dest_path.as_str()
+                ));
                 divergence_count += 1;
                 continue;
             }
@@ -227,16 +231,18 @@ fn check_target_divergence(
                 Ok(target_hash) => {
                     if target_hash != item.installed_checksum {
                         warnings.push(format!(
-                            "divergent in target: {} (local modifications)",
-                            relative_path.display()
+                            "divergent in target: {}/{} (local modifications)",
+                            target_name,
+                            dest_path.as_str()
                         ));
                         divergence_count += 1;
                     }
                 }
                 Err(e) => {
                     warnings.push(format!(
-                        "divergent in target: {} (local modifications; failed to hash: {e})",
-                        relative_path.display()
+                        "divergent in target: {}/{} (local modifications; failed to hash: {e})",
+                        target_name,
+                        dest_path.as_str()
                     ));
                     divergence_count += 1;
                 }

@@ -526,7 +526,7 @@ impl SourceId {
         } else {
             base.join(relative_or_absolute)
         };
-        let canonical = candidate.canonicalize()?;
+        let canonical = dunce::canonicalize(&candidate)?;
         Ok(Self::Path { canonical, subpath })
     }
 }

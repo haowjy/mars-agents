@@ -1,4 +1,6 @@
-# Smoke Testing
+# Smoke Testing (POSIX Shell)
+
+> **Platform note:** This guide uses POSIX shell features (`mktemp`, heredocs, shell traps, background processes). For Windows, see [smoke-testing-windows.md](smoke-testing-windows.md).
 
 This page documents the manual smoke checks that are worth running after parser, discovery, fetch, or sync changes.
 

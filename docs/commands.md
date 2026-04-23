@@ -283,7 +283,7 @@ Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL fo
 
 ## `mars link`
 
-Symlink `agents/` and `skills/` into a tool directory.
+Copy `agents/` and `skills/` into a tool directory.
 
 ```bash
 mars link <target> [--unlink] [--force]
@@ -301,9 +301,9 @@ mars link <target> [--unlink] [--force]
 - `--unlink` removes the target directory and its entry from settings
 
 ```bash
-mars link .claude            # Link agents/ and skills/ into .claude/
-mars link .cursor            # Link to another tool
-mars link --unlink .claude   # Remove links
+mars link .claude            # Copy agents/ and skills/ into .claude/
+mars link .cursor            # Copy to another tool
+mars link --unlink .claude   # Remove managed target
 mars link .claude --force    # Replace whatever exists
 ```
 
@@ -404,7 +404,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Frontmatter: name, description presence and consistency
 - Duplicate names across agents and skills
 - Skill dependency references (warns about external deps)
-- Symlinks in source packages (warned)
+- Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
 
 ```bash

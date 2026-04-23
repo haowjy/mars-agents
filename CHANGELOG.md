@@ -4,6 +4,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Windows CI job for `cargo fmt --all --check` and `cargo test -q`.
+- Windows release artifacts: `mars-windows-x64.exe` binary and PyPI wheel.
+- Windows npm package: `@meridian-flow/mars-agents-win32-x64`.
+- Windows PowerShell smoke testing guide (`docs/smoke-testing-windows.md`).
+- `crate::platform` boundary module for cross-platform operations.
+
+### Changed
+- Cache root default now uses OS cache directories (`dirs::cache_dir()`).
+- Cache component names use hash suffix for collision prevention.
+- Directory replacement uses explicit `replace_generated_dir` with rollback.
+- Cache finalization uses `publish_cache_dir_if_absent` for race handling.
+- Git invocation centralized in `platform::process::run_git`.
+- Source path classification centralized in `platform::path_syntax`.
+- POSIX smoke guide renamed to `docs/smoke-testing-posix.md` with platform note.
+- `docs/commands.md`: `mars link` described as copy, not symlink.
+
+### Fixed
+- Explicit-port URLs (e.g., `git://host:19424/repo.git`) no longer produce cache directories with colons.
+- Windows-invalid characters in cache component names are sanitized.
+- Windows reserved device names in cache paths are escaped.
+- Filesystem errors now include operation name and path in diagnostics.
+
 ## [0.1.8] - 2026-04-19
 
 ### Added

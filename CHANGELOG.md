@@ -4,8 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-04-23
+
 ### Changed
 - `DestPath` refactored from `PathBuf`-backed to `String`-backed normalized forward-slash coordinate. Lock keys and map keys now consistent across platforms. `resolve(root)` is the only path to native filesystem paths.
+- `default_dest_path` and `parse_rename_dest` return `DestPath` directly, not `PathBuf`.
+- `target_sync` uses `HashSet<String>` for cross-platform path comparison.
+- `SourceSubpath` and `DestPath` share internal `normalize_relative_coordinate()` helper.
+- Added `DestPath::item_name()` method; deduplicated `rsplit('/')` pattern.
+- All `std::fs::canonicalize` replaced with `dunce::canonicalize` project-wide.
+- Remaining `Command::new("git")` in `version.rs` and `merge/mod.rs` routed through `platform::process::run_git`.
 
 ### Fixed
 - Windows lock files with backslash paths now normalize to forward slashes on load.
@@ -14,7 +22,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars adopt` handles invalid target-relative paths gracefully.
 - Cache base filename uses underscore instead of colon for Windows compatibility.
 - Doctor target divergence warnings use forward-slash display paths.
-- MarsContext canonicalization uses `dunce` to avoid `\\?\\` prefix on Windows.
+- MarsContext canonicalization uses `dunce` to avoid `\\?\` prefix on Windows.
 - Rename destination normalization handles backslash paths.
 - Path source name derivation uses forward-slash-only splitting for cross-platform consistency.
 

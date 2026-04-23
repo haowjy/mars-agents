@@ -10,6 +10,7 @@ pub mod local_source;
 pub mod lock;
 pub mod merge;
 pub mod models;
+pub mod platform;
 pub mod reconcile;
 pub mod resolve;
 pub mod source;

@@ -16,6 +16,7 @@ Supported prebuilt platforms:
 - macOS `x64`
 - Linux `arm64` (glibc)
 - Linux `x64` (glibc)
+- Windows `x64`
 
 If your platform is not supported, install from source instead:
 

@@ -7,6 +7,7 @@ const PLATFORMS = {
   "darwin x64": "@meridian-flow/mars-agents-darwin-x64",
   "linux arm64": "@meridian-flow/mars-agents-linux-arm64",
   "linux x64": "@meridian-flow/mars-agents-linux-x64",
+  "win32 x64": "@meridian-flow/mars-agents-win32-x64",
 };
 
 const key = `${process.platform} ${process.arch}`;
@@ -15,7 +16,7 @@ const pkg = PLATFORMS[key];
 if (!pkg) {
   console.error(
     `mars: unsupported platform ${process.platform} ${process.arch}\n` +
-    `Supported: linux-arm64, linux-x64, darwin-arm64, darwin-x64\n` +
+    `Supported: linux-arm64, linux-x64, darwin-arm64, darwin-x64, win32-x64\n` +
     `Try: cargo install mars-agents`
   );
   process.exit(1);
@@ -23,7 +24,8 @@ if (!pkg) {
 
 let binaryPath;
 try {
-  binaryPath = require.resolve(`${pkg}/mars`);
+  const binaryName = process.platform === "win32" ? "mars.exe" : "mars";
+  binaryPath = require.resolve(`${pkg}/${binaryName}`);
 } catch {
   console.error(
     `mars: could not find binary package ${pkg}\n` +

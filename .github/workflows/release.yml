@@ -26,6 +26,9 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             artifact: mars-darwin-x64
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            artifact: mars-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +57,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary
-        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        if: matrix.target != 'aarch64-unknown-linux-gnu' && !contains(matrix.target, 'windows')
         run: strip target/${{ matrix.target }}/release/mars
 
       - name: Strip binary (Linux ARM64)
@@ -62,7 +65,23 @@ jobs:
         run: aarch64-linux-gnu-strip target/${{ matrix.target }}/release/mars
 
       - name: Rename binary
-        run: cp target/${{ matrix.target }}/release/mars ${{ matrix.artifact }}
+        shell: bash
+        run: |
+          if [[ "${{ matrix.artifact }}" == *.exe ]]; then
+            cp target/${{ matrix.target }}/release/mars.exe ${{ matrix.artifact }}
+          else
+            cp target/${{ matrix.target }}/release/mars ${{ matrix.artifact }}
+          fi
+
+      - name: Smoke test (Windows)
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: |
+          .\target\${{ matrix.target }}\release\mars.exe --version
+          $tmp = Join-Path $env:TEMP "mars-smoke-$([guid]::NewGuid())"
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          .\target\${{ matrix.target }}\release\mars.exe init --root $tmp
+          .\target\${{ matrix.target }}\release\mars.exe doctor --root $tmp
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,6 +106,9 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             artifact: wheels-darwin-x64
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            artifact: wheels-windows-x64
     steps:
       - uses: actions/checkout@v4
 
@@ -219,8 +241,12 @@ jobs:
             (
               cd "$pkg_dir"
               npm version "$VERSION" --no-git-tag-version --allow-same-version
-              cp "$GITHUB_WORKSPACE/artifacts/$binary" mars
-              chmod +x mars
+              if [[ "$binary" == *.exe ]]; then
+                cp "$GITHUB_WORKSPACE/artifacts/$binary" mars.exe
+              else
+                cp "$GITHUB_WORKSPACE/artifacts/$binary" mars
+                chmod +x mars
+              fi
               npm publish --provenance --access public --tag latest
             )
           }
@@ -229,6 +255,7 @@ jobs:
           publish_platform npm/@meridian-flow/mars-agents-linux-arm64 mars-linux-arm64
           publish_platform npm/@meridian-flow/mars-agents-darwin-arm64 mars-darwin-arm64
           publish_platform npm/@meridian-flow/mars-agents-darwin-x64 mars-darwin-x64
+          publish_platform npm/@meridian-flow/mars-agents-win32-x64 mars-windows-x64.exe
 
       - name: Publish CLI stub package
         run: |

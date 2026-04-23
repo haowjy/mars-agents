@@ -20,6 +20,7 @@
     "@meridian-flow/mars-agents-linux-x64": "0.1.6",
     "@meridian-flow/mars-agents-linux-arm64": "0.1.6",
     "@meridian-flow/mars-agents-darwin-arm64": "0.1.6",
-    "@meridian-flow/mars-agents-darwin-x64": "0.1.6"
+    "@meridian-flow/mars-agents-darwin-x64": "0.1.6",
+    "@meridian-flow/mars-agents-win32-x64": "0.1.6"
   }
 }

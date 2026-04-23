@@ -6,11 +6,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::MarsError;
+use crate::platform::cache::archive_cache_component;
 use crate::source::GlobalCache;
 use flate2::read::GzDecoder;
 use tar::Archive;
-
-use super::git::url_to_dirname;
 
 pub(crate) fn github_owner_repo(url: &str) -> Option<(String, String)> {
     let (_, tail) = url.split_once("github.com/")?;
@@ -159,9 +158,8 @@ pub(crate) fn fetch_archive(
     })?;
 
     let archive_url = format!("https://github.com/{owner}/{repo}/archive/{sha}.tar.gz");
-    let cache_path = cache
-        .archives_dir()
-        .join(format!("{}_{}", url_to_dirname(url), sha));
+    let cache_key = archive_cache_component(url, sha)?;
+    let cache_path = cache.archives_dir().join(cache_key);
 
     if cache_path.exists() {
         return Ok(cache_path);

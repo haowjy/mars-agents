@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::MarsError;
+use crate::platform::cache::git_cache_component;
 use crate::source::{AvailableVersion, GlobalCache};
 
-use super::git::{parse_semver_tag, url_to_dirname};
+use super::git::parse_semver_tag;
 
 pub(crate) fn run_command(command: &mut Command, display: String) -> Result<String, MarsError> {
     let output = command.output().map_err(|err| MarsError::GitCli {
@@ -103,7 +104,8 @@ pub(crate) fn fetch_git_clone(
     sha: Option<&str>,
     cache: &GlobalCache,
 ) -> Result<PathBuf, MarsError> {
-    let cache_path = cache.git_dir().join(url_to_dirname(url));
+    let cache_name = git_cache_component(url)?;
+    let cache_path = cache.git_dir().join(cache_name);
 
     // Acquire per-entry lock to prevent cross-repo races on the same cache entry.
     // Held through fetch + checkout, released when _lock drops at function return.

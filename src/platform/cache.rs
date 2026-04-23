@@ -138,23 +138,78 @@ fn normalize_git_url(url: &str) -> &str {
 /// 2. OS cache directory + `mars/cache`
 /// 3. `{cwd}/.mars/cache` fallback
 pub fn global_cache_root() -> Result<PathBuf, MarsError> {
-    // Placeholder - will be implemented in Slice 3
-    // For now, delegate to existing GlobalCache::new logic
     if let Some(cache_dir) = std::env::var_os("MARS_CACHE_DIR") {
-        Ok(PathBuf::from(cache_dir))
-    } else if let Some(home) = dirs::home_dir() {
-        Ok(home.join(".mars").join("cache"))
-    } else {
-        Ok(std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(".mars")
-            .join("cache"))
+        return Ok(PathBuf::from(cache_dir));
     }
+
+    if let Some(cache_dir) = dirs::cache_dir() {
+        return Ok(cache_dir.join("mars").join("cache"));
+    }
+
+    Ok(std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".mars")
+        .join("cache"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    #[allow(unused_unsafe)]
+    fn env_set(key: &str, value: &std::path::Path) {
+        unsafe {
+            std::env::set_var(key, value);
+        }
+    }
+
+    #[allow(unused_unsafe)]
+    fn env_remove(key: &str) {
+        unsafe {
+            std::env::remove_var(key);
+        }
+    }
+
+    struct EnvVarGuard {
+        key: String,
+        prev: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set_path(key: &str, value: &std::path::Path) -> Self {
+            let prev = std::env::var_os(key);
+            env_set(key, value);
+            Self {
+                key: key.to_string(),
+                prev,
+            }
+        }
+
+        fn remove(key: &str) -> Self {
+            let prev = std::env::var_os(key);
+            env_remove(key);
+            Self {
+                key: key.to_string(),
+                prev,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = &self.prev {
+                #[allow(unused_unsafe)]
+                unsafe {
+                    std::env::set_var(&self.key, prev);
+                }
+            } else {
+                env_remove(&self.key);
+            }
+        }
+    }
 
     #[test]
     fn safe_component_replaces_invalid_chars() {
@@ -233,5 +288,32 @@ mod tests {
             !result.contains(':'),
             "archive component should not contain colon: {result}"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn global_cache_root_respects_env_var() {
+        let temp = std::env::temp_dir().join("mars-test-cache");
+        let _guard = EnvVarGuard::set_path("MARS_CACHE_DIR", &temp);
+
+        let root = global_cache_root().unwrap();
+        assert_eq!(root, temp);
+    }
+
+    #[test]
+    #[serial]
+    fn global_cache_root_uses_os_cache_when_no_env() {
+        let _guard = EnvVarGuard::remove("MARS_CACHE_DIR");
+
+        let root = global_cache_root().unwrap();
+
+        if let Some(cache_dir) = dirs::cache_dir() {
+            assert_eq!(root, cache_dir.join("mars").join("cache"));
+        } else {
+            assert!(
+                root.ends_with(Path::new(".mars").join("cache")),
+                "fallback root should end with .mars/cache: {root:?}"
+            );
+        }
     }
 }

@@ -7,9 +7,10 @@ pub mod path;
 use std::path::PathBuf;
 
 use crate::error::MarsError;
+use crate::platform::cache::global_cache_root;
 use crate::types::{CommitHash, SourceName, SourceUrl};
 
-/// Global source cache under `~/.mars/cache` (or `MARS_CACHE_DIR`).
+/// Global source cache under the OS cache root (or `MARS_CACHE_DIR`).
 #[derive(Debug, Clone)]
 pub struct GlobalCache {
     pub root: PathBuf,
@@ -20,19 +21,10 @@ impl GlobalCache {
     ///
     /// Resolution order:
     /// 1. `MARS_CACHE_DIR`
-    /// 2. `dirs::home_dir()/.mars/cache`
+    /// 2. OS cache directory + `mars/cache`
     /// 3. `{current_working_dir}/.mars/cache` fallback
     pub fn new() -> Result<Self, MarsError> {
-        let root = if let Some(cache_dir) = std::env::var_os("MARS_CACHE_DIR") {
-            PathBuf::from(cache_dir)
-        } else if let Some(home) = dirs::home_dir() {
-            home.join(".mars").join("cache")
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(".mars")
-                .join("cache")
-        };
+        let root = global_cache_root()?;
 
         let cache = Self { root };
         std::fs::create_dir_all(cache.archives_dir())?;
@@ -84,11 +76,8 @@ mod tests {
     fn global_cache_creates_directory() {
         let cache = GlobalCache::new().unwrap();
         assert!(cache.root.exists());
-        if let Some(from_env) = std::env::var_os("MARS_CACHE_DIR") {
-            assert_eq!(cache.root, PathBuf::from(from_env));
-        } else {
-            assert!(cache.root.ends_with(".mars/cache"));
-        }
+        let expected_root = global_cache_root().unwrap();
+        assert_eq!(cache.root, expected_root);
         assert!(cache.archives_dir().exists());
         assert!(cache.git_dir().exists());
     }

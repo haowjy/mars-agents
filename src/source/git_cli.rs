@@ -1,46 +1,22 @@
 //! Git CLI operations — ls-remote, clone, fetch, checkout.
 
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::platform::cache::git_cache_component;
+use crate::platform::process::{display_command, run_git, run_git_with_ref};
 use crate::source::{AvailableVersion, GlobalCache};
 
 use super::git::parse_semver_tag;
 
-pub(crate) fn run_command(command: &mut Command, display: String) -> Result<String, MarsError> {
-    let output = command.output().map_err(|err| MarsError::GitCli {
-        command: display.clone(),
-        message: err.to_string(),
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let message = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else if !stdout.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            format!("command exited with status {}", output.status)
-        };
-
-        return Err(MarsError::GitCli {
-            command: display,
-            message,
-        });
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
 pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
-    let mut command = Command::new("git");
-    command.arg("ls-remote").arg(url).arg(reference);
-
-    let command_display = format!("git ls-remote {url} {reference}");
-    let output = run_command(&mut command, command_display.clone())?;
+    let command_display = display_command(&["ls-remote", url, reference]);
+    let output = run_git_with_ref(
+        &["ls-remote", url],
+        reference,
+        Path::new("."),
+        "resolve remote git reference",
+    )?;
 
     for line in output.lines() {
         if let Some((sha, _)) = line.split_once('\t')
@@ -58,10 +34,11 @@ pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsEr
 
 /// Run `git ls-remote --tags <url>` and parse semver tags.
 pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
-    let mut command = Command::new("git");
-    command.arg("ls-remote").arg("--tags").arg(url);
-
-    let output = run_command(&mut command, format!("git ls-remote --tags {url}"))?;
+    let output = run_git(
+        &["ls-remote", "--tags", url],
+        Path::new("."),
+        "list remote git tags",
+    )?;
     let mut versions = Vec::new();
 
     for line in output.lines() {
@@ -116,82 +93,50 @@ pub(crate) fn fetch_git_clone(
     let was_cached = cache_path.exists();
 
     if !was_cached {
-        let mut command = Command::new("git");
-        command.arg("clone").arg("--depth").arg("1");
-        if let Some(tag) = tag {
-            command.arg("--branch").arg(tag);
+        let mut args = vec!["clone", "--depth", "1"];
+        if let Some(tag_name) = tag {
+            args.push("--branch");
+            args.push(tag_name);
         }
-        command.arg(url).arg(&cache_path);
+        args.push(url);
+        args.push(&cache_path_display);
 
-        let mut display = String::from("git clone --depth 1");
-        if let Some(tag) = tag {
-            display.push_str(&format!(" --branch {tag}"));
-        }
-        display.push_str(&format!(" {url} {cache_path_display}"));
-
-        run_command(&mut command, display)?;
+        run_git(&args, &cache.git_dir(), "clone git source into cache")?;
     } else {
-        let mut fetch_cmd = Command::new("git");
-        fetch_cmd
-            .arg("-C")
-            .arg(&cache_path)
-            .arg("fetch")
-            .arg("--depth")
-            .arg("1")
-            .arg("origin");
-        run_command(
-            &mut fetch_cmd,
-            format!("git -C {cache_path_display} fetch --depth 1 origin"),
+        run_git(
+            &["fetch", "--depth", "1", "origin"],
+            &cache_path,
+            "fetch cached git source",
         )?;
     }
 
     if was_cached {
-        if let Some(tag) = tag {
-            let mut checkout_tag = Command::new("git");
-            checkout_tag
-                .arg("-C")
-                .arg(&cache_path)
-                .arg("checkout")
-                .arg(tag);
-            run_command(
-                &mut checkout_tag,
-                format!("git -C {cache_path_display} checkout {tag}"),
+        if let Some(tag_name) = tag {
+            run_git(
+                &["checkout", tag_name],
+                &cache_path,
+                "checkout cached git tag",
             )?;
         }
 
         if let Some(sha) = sha {
-            let mut checkout_sha = Command::new("git");
-            checkout_sha
-                .arg("-C")
-                .arg(&cache_path)
-                .arg("checkout")
-                .arg(sha);
-            run_command(
-                &mut checkout_sha,
-                format!("git -C {cache_path_display} checkout {sha}"),
+            run_git(
+                &["checkout", sha],
+                &cache_path,
+                "checkout cached git commit",
             )?;
         } else if tag.is_none() {
-            let mut checkout_head = Command::new("git");
-            checkout_head
-                .arg("-C")
-                .arg(&cache_path)
-                .arg("checkout")
-                .arg("origin/HEAD");
-            run_command(
-                &mut checkout_head,
-                format!("git -C {cache_path_display} checkout origin/HEAD"),
+            run_git(
+                &["checkout", "origin/HEAD"],
+                &cache_path,
+                "checkout cached git default head",
             )?;
         }
     } else if let Some(sha) = sha {
-        let mut checkout_sha = Command::new("git");
-        checkout_sha
-            .arg("-C")
-            .arg(&cache_path)
-            .arg("checkout")
-            .arg(sha);
-        run_command(
-            &mut checkout_sha,
-            format!("git -C {cache_path_display} checkout {sha}"),
+        run_git(
+            &["checkout", sha],
+            &cache_path,
+            "checkout cloned git commit",
         )?;
     }
 

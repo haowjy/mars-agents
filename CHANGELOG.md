@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-04-23
+
 ### Added
 - Windows CI job for `cargo fmt --all --check` and `cargo test -q`.
 - Windows release artifacts: `mars-windows-x64.exe` binary and PyPI wheel.

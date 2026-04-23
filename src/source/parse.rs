@@ -564,11 +564,21 @@ fn derive_git_name(repo: &str, subpath: Option<&SourceSubpath>) -> String {
 }
 
 fn derive_path_name(path: &Path, subpath: Option<&SourceSubpath>) -> Result<String, ParseError> {
-    // Use Path::file_name() for cross-platform last-component extraction.
-    // This handles both `/` and `\` separators correctly on all platforms.
-    let base = path
-        .file_name()
-        .and_then(|f| f.to_str())
+    // Split on both `/` and `\` to handle Windows paths even when running on
+    // Linux (where Path only recognizes `/`).  Also strip Windows drive prefixes
+    // like `C:` that appear in drive-relative paths.
+    let path_str = path.to_string_lossy();
+    let base = path_str
+        .rsplit(|c| c == '/' || c == '\\')
+        .find(|s| !s.is_empty())
+        .map(|s| {
+            // Strip drive letter prefix (e.g. "C:agents" → "agents")
+            if s.len() >= 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':' {
+                &s[2..]
+            } else {
+                s
+            }
+        })
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ParseError::CannotDeriveName {
             input: path.display().to_string(),
@@ -663,7 +673,8 @@ mod tests {
         assert_eq!(parsed.format, SourceFormat::LocalPath);
         assert_eq!(parsed.path.as_deref(), Some(Path::new("packages\\agents")));
         assert!(parsed.url.is_none());
-        assert_eq!(parsed.name, "packages\\agents");
+        // Name is the last path component, not the full path
+        assert_eq!(parsed.name, "agents");
     }
 
     #[test]
@@ -672,7 +683,8 @@ mod tests {
         assert_eq!(parsed.format, SourceFormat::LocalPath);
         assert_eq!(parsed.path.as_deref(), Some(Path::new("C:agents")));
         assert!(parsed.url.is_none());
-        assert_eq!(parsed.name, "C:agents");
+        // Name is the last path component, not the drive-relative form
+        assert_eq!(parsed.name, "agents");
     }
 
     #[test]

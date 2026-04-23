@@ -1126,6 +1126,7 @@ path = "/home/dev/local-base"
         let temp = TempDir::new().unwrap();
         let override_path = temp.path().join("local-base");
         std::fs::create_dir_all(&override_path).unwrap();
+        let canonical_override = dunce::canonicalize(&override_path).unwrap();
 
         let config = Config {
             dependencies: {
@@ -1151,7 +1152,7 @@ path = "/home/dev/local-base"
                 m.insert(
                     "base".into(),
                     OverrideEntry {
-                        path: override_path.clone(),
+                        path: canonical_override.clone(),
                     },
                 );
                 m
@@ -1159,7 +1160,6 @@ path = "/home/dev/local-base"
         };
 
         let (effective, _) = merge_with_root(config, local, temp.path()).unwrap();
-        let canonical_override = dunce::canonicalize(&override_path).unwrap();
         let source = &effective.dependencies["base"];
         assert!(source.is_overridden);
         assert_eq!(

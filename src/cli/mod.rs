@@ -363,12 +363,13 @@ mod tests {
     #[test]
     fn find_root_with_explicit_path() {
         let dir = TempDir::new().unwrap();
+        let canonical_dir = dunce::canonicalize(dir.path()).unwrap();
         std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
 
         // --root points to a dir with mars.toml — should find it via walk-up
-        let ctx = find_agents_root(Some(dir.path())).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
-        assert_eq!(ctx.managed_root, dir.path().join(".agents"));
+        let ctx = find_agents_root(Some(&canonical_dir)).unwrap();
+        assert_eq!(ctx.project_root, canonical_dir);
+        assert_eq!(ctx.managed_root, ctx.project_root.join(".agents"));
     }
 
     #[test]

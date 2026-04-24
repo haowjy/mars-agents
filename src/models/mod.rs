@@ -630,14 +630,14 @@ fn normalize_provider(slug: &str) -> String {
 /// 2. All match patterns must hit (AND)
 /// 3. No exclude patterns may hit (OR)
 /// 4. Skip entries ending with `-latest` (synthetic aliases)
-/// 5. Sort by newest release_date, then shortest ID
-/// 6. Pick first
-pub fn auto_resolve(
+/// 5. Sort by newest release_date, then shortest ID, then lexical ID
+/// 6. Return all candidates
+pub fn auto_resolve_all<'a>(
     provider: &str,
     match_patterns: &[String],
     exclude_patterns: &[String],
-    cache: &ModelsCache,
-) -> Option<String> {
+    cache: &'a ModelsCache,
+) -> Vec<&'a CachedModel> {
     let mut candidates: Vec<&CachedModel> = cache
         .models
         .iter()
@@ -659,17 +659,113 @@ pub fn auto_resolve(
         })
         .collect();
 
-    // Sort: newest release_date first, then shortest ID (tiebreaker)
+    // Sort: newest release_date first, then shortest ID, then lexical ID.
     candidates.sort_by(|a, b| {
         let date_cmp = b
             .release_date
             .as_deref()
             .unwrap_or("")
             .cmp(a.release_date.as_deref().unwrap_or(""));
-        date_cmp.then_with(|| a.id.len().cmp(&b.id.len()))
+        date_cmp
+            .then_with(|| a.id.len().cmp(&b.id.len()))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
+    candidates
+}
+
+/// Resolve an auto-resolve spec against the models cache.
+///
+/// Algorithm:
+/// 1. Filter by provider (case-insensitive)
+/// 2. All match patterns must hit (AND)
+/// 3. No exclude patterns may hit (OR)
+/// 4. Skip entries ending with `-latest` (synthetic aliases)
+/// 5. Sort by newest release_date, then shortest ID, then lexical ID
+/// 6. Pick first
+pub fn auto_resolve(
+    provider: &str,
+    match_patterns: &[String],
+    exclude_patterns: &[String],
+    cache: &ModelsCache,
+) -> Option<String> {
+    let candidates = auto_resolve_all(provider, match_patterns, exclude_patterns, cache);
+
     candidates.first().map(|m| m.id.clone())
+}
+
+/// Alias-prefix resolution for inputs like `opus-4-6`.
+///
+/// Algorithm:
+/// 1. For each auto-resolve alias whose name is a strict prefix of `input`:
+///    a. Extract suffix = input[alias_name.len()..]
+///    b. Resolve all candidates with alias filters
+///    c. Keep candidates whose model ID contains the suffix
+/// 2. Collect union across aliases, deduplicated by model ID
+/// 3. Sort candidates by newest release_date, then shortest ID
+/// 4. Return the best candidate
+pub fn resolve_with_alias_prefix(
+    input: &str,
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+) -> Option<ResolvedAlias> {
+    let mut deduped: IndexMap<String, CachedModel> = IndexMap::new();
+
+    for (alias_name, alias) in aliases {
+        if !(input.starts_with(alias_name.as_str()) && input.len() > alias_name.len()) {
+            continue;
+        }
+
+        let ModelSpec::AutoResolve {
+            provider,
+            match_patterns,
+            exclude_patterns,
+        } = &alias.spec
+        else {
+            continue;
+        };
+
+        let suffix = &input[alias_name.len()..];
+        for candidate in auto_resolve_all(provider, match_patterns, exclude_patterns, cache) {
+            if candidate.id.contains(suffix) {
+                deduped
+                    .entry(candidate.id.clone())
+                    .or_insert_with(|| candidate.clone());
+            }
+        }
+    }
+
+    let mut candidates: Vec<CachedModel> = deduped.into_values().collect();
+    candidates.sort_by(|a, b| {
+        let date_cmp = b
+            .release_date
+            .as_deref()
+            .unwrap_or("")
+            .cmp(a.release_date.as_deref().unwrap_or(""));
+        date_cmp
+            .then_with(|| a.id.len().cmp(&b.id.len()))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let winner = candidates.into_iter().next()?;
+    let provider = winner.provider.to_ascii_lowercase();
+    let installed = harness::detect_installed_harnesses();
+    let harness = harness::resolve_harness_for_provider(&provider, &installed);
+    let harness_source = if harness.is_some() {
+        HarnessSource::AutoDetected
+    } else {
+        HarnessSource::Unavailable
+    };
+
+    Some(ResolvedAlias {
+        name: input.to_string(),
+        model_id: winner.id,
+        provider: provider.clone(),
+        harness,
+        harness_source,
+        harness_candidates: harness::harness_candidates_for_provider(&provider),
+        description: None,
+    })
 }
 
 /// Simple glob matching: `*` matches any sequence of characters.
@@ -939,8 +1035,7 @@ fn resolve_harness(
 
 /// Best-effort provider inference from model ID prefixes.
 /// Returns None for unrecognized patterns.
-#[allow(dead_code)]
-fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
+pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
     let id = model_id.to_lowercase();
     if id.starts_with("claude-") {
         return Some("anthropic");
@@ -1198,6 +1293,41 @@ mod tests {
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
+    #[test]
+    fn auto_resolve_lexical_id_tiebreaker_when_date_and_length_equal() {
+        let cache = make_cache(vec![
+            ("claude-opus-4-b", "Anthropic", Some("2025-03-01")),
+            ("claude-opus-4-a", "Anthropic", Some("2025-03-01")),
+        ]);
+
+        let result = auto_resolve("Anthropic", &["claude-opus-4-*".to_string()], &[], &cache);
+        // Same date + same length — lexical ID wins for deterministic ordering.
+        assert_eq!(result, Some("claude-opus-4-a".to_string()));
+    }
+
+    #[test]
+    fn auto_resolve_all_returns_all_candidates() {
+        let cache = make_cache(vec![
+            ("claude-opus-4-5", "Anthropic", Some("2025-12-01")),
+            ("claude-opus-latest", "Anthropic", Some("9999-01-01")),
+            ("claude-opus-4-6-long", "Anthropic", Some("2026-02-05")),
+            ("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
+            ("claude-opus-3", "Anthropic", Some("2024-02-05")),
+        ]);
+
+        let result = auto_resolve_all(
+            "Anthropic",
+            &["claude-opus-*".to_string()],
+            &["*opus-3".to_string()],
+            &cache,
+        );
+        let ids: Vec<&str> = result.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["claude-opus-4-6", "claude-opus-4-6-long", "claude-opus-4-5"]
+        );
+    }
+
     // -- merge_model_config tests --
 
     fn pinned_alias(harness: Option<&str>, model: &str) -> ModelAlias {
@@ -1209,6 +1339,122 @@ mod tests {
                 provider: None,
             },
         }
+    }
+
+    fn auto_alias(
+        provider: &str,
+        match_patterns: &[&str],
+        exclude_patterns: &[&str],
+    ) -> ModelAlias {
+        ModelAlias {
+            harness: None,
+            description: None,
+            spec: ModelSpec::AutoResolve {
+                provider: provider.to_string(),
+                match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
+                exclude_patterns: exclude_patterns.iter().map(|s| s.to_string()).collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_basic() {
+        let aliases = builtin_aliases();
+        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
+
+        let resolved = resolve_with_alias_prefix("opus-4-6", &aliases, &cache).unwrap();
+        assert_eq!(resolved.name, "opus-4-6");
+        assert_eq!(resolved.model_id, "claude-opus-4-6");
+        assert_eq!(resolved.provider, "anthropic");
+        assert_eq!(
+            resolved.harness_candidates,
+            vec!["claude", "opencode", "gemini"]
+        );
+
+        let installed = harness::detect_installed_harnesses();
+        let expected_harness = harness::resolve_harness_for_provider("anthropic", &installed);
+        let expected_source = if expected_harness.is_some() {
+            HarnessSource::AutoDetected
+        } else {
+            HarnessSource::Unavailable
+        };
+        assert_eq!(resolved.harness, expected_harness);
+        assert_eq!(resolved.harness_source, expected_source);
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_no_candidates() {
+        let aliases = builtin_aliases();
+        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
+
+        let resolved = resolve_with_alias_prefix("opus-9-9", &aliases, &cache);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_picks_newest() {
+        let aliases = builtin_aliases();
+        let cache = make_cache(vec![
+            ("claude-opus-4-6-20250101", "Anthropic", Some("2025-01-01")),
+            ("claude-opus-4-6-20260101", "Anthropic", Some("2026-01-01")),
+        ]);
+
+        let resolved = resolve_with_alias_prefix("opus-4-6", &aliases, &cache).unwrap();
+        assert_eq!(resolved.model_id, "claude-opus-4-6-20260101");
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_lexical_id_tiebreaker_when_date_and_length_equal() {
+        let aliases = builtin_aliases();
+        let cache = make_cache(vec![
+            ("claude-opus-4-b", "Anthropic", Some("2026-02-05")),
+            ("claude-opus-4-a", "Anthropic", Some("2026-02-05")),
+        ]);
+
+        let resolved = resolve_with_alias_prefix("opus-4-", &aliases, &cache).unwrap();
+        assert_eq!(resolved.model_id, "claude-opus-4-a");
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_pinned_skipped() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            pinned_alias(Some("claude"), "claude-opus-4-6"),
+        );
+        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
+
+        let resolved = resolve_with_alias_prefix("opus-4-6", &aliases, &cache);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_exact_name_skipped() {
+        let aliases = builtin_aliases();
+        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
+
+        let resolved = resolve_with_alias_prefix("opus", &aliases, &cache);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_with_alias_prefix_multiple_aliases_union() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "g".to_string(),
+            auto_alias("openai", &["gpt-2026-08*"], &[]),
+        );
+        aliases.insert(
+            "gpt".to_string(),
+            auto_alias("openai", &["gpt-2026-03*"], &[]),
+        );
+        let cache = make_cache(vec![
+            ("gpt-2026-03-01", "OpenAI", Some("2026-03-01")),
+            ("gpt-2026-08-07", "OpenAI", Some("2026-08-07")),
+        ]);
+
+        let resolved = resolve_with_alias_prefix("gpt-2026", &aliases, &cache).unwrap();
+        assert_eq!(resolved.model_id, "gpt-2026-08-07");
     }
 
     #[test]

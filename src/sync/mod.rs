@@ -242,7 +242,8 @@ fn resolve_graph(
 
     // Merge model config from dependency tree
     let dep_models = declaration_ordered_dep_models(&graph, &loaded.effective);
-    let model_aliases = crate::models::merge_model_config(&loaded.config.models, &dep_models, diag);
+    let model_aliases =
+        crate::models::merge_model_config(&loaded.config.models, &dep_models, diag, None);
 
     Ok(ResolvedState {
         loaded,
@@ -566,8 +567,12 @@ fn finalize(
         let empty_consumer: indexmap::IndexMap<String, crate::models::ModelAlias> =
             indexmap::IndexMap::new();
         let mut ignored_diag = DiagnosticCollector::new();
-        let dep_model_aliases =
-            crate::models::merge_model_config(&empty_consumer, &dep_models, &mut ignored_diag);
+        let dep_model_aliases = crate::models::merge_model_config(
+            &empty_consumer,
+            &dep_models,
+            &mut ignored_diag,
+            None,
+        );
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh
@@ -1123,6 +1128,8 @@ mod tests {
         crate::models::ModelAlias {
             harness: None,
             description: None,
+            default_effort: None,
+            autocompact: None,
             spec: crate::models::ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: None,

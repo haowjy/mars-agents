@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
@@ -164,8 +165,9 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     }
 
     let cache_warning = cache_warning(&outcome);
+    let mut diag = DiagnosticCollector::new();
 
-    let resolved = models::resolve_all(&merged, &cache);
+    let resolved = models::resolve_all(&merged, &cache, &mut diag);
 
     // Build effective visibility: CLI overrides config entirely.
     let config_visibility = crate::config::load(&ctx.project_root)
@@ -202,6 +204,12 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 if let Some(error) = unavailable_harness_error(r) {
                     obj["error"] = serde_json::json!(error);
                 }
+                if let Some(default_effort) = &r.default_effort {
+                    obj["default_effort"] = serde_json::json!(default_effort);
+                }
+                if let Some(autocompact) = r.autocompact {
+                    obj["autocompact"] = serde_json::json!(autocompact);
+                }
                 obj
             })
             .collect();
@@ -211,6 +219,9 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         });
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
+        }
+        if let Some(diagnostics) = drain_diagnostics_json(&mut diag) {
+            out["diagnostics"] = diagnostics;
         }
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
@@ -234,6 +245,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 r.name, harness, mode, r.model_id, desc
             );
         }
+        emit_text_diagnostics(&mut diag);
     }
 
     Ok(0)
@@ -381,7 +393,7 @@ fn collect_all_model_entries(
                     append_alias_match(&mut by_model_id, matched, &installed, alias_name);
                 }
             }
-            ModelSpec::Pinned { model, provider } => {
+            ModelSpec::Pinned { model, provider, .. } => {
                 if let Some(matched) = cache
                     .models
                     .iter()
@@ -397,6 +409,43 @@ fn collect_all_model_entries(
                         &installed,
                         alias_name,
                     );
+                }
+            }
+            ModelSpec::PinnedWithMatch {
+                model,
+                provider,
+                match_patterns,
+                exclude_patterns,
+            } => {
+                if let Some(matched) = cache
+                    .models
+                    .iter()
+                    .find(|cache_model| cache_model.id == *model)
+                {
+                    append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                } else {
+                    append_pinned_alias_match(
+                        &mut by_model_id,
+                        model,
+                        provider.as_deref(),
+                        alias.description.as_deref(),
+                        &installed,
+                        alias_name,
+                    );
+                }
+
+                let provider_for_discovery = provider
+                    .as_deref()
+                    .or_else(|| models::infer_provider_from_model_id(model));
+                if let Some(provider_for_discovery) = provider_for_discovery {
+                    for matched in models::auto_resolve_all(
+                        provider_for_discovery,
+                        match_patterns,
+                        exclude_patterns,
+                        cache,
+                    ) {
+                        append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                    }
                 }
             }
         }
@@ -559,6 +608,8 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
         ModelAlias {
             harness: Some(args.harness.clone()),
             description: args.description.clone(),
+            default_effort: None,
+            autocompact: None,
             spec: ModelSpec::Pinned {
                 model: args.model_id.clone(),
                 provider: None,
@@ -627,11 +678,12 @@ fn run_resolve_exact_alias(
     }
 
     let source = determine_source(name, ctx)?;
-    let resolved_map = models::resolve_all(merged, cache);
-    let resolved_entry = resolved_map.get(name);
+    let mut diag = DiagnosticCollector::new();
+    let resolved_entry = models::resolve_one(name, merged, cache, &mut diag);
+    let diagnostics = diag.drain();
 
     if json {
-        if let Some(r) = resolved_entry {
+        if let Some(r) = resolved_entry.as_ref() {
             let mut out = serde_json::json!({
                 "name": r.name,
                 "source": source,
@@ -647,8 +699,17 @@ fn run_resolve_exact_alias(
             if let Some(error) = unavailable_harness_error(r) {
                 out["error"] = serde_json::json!(error);
             }
+            if let Some(default_effort) = &r.default_effort {
+                out["default_effort"] = serde_json::json!(default_effort);
+            }
+            if let Some(autocompact) = r.autocompact {
+                out["autocompact"] = serde_json::json!(autocompact);
+            }
             if let Some(warning) = cache_warning.as_deref() {
                 out["cache_warning"] = serde_json::json!(warning);
+            }
+            if !diagnostics.is_empty() {
+                out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
@@ -658,11 +719,14 @@ fn run_resolve_exact_alias(
             if let Some(warning) = cache_warning.as_deref() {
                 out["cache_warning"] = serde_json::json!(warning);
             }
+            if !diagnostics.is_empty() {
+                out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
+            }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
             return Ok(1);
         }
     } else {
-        let Some(r) = resolved_entry else {
+        let Some(r) = resolved_entry.as_ref() else {
             eprintln!("error: alias `{}` did not resolve to a model ID", name);
             return Ok(1);
         };
@@ -679,6 +743,20 @@ fn run_resolve_exact_alias(
             ModelSpec::Pinned { model, provider: _ } => {
                 println!("Mode:     pinned");
                 println!("Model:    {}", model);
+            }
+            ModelSpec::PinnedWithMatch {
+                model,
+                provider: _,
+                match_patterns,
+                exclude_patterns,
+            } => {
+                println!("Mode:     pinned");
+                println!("Model:    {}", model);
+                println!("Match:    {}", match_patterns.join(", "));
+                if !exclude_patterns.is_empty() {
+                    println!("Exclude:  {}", exclude_patterns.join(", "));
+                }
+                println!("Resolved: {}", r.model_id);
             }
             ModelSpec::AutoResolve {
                 provider: _,
@@ -699,6 +777,7 @@ fn run_resolve_exact_alias(
         if let Some(desc) = &r.description {
             println!("Desc:     {}", desc);
         }
+        emit_drained_text_diagnostics(&diagnostics);
     }
 
     Ok(0)
@@ -732,6 +811,12 @@ fn run_output_resolved(
         });
         if let Some(error) = unavailable_harness_error(resolved) {
             out["error"] = serde_json::json!(error);
+        }
+        if let Some(default_effort) = &resolved.default_effort {
+            out["default_effort"] = serde_json::json!(default_effort);
+        }
+        if let Some(autocompact) = resolved.autocompact {
+            out["autocompact"] = serde_json::json!(autocompact);
         }
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
@@ -895,22 +980,41 @@ fn format_spec(spec: &ModelSpec) -> serde_json::Value {
             }
             out
         }
+        ModelSpec::PinnedWithMatch {
+            model,
+            provider,
+            match_patterns,
+            exclude_patterns,
+        } => {
+            let mut out = serde_json::json!({
+                "mode": "pinned",
+                "model": model,
+                "match": match_patterns,
+                "exclude": exclude_patterns,
+            });
+            if let Some(provider) = provider {
+                out["provider"] = serde_json::json!(provider);
+            }
+            out
+        }
         ModelSpec::AutoResolve {
             provider,
             match_patterns,
             exclude_patterns,
-        } => serde_json::json!({
-            "mode": "auto-resolve",
-            "provider": provider,
-            "match": match_patterns,
-            "exclude": exclude_patterns,
-        }),
+        } => {
+            serde_json::json!({
+                "mode": "auto-resolve",
+                "provider": provider,
+                "match": match_patterns,
+                "exclude": exclude_patterns,
+            })
+        }
     }
 }
 
 fn mode_for_alias(spec: Option<&ModelSpec>) -> &'static str {
     match spec {
-        Some(ModelSpec::Pinned { .. }) => "pinned",
+        Some(ModelSpec::Pinned { .. }) | Some(ModelSpec::PinnedWithMatch { .. }) => "pinned",
         Some(ModelSpec::AutoResolve { .. }) => "auto-resolve",
         None => "unknown",
     }
@@ -947,6 +1051,48 @@ fn cache_warning(outcome: &models::RefreshOutcome) -> Option<String> {
     match outcome {
         models::RefreshOutcome::StaleFallback { reason } => Some(stale_warning(reason)),
         _ => None,
+    }
+}
+
+fn diagnostics_to_json_entries(diagnostics: &[Diagnostic]) -> Vec<serde_json::Value> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            serde_json::json!({
+                "level": diagnostic_level_label(diagnostic.level),
+                "code": diagnostic.code,
+                "message": diagnostic.message,
+                "context": diagnostic.context,
+            })
+        })
+        .collect()
+}
+
+fn drain_diagnostics_json(diag: &mut DiagnosticCollector) -> Option<serde_json::Value> {
+    let diagnostics = diag.drain();
+    if diagnostics.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!(diagnostics_to_json_entries(&diagnostics)))
+    }
+}
+
+fn emit_drained_text_diagnostics(diagnostics: &[Diagnostic]) {
+    for diagnostic in diagnostics {
+        let label = diagnostic_level_label(diagnostic.level);
+        eprintln!("{label}: {}", diagnostic.message);
+    }
+}
+
+fn emit_text_diagnostics(diag: &mut DiagnosticCollector) {
+    let diagnostics = diag.drain();
+    emit_drained_text_diagnostics(&diagnostics);
+}
+
+fn diagnostic_level_label(level: DiagnosticLevel) -> &'static str {
+    match level {
+        DiagnosticLevel::Warning => "warning",
+        DiagnosticLevel::Info => "info",
     }
 }
 
@@ -1084,8 +1230,30 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            default_effort: None,
+            autocompact: None,
             spec: ModelSpec::AutoResolve {
                 provider: provider.to_string(),
+                match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
+                exclude_patterns: exclude_patterns.iter().map(|v| (*v).to_string()).collect(),
+            },
+        }
+    }
+
+    fn pinned_with_match_alias(
+        model: &str,
+        provider: &str,
+        match_patterns: &[&str],
+        exclude_patterns: &[&str],
+    ) -> ModelAlias {
+        ModelAlias {
+            harness: None,
+            description: None,
+            default_effort: None,
+            autocompact: None,
+            spec: ModelSpec::PinnedWithMatch {
+                model: model.to_string(),
+                provider: Some(provider.to_string()),
                 match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
                 exclude_patterns: exclude_patterns.iter().map(|v| (*v).to_string()).collect(),
             },
@@ -1096,6 +1264,8 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            default_effort: None,
+            autocompact: None,
             spec: ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: None,
@@ -1107,6 +1277,8 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            default_effort: None,
+            autocompact: None,
             spec: ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: Some(provider.to_string()),
@@ -1248,5 +1420,42 @@ description = "Old alias"
         assert_eq!(rows[0].id, "claude-opus-4-6");
         assert_eq!(rows[1].id, "claude-sonnet-4-5");
         assert_eq!(rows[2].id, "gpt-5");
+    }
+
+    #[test]
+    fn list_all_includes_pinned_with_match_discovery_candidates() {
+        let mut merged = IndexMap::new();
+        merged.insert(
+            "opus".to_string(),
+            pinned_with_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
+        );
+        let models_cache = cache(vec![
+            cached_model("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
+            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
+        ]);
+
+        let rows = collect_all_model_entries(&merged, &models_cache);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "claude-opus-4-7");
+        assert_eq!(rows[1].id, "claude-opus-4-6");
+        assert_eq!(rows[0].matched_aliases, vec!["opus"]);
+        assert_eq!(rows[1].matched_aliases, vec!["opus"]);
+    }
+
+    #[test]
+    fn resolve_pinned_with_match_uses_model_field() {
+        let mut merged = IndexMap::new();
+        merged.insert(
+            "opus".to_string(),
+            pinned_with_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
+        );
+        let models_cache = cache(vec![
+            cached_model("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
+            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
+        ]);
+        let mut diag = DiagnosticCollector::new();
+        let resolved = models::resolve_one("opus", &merged, &models_cache, &mut diag).unwrap();
+        assert_eq!(resolved.model_id, "claude-opus-4-6");
+        assert!(diag.drain().is_empty());
     }
 }

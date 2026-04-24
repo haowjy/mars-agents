@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "mars-agents"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "assert_cmd",
  "assert_fs",

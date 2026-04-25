@@ -14,8 +14,11 @@ pub enum AvailabilityStatus {
 #[serde(rename_all = "snake_case")]
 pub enum AvailabilitySource {
     HarnessInstalled,
+    #[serde(rename = "opencode_probe")]
     OpenCodeProbe,
+    #[serde(rename = "opencode_probe_negative")]
     OpenCodeProbeNegative,
+    #[serde(rename = "opencode_probe_unknown")]
     OpenCodeProbeUnknown,
     NoHarness,
     Offline,
@@ -145,26 +148,13 @@ pub fn classify_model(
     probe_result: Option<&OpenCodeProbeResult>,
     offline: bool,
 ) -> ModelAvailability {
-    if offline {
-        return ModelAvailability {
-            status: AvailabilityStatus::Unknown,
-            source: AvailabilitySource::Offline,
-            runnable_paths: Vec::new(),
-        };
-    }
-
     let mut statuses = Vec::new();
     let mut runnable_paths = Vec::new();
-    let harnesses = ["claude", "codex", "gemini", "opencode"];
 
-    for harness in harnesses {
+    for harness in ["claude", "codex", "gemini"] {
         let Some((status, source, path)) =
-            classify_for_harness(harness, provider, model_id, installed, probe_result)
+            classify_for_harness(harness, provider, model_id, installed, None)
         else {
-            statuses.push((
-                AvailabilityStatus::Unknown,
-                AvailabilitySource::OpenCodeProbeUnknown,
-            ));
             continue;
         };
         if let Some(path) = path {
@@ -173,10 +163,53 @@ pub fn classify_model(
         statuses.push((status, source));
     }
 
-    if !runnable_paths.is_empty() {
+    if installed.contains("opencode") {
+        if offline {
+            statuses.push((AvailabilityStatus::Unknown, AvailabilitySource::Offline));
+        } else if let Some(result) = probe_result {
+            if let Some((status, source, path)) =
+                classify_for_harness("opencode", provider, model_id, installed, Some(result))
+            {
+                if let Some(path) = path {
+                    runnable_paths.push(path);
+                }
+                statuses.push((status, source));
+            }
+        } else {
+            statuses.push((
+                AvailabilityStatus::Unknown,
+                AvailabilitySource::OpenCodeProbeUnknown,
+            ));
+        }
+    }
+
+    aggregate_statuses(statuses, runnable_paths)
+}
+
+fn aggregate_statuses(
+    statuses: Vec<(AvailabilityStatus, AvailabilitySource)>,
+    runnable_paths: Vec<RunnablePath>,
+) -> ModelAvailability {
+    if statuses.is_empty() {
+        return ModelAvailability {
+            status: AvailabilityStatus::Unavailable,
+            source: AvailabilitySource::NoHarness,
+            runnable_paths: Vec::new(),
+        };
+    }
+
+    if statuses
+        .iter()
+        .any(|(status, _)| *status == AvailabilityStatus::Runnable)
+    {
         return ModelAvailability {
             status: AvailabilityStatus::Runnable,
-            source: AvailabilitySource::HarnessInstalled,
+            source: statuses
+                .iter()
+                .find_map(|(status, source)| {
+                    (*status == AvailabilityStatus::Runnable).then(|| source.clone())
+                })
+                .expect("runnable status exists"),
             runnable_paths,
         };
     }
@@ -193,14 +226,17 @@ pub fn classify_model(
                     (*status == AvailabilityStatus::Unknown).then(|| source.clone())
                 })
                 .unwrap_or(AvailabilitySource::OpenCodeProbeUnknown),
-            runnable_paths,
+            runnable_paths: Vec::new(),
         };
     }
 
     ModelAvailability {
         status: AvailabilityStatus::Unavailable,
-        source: AvailabilitySource::NoHarness,
-        runnable_paths,
+        source: statuses
+            .first()
+            .map(|(_, source)| source.clone())
+            .unwrap_or(AvailabilitySource::NoHarness),
+        runnable_paths: Vec::new(),
     }
 }
 
@@ -336,6 +372,12 @@ mod tests {
     #[test]
     fn test_classify_offline_mode() {
         let result = classify_model("gpt-5.4", "OpenAI", &installed(&["codex"]), None, true);
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::HarnessInstalled);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(result.runnable_paths[0].harness, "codex");
+
+        let result = classify_model("gpt-5.4", "OpenAI", &installed(&["opencode"]), None, true);
         assert_eq!(result.status, AvailabilityStatus::Unknown);
         assert_eq!(result.source, AvailabilitySource::Offline);
         assert!(result.runnable_paths.is_empty());

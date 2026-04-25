@@ -392,7 +392,7 @@ fn collect_all_model_entries(
                 for matched in
                     models::auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
                 {
-                    append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                    append_alias_match(&mut by_model_id, matched, installed, alias_name);
                 }
             }
             ModelSpec::Pinned {
@@ -403,14 +403,14 @@ fn collect_all_model_entries(
                     .iter()
                     .find(|cache_model| cache_model.id == *model)
                 {
-                    append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                    append_alias_match(&mut by_model_id, matched, installed, alias_name);
                 } else {
                     append_pinned_alias_match(
                         &mut by_model_id,
                         model,
                         provider.as_deref(),
                         alias.description.as_deref(),
-                        &installed,
+                        installed,
                         alias_name,
                     );
                 }
@@ -426,14 +426,14 @@ fn collect_all_model_entries(
                     .iter()
                     .find(|cache_model| cache_model.id == *model)
                 {
-                    append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                    append_alias_match(&mut by_model_id, matched, installed, alias_name);
                 } else {
                     append_pinned_alias_match(
                         &mut by_model_id,
                         model,
                         provider.as_deref(),
                         alias.description.as_deref(),
-                        &installed,
+                        installed,
                         alias_name,
                     );
                 }
@@ -448,7 +448,7 @@ fn collect_all_model_entries(
                         exclude_patterns,
                         cache,
                     ) {
-                        append_alias_match(&mut by_model_id, matched, &installed, alias_name);
+                        append_alias_match(&mut by_model_id, matched, installed, alias_name);
                     }
                 }
             }

@@ -171,18 +171,32 @@ fn classify_opencode(
         ));
     }
 
-    let matching_slug = if probe.model_probe_success {
-        find_matching_slug(model_id, provider, &probe.model_slugs)
+    if probe.model_probe_success {
+        let Some(harness_model_id) = find_matching_slug(model_id, provider, &probe.model_slugs)
+        else {
+            return Some((
+                AvailabilityStatus::Unavailable,
+                AvailabilitySource::OpenCodeProbeNegative,
+                None,
+            ));
+        };
+
+        return Some((
+            AvailabilityStatus::Runnable,
+            AvailabilitySource::OpenCodeProbe,
+            Some(RunnablePath {
+                harness: "opencode".to_string(),
+                mars_provider: provider.to_string(),
+                harness_model_id,
+            }),
+        ));
+    }
+
+    let harness_model_id = if has_via_openrouter && !has_provider {
+        format!("openrouter/{provider_lower}/{model_id}")
     } else {
-        None
+        format!("{provider_lower}/{model_id}")
     };
-    let harness_model_id = matching_slug.unwrap_or_else(|| {
-        if has_via_openrouter && !has_provider {
-            format!("openrouter/{provider_lower}/{model_id}")
-        } else {
-            format!("{provider_lower}/{model_id}")
-        }
-    });
 
     Some((
         AvailabilityStatus::Runnable,
@@ -542,6 +556,79 @@ mod tests {
         assert_eq!(result.status, AvailabilityStatus::Unavailable);
         assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
         assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_opencode_empty_providers() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::new(),
+            model_slugs: Vec::new(),
+            provider_probe_success: true,
+            model_probe_success: true,
+            error: None,
+        };
+
+        let result = classify_model(
+            "claude-opus-4-7",
+            "Anthropic",
+            &installed(&["opencode"]),
+            Some(&probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_opencode_no_matching_slug() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("anthropic".to_string(), true)]),
+            model_slugs: vec!["anthropic/claude-3-5-sonnet".to_string()],
+            provider_probe_success: true,
+            model_probe_success: true,
+            error: None,
+        };
+
+        let result = classify_model(
+            "claude-opus-4-7",
+            "Anthropic",
+            &installed(&["opencode"]),
+            Some(&probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_opencode_synthesizes_slug_when_model_probe_fails() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("anthropic".to_string(), true)]),
+            provider_probe_success: true,
+            model_probe_success: false,
+            error: Some("model probe failed: timeout".to_string()),
+            ..OpenCodeProbeResult::default()
+        };
+
+        let result = classify_model(
+            "claude-opus-4-7",
+            "Anthropic",
+            &installed(&["opencode"]),
+            Some(&probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbe);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(
+            result.runnable_paths[0].harness_model_id,
+            "anthropic/claude-opus-4-7"
+        );
     }
 
     #[test]

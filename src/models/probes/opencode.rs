@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wait_timeout::ChildExt;
 
@@ -30,24 +30,36 @@ pub fn probe() -> OpenCodeProbeResult {
 
 /// Probe OpenCode with a specific timeout.
 pub fn probe_with_timeout(timeout: Duration) -> OpenCodeProbeResult {
+    let deadline = Instant::now() + timeout;
     let mut result = OpenCodeProbeResult::default();
 
     match run_command("opencode", &["providers", "list"], timeout) {
         Ok(stdout) => {
             result.providers = parse_providers_output(&stdout);
-            result.provider_probe_success = !result.providers.is_empty();
+            result.provider_probe_success = true;
         }
         Err(error) => {
             result.error = Some(format!("provider probe failed: {error}"));
+            result.provider_probe_success = false;
         }
     }
 
-    match run_command("opencode", &["models"], timeout) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        result.model_probe_success = false;
+        if result.error.is_none() {
+            result.error = Some("timeout before model probe".to_string());
+        }
+        return result;
+    }
+
+    match run_command("opencode", &["models"], remaining) {
         Ok(stdout) => {
             result.model_slugs = parse_models_output(&stdout);
             result.model_probe_success = true;
         }
         Err(error) => {
+            result.model_probe_success = false;
             if result.error.is_none() {
                 result.error = Some(format!("model probe failed: {error}"));
             }

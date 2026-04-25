@@ -1272,11 +1272,20 @@ pub fn filter_by_visibility(
     mut aliases: IndexMap<String, ResolvedAlias>,
     visibility: &crate::config::ModelVisibility,
 ) -> IndexMap<String, ResolvedAlias> {
-    if visibility.include.is_none() && visibility.exclude.is_none() {
+    let include = visibility
+        .include
+        .as_ref()
+        .filter(|patterns| !patterns.is_empty());
+    let exclude = visibility
+        .exclude
+        .as_ref()
+        .filter(|patterns| !patterns.is_empty());
+
+    if include.is_none() && exclude.is_none() {
         return aliases;
     }
 
-    if let Some(includes) = &visibility.include {
+    if let Some(includes) = include {
         aliases.retain(|_, alias| {
             let paths = alias
                 .availability
@@ -1289,7 +1298,7 @@ pub fn filter_by_visibility(
         });
     }
 
-    if let Some(excludes) = &visibility.exclude {
+    if let Some(excludes) = exclude {
         aliases.retain(|_, alias| {
             let paths = alias
                 .availability
@@ -2516,6 +2525,23 @@ mod tests {
         aliases.insert("opus".to_string(), make_resolved_alias("opus"));
         aliases.insert("sonnet".to_string(), make_resolved_alias("sonnet"));
         let filtered = filter_by_visibility(aliases, &crate::config::ModelVisibility::default());
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains_key("opus"));
+        assert!(filtered.contains_key("sonnet"));
+    }
+
+    #[test]
+    fn filter_by_visibility_empty_lists_return_all() {
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), make_resolved_alias("opus"));
+        aliases.insert("sonnet".to_string(), make_resolved_alias("sonnet"));
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: Some(Vec::new()),
+                exclude: Some(Vec::new()),
+            },
+        );
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains_key("opus"));
         assert!(filtered.contains_key("sonnet"));

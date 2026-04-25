@@ -171,32 +171,18 @@ fn classify_opencode(
         ));
     }
 
-    if probe.model_probe_success {
-        let Some(harness_model_id) = find_matching_slug(model_id, provider, &probe.model_slugs)
-        else {
-            return Some((
-                AvailabilityStatus::Unavailable,
-                AvailabilitySource::OpenCodeProbeNegative,
-                None,
-            ));
-        };
-
-        return Some((
-            AvailabilityStatus::Runnable,
-            AvailabilitySource::OpenCodeProbe,
-            Some(RunnablePath {
-                harness: "opencode".to_string(),
-                mars_provider: provider.to_string(),
-                harness_model_id,
-            }),
-        ));
-    }
-
-    let harness_model_id = if has_via_openrouter && !has_provider {
-        format!("openrouter/{provider_lower}/{model_id}")
+    let harness_model_id = if probe.model_probe_success {
+        find_matching_slug(model_id, provider, &probe.model_slugs)
     } else {
-        format!("{provider_lower}/{model_id}")
-    };
+        None
+    }
+    .unwrap_or_else(|| {
+        if has_via_openrouter && !has_provider {
+            format!("openrouter/{provider_lower}/{model_id}")
+        } else {
+            format!("{provider_lower}/{model_id}")
+        }
+    });
 
     Some((
         AvailabilityStatus::Runnable,
@@ -599,9 +585,13 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.status, AvailabilityStatus::Unavailable);
-        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
-        assert!(result.runnable_paths.is_empty());
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbe);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(
+            result.runnable_paths[0].harness_model_id,
+            "anthropic/claude-opus-4-7"
+        );
     }
 
     #[test]

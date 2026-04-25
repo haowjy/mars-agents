@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-04-25
+
 ### Added
 - Model availability classification. Each model now `runnable`, `unavailable`, or `unknown` based on installed harnesses and provider credentials.
 - OpenCode provider probing. `opencode providers list` + `opencode models` detect available models through OpenCode harness.

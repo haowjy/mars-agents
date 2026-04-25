@@ -329,33 +329,51 @@ Use this before `models list`/`models resolve` when you want fresh auto-resolve 
 
 ### `mars models list`
 
-List models from alias resolution (dependency + consumer config) and the local cache.
+List model aliases with availability information.
 
 ```bash
-mars models list [--all] [--catalog] [--include PATTERN,... | --exclude PATTERN,...]
+mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--include PATTERN,...] [--exclude PATTERN,...]
 ```
+
+#### Flags
 
 | Flag | Description |
 |---|---|
-| `--all` | Show all alias-filter candidates (can include multiple versions per alias) |
-| `--catalog` | Show all models from the cache, regardless of alias coverage |
-| `--include` | Show only entries matching glob patterns |
-| `--exclude` | Hide entries matching glob patterns |
+| `--all` | Show all alias candidates with availability info. Does NOT show raw catalog - use `--catalog` for that. |
+| `--catalog` | Show raw models.dev cache entries (diagnostic view). Ignores aliases and visibility config. |
+| `--unavailable` | Include unavailable models in output (normally pruned from default view). |
+| `--no-refresh-models` | Skip automatic cache refresh; use existing cache. OpenCode probing also skipped. |
+| `--include <patterns>` | Show only aliases matching these comma-separated glob patterns. Overrides config. |
+| `--exclude <patterns>` | Hide aliases matching these comma-separated glob patterns. Overrides config. |
 
-**List modes (three-tier):**
-- Default: resolved alias view (single best match per alias)
-- `--all`: expanded alias view (all alias-filter candidates, including multiple versions per alias)
-- `--catalog`: raw cache view (all cached models, even when no alias maps to them)
+#### Output
 
-**Rules:**
-- `--include` and `--exclude` are mutually exclusive
-- `--include`/`--exclude` override `[settings.model_visibility]` for that command invocation
-- Filtering is display-only; it does not affect `mars models resolve`
+Default view shows resolved aliases with availability pruning:
+- `runnable` models are shown
+- `unknown` models are shown (conservative)
+- `unavailable` models are pruned unless `--unavailable` is set
+
+JSON output includes:
+- `availability`: `runnable`, `unavailable`, or `unknown`
+- `availability_source`: `harness_installed`, `opencode_probe`, `opencode_probe_negative`, `opencode_probe_unknown`, `no_harness`, `offline`
+- `runnable_paths`: array of `{harness, mars_provider, harness_model_id}` tuples
+- `probe_results.opencode`: summary when OpenCode probing ran
+
+#### Visibility Patterns
+
+Patterns use glob matching with `*` wildcards (does not span `/`):
+
+| Pattern Form | Matches Against |
+|--------------|-----------------|
+| `gpt-5*` (no slash) | Bare model ID |
+| `anthropic/*` (one slash) | `{provider}/{model_id}` |
+| `openrouter/anthropic/*` (two slashes) | OpenCode runnable path slug |
 
 ```bash
 mars models list
 mars models list --all
 mars models list --catalog
+mars models list --unavailable
 mars models list --include "opus*,sonnet*"
 mars models list --exclude "experimental-*"
 ```

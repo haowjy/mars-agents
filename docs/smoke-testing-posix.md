@@ -22,6 +22,49 @@ cargo fmt --all
 cargo test -q
 ```
 
+## Model Availability
+
+### Default view prunes unavailable
+
+```bash
+# With only claude installed (no codex)
+mars models list
+# Should NOT show OpenAI models (unavailable)
+```
+
+### `--unavailable` shows all
+
+```bash
+mars models list --unavailable
+# Shows both available and unavailable with availability column
+```
+
+### `--catalog` shows raw cache
+
+```bash
+mars models list --catalog
+# Shows all models.dev entries regardless of aliases or availability
+```
+
+### OpenCode probing
+
+```bash
+# With opencode configured with OpenRouter credentials
+mars models list --json | jq '.probe_results.opencode'
+# Should show providers_found and models_found
+
+# With MARS_OFFLINE=1
+MARS_OFFLINE=1 mars models list --json | jq '.aliases[0].availability'
+# Should show "unknown" for OpenCode-dependent models
+```
+
+### Resolve includes availability
+
+```bash
+mars models resolve opus --json | jq '.availability, .runnable_paths'
+# Should show availability status and runnable paths
+```
+
 ## Local Path + `--subpath`
 
 Verifies local source parsing, subpath rooting, discovery, install, and doctor.

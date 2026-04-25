@@ -135,7 +135,8 @@ managed_root = ".claude"   # default: ".agents"
 links = [".claude", ".cursor"]
 
 [settings.model_visibility]
-include = ["opus*", "sonnet*"]  # or use exclude = [...]
+include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
+exclude = ["*-preview*", "*-latest"]         # Then hide these
 ```
 
 | Field | Type | Default | Description |
@@ -144,20 +145,43 @@ include = ["opus*", "sonnet*"]  # or use exclude = [...]
 | `targets` | string[] | `[managed_root]` | Directories where managed content is copied |
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 
-#### `[settings.model_visibility]`
+## Model Visibility
 
-Controls alias visibility in `mars models list`.
+Configure which models appear in `mars models list`. Consumer-only - not merged from dependencies.
+
+### Example
+
+```toml
+[settings.model_visibility]
+include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
+exclude = ["*-preview*", "*-latest"]         # Then hide these
+```
 
 | Field | Type | Description |
 |---|---|---|
 | `include` | string[] | Glob patterns; only matching aliases are shown |
 | `exclude` | string[] | Glob patterns; matching aliases are hidden |
 
-Rules:
-- `include` and `exclude` are mutually exclusive (`[settings.model_visibility]` with both is a validation error)
-- Consumer-only setting; it does not flow through dependencies
-- Display filter only; it does not affect `mars models resolve`
-- CLI `mars models list --include/--exclude` overrides this config for that invocation
+### Behavior
+
+- `include` alone: show only matching models
+- `exclude` alone: show all except matching models
+- Both: apply include first, then exclude from that set
+- Neither: show all (no filtering)
+
+CLI `--include`/`--exclude` replace config entirely for that invocation.
+
+## OpenCode Probe
+
+When OpenCode is installed, mars probes for available providers and models:
+
+- Runs `opencode providers list` to detect configured credentials
+- Runs `opencode models` to get available model slugs
+- Probe timeout configurable via `MARS_PROBE_TIMEOUT_SECS` (default: 5)
+- Probe failures degrade to `unknown`, not `unavailable`
+- No credential values are logged
+
+Use `--no-refresh-models` or `MARS_OFFLINE=1` to skip probing.
 
 ## Version Constraints
 

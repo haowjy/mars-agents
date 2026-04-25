@@ -5,15 +5,28 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Model availability classification. Each model now `runnable`, `unavailable`, or `unknown` based on installed harnesses and provider credentials.
+- OpenCode provider probing. `opencode providers list` + `opencode models` detect available models through OpenCode harness.
+- `--unavailable` flag. Show unavailable models in default list view.
+- Availability fields in JSON output: `availability`, `availability_source`, `runnable_paths`.
+- `probe_results.opencode` in JSON when OpenCode probing runs.
 - **Three-step model resolve**: `mars models resolve` now tries alias → glob match against alias candidates → passthrough. Older versions work: `opus-4-6` → `claude-opus-4-6`. Unknown models pass through to harness with warning instead of erroring. Exit 0 always (cache is enrichment, not gate).
-- **Three-tier `mars models list`**: default shows alias winners; `--all` shows all models matching any alias filter; `--catalog` dumps full models.dev cache. `--all`/`--catalog`/`--include`/`--exclude` conflict pairwise (clap-enforced).
+- **Three-tier `mars models list`**: default shows alias winners; `--all` shows all models matching any alias filter; `--catalog` dumps full models.dev cache.
 - `auto_resolve_all()` — returns all alias filter candidates, not just winner. Used by `--all` listing and glob resolve.
 - User-provided wildcards in resolve: `mars models resolve "*opus*"` uses pattern as-is; plain text auto-wraps as `*{input}*`.
 
 ### Fixed
+- Offline mode no longer marks direct-harness models as unknown. Only OpenCode probing suppressed.
+- Empty OpenCode provider list correctly classifies as unavailable, not unknown.
+- OpenCode model slug matching requires exact match when model probe succeeds.
 - Passthrough resolve works when cache unavailable (offline + first run). Cache load failure skips to passthrough instead of erroring.
 
 ### Changed
+- Default `mars models list` prunes unavailable models. Use `--unavailable` to see them.
+- `--all` expands alias candidates, does NOT show raw catalog. Use `--catalog` for that.
+- `[settings.model_visibility]` now supports combined `include` + `exclude`.
+- Visibility patterns match bare model ID, `provider/model`, or OpenCode slug based on slash count.
+- `mars models resolve` includes availability annotation (never pruned).
 - `--all` flag on `mars models list` redefined: was "show aliases with unavailable harnesses", now "show all alias-filter candidates across versions". No backwards compat needed.
 
 ## [0.1.16] - 2026-04-23

@@ -694,11 +694,57 @@ fn resolve_unknown_exits_zero_with_passthrough() {
     assert_eq!(stdout["harness"], Value::Null);
     assert_eq!(stdout["harness_source"].as_str(), Some("unavailable"));
     assert_eq!(stdout["harness_candidates"], json!([]));
+    assert!(stdout["availability"].is_string());
+    assert!(stdout["availability_source"].is_string());
+    assert!(
+        stdout["runnable_paths"].is_array(),
+        "passthrough JSON should include availability runnable paths"
+    );
     assert!(
         stdout["warning"]
             .as_str()
             .expect("passthrough warning should be present")
             .contains("passing through to harness")
+    );
+}
+
+#[test]
+#[serial]
+fn models_list_visibility_include_does_not_add_catalog_rows() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[settings.model_visibility]
+include = ["catalog-only-*"]
+"#,
+    )
+    .expect("failed to write mars.toml with model visibility");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "catalog-only-model",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    assert!(
+        aliases.is_empty(),
+        "default models list should not expand visibility includes into catalog rows"
     );
 }
 

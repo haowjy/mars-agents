@@ -166,16 +166,6 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
 
     // Build effective visibility: CLI overrides config entirely.
     let visibility = effective_visibility(ctx, args);
-    add_visibility_selected_catalog_models(
-        &mut resolved,
-        &cache,
-        &visibility,
-        &installed,
-        probe_result.as_ref(),
-        is_offline,
-        args.unavailable,
-    );
-
     let resolved = models::filter_by_visibility(resolved, &visibility);
 
     if json {
@@ -738,68 +728,6 @@ fn prune_unavailable(resolved: &mut IndexMap<String, models::ResolvedAlias>) {
     });
 }
 
-fn add_visibility_selected_catalog_models(
-    resolved: &mut IndexMap<String, models::ResolvedAlias>,
-    cache: &models::ModelsCache,
-    visibility: &crate::config::ModelVisibility,
-    installed: &HashSet<String>,
-    probe_result: Option<&OpenCodeProbeResult>,
-    is_offline: bool,
-    include_unavailable: bool,
-) {
-    if visibility.include.is_none() {
-        return;
-    }
-
-    for model in &cache.models {
-        if resolved.values().any(|alias| alias.model_id == model.id) {
-            continue;
-        }
-        let availability = models::availability::classify_model(
-            &model.id,
-            &model.provider,
-            installed,
-            probe_result,
-            is_offline,
-        );
-        if !include_unavailable && availability.status == AvailabilityStatus::Unavailable {
-            continue;
-        }
-        let paths = availability.runnable_paths.as_slice();
-        let matches_include = visibility.include.as_ref().is_some_and(|includes| {
-            includes.iter().any(|pattern| {
-                models::matches_visibility_pattern(pattern, &model.id, &model.provider, paths)
-            })
-        });
-        if !matches_include {
-            continue;
-        }
-
-        let candidates = models::harness::harness_candidates_for_provider(&model.provider);
-        let harness = models::harness::resolve_harness_for_provider(&model.provider, installed);
-        let harness_source = if harness.is_some() {
-            HarnessSource::AutoDetected
-        } else {
-            HarnessSource::Unavailable
-        };
-        resolved.insert(
-            model.id.clone(),
-            models::ResolvedAlias {
-                name: model.id.clone(),
-                model_id: model.id.clone(),
-                provider: model.provider.clone(),
-                harness,
-                harness_source,
-                harness_candidates: candidates,
-                description: model.description.clone(),
-                default_effort: None,
-                autocompact: None,
-                availability: Some(availability),
-            },
-        );
-    }
-}
-
 fn filter_model_entries_by_visibility(
     entries: Vec<ListModelEntry>,
     visibility: &crate::config::ModelVisibility,
@@ -930,7 +858,8 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .as_ref()
         .map(|(_, o)| o.clone())
         .unwrap_or(models::RefreshOutcome::Offline);
-    run_output_passthrough(&args.name, &outcome, json)
+    let is_offline = models::is_mars_offline() || args.no_refresh_models;
+    run_output_passthrough(&args.name, &outcome, is_offline, json)
 }
 
 fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -1187,6 +1116,7 @@ fn run_output_resolved(
 fn run_output_passthrough(
     name: &str,
     outcome: &models::RefreshOutcome,
+    is_offline: bool,
     json: bool,
 ) -> Result<i32, MarsError> {
     if name.trim().is_empty() {
@@ -1225,6 +1155,18 @@ fn run_output_passthrough(
         .as_deref()
         .map(models::harness::harness_candidates_for_provider)
         .unwrap_or_default();
+    let probe_result = if !is_offline && installed.contains("opencode") {
+        Some(models::probes::opencode::probe())
+    } else {
+        None
+    };
+    let availability = models::availability::classify_model(
+        name,
+        guessed_provider.as_deref().unwrap_or("unknown"),
+        &installed,
+        probe_result.as_ref(),
+        is_offline,
+    );
 
     let warning = format!(
         "model '{}' not found in catalog, passing through to harness",
@@ -1244,6 +1186,7 @@ fn run_output_passthrough(
             "description": serde_json::Value::Null,
             "warning": warning,
         });
+        add_availability_json_fields(&mut out, Some(&availability));
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }

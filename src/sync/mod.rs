@@ -18,7 +18,6 @@ use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
-use crate::local_source;
 use crate::lock::LockFile;
 use crate::lock::{ItemId, ItemKind};
 use crate::resolve::{ResolveOptions, ResolvedGraph};
@@ -86,7 +85,7 @@ pub enum ResolutionMode {
 // ---------------------------------------------------------------------------
 
 /// Phase 1: Load and validate configuration under sync lock.
-pub struct LoadedConfig {
+pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
     pub effective: EffectiveConfig,
@@ -96,14 +95,14 @@ pub struct LoadedConfig {
 }
 
 /// Phase 2: Resolved dependency graph.
-pub struct ResolvedState {
+pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
     pub model_aliases: indexmap::IndexMap<String, crate::models::ModelAlias>,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
-pub struct TargetedState {
+pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
     pub renames: Vec<ExplicitSkillRename>,
@@ -111,19 +110,19 @@ pub struct TargetedState {
 }
 
 /// Phase 4: Diff + plan ready for execution.
-pub struct PlannedState {
+pub(crate) struct PlannedState {
     pub targeted: TargetedState,
     pub plan: plan::SyncPlan,
 }
 
 /// Phase 5: Applied results.
-pub struct AppliedState {
+pub(crate) struct AppliedState {
     pub planned: PlannedState,
     pub applied: ApplyResult,
 }
 
 /// Phase 6: Target sync results.
-pub struct SyncedState {
+pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
 }
@@ -134,17 +133,8 @@ pub struct SyncedState {
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
     let mut diag = DiagnosticCollector::new();
-    let loaded = load_config(ctx, request, &mut diag)?;
-    let resolved = resolve_graph(ctx, loaded, request, &mut diag)?;
-    let targeted = build_target(ctx, resolved, request, &mut diag)?;
-    let planned = create_plan(ctx, targeted, request, &mut diag)?;
-    if request.options.frozen {
-        check_frozen_gate(&planned)?;
-    }
-    let applied = apply_plan(ctx, planned, request)?;
-    let synced = sync_targets(ctx, applied, request, &mut diag);
-    let report = finalize(ctx, synced, request, &mut diag)?;
-    Ok(report)
+    let ir = crate::reader::read(ctx, request, &mut diag)?;
+    crate::compiler::compile(ctx, ir, request, &mut diag)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +143,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
 
 /// Phase 1: Acquire sync lock, load config, apply mutations, merge effective config,
 /// and load the existing lock file.
-fn load_config(
+pub(crate) fn load_config(
     ctx: &MarsContext,
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
@@ -209,7 +199,7 @@ fn load_config(
 }
 
 /// Phase 2: Validate upgrade targets, resolve the dependency graph.
-fn resolve_graph(
+pub(crate) fn resolve_graph(
     ctx: &MarsContext,
     mut loaded: LoadedConfig,
     request: &SyncRequest,
@@ -253,9 +243,14 @@ fn resolve_graph(
 }
 
 /// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
-fn build_target(
+///
+/// `local_items` are pre-discovered by the reader stage; no discovery is
+/// performed here so that dest-path assignment remains the only compiler
+/// concern for local content.
+pub(crate) fn build_target(
     ctx: &MarsContext,
     resolved: ResolvedState,
+    local_items: Vec<crate::local_source::LocalDiscoveredItem>,
     _request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
@@ -274,12 +269,6 @@ fn build_target(
         subpath: None,
     };
 
-    let local_items = local_source::discover_local_items(
-        &ctx.project_root,
-        resolved.loaded.config.package.is_some(),
-        Some(local_source_name.as_str()),
-        diag,
-    )?;
     for item in local_items {
         let source_path = item.disk_path();
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
@@ -379,7 +368,7 @@ fn build_target(
 }
 
 /// Phase 4: Compute diff, create plan.
-fn create_plan(
+pub(crate) fn create_plan(
     ctx: &MarsContext,
     targeted: TargetedState,
     request: &SyncRequest,
@@ -422,7 +411,7 @@ fn create_plan(
 }
 
 /// Check that a frozen sync has no pending changes.
-fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
+pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
     let has_changes = planned.plan.actions.iter().any(|a| {
         !matches!(
             a,
@@ -438,7 +427,7 @@ fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
 }
 
 /// Phase 5: Persist config if mutated, apply plan to .mars/ canonical store.
-fn apply_plan(
+pub(crate) fn apply_plan(
     ctx: &MarsContext,
     planned: PlannedState,
     request: &SyncRequest,
@@ -490,7 +479,7 @@ fn apply_plan(
 /// Copies content from .mars/ to all configured target directories.
 /// Non-fatal — target sync errors are recorded as diagnostics.
 /// Lock is written regardless of target sync outcome (D21).
-fn sync_targets(
+pub(crate) fn sync_targets(
     ctx: &MarsContext,
     applied: AppliedState,
     request: &SyncRequest,
@@ -542,7 +531,7 @@ fn sync_targets(
 /// Phase 7: Write lock file, construct SyncReport.
 ///
 /// Lock is written regardless of target sync outcome (D21).
-fn finalize(
+pub(crate) fn finalize(
     ctx: &MarsContext,
     state: SyncedState,
     request: &SyncRequest,

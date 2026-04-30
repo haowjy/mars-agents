@@ -35,28 +35,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn name(&self) -> &str;
 
     // -----------------------------------------------------------------------
-    // File-output surface
-    // -----------------------------------------------------------------------
-
-    /// Whether this target emits agent files (`.md` in an `agents/` subtree).
-    fn supports_agents(&self) -> bool;
-
-    /// Whether this target emits skill files (directory trees in a `skills/` subtree).
-    fn supports_skills(&self) -> bool;
-
-    // -----------------------------------------------------------------------
-    // Config-entry surface (future: MCP, hooks, model config)
-    // -----------------------------------------------------------------------
-
-    /// Whether this target emits config-entry files (MCP server JSON, hook
-    /// scripts, settings TOML, etc.).
-    ///
-    /// Config-entry writing is a separate pipeline lane from file outputs — an
-    /// adapter that returns `true` here owns writing target-specific config
-    /// without touching the file-output lane.
-    fn supports_config_entries(&self) -> bool;
-
-    // -----------------------------------------------------------------------
     // Path resolution
     // -----------------------------------------------------------------------
 
@@ -141,14 +119,6 @@ mod tests {
     fn registry_get_unknown_name_returns_none() {
         let registry = TargetRegistry::new();
         assert!(registry.get(".unknown-target").is_none());
-    }
-
-    #[test]
-    fn agents_adapter_supports_agents_and_skills() {
-        let registry = TargetRegistry::new();
-        let adapter = registry.get(".agents").unwrap();
-        assert!(adapter.supports_agents());
-        assert!(adapter.supports_skills());
     }
 
     #[test]

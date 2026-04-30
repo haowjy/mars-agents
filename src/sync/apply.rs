@@ -176,7 +176,7 @@ fn execute_action(
 
             let item_id = ItemId {
                 kind: locked.kind,
-                name: ItemName::from(extract_name_from_dest(&locked.dest_path, locked.kind)),
+                name: ItemName::from(locked.dest_path.item_name(locked.kind)),
             };
 
             Ok(ActionOutcome {
@@ -249,7 +249,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
         PlannedAction::Remove { locked } => {
             let item_id = ItemId {
                 kind: locked.kind,
-                name: ItemName::from(extract_name_from_dest(&locked.dest_path, locked.kind)),
+                name: ItemName::from(locked.dest_path.item_name(locked.kind)),
             };
             ActionOutcome {
                 item_id,
@@ -408,17 +408,6 @@ fn cache_base_content(
     Ok(())
 }
 
-/// Extract the item name from a destination path.
-fn extract_name_from_dest(dest_path: &DestPath, kind: ItemKind) -> String {
-    let last = dest_path.as_str().rsplit('/').next().unwrap_or("");
-    match kind {
-        ItemKind::Agent => last.strip_suffix(".md").unwrap_or(last).to_string(),
-        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            last.to_string()
-        }
-    }
-}
-
 /// Prune orphans: items in old lock but not in new target.
 ///
 /// This is handled by the Remove action in the plan, but exposed
@@ -439,7 +428,7 @@ pub fn prune_orphans(
             outcomes.push(ActionOutcome {
                 item_id: ItemId {
                     kind: locked_item.kind,
-                    name: ItemName::from(extract_name_from_dest(dest_path_str, locked_item.kind)),
+                    name: ItemName::from(dest_path_str.item_name(locked_item.kind)),
                 },
                 action: ActionTaken::Removed,
                 dest_path: dest_path_str.clone(),
@@ -944,15 +933,12 @@ mod tests {
         assert!(!root.path().join("agents/old.md").exists());
     }
 
-    // === extract_name_from_dest tests ===
+    // === DestPath::item_name tests ===
 
     #[test]
     fn extract_agent_name() {
         assert_eq!(
-            extract_name_from_dest(
-                &crate::types::DestPath::from("agents/coder.md"),
-                ItemKind::Agent
-            ),
+            crate::types::DestPath::from("agents/coder.md").item_name(ItemKind::Agent),
             "coder"
         );
     }
@@ -960,10 +946,7 @@ mod tests {
     #[test]
     fn extract_skill_name() {
         assert_eq!(
-            extract_name_from_dest(
-                &crate::types::DestPath::from("skills/planning"),
-                ItemKind::Skill
-            ),
+            crate::types::DestPath::from("skills/planning").item_name(ItemKind::Skill),
             "planning"
         );
     }

@@ -23,10 +23,9 @@ pub fn compile(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
-    // Construct translation context for this compilation run.
-    // Carries target registry and host platform so future phases can lower
-    // the same logical item differently per target (lossiness classification,
-    // hook script selection). Unused today — seam exists for R4+.
+    // Phase 2+ scaffolding: translation context wired here so the seam exists
+    // when the pipeline is extended to produce per-target output records
+    // (lossiness classification, hook script selection). Unused today.
     let _compile_ctx = CompileContext::new();
 
     // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.

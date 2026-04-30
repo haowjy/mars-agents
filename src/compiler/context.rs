@@ -10,13 +10,13 @@ use crate::target::TargetRegistry;
 
 /// Context for a single compilation run.
 ///
-/// Carries the target registry and host platform so the compiler can lower
-/// the same logical item differently per target.
+/// Carries the target registry and host platform flag so the compiler can lower
+/// the same logical item differently per target (hook script selection, etc.).
 pub struct CompileContext {
     /// Available target adapters, keyed by target root name.
     pub target_registry: TargetRegistry,
-    /// Host platform — used for hook file selection, not content variation.
-    pub platform: Platform,
+    /// Whether the host is Windows — used for hook file selection, not content variation.
+    pub is_windows: bool,
 }
 
 impl CompileContext {
@@ -25,7 +25,7 @@ impl CompileContext {
     pub fn new() -> Self {
         Self {
             target_registry: TargetRegistry::new(),
-            platform: Platform::current(),
+            is_windows: cfg!(windows),
         }
     }
 }
@@ -36,10 +36,9 @@ impl Default for CompileContext {
     }
 }
 
-/// Output of the compiler's planning phase.
-///
-/// Bundles the translation context with the concrete sync plan so downstream
-/// apply/write stages have both what to do and how to interpret it per target.
+/// Compiler plan output — seam for Phase 2+ when the compiler produces
+/// per-target output records. Currently unused; exists as a forward declaration
+/// so the type is available when the pipeline is wired through target adapters.
 ///
 /// Future: per-target output records, lossiness annotations.
 pub struct CompilePlan {
@@ -47,22 +46,4 @@ pub struct CompilePlan {
     pub context: CompileContext,
     /// The concrete sync plan produced by the diff+plan phase.
     pub sync_plan: SyncPlan,
-}
-
-/// Host platform — used for hook file selection, not content variation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Platform {
-    Windows,
-    Unix,
-}
-
-impl Platform {
-    /// Detect the current host platform at compile time.
-    pub fn current() -> Self {
-        if cfg!(windows) {
-            Platform::Windows
-        } else {
-            Platform::Unix
-        }
-    }
 }

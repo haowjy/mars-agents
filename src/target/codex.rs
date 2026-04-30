@@ -16,18 +16,6 @@ impl TargetAdapter for CodexAdapter {
         ".codex"
     }
 
-    fn supports_agents(&self) -> bool {
-        false
-    }
-
-    fn supports_skills(&self) -> bool {
-        true
-    }
-
-    fn supports_config_entries(&self) -> bool {
-        false
-    }
-
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
         match kind {
             ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),

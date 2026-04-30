@@ -20,18 +20,6 @@ impl TargetAdapter for AgentsAdapter {
         ".agents"
     }
 
-    fn supports_agents(&self) -> bool {
-        true
-    }
-
-    fn supports_skills(&self) -> bool {
-        true
-    }
-
-    fn supports_config_entries(&self) -> bool {
-        false
-    }
-
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
         let path = match kind {
             ItemKind::Agent => format!("agents/{name}.md"),

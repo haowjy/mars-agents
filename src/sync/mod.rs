@@ -91,7 +91,7 @@ pub(crate) struct LoadedConfig {
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     pub dependency_changes: Vec<DependencyUpsertChange>,
-    pub _sync_lock: FileLock,
+    pub sync_lock: FileLock,
 }
 
 /// Phase 2: Resolved dependency graph.
@@ -194,7 +194,7 @@ pub(crate) fn load_config(
         effective,
         old_lock,
         dependency_changes,
-        _sync_lock,
+        sync_lock: _sync_lock,
     })
 }
 
@@ -565,26 +565,24 @@ pub(crate) fn finalize(
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh
-        // failure — warn and continue. Skip on dry_run (side-effect-free).
-        if !request.options.dry_run {
-            let mars_path = ctx.project_root.join(".mars");
-            let ttl = crate::models::load_models_cache_ttl(ctx);
-            let mode = crate::models::resolve_refresh_mode(request.options.no_refresh_models);
-            match crate::models::ensure_fresh(&mars_path, ttl, mode) {
-                Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
-                    diag.warn(
-                        "models-cache-refresh",
-                        format!("using stale models cache: {reason}"),
-                    );
-                }
-                Ok((_, crate::models::RefreshOutcome::Offline)) => {}
-                Ok(_) => {}
-                Err(err) => {
-                    diag.warn(
-                        "models-cache-refresh",
-                        format!("failed to refresh models cache: {err}"),
-                    );
-                }
+        // failure — warn and continue.
+        let mars_path = ctx.project_root.join(".mars");
+        let ttl = crate::models::load_models_cache_ttl(ctx);
+        let mode = crate::models::resolve_refresh_mode(request.options.no_refresh_models);
+        match crate::models::ensure_fresh(&mars_path, ttl, mode) {
+            Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
+                diag.warn(
+                    "models-cache-refresh",
+                    format!("using stale models cache: {reason}"),
+                );
+            }
+            Ok((_, crate::models::RefreshOutcome::Offline)) => {}
+            Ok(_) => {}
+            Err(err) => {
+                diag.warn(
+                    "models-cache-refresh",
+                    format!("failed to refresh models cache: {err}"),
+                );
             }
         }
 

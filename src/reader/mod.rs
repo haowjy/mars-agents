@@ -8,7 +8,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::local_source;
 use crate::model::ReaderIr;
-use crate::sync::{LoadedConfig, ResolvedState, SyncRequest, load_config, resolve_graph};
+use crate::sync::{SyncRequest, load_config, resolve_graph};
 use crate::types::MarsContext;
 
 /// Run the reader stage: lock → config → graph → local discovery → `ReaderIr`.
@@ -23,27 +23,9 @@ pub fn read(
     // Phase 2: resolve dependency graph + model aliases.
     let resolved = resolve_graph(ctx, loaded, request, diag)?;
 
-    // Destructure resolved to enable partial moves.
-    let ResolvedState {
-        loaded:
-            LoadedConfig {
-                config,
-                local,
-                effective,
-                old_lock,
-                dependency_changes,
-                _sync_lock,
-            },
-        graph,
-        model_aliases,
-    } = resolved;
-
-    // Extract values that need borrowing before moving.
-    let has_package = config.package.is_some();
-    let target_registry = effective.settings.managed_targets();
-
     // Local package discovery — produces source paths only (no DestPath).
     // Dest-path assignment is the compiler's responsibility.
+    let has_package = resolved.loaded.config.package.is_some();
     let local_source_name = crate::types::SourceOrigin::LocalPackage.to_string();
     let local_items = local_source::discover_local_items(
         &ctx.project_root,
@@ -53,15 +35,7 @@ pub fn read(
     )?;
 
     Ok(ReaderIr {
-        config: effective,
-        local_config: local,
-        raw_config: config,
-        old_lock,
-        graph,
-        model_aliases,
-        target_registry,
-        dependency_changes,
+        resolved,
         local_items,
-        _sync_lock,
     })
 }

@@ -4,15 +4,8 @@
 /// `compiler::compile()`.  It contains source-level facts only; no
 /// destination paths, rendered bytes, lock records, or sync-plan state may
 /// appear here.
-use indexmap::IndexMap;
-
-use crate::config::{Config, EffectiveConfig, LocalConfig};
-use crate::fs::FileLock;
 use crate::local_source::LocalDiscoveredItem;
-use crate::lock::LockFile;
-use crate::models::ModelAlias;
-use crate::resolve::ResolvedGraph;
-use crate::sync::mutation::DependencyUpsertChange;
+use crate::sync::ResolvedState;
 
 /// The single boundary type between reader and compiler.
 ///
@@ -22,25 +15,9 @@ use crate::sync::mutation::DependencyUpsertChange;
 /// - No lock item records (only the *old* lock for diff purposes).
 /// - No sync-plan or apply state.
 pub struct ReaderIr {
-    /// Merged effective config (direct + local overrides).
-    pub config: EffectiveConfig,
-    /// Raw local-override config (needed for mutation persistence).
-    pub local_config: LocalConfig,
-    /// Raw base config (needed for mutation persistence and bump entries).
-    pub raw_config: Config,
-    /// Existing lock file on disk before this sync run.
-    pub old_lock: LockFile,
-    /// Fully resolved dependency graph.
-    pub graph: ResolvedGraph,
-    /// Merged model aliases (consumer + all dependency manifests).
-    pub model_aliases: IndexMap<String, ModelAlias>,
-    /// Configured managed-target root names (e.g. `[".agents"]`).
-    pub target_registry: Vec<String>,
-    /// Dependency mutations to record in the sync report.
-    pub dependency_changes: Vec<DependencyUpsertChange>,
+    /// Fully resolved pipeline state (config, graph, model aliases, lock, sync lock).
+    pub resolved: ResolvedState,
     /// Local package items discovered from the project root.
     /// Source paths only — dest-path assignment happens in the compiler.
     pub local_items: Vec<LocalDiscoveredItem>,
-    /// Holds the sync file-lock for the lifetime of the pipeline.
-    pub(crate) _sync_lock: FileLock,
 }

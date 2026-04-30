@@ -8,8 +8,8 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::model::ReaderIr;
 use crate::sync::{
-    LoadedConfig, ResolvedState, SyncReport, SyncRequest, apply_plan, build_target,
-    check_frozen_gate, create_plan, finalize, sync_targets,
+    SyncReport, SyncRequest, apply_plan, build_target, check_frozen_gate, create_plan, finalize,
+    sync_targets,
 };
 use crate::types::MarsContext;
 
@@ -20,22 +20,8 @@ pub fn compile(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
-    // Reconstruct the phase struct the compiler phases expect.
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: ir.raw_config,
-            local: ir.local_config,
-            effective: ir.config,
-            old_lock: ir.old_lock,
-            dependency_changes: ir.dependency_changes,
-            _sync_lock: ir._sync_lock,
-        },
-        graph: ir.graph,
-        model_aliases: ir.model_aliases,
-    };
-
     // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.
-    let targeted = build_target(ctx, resolved, ir.local_items, request, diag)?;
+    let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
     // Phase 4: diff + plan.
     let planned = create_plan(ctx, targeted, request, diag)?;

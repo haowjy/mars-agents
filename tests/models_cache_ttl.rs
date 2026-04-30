@@ -566,6 +566,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
                     .arg("--json")
                     .arg("models")
                     .arg("list")
+                    .arg("--unavailable")
                     .output()
                     .expect("failed to execute concurrent mars models list")
             })

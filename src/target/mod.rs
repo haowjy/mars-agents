@@ -1,0 +1,171 @@
+/// Per-target compilation adapters.
+///
+/// Each target root (`.agents`, `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`)
+/// has an adapter that knows how to lower agents, format config entries, translate
+/// hooks, and resolve model aliases for that target.
+///
+/// The adapter boundary isolates all per-target branching here, keeping shared
+/// compiler code free of `if target == ...` chains.
+pub mod agents;
+pub mod claude;
+pub mod codex;
+pub mod cursor;
+pub mod opencode;
+pub mod pi;
+
+use crate::lock::ItemKind;
+use crate::types::DestPath;
+
+/// Per-target compilation adapter.
+///
+/// Implementations encapsulate all per-target knowledge:
+/// - Which item kinds this target accepts
+/// - Default destination path layout
+/// - Config-entry format (future: MCP, hooks, model aliases)
+///
+/// The trait is split into file-output surfaces and config-entry surfaces so
+/// parallel pipeline lanes can own disjoint write responsibilities without
+/// interfering with each other.
+///
+/// # Object safety
+/// All methods take `&self` and return concrete types to ensure the trait can
+/// be used as `dyn TargetAdapter`.
+pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
+    /// Target root name (e.g., `.agents`, `.claude`, `.codex`).
+    fn name(&self) -> &str;
+
+    // -----------------------------------------------------------------------
+    // File-output surface
+    // -----------------------------------------------------------------------
+
+    /// Whether this target emits agent files (`.md` in an `agents/` subtree).
+    fn supports_agents(&self) -> bool;
+
+    /// Whether this target emits skill files (directory trees in a `skills/` subtree).
+    fn supports_skills(&self) -> bool;
+
+    // -----------------------------------------------------------------------
+    // Config-entry surface (future: MCP, hooks, model config)
+    // -----------------------------------------------------------------------
+
+    /// Whether this target emits config-entry files (MCP server JSON, hook
+    /// scripts, settings TOML, etc.).
+    ///
+    /// Config-entry writing is a separate pipeline lane from file outputs — an
+    /// adapter that returns `true` here owns writing target-specific config
+    /// without touching the file-output lane.
+    fn supports_config_entries(&self) -> bool;
+
+    // -----------------------------------------------------------------------
+    // Path resolution
+    // -----------------------------------------------------------------------
+
+    /// Default destination path for an item of the given kind and name.
+    ///
+    /// Returns `None` if this target does not accept the item kind. The
+    /// compiler MUST skip items for which this returns `None`.
+    fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
+}
+
+/// Registry of target adapters, keyed by target root name.
+///
+/// Constructed once per sync run. Adapters are registered at startup; no
+/// dynamic registration is needed.
+pub struct TargetRegistry {
+    adapters: Vec<Box<dyn TargetAdapter>>,
+}
+
+impl TargetRegistry {
+    /// Build a registry containing all built-in target adapters.
+    pub fn new() -> Self {
+        Self {
+            adapters: vec![
+                Box::new(agents::AgentsAdapter),
+                Box::new(claude::ClaudeAdapter),
+                Box::new(codex::CodexAdapter),
+                Box::new(opencode::OpencodeAdapter),
+                Box::new(pi::PiAdapter),
+                Box::new(cursor::CursorAdapter),
+            ],
+        }
+    }
+
+    /// Look up an adapter by target root name.
+    ///
+    /// Returns `None` if no adapter is registered for the given name. Callers
+    /// may fall back to a default behavior (currently: pass-through copy) when
+    /// no adapter is found.
+    pub fn get(&self, name: &str) -> Option<&dyn TargetAdapter> {
+        self.adapters
+            .iter()
+            .find(|a| a.name() == name)
+            .map(|a| a.as_ref())
+    }
+
+    /// Iterate over all registered adapters.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn TargetAdapter> {
+        self.adapters.iter().map(|a| a.as_ref())
+    }
+}
+
+impl Default for TargetRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_contains_all_builtin_adapters() {
+        let registry = TargetRegistry::new();
+        let names: Vec<&str> = registry.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&".agents"));
+        assert!(names.contains(&".claude"));
+        assert!(names.contains(&".codex"));
+        assert!(names.contains(&".opencode"));
+        assert!(names.contains(&".pi"));
+        assert!(names.contains(&".cursor"));
+    }
+
+    #[test]
+    fn registry_get_returns_adapter_by_name() {
+        let registry = TargetRegistry::new();
+        let adapter = registry.get(".agents").unwrap();
+        assert_eq!(adapter.name(), ".agents");
+    }
+
+    #[test]
+    fn registry_get_unknown_name_returns_none() {
+        let registry = TargetRegistry::new();
+        assert!(registry.get(".unknown-target").is_none());
+    }
+
+    #[test]
+    fn agents_adapter_supports_agents_and_skills() {
+        let registry = TargetRegistry::new();
+        let adapter = registry.get(".agents").unwrap();
+        assert!(adapter.supports_agents());
+        assert!(adapter.supports_skills());
+    }
+
+    #[test]
+    fn agents_adapter_default_dest_path_agent() {
+        let registry = TargetRegistry::new();
+        let adapter = registry.get(".agents").unwrap();
+        let path = adapter.default_dest_path(ItemKind::Agent, "coder").unwrap();
+        assert_eq!(path.as_str(), "agents/coder.md");
+    }
+
+    #[test]
+    fn agents_adapter_default_dest_path_skill() {
+        let registry = TargetRegistry::new();
+        let adapter = registry.get(".agents").unwrap();
+        let path = adapter
+            .default_dest_path(ItemKind::Skill, "planning")
+            .unwrap();
+        assert_eq!(path.as_str(), "skills/planning");
+    }
+}

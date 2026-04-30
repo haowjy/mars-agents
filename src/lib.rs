@@ -20,6 +20,7 @@ pub mod reconcile;
 pub mod resolve;
 pub mod source;
 pub mod sync;
+pub mod target;
 pub mod target_sync;
 pub mod types;
 pub mod validate;

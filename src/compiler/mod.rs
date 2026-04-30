@@ -4,6 +4,9 @@
 /// [`crate::model::ReaderIr`] (all source-level facts) and produces a
 /// [`crate::sync::SyncReport`] by assigning dest paths, computing diffs,
 /// writing files, syncing managed targets, and persisting the lock.
+pub mod context;
+
+use crate::compiler::context::CompileContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::model::ReaderIr;
@@ -20,6 +23,12 @@ pub fn compile(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
+    // Construct translation context for this compilation run.
+    // Carries target registry and host platform so future phases can lower
+    // the same logical item differently per target (lossiness classification,
+    // hook script selection). Unused today — seam exists for R4+.
+    let _compile_ctx = CompileContext::new();
+
     // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.
     let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 

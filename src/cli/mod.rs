@@ -25,6 +25,7 @@ pub mod repair;
 pub mod resolve_cmd;
 pub mod sync;
 pub mod upgrade;
+pub mod validate;
 pub mod version;
 pub mod why;
 
@@ -148,6 +149,9 @@ pub enum Command {
     /// Add/remove managed target directories (e.g. .claude).
     Link(link::LinkArgs),
 
+    /// Dry-run the compiler pipeline and report diagnostics without writing.
+    Validate(validate::ValidateArgs),
+
     /// Validate a source package before publishing (structure, frontmatter, deps).
     Check(check::CheckArgs),
 
@@ -219,6 +223,7 @@ fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
 
 fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match cmd {
+        Command::Validate(args) => validate::run(args, ctx, json),
         Command::Add(args) => add::run(args, ctx, json),
         Command::Adopt(args) => adopt::run(args, ctx, json),
         Command::Remove(args) => remove::run(args, ctx, json),

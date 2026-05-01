@@ -3,6 +3,7 @@ use std::path::Path;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::types::{
     CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
@@ -220,10 +221,21 @@ struct VersionProbe {
 /// V1 lock files are transparently promoted to the v2 in-memory shape (D19):
 /// the lock is only written as v2 after a successful sync.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
+    let (lock, _) = load_with_diagnostics(root)?;
+    Ok(lock)
+}
+
+/// Load the lock file and return any diagnostics produced while reading it.
+///
+/// This preserves legacy v1→v2 in-memory promotion while routing promotion
+/// warnings through the normal diagnostic flow for sync callers.
+pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LockFile::empty()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((LockFile::empty(), Vec::new()));
+        }
         Err(e) => return Err(LockError::Io(e).into()),
     };
 
@@ -236,22 +248,28 @@ pub fn load(root: &Path) -> Result<LockFile, MarsError> {
         let wire: LockFileV2Wire = toml::from_str(&content).map_err(|e| LockError::Corrupt {
             message: format!("failed to parse {}: {e}", path.display()),
         })?;
-        Ok(LockFile {
-            version: wire.version,
-            dependencies: wire.dependencies,
-            items: wire.items,
-        })
+        Ok((
+            LockFile {
+                version: wire.version,
+                dependencies: wire.dependencies,
+                items: wire.items,
+            },
+            Vec::new(),
+        ))
     } else {
         // V1 → V2 promotion (D19): map each DestPath key to a logical identity.
         let wire: LockFileV1 = toml::from_str(&content).map_err(|e| LockError::Corrupt {
             message: format!("failed to parse {}: {e}", path.display()),
         })?;
-        let items = promote_v1_items(wire.items);
-        Ok(LockFile {
-            version: LOCK_VERSION,
-            dependencies: wire.dependencies,
-            items,
-        })
+        let (items, diagnostics) = promote_v1_items(wire.items);
+        Ok((
+            LockFile {
+                version: LOCK_VERSION,
+                dependencies: wire.dependencies,
+                items,
+            },
+            diagnostics,
+        ))
     }
 }
 
@@ -273,8 +291,11 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
 /// (e.g. `hooks/pre-commit/hook.sh` and `hooks/pre-push/hook.sh` both name "hook")
 /// would map to the same key and silently drop one. When a collision is detected,
 /// we warn and fall back to the raw dest_path string as a disambiguated key.
-fn promote_v1_items(v1_items: IndexMap<DestPath, LockedItem>) -> IndexMap<String, LockedItemV2> {
+fn promote_v1_items(
+    v1_items: IndexMap<DestPath, LockedItem>,
+) -> (IndexMap<String, LockedItemV2>, Vec<Diagnostic>) {
     let mut result: IndexMap<String, LockedItemV2> = IndexMap::new();
+    let mut diagnostics = Vec::new();
 
     for (dest_path, item) in v1_items {
         let key = format!("{}/{}", item.kind, dest_path.item_name(item.kind));
@@ -294,16 +315,22 @@ fn promote_v1_items(v1_items: IndexMap<DestPath, LockedItem>) -> IndexMap<String
             // Two v1 entries share the same basename — use the full dest_path as a
             // disambiguated key so neither entry is silently dropped.
             let fallback_key = format!("{}/{}", item_v2.kind, dest_path.as_str());
-            eprintln!(
-                "[WARN] v1→v2 promotion: key collision on `{key}`; using dest_path key `{fallback_key}`"
-            );
+            diagnostics.push(Diagnostic {
+                level: crate::diagnostic::DiagnosticLevel::Warning,
+                code: "lock-promotion-collision",
+                message: format!(
+                    "v1→v2 promotion: key collision on `{key}`; using dest_path key `{fallback_key}`"
+                ),
+                context: None,
+                category: None,
+            });
             result.insert(fallback_key, item_v2);
         } else {
             result.insert(key, item_v2);
         }
     }
 
-    result
+    (result, diagnostics)
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,10 +1146,11 @@ dest_path = "agents/coder.md"
             },
         );
 
-        let promoted = promote_v1_items(v1_items);
+        let (promoted, diagnostics) = promote_v1_items(v1_items);
 
         // Both entries must be present — neither was silently dropped.
         assert_eq!(promoted.len(), 2, "both items should survive promotion");
+        assert_eq!(diagnostics.len(), 1);
 
         // The first item gets the canonical key; the second gets the fallback dest_path key.
         let checksums: std::collections::HashSet<String> = promoted
@@ -1137,6 +1165,46 @@ dest_path = "agents/coder.md"
             checksums.contains("sha256:ccc"),
             "pre-push hook must be present"
         );
+    }
+
+    #[test]
+    fn load_with_diagnostics_reports_v1_promotion_collision() {
+        let v1_toml = r#"
+version = 1
+
+[dependencies.base]
+url = "https://github.com/org/base.git"
+
+[items."hooks/pre-commit/hook.sh"]
+source = "base"
+kind = "hook"
+source_checksum = "sha256:aaa"
+installed_checksum = "sha256:bbb"
+dest_path = "hooks/pre-commit/hook.sh"
+
+[items."hooks/pre-push/hook.sh"]
+source = "base"
+kind = "hook"
+source_checksum = "sha256:ccc"
+installed_checksum = "sha256:ddd"
+dest_path = "hooks/pre-push/hook.sh"
+"#;
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mars.lock"), v1_toml).unwrap();
+
+        let (lock, diagnostics) = load_with_diagnostics(dir.path()).unwrap();
+
+        assert_eq!(lock.version, LOCK_VERSION);
+        assert_eq!(lock.items.len(), 2);
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert_eq!(
+            diagnostic.level,
+            crate::diagnostic::DiagnosticLevel::Warning
+        );
+        assert_eq!(diagnostic.code, "lock-promotion-collision");
+        assert!(diagnostic.message.contains("key collision"));
+        assert!(diagnostic.message.contains("hook/hooks/pre-push/hook.sh"));
     }
 
     #[test]

@@ -11,8 +11,6 @@ pub mod context;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
-/// Skill placement, output planning, and compile-time overlap/visibility checks.
-pub mod skills;
 /// Visibility propagation rules for passive vs effectful items (D1/D10).
 pub mod visibility;
 
@@ -137,10 +135,9 @@ fn compile_config_entries(
         let Some(node) = graph.nodes.get(source_name) else {
             continue;
         };
-        let depth = depths.get(source_name).copied().unwrap_or(1);
         let package_root = &node.rooted_ref.package_root;
 
-        match discover_mcp_items(package_root, source_name.as_str(), depth) {
+        match discover_mcp_items(package_root, source_name.as_str(), decl_order + 1) {
             Ok(items) => all_mcp.extend(items),
             Err(e) => {
                 diag.warn(
@@ -150,6 +147,7 @@ fn compile_config_entries(
             }
         }
 
+        let depth = depths.get(source_name).copied().unwrap_or(1);
         match discover_hook_items(package_root, source_name.as_str(), depth, decl_order + 1) {
             Ok(items) => all_hooks.extend(items),
             Err(e) => {
@@ -511,7 +509,6 @@ fn dual_surface_compile(
                         ),
                     );
                 }
-                Lossiness::Exact => {}
             }
         }
 

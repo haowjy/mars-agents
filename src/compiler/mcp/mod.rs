@@ -82,8 +82,8 @@ pub struct ParsedMcpItem {
     pub def: McpServerDef,
     /// Source package name this item came from.
     pub source_name: String,
-    /// Depth of the package in the dependency graph (0 = root package).
-    pub package_depth: usize,
+    /// Declaration order of the source package in the consumer graph.
+    pub decl_order: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ pub struct ParsedMcpItem {
 pub fn discover_mcp_items(
     package_root: &Path,
     source_name: &str,
-    package_depth: usize,
+    decl_order: usize,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
     let mcp_dir = package_root.join("mcp");
     if !mcp_dir.is_dir() {
@@ -139,7 +139,7 @@ pub fn discover_mcp_items(
             name: resolved_name,
             def,
             source_name: source_name.to_string(),
-            package_depth,
+            decl_order,
         });
     }
 
@@ -270,12 +270,17 @@ impl TargetMcpEntry {
 ///
 /// Filters to items that apply to the given target (empty target list = all targets).
 pub fn lower_for_target<'a>(items: &'a [ParsedMcpItem], target_root: &str) -> Vec<TargetMcpEntry> {
-    items
+    let mut applicable: Vec<(usize, &'a ParsedMcpItem)> = items
         .iter()
+        .enumerate()
         .filter(|item| {
-            item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == target_root)
+            item.1.def.targets.is_empty() || item.1.def.targets.iter().any(|t| t == target_root)
         })
-        .map(TargetMcpEntry::from_parsed)
+        .collect();
+    applicable.sort_by_key(|(original_index, item)| (item.decl_order, *original_index));
+    applicable
+        .into_iter()
+        .map(|(_, item)| TargetMcpEntry::from_parsed(item))
         .collect()
 }
 

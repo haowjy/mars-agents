@@ -67,15 +67,6 @@ impl HarnessKind {
             Self::Pi => ".pi",
         }
     }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::OpenCode => "opencode",
-            Self::Pi => "pi",
-        }
-    }
 }
 
 /// Approval policy field.
@@ -95,15 +86,6 @@ impl ApprovalMode {
             "confirm" => Some(Self::Confirm),
             "yolo" => Some(Self::Yolo),
             _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Default => "default",
-            Self::Auto => "auto",
-            Self::Confirm => "confirm",
-            Self::Yolo => "yolo",
         }
     }
 }
@@ -212,35 +194,22 @@ impl HarnessOverrides {
             HarnessKind::Pi => self.pi.as_ref(),
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.claude.is_none()
-            && self.codex.is_none()
-            && self.opencode.is_none()
-            && self.pi.is_none()
-    }
 }
 
-/// A typed selector for `model-policies:` entries.
+/// Marker for a validated `model-policies:` entry.
 ///
 /// Per the spec (D43), model-policies are consumed by Meridian at runtime.
 /// Mars parses them at compile time only for validation and preservation.
 #[derive(Debug, Clone)]
-pub struct ModelPolicyEntry {
-    /// Raw YAML value — preserved verbatim in compiled output.
-    pub raw: serde_yaml::Value,
-}
+pub struct ModelPolicyEntry;
 
-/// A fanout inventory entry (`fanout:`).
+/// Marker for a validated fanout inventory entry (`fanout:`).
 ///
 /// Fanout is metadata-only (D43): it never gains lowering behavior.
 /// Mars parses it for validation and preservation; no harness-native artifact
 /// receives fanout entries.
 #[derive(Debug, Clone)]
-pub struct FanoutEntry {
-    /// Raw YAML value — preserved verbatim in Meridian artifact.
-    pub raw: serde_yaml::Value,
-}
+pub struct FanoutEntry;
 
 // ---------------------------------------------------------------------------
 // AgentProfile — the fully parsed frontmatter
@@ -282,10 +251,6 @@ pub struct AgentProfile {
     pub harness_overrides: HarnessOverrides,
     pub model_policies: Vec<ModelPolicyEntry>,
     pub fanout: Vec<FanoutEntry>,
-
-    // --- Legacy ---
-    /// `models:` field present (deprecated). Triggers a warning.
-    pub has_legacy_models: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -307,8 +272,6 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Non-overridable field appears inside an override block.
     NonOverridableFieldInOverride { field: String, table: String },
-    /// A field was set on an agent that cannot be expressed in the harness-native target.
-    DroppedField { field: String, target: String },
 }
 
 impl AgentDiagnostic {
@@ -333,11 +296,6 @@ impl AgentDiagnostic {
             }
             AgentDiagnostic::NonOverridableFieldInOverride { field, table } => {
                 format!("field `{field}` is not overridable; remove from `{table}`")
-            }
-            AgentDiagnostic::DroppedField { field, target } => {
-                format!(
-                    "field `{field}` cannot be expressed in {target} native format; it will be dropped"
-                )
             }
         }
     }
@@ -502,17 +460,14 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
 
 fn parse_model_policies(val: &Value) -> Vec<ModelPolicyEntry> {
     match val {
-        Value::Sequence(seq) => seq
-            .iter()
-            .map(|v| ModelPolicyEntry { raw: v.clone() })
-            .collect(),
+        Value::Sequence(seq) => seq.iter().map(|_| ModelPolicyEntry).collect(),
         _ => vec![],
     }
 }
 
 fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
     match val {
-        Value::Sequence(seq) => seq.iter().map(|v| FanoutEntry { raw: v.clone() }).collect(),
+        Value::Sequence(seq) => seq.iter().map(|_| FanoutEntry).collect(),
         _ => vec![],
     }
 }
@@ -648,8 +603,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     let fanout = fm.get("fanout").map(parse_fanout).unwrap_or_default();
 
     // Legacy models: field
-    let has_legacy_models = fm.get("models").is_some();
-    if has_legacy_models {
+    if fm.get("models").is_some() {
         diags.push(AgentDiagnostic::LegacyModelsField);
     }
 
@@ -670,7 +624,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         harness_overrides,
         model_policies,
         fanout,
-        has_legacy_models,
     }
 }
 
@@ -873,8 +826,7 @@ mod tests {
     #[test]
     fn legacy_models_field_produces_deprecation_warning() {
         let content = "---\nmodels:\n  opus:\n    effort: high\n---\n";
-        let (p, diags) = parse(content);
-        assert!(p.has_legacy_models);
+        let (_p, diags) = parse(content);
         assert_eq!(diags.len(), 1);
         assert!(matches!(&diags[0], AgentDiagnostic::LegacyModelsField));
     }

@@ -6,7 +6,6 @@ pub mod plan;
 pub mod provider;
 pub mod rewrite;
 pub mod target;
-pub mod translate;
 pub mod types;
 
 use std::cmp::Reverse;
@@ -25,7 +24,7 @@ use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::target::{ExplicitSkillRename, TargetItem, TargetState};
+use crate::sync::target::{TargetItem, TargetState};
 use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 
@@ -92,6 +91,8 @@ pub(crate) struct LoadedConfig {
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     pub dependency_changes: Vec<DependencyUpsertChange>,
+    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock.
+    #[allow(dead_code)]
     pub sync_lock: FileLock,
 }
 
@@ -99,14 +100,12 @@ pub(crate) struct LoadedConfig {
 pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
-    pub model_aliases: indexmap::IndexMap<String, crate::models::ModelAlias>,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
-    pub renames: Vec<ExplicitSkillRename>,
     pub warnings: Vec<ValidationWarning>,
 }
 
@@ -233,14 +232,9 @@ pub(crate) fn resolve_graph(
 
     // Merge model config from dependency tree
     let dep_models = declaration_ordered_dep_models(&graph, &loaded.effective);
-    let model_aliases =
-        crate::models::merge_model_config(&loaded.config.models, &dep_models, diag, None);
+    let _ = crate::models::merge_model_config(&loaded.config.models, &dep_models, diag, None);
 
-    Ok(ResolvedState {
-        loaded,
-        graph,
-        model_aliases,
-    })
+    Ok(ResolvedState { loaded, graph })
 }
 
 /// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
@@ -363,7 +357,6 @@ pub(crate) fn build_target(
     Ok(TargetedState {
         resolved,
         target: target_state,
-        renames,
         warnings,
     })
 }

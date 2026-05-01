@@ -121,7 +121,7 @@ pub struct ParsedHookItem {
     pub package_depth: usize,
     /// Position of the source in the dependency declaration order.
     /// Used for stable ordering within the same depth.
-    pub dep_decl_order: usize,
+    pub decl_order: usize,
     /// Absolute path to the package root this hook was discovered in.
     pub package_root: PathBuf,
 }
@@ -184,7 +184,7 @@ pub fn discover_hook_items(
     package_root: &Path,
     source_name: &str,
     package_depth: usize,
-    dep_decl_order: usize,
+    decl_order: usize,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
     let hooks_dir = package_root.join("hooks");
     if !hooks_dir.is_dir() {
@@ -259,7 +259,7 @@ pub fn discover_hook_items(
             },
             source_name: source_name.to_string(),
             package_depth,
-            dep_decl_order,
+            decl_order,
             package_root: package_root.to_path_buf(),
         });
     }
@@ -275,7 +275,7 @@ pub fn discover_hook_items(
 #[derive(Debug, Clone)]
 pub struct OrderedHook {
     pub item: ParsedHookItem,
-    /// Sort key: (depth, dep_decl_order, order_field, name)
+    /// Sort key: (depth, decl_order, order_field, name)
     pub sort_key: (usize, usize, i32, String),
 }
 
@@ -291,7 +291,7 @@ pub fn order_hooks(items: Vec<ParsedHookItem>) -> Vec<OrderedHook> {
         .map(|item| {
             let sort_key = (
                 item.package_depth,
-                item.dep_decl_order,
+                item.decl_order,
                 item.def.order,
                 item.def.name.clone(),
             );

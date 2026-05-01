@@ -10,7 +10,7 @@
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
-use crate::compiler::agents::{AgentDiagnostic, AgentProfile, HarnessKind, OverrideFields};
+use crate::compiler::agents::{AgentProfile, HarnessKind, OverrideFields};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,6 @@ pub struct LossyField {
 /// Lossiness classification for a single field in a target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lossiness {
-    Exact,
     Approximate { note: &'static str },
     Dropped,
     MeridianOnly,
@@ -95,25 +94,6 @@ impl<'a> Effective<'a> {
             return ov;
         }
         &self.profile.disallowed_tools
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Meridian artifact — full-fidelity pass-through
-// ---------------------------------------------------------------------------
-
-/// Produce the Meridian-artifact bytes.
-///
-/// The Meridian artifact is full-fidelity: it is the source content verbatim,
-/// with no field stripping. The `translated_content` in the translate stage is
-/// `None` for the Meridian artifact (pass-through reads the source directly).
-///
-/// This function exists for testing and explicit production; the sync pipeline
-/// uses the source content directly for the `.agents/` artifact.
-pub fn lower_to_meridian(source_content: &str) -> LoweredOutput {
-    LoweredOutput {
-        bytes: source_content.as_bytes().to_vec(),
-        lossy_fields: vec![],
     }
 }
 
@@ -689,41 +669,15 @@ pub fn lower_for_harness(
     }
 }
 
-/// Collect lossiness diagnostics from a lowered output and push them as
-/// `AgentDiagnostic::DroppedField` entries.
-pub fn collect_lossiness_diags(output: &LoweredOutput, diags: &mut Vec<AgentDiagnostic>) {
-    for lf in &output.lossy_fields {
-        if matches!(
-            lf.classification,
-            Lossiness::Dropped | Lossiness::MeridianOnly
-        ) {
-            diags.push(AgentDiagnostic::DroppedField {
-                field: lf.field.clone(),
-                target: lf.target.clone(),
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::parse_agent_content;
+    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
         let mut diags = Vec::new();
         let (profile, fm) = parse_agent_content(content, &mut diags).unwrap();
         (profile, fm, diags)
-    }
-
-    // --- 3.1: Meridian pass-through ---
-
-    #[test]
-    fn meridian_lowering_is_identity() {
-        let src = "---\nname: coder\nharness: claude\n---\n# Body";
-        let out = lower_to_meridian(src);
-        assert_eq!(out.bytes, src.as_bytes());
-        assert!(out.lossy_fields.is_empty());
     }
 
     // --- 3.3: Claude lowering ---

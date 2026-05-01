@@ -163,10 +163,6 @@ pub(crate) fn compile_config_entries(
     // For each target root, lower and write config entries.
     for target_root in &target_roots {
         let target_dir = ctx.project_root.join(target_root);
-        if !target_dir.is_dir() {
-            // Target directory doesn't exist — skip (not configured/enabled).
-            continue;
-        }
 
         // Lower MCP items for this target.
         let mut entries_with_source: Vec<(ConfigEntry, String)> = Vec::new();
@@ -280,7 +276,7 @@ pub(crate) fn compile_config_entries(
             .map(|(entry, _)| entry.clone())
             .collect();
 
-        let target_records = current_records.entry(target_root.clone()).or_default();
+        let mut target_records = BTreeMap::new();
         for (entry, source) in &entries_with_source {
             target_records.insert(
                 entry.key(),
@@ -293,12 +289,19 @@ pub(crate) fn compile_config_entries(
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
         adapter.emit_pre_write_diagnostics(&entries, diag);
 
-        if !dry_run {
-            if let Err(e) = adapter.write_config_entries(&entries, &target_dir) {
-                diag.warn(
-                    "config-entry-write",
-                    format!("failed to write config entries to `{target_root}`: {e}"),
-                );
+        if dry_run {
+            current_records.insert(target_root.clone(), target_records);
+        } else {
+            match adapter.write_config_entries(&entries, &target_dir) {
+                Ok(_) => {
+                    current_records.insert(target_root.clone(), target_records);
+                }
+                Err(e) => {
+                    diag.warn(
+                        "config-entry-write",
+                        format!("failed to write config entries to `{target_root}`: {e}"),
+                    );
+                }
             }
         }
     }

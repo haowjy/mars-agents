@@ -130,7 +130,7 @@ impl LockFile {
 /// at hot call sites that need repeated output-path lookups.
 pub struct LockIndex<'a> {
     lock: &'a LockFile,
-    by_dest_path: HashMap<&'a DestPath, (&'a str, usize)>,
+    by_dest_path: HashMap<String, (&'a str, usize)>,
 }
 
 impl<'a> LockIndex<'a> {
@@ -139,10 +139,12 @@ impl<'a> LockIndex<'a> {
             .items
             .iter()
             .flat_map(|(key, item)| {
-                item.outputs
-                    .iter()
-                    .enumerate()
-                    .map(move |(idx, output)| (&output.dest_path, (key.as_str(), idx)))
+                item.outputs.iter().enumerate().map(move |(idx, output)| {
+                    (
+                        normalize_dest_path(output.dest_path.as_str()),
+                        (key.as_str(), idx),
+                    )
+                })
             })
             .collect();
 
@@ -151,11 +153,9 @@ impl<'a> LockIndex<'a> {
 
     /// Look up a locked item by output dest_path, returning a flat [`LockedItem`] view.
     pub fn find_by_dest_path(&self, dest_path: &DestPath) -> Option<LockedItem> {
-        let (item_key, output_idx) =
-            self.by_dest_path.iter().find_map(|(locked_dest, value)| {
-                crate::target::dest_paths_equivalent(locked_dest.as_str(), dest_path.as_str())
-                    .then_some(*value)
-            })?;
+        let (item_key, output_idx) = *self
+            .by_dest_path
+            .get(&normalize_dest_path(dest_path.as_str()))?;
         let item_v2 = self.lock.items.get(item_key)?;
         let output = item_v2.outputs.get(output_idx)?;
         Some(LockedItem {
@@ -170,9 +170,16 @@ impl<'a> LockIndex<'a> {
 
     /// Check if any output record has the given dest_path.
     pub fn contains_dest_path(&self, dest_path: &DestPath) -> bool {
-        self.by_dest_path.keys().any(|locked_dest| {
-            crate::target::dest_paths_equivalent(locked_dest.as_str(), dest_path.as_str())
-        })
+        self.by_dest_path
+            .contains_key(&normalize_dest_path(dest_path.as_str()))
+    }
+}
+
+fn normalize_dest_path(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.to_string()
     }
 }
 

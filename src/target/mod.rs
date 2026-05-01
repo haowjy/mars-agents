@@ -13,8 +13,27 @@ pub mod cursor;
 pub mod opencode;
 pub mod pi;
 
+use std::path::{Path, PathBuf};
+
+use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
+
+/// A config entry to be written to a target's config file.
+///
+/// Currently a placeholder — future use: MCP server entries, hook bindings.
+#[derive(Debug, Clone)]
+pub struct ConfigEntry {
+    pub key: String,
+    pub kind: ConfigEntryKind,
+}
+
+/// Kind of config entry.
+#[derive(Debug, Clone)]
+pub enum ConfigEntryKind {
+    McpServer,
+    HookBinding,
+}
 
 /// Per-target compilation adapter.
 ///
@@ -43,6 +62,34 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Returns `None` if this target does not accept the item kind. The
     /// compiler MUST skip items for which this returns `None`.
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
+
+    // -----------------------------------------------------------------------
+    // Config-file writing
+    // -----------------------------------------------------------------------
+
+    /// Write config entries (MCP servers, hooks) to this target's config file.
+    ///
+    /// Returns the paths of files written, for lock tracking.
+    /// Default: no-op — targets that don't use a config file leave this as-is.
+    fn write_config_entries(
+        &self,
+        _entries: &[ConfigEntry],
+        _target_dir: &Path,
+    ) -> Result<Vec<PathBuf>, MarsError> {
+        Ok(Vec::new())
+    }
+
+    /// Remove stale config entries from this target's config file.
+    ///
+    /// `entry_keys` are the `ConfigEntry::key` values to remove.
+    /// Default: no-op.
+    fn remove_config_entries(
+        &self,
+        _entry_keys: &[String],
+        _target_dir: &Path,
+    ) -> Result<(), MarsError> {
+        Ok(())
+    }
 }
 
 /// Registry of target adapters, keyed by target root name.

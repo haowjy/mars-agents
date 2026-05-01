@@ -8,6 +8,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ReaderIr` now embeds `ResolvedState` directly — eliminates decompose/reconstruct round-trip between reader and compiler stages. Removed dead `target_registry` field. Renamed `_sync_lock` → `sync_lock` in `LoadedConfig`. Removed redundant nested `dry_run` guard in `finalize()`.
 
 ### Added
+- `sync::translate` module — `TranslatedOutput` type wraps `PlannedAction` with optional pre-translated content; `translate()` pass-through establishes insertion point for per-target format lowering.
+- `TargetAdapter::write_config_entries` / `remove_config_entries` default-no-op methods + `ConfigEntry`/`ConfigEntryKind` placeholder types in `target/mod.rs`.
+- Lock-driven orphan cleanup in `target_sync`: `cleanup_orphans` now iterates lock v2 `previous_managed_paths` directly instead of scanning hardcoded subdirectories (`agents/`, `skills/`, etc.).
 - `mars version` CHANGELOG.md integration. Automatically promotes `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD`, inserts fresh empty `[Unreleased]`, stages alongside `mars.toml`. Warns when `[Unreleased]` section is empty. Silent skip when no CHANGELOG.md exists.
 
 ## [0.1.19] - 2026-04-25

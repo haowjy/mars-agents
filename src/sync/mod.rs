@@ -6,6 +6,7 @@ pub mod plan;
 pub mod provider;
 pub mod rewrite;
 pub mod target;
+pub mod translate;
 pub mod types;
 
 use std::cmp::Reverse;

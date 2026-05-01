@@ -217,9 +217,11 @@ fn copy_item_to_target(source: &Path, dest: &Path) -> Result<(), MarsError> {
 
 /// Clean up orphaned items in a target directory.
 ///
-/// Scans `agents/` and `skills/` subdirectories in the target. Removes
-/// entries only if they were previously managed by mars (present in old
-/// lock ownership) and are no longer expected in the current sync.
+/// Uses lock v2 output records (via `previous_managed_paths`) to determine
+/// what was managed in the prior sync, rather than scanning hardcoded
+/// subdirectories. Removes entries that were previously managed but are no
+/// longer expected in the current sync.
+///
 /// Returns the number of items removed.
 fn cleanup_orphans(
     target_root: &Path,
@@ -229,46 +231,33 @@ fn cleanup_orphans(
 ) -> usize {
     let mut removed = 0;
 
-    for subdir in ["agents", "skills", "hooks", "mcp", "bootstrap"] {
-        let scan_dir = target_root.join(subdir);
-        if !scan_dir.exists() {
+    // Lock-driven: iterate paths from the old lock, not hardcoded subdirectories.
+    // Only remove entries that were previously managed and are no longer expected.
+    for managed_path in previous_managed_paths {
+        if expected.contains(managed_path) {
             continue;
         }
 
-        // Skip if it's a symlink (legacy link setup — don't touch)
-        if scan_dir.symlink_metadata().is_ok()
-            && scan_dir
-                .symlink_metadata()
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
+        let full_path = target_root.join(managed_path);
+
+        // Skip if the path doesn't exist (already removed or never synced to this target).
+        if !full_path.exists() && full_path.symlink_metadata().is_err() {
+            continue;
+        }
+
+        // Skip symlinked paths (legacy link setup — don't touch).
+        if full_path
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
         {
             continue;
         }
 
-        let entries = match std::fs::read_dir(&scan_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let name_str = file_name.to_string_lossy();
-
-            // Skip hidden files (like .mars-tmp-*)
-            if name_str.starts_with('.') {
-                continue;
-            }
-
-            // Build forward-slash relative path for consistent cross-platform comparison
-            let rel_path_str = format!("{}/{}", subdir, name_str);
-            if previous_managed_paths.contains(&rel_path_str) && !expected.contains(&rel_path_str) {
-                let full_path = entry.path();
-                if let Err(e) = fs_ops::safe_remove(&full_path) {
-                    errors.push(format!("failed to remove orphan {}: {e}", rel_path_str));
-                } else {
-                    removed += 1;
-                }
-            }
+        if let Err(e) = fs_ops::safe_remove(&full_path) {
+            errors.push(format!("failed to remove orphan {managed_path}: {e}"));
+        } else {
+            removed += 1;
         }
     }
 

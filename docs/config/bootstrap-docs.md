@@ -54,6 +54,25 @@ During `mars sync`, package-level bootstrap docs sync to `.mars/bootstrap/`:
 
 Package-level bootstrap docs are **not** copied to native harness directories. They are consumed by Meridian at launch time only.
 
+### Manifest-declared bootstrap docs
+
+Bootstrap docs can also be declared in package manifests instead of discovered from `bootstrap/<doc-name>/BOOTSTRAP.md`.
+
+Supported declarations:
+
+```toml
+bootstrapDocs = ["./docs/global-auth"]
+bootstrap_docs = ["./docs/workspace-setup"]
+
+[package.bootstrap]
+path = "./bootstrap"
+```
+
+Each path points to either:
+
+- a bootstrap doc directory containing `BOOTSTRAP.md`
+- a bootstrap container directory with child doc directories
+
 ## Writing a BOOTSTRAP.md
 
 A bootstrap doc is plain markdown. Write it as instructions for an agent to follow when helping a user set up their environment.
@@ -103,7 +122,7 @@ All standard primary launch flags (`--model`, `--harness`, `--approval`, `--work
 
 ## Discovery and sync
 
-Mars discovers bootstrap docs at the same time as agents and skills during `mars sync`. No additional configuration is needed — any `bootstrap/` directory in a source package is automatically included.
+Mars discovers bootstrap docs at the same time as agents and skills during `mars sync`. Any `bootstrap/` directory in a source package is automatically included; manifest declarations add docs outside that conventional location.
 
 Skill-level bootstrap docs are part of the skill tree and require no extra configuration.
 

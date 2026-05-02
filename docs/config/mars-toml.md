@@ -3,8 +3,9 @@
 ## Terminology
 
 - **Project root**: directory containing `mars.toml` and `mars.lock`.
-- **Managed root**: directory Mars installs into (default: `.agents/`, configurable via `settings.managed_root`).
-- **`--root`**: points to the managed root when you need to override auto-detection.
+- **Canonical store**: `.mars/`, the full-fidelity compiled output Mars owns.
+- **Target sync**: optional copies from `.mars/` into managed target directories, configured by `settings.targets`.
+- **`--root`**: points to the project root when you need to override auto-detection.
 
 Mars uses three config files, all at the project root:
 
@@ -127,12 +128,32 @@ When `agents` and/or `skills` lists are provided:
 - Skills referenced by those agents' frontmatter are installed (**transitive skill dependencies**: indirectly required skills pulled in through agent declarations)
 - Standalone skills not referenced by any agent are excluded
 
+### `[local-dependencies]`
+
+Local dependency declarations have the same shape as `[dependencies]`, but are developer-local and are not exported to package manifests.
+
+Use them for private checkouts, local prompt repos, and temporary development wiring:
+
+```toml
+[local-dependencies.prompter]
+path = "../prompts/meridian-prompter"
+```
+
+Rules:
+
+- Same source and filter fields as `[dependencies]`
+- Merged into the effective config for local commands
+- Not exported when publishing package metadata
+- Cannot reuse a name already declared in `[dependencies]`
+
 ### `[settings]`
 
 ```toml
 [settings]
-managed_root = ".claude"   # default: ".agents"
-links = [".claude", ".cursor"]
+targets = [".claude", ".cursor"]
+agent_emission = "auto"
+min_mars_version = "0.12.0"
+models_cache_ttl_hours = 24
 
 [settings.model_visibility]
 include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
@@ -141,9 +162,14 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `managed_root` | string | `".agents"` | Directory name for managed output under the project root |
-| `targets` | string[] | `[managed_root]` | Directories where managed content is copied |
+| `targets` | string[] | unset | Managed target directories copied from `.mars/` |
+| `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
+| `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
+| `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
+| `models_cache_ttl_hours` | integer | `24` | Model catalog cache TTL; `0` forces refresh |
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
+
+`.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
 ## Model Visibility
 

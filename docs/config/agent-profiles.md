@@ -310,7 +310,7 @@ Per-harness override table. Overrides top-level field values when a specific har
 
 **Overridable fields:** `effort`, `autocompact`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
 
-**Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `model-overrides`, `harness-overrides`
+**Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `harness-overrides`
 
 ```yaml
 harness-overrides:
@@ -377,7 +377,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 | Invalid field value (e.g. `effort: ultra`) | Error — field is skipped |
 | Unknown harness name | Warning — field is skipped |
 | Non-overridable field in override block | Warning — field is skipped |
-| Legacy `models:` field | Warning — use `model-overrides:` instead |
+| Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |
 | Unknown top-level fields | Tolerated (forward compatibility) |
 
 Diagnostics are emitted during `mars sync` and `mars validate`. Errors in a field skip that field; the rest of the profile is used.

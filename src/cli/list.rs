@@ -37,6 +37,7 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
     // Default: catalog view (name + description from frontmatter)
     let mut agents = Vec::new();
     let mut skills = Vec::new();
+    let mut bootstrap = Vec::new();
 
     for (dest_path, item) in lock.flat_items() {
         // Filter by source
@@ -69,7 +70,10 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             ItemKind::Skill => disk_path.join("SKILL.md"),
         };
 
-        let fallback_name = path_to_name(&disk_path);
+        let fallback_name = match item.kind {
+            ItemKind::BootstrapDoc => dest_path.item_name(item.kind),
+            _ => path_to_name(&disk_path),
+        };
         let (name, description) = read_name_description(&content_path, &fallback_name);
         let variants = match item.kind {
             ItemKind::Skill => {
@@ -90,21 +94,24 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         match item.kind {
             ItemKind::Agent => agents.push(entry),
             ItemKind::Skill => skills.push(entry),
-            // New kinds not yet shown in the default catalog view — no-op for now.
-            ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {}
+            ItemKind::BootstrapDoc => bootstrap.push(entry),
+            // Config kinds are not shown in the default catalog view.
+            ItemKind::Hook | ItemKind::McpServer => {}
         }
     }
 
     agents.sort_by(|a, b| a.name.cmp(&b.name));
     skills.sort_by(|a, b| a.name.cmp(&b.name));
+    bootstrap.sort_by(|a, b| a.name.cmp(&b.name));
 
     if json {
         output::print_json(&serde_json::json!({
             "agents": agents,
             "skills": skills,
+            "bootstrap": bootstrap,
         }));
     } else {
-        output::print_catalog(&agents, &skills, args.kind.as_deref());
+        output::print_catalog(&agents, &skills, &bootstrap, args.kind.as_deref());
     }
 
     Ok(0)
@@ -172,12 +179,13 @@ fn run_status(
         }
 
         let disk_path = dest_path.resolve(root);
-        let status = if !disk_path.exists() {
+        let hash_path = hash_path_for_kind(&disk_path, item.kind);
+        let status = if !hash_path.exists() {
             "missing".to_string()
         } else if crate::merge::file_has_conflict_markers(&disk_path) {
             "conflicted".to_string()
         } else {
-            let disk_hash = hash::compute_hash(&disk_path, item.kind)?;
+            let disk_hash = hash::compute_hash(&hash_path, item.kind)?;
             if disk_hash == item.installed_checksum.as_ref() {
                 "ok".to_string()
             } else {
@@ -197,6 +205,16 @@ fn run_status(
     entries.sort_by(|a, b| (&a.source, &a.item).cmp(&(&b.source, &b.item)));
     output::print_list(&entries, json);
     Ok(0)
+}
+
+fn hash_path_for_kind(path: &Path, kind: ItemKind) -> std::path::PathBuf {
+    if kind == ItemKind::BootstrapDoc {
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    }
 }
 
 #[cfg(test)]

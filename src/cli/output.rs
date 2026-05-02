@@ -48,11 +48,19 @@ pub struct CatalogEntry {
 }
 
 /// Print catalog view (name: description, grouped by kind).
-pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filter: Option<&str>) {
+pub fn print_catalog(
+    agents: &[CatalogEntry],
+    skills: &[CatalogEntry],
+    bootstrap: &[CatalogEntry],
+    kind_filter: Option<&str>,
+) {
     let show_agents =
         kind_filter.is_none() || kind_filter == Some("agents") || kind_filter == Some("agent");
     let show_skills =
         kind_filter.is_none() || kind_filter == Some("skills") || kind_filter == Some("skill");
+    let show_bootstrap = kind_filter.is_none()
+        || kind_filter == Some("bootstrap")
+        || kind_filter == Some("bootstrap-doc");
 
     if show_agents && !agents.is_empty() {
         println!("AGENTS");
@@ -90,9 +98,33 @@ pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filt
         }
     }
 
-    if (show_agents && agents.is_empty() && show_skills && skills.is_empty())
+    if ((show_agents && !agents.is_empty()) || (show_skills && !skills.is_empty()))
+        && show_bootstrap
+        && !bootstrap.is_empty()
+    {
+        println!();
+    }
+
+    if show_bootstrap && !bootstrap.is_empty() {
+        println!("BOOTSTRAP");
+        for entry in bootstrap {
+            if entry.description.is_empty() {
+                println!("- {}", entry.name);
+            } else {
+                println!("- {}: {}", entry.name, entry.description);
+            }
+        }
+    }
+
+    if (show_agents
+        && agents.is_empty()
+        && show_skills
+        && skills.is_empty()
+        && show_bootstrap
+        && bootstrap.is_empty())
         || (show_agents && !show_skills && agents.is_empty())
-        || (show_skills && !show_agents && skills.is_empty())
+        || (show_skills && !show_agents && !show_bootstrap && skills.is_empty())
+        || (show_bootstrap && !show_agents && !show_skills && bootstrap.is_empty())
     {
         println!("  no managed items");
     }

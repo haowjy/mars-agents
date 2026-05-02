@@ -109,6 +109,10 @@ pub(crate) fn parse_pending_item_skill_deps(
     pending_item: &PendingItem,
     package: &RegisteredPackage,
 ) -> Result<Vec<ItemName>, MarsError> {
+    if pending_item.kind == ItemKind::BootstrapDoc {
+        return Ok(Vec::new());
+    }
+
     let Some(discovered) = package.item(pending_item.kind, &pending_item.item) else {
         return Ok(Vec::new());
     };
@@ -123,9 +127,10 @@ pub(crate) fn discovered_item_markdown_path(
     item: &discover::DiscoveredItem,
 ) -> PathBuf {
     match item.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
+        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
             package_root.join(&item.source_path)
         }
+        ItemKind::BootstrapDoc => package_root.join(&item.source_path).join("BOOTSTRAP.md"),
         ItemKind::Skill => {
             if item.source_path == Path::new(".") {
                 package_root.join("SKILL.md")

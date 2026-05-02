@@ -114,6 +114,13 @@ fn sync_one_target(
     let mut expected_paths: HashSet<String> = HashSet::new();
 
     for outcome in outcomes {
+        if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
+            // Package-level bootstrap docs are Meridian-only canonical content.
+            // Skill-level bootstrap docs still reach native targets as ordinary
+            // files inside skill directories.
+            continue;
+        }
+
         let dest_rel = outcome.dest_path.as_str();
 
         match &outcome.action {

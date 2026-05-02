@@ -1,6 +1,7 @@
 mod common;
 
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use std::fs;
 
 use common::*;
@@ -149,6 +150,63 @@ fn export_complete_status_on_clean_project() {
         json["status"].as_str(),
         Some("complete"),
         "expected complete status: {stdout}"
+    );
+}
+
+#[test]
+fn list_and_export_include_bootstrap_docs() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", "# Coder")], &[]);
+    let bootstrap_dir = source.join("bootstrap/global-auth");
+    fs::create_dir_all(&bootstrap_dir).unwrap();
+    fs::write(
+        bootstrap_dir.join("BOOTSTRAP.md"),
+        "---\nname: global-auth\ndescription: auth setup\n---\n# Auth",
+    )
+    .unwrap();
+
+    let project = dir.child("proj");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies]\nsrc = {{ path = \"{}\" }}\n",
+            source.display()
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let list_output = mars()
+        .args(["--json", "list", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(list_output.status.success(), "mars list should succeed");
+    let list_stdout = String::from_utf8(list_output.stdout).unwrap();
+    let list_json: serde_json::Value = serde_json::from_str(&list_stdout).expect("valid list JSON");
+    assert_eq!(
+        list_json["bootstrap"][0]["name"].as_str(),
+        Some("global-auth"),
+        "expected bootstrap doc in list output: {list_stdout}"
+    );
+
+    let export_output = mars()
+        .args(["export", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(export_output.status.success(), "mars export should succeed");
+    let export_stdout = String::from_utf8(export_output.stdout).unwrap();
+    let export_json: serde_json::Value =
+        serde_json::from_str(&export_stdout).expect("valid export JSON");
+    let items = export_json["items"].as_array().unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|item| item["kind"] == "bootstrap-doc" && item["name"] == "global-auth"),
+        "expected bootstrap-doc in export output: {export_stdout}"
     );
 }
 

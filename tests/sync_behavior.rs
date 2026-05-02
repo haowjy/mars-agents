@@ -133,6 +133,61 @@ fn sync_json_includes_target_outcomes() {
 }
 
 #[test]
+fn sync_materializes_bootstrap_docs_only_to_mars_store_and_removes_cleanly() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[("coder", "# Coder")], &[]);
+    let bootstrap_dir = source.join("bootstrap/setup");
+    fs::create_dir_all(&bootstrap_dir).unwrap();
+    fs::write(bootstrap_dir.join("BOOTSTRAP.md"), "# Setup").unwrap();
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            dir.child("project").path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let project = dir.child("project");
+    assert_eq!(
+        fs::read_to_string(project.path().join(".mars/bootstrap/setup/BOOTSTRAP.md")).unwrap(),
+        "# Setup"
+    );
+    assert!(
+        !project
+            .path()
+            .join(".claude/bootstrap/setup/BOOTSTRAP.md")
+            .exists(),
+        "package-level bootstrap docs must not copy to native harness dirs"
+    );
+
+    fs::remove_file(source.join("bootstrap/setup/BOOTSTRAP.md")).unwrap();
+    fs::remove_dir(source.join("bootstrap/setup")).unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(
+        !project.path().join(".mars/bootstrap/setup").exists(),
+        "removed bootstrap docs should clean up their containing directory"
+    );
+}
+
+#[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();
     let source = create_source(

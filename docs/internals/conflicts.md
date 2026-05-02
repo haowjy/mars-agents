@@ -2,6 +2,8 @@
 
 Mars handles three types of conflicts: naming collisions between sources, unmanaged file collisions, and content conflicts during updates.
 
+MCP server and hook name collisions are resolved separately — see [mcp-and-hooks.md](mcp-and-hooks.md#collision-resolution).
+
 ## Naming Collisions
 
 When two sources expose an item with the same destination path (e.g., both have `agents/coder.md`), Mars auto-renames both items.

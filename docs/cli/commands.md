@@ -122,7 +122,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
 
-This is the core operation. It runs the full [sync pipeline](sync-pipeline.md): resolve → target → diff → apply.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → target → diff → apply.
 
 ---
 
@@ -277,7 +277,7 @@ Set a local development override for a source.
 mars override <name> --path <local-path>
 ```
 
-Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](local-development.md).
+Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](../dev/local-development.md).
 
 ---
 
@@ -456,7 +456,7 @@ Checks:
 - Target health: each managed target has the expected files with correct content
 - Target divergence: detects missing and locally modified files in targets, suggests `mars sync --force` or `mars repair`
 
-Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](troubleshooting.md).
+Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](../dev/troubleshooting.md).
 
 ---
 

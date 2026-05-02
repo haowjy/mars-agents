@@ -303,7 +303,7 @@ Each key under `[overrides]` must match a dependency name in `mars.toml`. The ov
 
 If an override references a dependency name not in config, Mars prints a warning but continues.
 
-See [local-development.md](local-development.md) for workflows.
+See [local-development.md](../dev/local-development.md) for workflows.
 
 ## Reserved Names
 

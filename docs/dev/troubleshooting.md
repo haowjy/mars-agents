@@ -186,4 +186,4 @@ If the problem persists after repair, check:
 
 ## Smoke Checks
 
-For parser, discovery, transport, or sync regressions, use the manual smoke matrix in [Smoke Testing](smoke-testing.md).
+For parser, discovery, transport, or sync regressions, use the manual smoke matrices in [Smoke Testing (POSIX)](smoke-testing-posix.md) or [Smoke Testing (Windows)](smoke-testing-windows.md).

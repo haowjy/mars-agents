@@ -70,13 +70,10 @@ Use `mars adopt` to bring an existing unmanaged file into `.mars-src/` in one st
 
 ## Docs
 
-- [Configuration](docs/configuration.md) — `mars.toml` reference, filters, model aliases, merge precedence
-- [CLI Reference](docs/commands.md) — every command with flags and examples
-- [Sync Pipeline](docs/sync-pipeline.md) — how resolve → plan → apply works
-- [Conflicts](docs/conflicts.md) — collision handling and resolution
-- [Local Development](docs/local-development.md) — overrides, local paths, submodules
-- [Smoke Testing](docs/smoke-testing.md) — manual end-to-end checks for parser, discovery, and sync changes
-- [Troubleshooting](docs/troubleshooting.md) — `mars doctor`, `mars repair`
+- [Config](docs/config/) — `mars.toml`, agent profiles, compilation, MCP/hooks
+- [CLI](docs/cli/commands.md) — every command with flags and examples
+- [Internals](docs/internals/) — sync pipeline, lock file, conflicts
+- [Dev](docs/dev/) — local development, troubleshooting, smoke testing
 
 ## License
 

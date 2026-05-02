@@ -171,6 +171,40 @@ Project-local (`_self`) items follow the same Install path as dependency items �
 
 In `--diff` (dry run) mode, actions are computed but not executed.
 
+### 5.1 Config Entry Compilation (`compile_config_entries`)
+
+Runs after the apply plan and before target sync. Compiles MCP server
+registrations and lifecycle hooks from all packages in the resolved graph and
+writes them to per-target config files.
+
+**Steps:**
+
+1. Discover `mcp/<name>/mcp.toml` items from each package (local first, then
+   dependencies in topological order).
+2. Discover `hooks/<name>/hook.toml` items from each package.
+3. Filter items whose `visibility` is `"local"` (default) when they originate
+   from a dependency — only `"exported"` items cross the package boundary.
+4. Check env references — warn (or error under `--strict`) for missing env vars.
+5. Resolve per-target MCP name collisions:
+   - `_self` (local package) wins over any dependency, silently.
+   - Among dependencies, earlier `[dependencies]` declaration order wins; a
+     warning is emitted naming both sources.
+   - Same declaration order: alphabetically-first source name wins; a warning
+     is emitted.
+6. Order hooks deterministically: package depth → declaration order → `order`
+   field → hook name.
+7. Translate universal hook events to native target events (with lossiness
+   classification); drop events with no native support and emit a warning.
+8. Write entries to target config files via target adapters (`.mcp.json`,
+   `settings.json`, etc.). Non-fatal per-target.
+9. Compare current config entries against the previous lock to find stale
+   entries, then remove them via `adapter.remove_config_entries()`.
+
+In `--diff` (dry run) mode, stale entries are reported as warnings but not
+removed; writes are skipped.
+
+See [mcp-and-hooks.md](../config/mcp-and-hooks.md) for the full reference.
+
 ### 6. Sync Targets (`sync_targets`)
 
 Copies content from `.mars/` canonical store to each configured target directory (`.agents/`, `.claude/`, etc.). Implemented in `src/target_sync/mod.rs`.

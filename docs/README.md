@@ -16,9 +16,9 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
-**Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. It is the authority for what Mars manages. See [lock-file.md](lock-file.md) for format details.
+**Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. It is the authority for what Mars manages. See [internals/lock-file.md](internals/lock-file.md) for format details.
 
-**Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [configuration.md](configuration.md).
+**Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [config/mars-toml.md](config/mars-toml.md).
 
 ## Dependency Names vs Source Specifiers
 
@@ -77,18 +77,37 @@ Mars accepts several source forms:
 
 ## Documentation
 
+### Config
+
 | Document | Contents |
 |---|---|
-| [agent-profiles.md](agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies, fanout, examples |
-| [agent-compilation.md](agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
-| [configuration.md](configuration.md) | `mars.toml` reference: all fields, filter modes, model alias merge precedence, settings |
-| [commands.md](commands.md) | Full CLI reference: every subcommand with flags and examples |
-| [sync-pipeline.md](sync-pipeline.md) | How sync works: resolve → target → diff → apply → sync targets → finalize |
-| [conflicts.md](conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
-| [mcp-and-hooks.md](mcp-and-hooks.md) | MCP server and hook compilation: declaring, collision resolution, stale cleanup, Windows |
-| [lock-file.md](lock-file.md) | Lock file format and semantics |
-| [local-development.md](local-development.md) | Dev workflows: overrides, local paths, submodules |
-| [troubleshooting.md](troubleshooting.md) | `mars doctor`, `mars repair`, common problems |
+| [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: all fields, filter modes, model alias merge precedence, settings |
+| [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies, fanout, examples |
+| [config/agent-compilation.md](config/agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
+| [config/mcp-and-hooks.md](config/mcp-and-hooks.md) | MCP server and hook compilation: declaring, collision resolution, stale cleanup, Windows |
+
+### CLI
+
+| Document | Contents |
+|---|---|
+| [cli/commands.md](cli/commands.md) | Full CLI reference: every subcommand with flags and examples |
+
+### Internals
+
+| Document | Contents |
+|---|---|
+| [internals/sync-pipeline.md](internals/sync-pipeline.md) | How sync works: resolve → target → diff → apply → sync targets → finalize |
+| [internals/lock-file.md](internals/lock-file.md) | Lock file format and semantics |
+| [internals/conflicts.md](internals/conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
+
+### Dev
+
+| Document | Contents |
+|---|---|
+| [dev/local-development.md](dev/local-development.md) | Dev workflows: overrides, local paths, submodules |
+| [dev/troubleshooting.md](dev/troubleshooting.md) | `mars doctor`, `mars repair`, common problems |
+| [dev/smoke-testing-posix.md](dev/smoke-testing-posix.md) | Manual smoke checks (POSIX) |
+| [dev/smoke-testing-windows.md](dev/smoke-testing-windows.md) | Manual smoke checks (Windows) |
 
 ## Design Constraints
 

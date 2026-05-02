@@ -54,6 +54,12 @@ pub fn discover_source(
         &mut items,
         &mut HashSet::new(),
     )?;
+    scan_bootstrap_dir(
+        tree_path,
+        Path::new("bootstrap"),
+        &mut items,
+        &mut HashSet::new(),
+    )?;
 
     if items.is_empty() && tree_path.join("SKILL.md").is_file() {
         let name = fallback_name
@@ -161,6 +167,33 @@ fn scan_agent_dir(
     Ok(())
 }
 
+fn scan_bootstrap_dir(
+    package_root: &Path,
+    relative_root: &Path,
+    items: &mut Vec<DiscoveredItem>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), MarsError> {
+    let dir = package_root.join(relative_root);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    for path in read_dir_paths_sorted(&dir)? {
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str())
+            && name.starts_with('.')
+        {
+            continue;
+        }
+        let rel = relative_to(package_root, &path)?;
+        register_bootstrap_doc(package_root, &rel, items, visited)?;
+    }
+
+    Ok(())
+}
+
 fn scan_manifest_declared_path(
     package_root: &Path,
     declared_path: &DeclaredPath,
@@ -254,6 +287,33 @@ fn register_agent_file(
         },
         source_path: normalized,
     });
+}
+
+fn register_bootstrap_doc(
+    package_root: &Path,
+    relative_path: &Path,
+    items: &mut Vec<DiscoveredItem>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), MarsError> {
+    let normalized = normalize_relative_path(relative_path);
+    if !visited.insert(normalized.clone()) {
+        return Ok(());
+    }
+    if !package_root.join(&normalized).join("BOOTSTRAP.md").is_file() {
+        return Ok(());
+    }
+    let name = normalized
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    items.push(DiscoveredItem {
+        id: ItemId {
+            kind: ItemKind::BootstrapDoc,
+            name: ItemName::from(name.to_string()),
+        },
+        source_path: normalized,
+    });
+    Ok(())
 }
 
 fn discover_manifest_declared_items(
@@ -887,6 +947,35 @@ mod tests {
                 .iter()
                 .any(|item| item.source_path == Path::new("skills/planning"))
         );
+    }
+
+    #[test]
+    fn conventional_discovery_finds_package_bootstrap_docs() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("bootstrap/global-auth")).unwrap();
+        fs::create_dir_all(dir.path().join("bootstrap/.hidden")).unwrap();
+        fs::write(
+            dir.path().join("bootstrap/global-auth/BOOTSTRAP.md"),
+            "# auth",
+        )
+        .unwrap();
+        fs::write(dir.path().join("bootstrap/.hidden/BOOTSTRAP.md"), "# hide").unwrap();
+
+        let items = discover_source(dir.path(), None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
+        assert_eq!(items[0].id.name.as_str(), "global-auth");
+        assert_eq!(items[0].source_path, PathBuf::from("bootstrap/global-auth"));
+    }
+
+    #[test]
+    fn conventional_bootstrap_discovery_ignores_missing_bootstrap_file() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("bootstrap/incomplete")).unwrap();
+        fs::write(dir.path().join("bootstrap/incomplete/README.md"), "# readme").unwrap();
+
+        let items = discover_source(dir.path(), None).unwrap();
+        assert!(items.is_empty());
     }
 
     #[test]

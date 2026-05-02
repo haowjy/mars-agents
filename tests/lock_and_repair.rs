@@ -113,7 +113,7 @@ fn repair_recovers_from_corrupt_lock() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[("coder", "# Coder")], &[]);
 
-    let agents_dir = dir.child("project").child(".agents");
+    let mars_dir = dir.child("project").child(".mars");
     mars()
         .args([
             "init",
@@ -149,5 +149,5 @@ fn repair_recovers_from_corrupt_lock() {
     let lock_value: Value = toml::from_str(&repaired_lock).unwrap();
     assert!(lock_value["items"].as_table().is_some());
 
-    assert!(agents_dir.child("agents").child("coder.md").exists());
+    assert!(mars_dir.child("agents").child("coder.md").exists());
 }

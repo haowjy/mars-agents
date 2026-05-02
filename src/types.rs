@@ -496,8 +496,13 @@ impl<'de> Deserialize<'de> for DestPath {
 pub struct MarsContext {
     /// Project root containing mars.toml and mars.lock.
     pub project_root: PathBuf,
-    /// Managed output directory (e.g. /project/.agents).
+    /// Managed output directory (legacy/explicit target, e.g. /project/.claude).
     pub managed_root: PathBuf,
+    /// Whether mars is running under Meridian management.
+    ///
+    /// Captured at context construction time so compilation decisions are stable
+    /// for the duration of a sync.
+    pub meridian_managed: bool,
 }
 
 #[cfg(test)]
@@ -507,8 +512,13 @@ impl MarsContext {
         MarsContext {
             project_root,
             managed_root,
+            meridian_managed: meridian_managed_from_env(),
         }
     }
+}
+
+pub fn meridian_managed_from_env() -> bool {
+    std::env::var("MERIDIAN_MANAGED").is_ok_and(|value| value == "1")
 }
 
 /// Stable source identity used for resolver deduplication.

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostic::{Diagnostic, DiagnosticLevel};
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
@@ -144,11 +144,17 @@ pub struct OverrideEntry {
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
-    /// Custom managed output directory (e.g. ".claude"). Default: ".agents".
+    /// Custom managed output directory (e.g. ".claude").
+    ///
+    /// When unset, mars no longer creates a generic `.agents` target by default;
+    /// `.mars/` is the canonical compiled store and native emission is handled
+    /// by target-specific compiler paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
     /// Managed target directories materialized from .mars/ canonical store.
-    /// When set, only listed targets are populated. When unset, defaults to [".agents"].
+    /// When set, only listed targets are populated. When unset, `managed_root`
+    /// is used for backwards compatibility; otherwise no target-sync targets
+    /// are enabled by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "ModelVisibility::is_empty")]
@@ -160,6 +166,21 @@ pub struct Settings {
     /// New binary + old package without this set → succeeds with defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_mars_version: Option<String>,
+    /// Controls whether harness-bound agents are emitted to native harness dirs.
+    ///
+    /// `auto` (the default when unset) emits for standalone mars syncs and
+    /// suppresses native agent artifacts when Meridian invokes mars with
+    /// `MERIDIAN_MANAGED=1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_emission: Option<AgentEmission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentEmission {
+    Auto,
+    Always,
+    Never,
 }
 
 impl Default for Settings {
@@ -170,6 +191,7 @@ impl Default for Settings {
             model_visibility: ModelVisibility::default(),
             models_cache_ttl_hours: default_models_cache_ttl_hours(),
             min_mars_version: None,
+            agent_emission: None,
         }
     }
 }
@@ -182,16 +204,14 @@ impl Settings {
     /// Returns the effective list of managed target directories.
     ///
     /// - If `targets` is explicitly set, returns exactly those targets.
-    /// - If `targets` is unset, uses `managed_root` (or ".agents" default).
+    /// - If `targets` is unset, uses `managed_root` for backwards compatibility.
+    /// - If neither is set, returns no target-sync targets; `.mars/` remains
+    ///   the canonical compiled store.
     pub fn managed_targets(&self) -> Vec<String> {
         if let Some(targets) = &self.targets {
             return targets.clone();
         }
-        vec![
-            self.managed_root
-                .clone()
-                .unwrap_or_else(|| ".agents".to_string()),
-        ]
+        self.managed_root.clone().into_iter().collect()
     }
 }
 
@@ -356,6 +376,8 @@ pub fn merge_with_root(
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
+    diagnostics.extend(deprecated_agents_target_diagnostics(&config.settings));
+
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
     let all_deps = config
@@ -462,6 +484,34 @@ pub fn merge_with_root(
         },
         diagnostics,
     ))
+}
+
+fn deprecated_agents_target_diagnostics(settings: &Settings) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    if settings.managed_root.as_deref() == Some(".agents") {
+        diagnostics.push(deprecated_agents_target_diagnostic("settings.managed_root"));
+    }
+
+    if settings
+        .targets
+        .as_ref()
+        .is_some_and(|targets| targets.iter().any(|target| target == ".agents"))
+    {
+        diagnostics.push(deprecated_agents_target_diagnostic("settings.targets"));
+    }
+
+    diagnostics
+}
+
+fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
+    Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: "deprecated-agents-target",
+        message: "`.agents` is a deprecated link target. Run `mars unlink .agents` to remove it. Skills are now emitted to native harness dirs automatically.".to_string(),
+        context: Some(context.to_string()),
+        category: Some(DiagnosticCategory::Compatibility),
+    }
 }
 
 /// Validate filter configuration for consistency.
@@ -624,6 +674,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.model_visibility changed during roundtrip ({:?} -> {:?})",
                 original.settings.model_visibility, reparsed.settings.model_visibility
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.agent_emission != original.settings.agent_emission {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.agent_emission changed during roundtrip ({:?} -> {:?})",
+                original.settings.agent_emission, reparsed.settings.agent_emission
             ),
         }
         .into());
@@ -1679,9 +1738,9 @@ only_skills = true
     // === managed_targets tests ===
 
     #[test]
-    fn managed_targets_defaults_to_agents() {
+    fn managed_targets_defaults_to_no_target_sync_targets() {
         let settings = Settings::default();
-        assert_eq!(settings.managed_targets(), vec![".agents"]);
+        assert!(settings.managed_targets().is_empty());
     }
 
     #[test]
@@ -1711,6 +1770,44 @@ only_skills = true
         };
         // targets takes precedence over managed_root
         assert_eq!(settings.managed_targets(), vec![".codex"]);
+    }
+
+    #[test]
+    fn merge_warns_when_managed_root_is_agents() {
+        let config = Config {
+            settings: Settings {
+                managed_root: Some(".agents".into()),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+
+        let (_, diagnostics) =
+            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+
+        assert!(diagnostics.iter().any(|diag| {
+            diag.code == "deprecated-agents-target"
+                && diag.context.as_deref() == Some("settings.managed_root")
+        }));
+    }
+
+    #[test]
+    fn merge_warns_when_targets_include_agents() {
+        let config = Config {
+            settings: Settings {
+                targets: Some(vec![".agents".into(), ".claude".into()]),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+
+        let (_, diagnostics) =
+            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+
+        assert!(diagnostics.iter().any(|diag| {
+            diag.code == "deprecated-agents-target"
+                && diag.context.as_deref() == Some("settings.targets")
+        }));
     }
 
     #[test]
@@ -1775,6 +1872,68 @@ models_cache_ttl_hours = 48
         assert_eq!(
             roundtripped.settings.models_cache_ttl_hours,
             original.settings.models_cache_ttl_hours
+        );
+    }
+
+    #[test]
+    fn settings_agent_emission_parses_auto() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+agent_emission = "auto"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.settings.agent_emission, Some(AgentEmission::Auto));
+    }
+
+    #[test]
+    fn settings_agent_emission_parses_always_and_never() {
+        let always: Config = toml::from_str(
+            r#"
+[settings]
+agent_emission = "always"
+"#,
+        )
+        .unwrap();
+        assert_eq!(always.settings.agent_emission, Some(AgentEmission::Always));
+
+        let never: Config = toml::from_str(
+            r#"
+[settings]
+agent_emission = "never"
+"#,
+        )
+        .unwrap();
+        assert_eq!(never.settings.agent_emission, Some(AgentEmission::Never));
+    }
+
+    #[test]
+    fn settings_agent_emission_defaults_to_auto_when_omitted() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+models_cache_ttl_hours = 48
+"#,
+        )
+        .unwrap();
+        assert!(config.settings.agent_emission.is_none());
+    }
+
+    #[test]
+    fn settings_agent_emission_roundtrip_preserves_value() {
+        let original = Config {
+            settings: Settings {
+                agent_emission: Some(AgentEmission::Always),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&original).unwrap();
+        let roundtripped: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            roundtripped.settings.agent_emission,
+            original.settings.agent_emission
         );
     }
 

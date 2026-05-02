@@ -1,6 +1,7 @@
 //! `mars init [TARGET] [--link DIR...]` — scaffold a mars project.
 //!
-//! Creates `<project-root>/mars.toml` and `<project-root>/TARGET` (default: `.agents`).
+//! Creates `<project-root>/mars.toml` and `<project-root>/.mars`.
+//! If TARGET is provided, also creates `<project-root>/TARGET` as a managed output dir.
 //! Use `--root` to select an explicit project root.
 //!
 //! Init does NOT walk up — it creates a project at cwd or the `--root` target.
@@ -16,7 +17,7 @@ use super::output;
 /// Arguments for `mars init`.
 #[derive(Debug, clap::Args)]
 pub struct InitArgs {
-    /// Directory name to create for managed output (default: .agents).
+    /// Optional directory name to create for managed output.
     pub target: Option<String>,
 
     /// Directories to link after initialization. Repeatable.
@@ -27,7 +28,7 @@ pub struct InitArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InitializedProject {
     pub project_root: PathBuf,
-    pub managed_root: PathBuf,
+    pub managed_root: Option<PathBuf>,
     pub already_initialized: bool,
 }
 
@@ -37,14 +38,14 @@ fn validate_target(target: &str) -> Result<(), MarsError> {
         return Err(MarsError::Config(ConfigError::Invalid {
             message: format!(
                 "`{target}` looks like a path — TARGET should be a directory name \
-                 like `.agents` or `.claude`. Use `--root` to specify project root."
+                 like `.claude` or `.codex`. Use `--root` to specify project root."
             ),
         }));
     }
     if target == "." || target == ".." || target.is_empty() {
         return Err(MarsError::Config(ConfigError::Invalid {
             message: format!(
-                "`{target}` is not a valid target name — use a directory name like `.agents` or `.claude`."
+                "`{target}` is not a valid target name — use a directory name like `.claude` or `.codex`."
             ),
         }));
     }
@@ -69,27 +70,20 @@ pub(super) fn initialize_project(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
 
-    let target = if let Some(t) = target_override {
-        t.to_string()
-    } else {
-        match crate::config::load(&project_root) {
-            Ok(config) => config
-                .settings
-                .managed_root
-                .unwrap_or_else(|| ".agents".into()),
-            Err(_) => ".agents".into(),
-        }
-    };
-
-    validate_target(&target)?;
-    let managed_root = project_root.join(&target);
-
-    std::fs::create_dir_all(&managed_root)?;
     std::fs::create_dir_all(project_root.join(".mars"))?;
 
     let already_initialized = ensure_consumer_config(&project_root)?;
 
-    persist_managed_root(&project_root, &target)?;
+    let managed_root = if let Some(target) = explicit_init_target(&project_root, target_override)? {
+        validate_target(&target)?;
+        let managed_root = project_root.join(&target);
+        std::fs::create_dir_all(&managed_root)?;
+        persist_managed_root(&project_root, Some(&target))?;
+        Some(managed_root)
+    } else {
+        persist_managed_root(&project_root, None)?;
+        None
+    };
 
     Ok(InitializedProject {
         project_root,
@@ -120,7 +114,10 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 
     // 5. Process --link flags
     if !args.link.is_empty() {
-        let ctx = super::MarsContext::from_roots(project_root.clone(), managed_root.clone())?;
+        let context_managed_root = managed_root
+            .clone()
+            .unwrap_or_else(|| project_root.join(".mars"));
+        let ctx = super::MarsContext::from_roots(project_root.clone(), context_managed_root)?;
         for link_target in &args.link {
             let link_args = super::link::LinkArgs {
                 target: link_target.clone(),
@@ -134,7 +131,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         output::print_json(&serde_json::json!({
             "ok": true,
             "project_root": project_root.to_string_lossy(),
-            "managed_root": managed_root.to_string_lossy(),
+            "managed_root": managed_root.as_ref().map(|path| path.to_string_lossy().to_string()),
             "already_initialized": already_initialized,
             "links": args.link,
         }));
@@ -143,15 +140,26 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
     Ok(0)
 }
 
+fn explicit_init_target(
+    project_root: &Path,
+    target_override: Option<&str>,
+) -> Result<Option<String>, MarsError> {
+    if let Some(target) = target_override {
+        return Ok(Some(target.to_string()));
+    }
+
+    match crate::config::load(project_root) {
+        Ok(config) => Ok(config.settings.managed_root),
+        Err(MarsError::Config(ConfigError::NotFound { .. })) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Persist managed_root in mars.toml [settings].
-fn persist_managed_root(project_root: &Path, target: &str) -> Result<(), MarsError> {
+fn persist_managed_root(project_root: &Path, target: Option<&str>) -> Result<(), MarsError> {
     match crate::config::load(project_root) {
         Ok(mut config) => {
-            config.settings.managed_root = if target == ".agents" {
-                None
-            } else {
-                Some(target.to_string())
-            };
+            config.settings.managed_root = target.map(str::to_string);
             crate::config::save(project_root, &config)?;
         }
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {
@@ -214,5 +222,61 @@ mod tests {
 
         let already = ensure_consumer_config(dir.path()).unwrap();
         assert!(already);
+    }
+
+    #[test]
+    fn initialize_project_without_target_creates_mars_only() {
+        let dir = TempDir::new().unwrap();
+
+        let initialized = initialize_project(Some(dir.path()), None).unwrap();
+
+        assert!(dir.path().join(".mars").exists());
+        assert!(!dir.path().join(".agents").exists());
+        assert!(initialized.managed_root.is_none());
+
+        let config = crate::config::load(dir.path()).unwrap();
+        assert!(config.settings.managed_root.is_none());
+    }
+
+    #[test]
+    fn initialize_project_with_explicit_target_persists_managed_root() {
+        let dir = TempDir::new().unwrap();
+
+        let initialized = initialize_project(Some(dir.path()), Some(".claude")).unwrap();
+
+        assert!(dir.path().join(".mars").exists());
+        assert!(dir.path().join(".claude").exists());
+        assert_eq!(initialized.managed_root, Some(dir.path().join(".claude")));
+
+        let config = crate::config::load(dir.path()).unwrap();
+        assert_eq!(config.settings.managed_root.as_deref(), Some(".claude"));
+    }
+
+    #[test]
+    fn initialize_project_preserves_existing_managed_root_when_no_target_given() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings]\nmanaged_root = \".claude\"\n",
+        )
+        .unwrap();
+
+        let initialized = initialize_project(Some(dir.path()), None).unwrap();
+
+        assert!(dir.path().join(".claude").exists());
+        assert_eq!(initialized.managed_root, Some(dir.path().join(".claude")));
+    }
+
+    #[test]
+    fn initialize_project_with_explicit_agents_persists_deprecated_target() {
+        let dir = TempDir::new().unwrap();
+
+        let initialized = initialize_project(Some(dir.path()), Some(".agents")).unwrap();
+
+        assert!(dir.path().join(".agents").exists());
+        assert_eq!(initialized.managed_root, Some(dir.path().join(".agents")));
+
+        let config = crate::config::load(dir.path()).unwrap();
+        assert_eq!(config.settings.managed_root.as_deref(), Some(".agents"));
     }
 }

@@ -220,7 +220,7 @@ pub struct LockedItemV2 {
 /// A single materialized output of a logical item.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputRecord {
-    /// Target root this output belongs to (e.g., ".mars", ".agents", ".claude").
+    /// Target root this output belongs to (e.g., ".mars", ".claude").
     pub target_root: String,
     /// Relative path under the target root (e.g., "agents/coder.md").
     pub dest_path: DestPath,

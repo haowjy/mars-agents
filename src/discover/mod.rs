@@ -22,14 +22,8 @@ const SKILL_CONTAINER_ROOTS: &[&str] = &[
     "skills/.system",
     ".claude/skills",
     ".codex/skills",
-    ".agents/skills",
 ];
-const AGENT_CONTAINER_ROOTS: &[&str] = &[
-    "agents",
-    ".claude/agents",
-    ".codex/agents",
-    ".agents/agents",
-];
+const AGENT_CONTAINER_ROOTS: &[&str] = &["agents", ".claude/agents", ".codex/agents"];
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
 

@@ -5,7 +5,7 @@
 //! `mars link --unlink <target>` removes the target from `settings.targets`
 //! and removes the target directory.
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
@@ -91,7 +91,10 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
         true,
         &mut diag,
     );
-    let diagnostics = diag.drain();
+    let mut diagnostics = diag.drain();
+    if let Some(diagnostic) = deprecated_agents_target_diagnostic(target_name) {
+        diagnostics.push(diagnostic);
+    }
 
     let Some(outcome) = target_outcomes.first() else {
         return Err(MarsError::Link {
@@ -134,6 +137,16 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
     Ok(0)
 }
 
+fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> {
+    (target_name == ".agents").then(|| Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: "deprecated-agents-target",
+        message: "`.agents` is a deprecated link target. Run `mars unlink .agents` to remove it. Skills are now emitted to native harness dirs automatically.".to_string(),
+        context: Some("link target".to_string()),
+        category: Some(DiagnosticCategory::Compatibility),
+    })
+}
+
 fn unlink_target(
     ctx: &super::MarsContext,
     target_name: &str,
@@ -147,6 +160,12 @@ fn unlink_target(
     let mut config = crate::config::load(&ctx.project_root)?;
     let mut settings_updated = false;
     let mut target_was_managed = false;
+
+    if config.settings.managed_root.as_deref() == Some(target_name) {
+        config.settings.managed_root = None;
+        settings_updated = true;
+        target_was_managed = true;
+    }
 
     if let Some(targets) = config.settings.targets.as_mut() {
         let old_len = targets.len();

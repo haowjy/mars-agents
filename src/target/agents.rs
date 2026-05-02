@@ -1,4 +1,4 @@
-/// `.agents` target adapter — Meridian-facing full-fidelity output.
+/// `.agents` target adapter — deprecated full-fidelity legacy output.
 ///
 /// This is the primary target that Meridian reads at runtime. It emits:
 /// - `agents/<name>.md` — full-fidelity agent markdown with frontmatter preserved

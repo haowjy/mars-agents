@@ -37,8 +37,7 @@ use clap::{Parser, Subcommand};
 use crate::error::{ConfigError, LockError, MarsError};
 pub use crate::types::MarsContext;
 
-/// Directories where mars materializes agents/skills output.
-/// `.agents/` remains the default target for `mars init`.
+/// Deprecated generic output directories still recognized for migration hints.
 pub const WELL_KNOWN: &[&str] = &[".agents"];
 
 /// Tool-specific directories that commonly need linking.
@@ -86,13 +85,14 @@ impl MarsContext {
         Ok(MarsContext {
             managed_root: managed_canon,
             project_root: project_canon,
+            meridian_managed: crate::types::meridian_managed_from_env(),
         })
     }
 }
 
-/// mars — agent package manager for .agents/
+/// mars — agent package manager for agent and skill packages.
 #[derive(Debug, Parser)]
-#[command(name = "mars", version, about = "Agent package manager for .agents/")]
+#[command(name = "mars", version, about = "Agent package manager")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -108,7 +108,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Initialize project-level mars.toml (managed dir default: .agents/).
+    /// Initialize project-level mars.toml and .mars/ compiled store.
     Init(init::InitArgs),
 
     /// Add a dependency (git URL, GitHub shorthand, or local path).
@@ -207,7 +207,10 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                     }
                     MarsContext::from_roots(
                         initialized.project_root.clone(),
-                        initialized.managed_root.clone(),
+                        initialized
+                            .managed_root
+                            .clone()
+                            .unwrap_or_else(|| initialized.project_root.join(".mars")),
                     )?
                 }
                 Err(err) => return Err(err),
@@ -258,11 +261,19 @@ pub fn is_symlink(path: &Path) -> bool {
 }
 
 fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
-    // 1. Check settings in mars.toml
+    // 1. Check explicit settings in mars.toml.
     match crate::config::load(project_root) {
         Ok(config) => {
             if let Some(name) = &config.settings.managed_root {
                 return Ok(project_root.join(name));
+            }
+            if config
+                .settings
+                .targets
+                .as_ref()
+                .is_some_and(|targets| targets.iter().any(|target| target == WELL_KNOWN[0]))
+            {
+                return Ok(project_root.join(WELL_KNOWN[0]));
             }
         }
         // Config doesn't exist yet (before mars init) — expected, fall through
@@ -271,40 +282,9 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
         Err(e) => return Err(e),
     }
 
-    // 2. Default: .agents
-    let default_root = project_root.join(WELL_KNOWN[0]);
-    if default_root.exists() || is_symlink(&default_root) {
-        return Ok(default_root);
-    }
-
-    // 3. Fallback: scan for .mars/ marker (legacy compat)
-    let mut marked_roots: Vec<PathBuf> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(project_root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.join(".mars").exists() {
-                marked_roots.push(path);
-            }
-        }
-    }
-
-    if marked_roots.len() == 1 {
-        return Ok(marked_roots.remove(0));
-    }
-
-    for subdir in TOOL_DIRS {
-        let candidate = project_root.join(subdir);
-        if marked_roots.iter().any(|p| p == &candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    marked_roots.sort();
-    if let Some(first) = marked_roots.into_iter().next() {
-        return Ok(first);
-    }
-
-    Ok(default_root)
+    // 2. Canonical store default. Do not infer legacy `.agents/` ownership from
+    // disk presence; doctor reports leftover target migration hints separately.
+    Ok(project_root.join(".mars"))
 }
 
 /// Find mars project root by walking up from start path to filesystem root.
@@ -380,7 +360,7 @@ mod tests {
         // --root points to a dir with mars.toml — should find it via walk-up
         let ctx = find_agents_root(Some(&canonical_dir)).unwrap();
         assert_eq!(ctx.project_root, canonical_dir);
-        assert_eq!(ctx.managed_root, ctx.project_root.join(".agents"));
+        assert_eq!(ctx.managed_root, ctx.project_root.join(".mars"));
     }
 
     #[test]
@@ -397,17 +377,14 @@ mod tests {
     }
 
     #[test]
-    fn find_root_with_default_managed_dir() {
+    fn find_root_ignores_leftover_agents_dir_without_explicit_config() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
         std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
 
         let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
         assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
-        assert_eq!(
-            ctx.managed_root,
-            dunce::canonicalize(dir.path().join(".agents")).unwrap()
-        );
+        assert_eq!(ctx.managed_root, ctx.project_root.join(".mars"));
     }
 
     #[test]
@@ -428,15 +405,19 @@ mod tests {
     }
 
     #[test]
-    fn find_root_with_custom_managed_dir_marker() {
+    fn find_root_with_agents_target_from_settings_targets() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
-        std::fs::create_dir_all(dir.path().join(".claude/.mars")).unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[dependencies]\n\n[settings]\ntargets = [\".agents\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
 
         let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
         assert_eq!(
             ctx.managed_root,
-            dunce::canonicalize(dir.path().join(".claude")).unwrap()
+            dunce::canonicalize(dir.path().join(".agents")).unwrap()
         );
     }
 
@@ -445,7 +426,11 @@ mod tests {
     fn context_rejects_symlinked_managed_root_outside_project() {
         let project_dir = TempDir::new().unwrap();
         let external_dir = TempDir::new().unwrap();
-        std::fs::write(project_dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
+        std::fs::write(
+            project_dir.path().join("mars.toml"),
+            "[dependencies]\n\n[settings]\nmanaged_root = \".agents\"\n",
+        )
+        .unwrap();
 
         let external_agents = external_dir.path().join(".agents");
         std::fs::create_dir_all(&external_agents).unwrap();
@@ -473,7 +458,17 @@ mod tests {
     fn detect_managed_root_falls_through_on_missing_config() {
         let dir = TempDir::new().unwrap();
         let result = detect_managed_root(dir.path()).unwrap();
-        assert_eq!(result, dir.path().join(".agents"));
+        assert_eq!(result, dir.path().join(".mars"));
+    }
+
+    #[test]
+    fn detect_managed_root_ignores_agents_dir_without_explicit_config() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
+        std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
+
+        let result = detect_managed_root(dir.path()).unwrap();
+        assert_eq!(result, dir.path().join(".mars"));
     }
 
     #[test]

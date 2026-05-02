@@ -161,3 +161,63 @@ targets = [".claude"]
             .is_some_and(|settings| !settings.contains_key("targets"))
     );
 }
+
+#[test]
+fn unlink_clears_matching_managed_root() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project.child(".agents").create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(
+            r#"
+[settings]
+managed_root = ".agents"
+"#,
+        )
+        .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--unlink",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removed managed target `.agents`"));
+
+    let config: Value =
+        toml::from_str(&fs::read_to_string(project.child("mars.toml").path()).unwrap()).unwrap();
+    assert!(
+        config["settings"]
+            .as_table()
+            .is_some_and(|settings| !settings.contains_key("managed_root"))
+    );
+    assert!(!project.child(".agents").exists());
+}
+
+#[test]
+fn link_agents_prints_single_deprecation_warning() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("deprecated link target").count(1));
+}

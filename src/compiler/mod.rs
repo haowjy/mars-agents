@@ -17,12 +17,13 @@ pub mod visibility;
 
 use std::path::Path;
 
+use crate::config::AgentEmission;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::model::ReaderIr;
 use crate::sync::{
-    SyncReport, SyncRequest, apply_plan, build_target, check_frozen_gate, create_plan, finalize,
-    sync_targets,
+    SyncReport, SyncRequest, apply::ActionTaken, apply_plan, build_target, check_frozen_gate,
+    create_plan, finalize, sync_targets,
 };
 use crate::types::MarsContext;
 
@@ -52,7 +53,41 @@ pub fn compile(
     // Diagnostics run always; file writes are gated on !dry_run.
     {
         let mars_dir = ctx.project_root.join(".mars");
-        dual_surface_compile(&ctx.project_root, &mars_dir, request.options.dry_run, diag);
+        let emit_native_agents = should_emit_native_agents(
+            applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .config
+                .settings
+                .agent_emission
+                .as_ref(),
+            ctx.meridian_managed,
+        );
+        cleanup_removed_native_agents(
+            &ctx.project_root,
+            &applied.applied.outcomes,
+            request.options.dry_run,
+            diag,
+        );
+        if emit_native_agents {
+            dual_surface_compile(&ctx.project_root, &mars_dir, request.options.dry_run, diag);
+        } else {
+            remove_native_agent_surfaces(
+                &ctx.project_root,
+                &mars_dir,
+                request.options.dry_run,
+                diag,
+            );
+        }
+        skill_surface_compile(
+            &ctx.project_root,
+            &mars_dir,
+            &applied.applied.outcomes,
+            request.options.dry_run,
+            diag,
+        );
     }
 
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
@@ -68,6 +103,133 @@ pub fn compile(
 
     // Phase 7: write lock file, build report.
     finalize(ctx, synced, request, diag)
+}
+
+/// Remove stale native harness agent artifacts for agents that were removed
+/// from the canonical `.mars/agents/` store.
+///
+/// Removed agents can no longer be inspected for their previous `harness:`
+/// value, so cleanup checks every native harness agent filename shape
+/// (`*.md` and `*.toml`) under every native agent surface. Missing files are
+/// ignored and removal errors are non-fatal diagnostics.
+fn cleanup_removed_native_agents(
+    project_root: &Path,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) {
+    use crate::lock::ItemKind;
+
+    if dry_run {
+        return;
+    }
+
+    for outcome in outcomes {
+        if outcome.item_id.kind != ItemKind::Agent
+            || !matches!(outcome.action, ActionTaken::Removed)
+        {
+            continue;
+        }
+
+        let agent_name = outcome.dest_path.item_name(ItemKind::Agent);
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            for extension in ["md", "toml"] {
+                let native_path = project_root
+                    .join(target)
+                    .join("agents")
+                    .join(format!("{agent_name}.{extension}"));
+                if !native_path.exists() && native_path.symlink_metadata().is_err() {
+                    continue;
+                }
+                if let Err(e) = crate::reconcile::fs_ops::safe_remove(&native_path) {
+                    diag.warn(
+                        "native-agent-remove",
+                        format!("could not remove {}: {e}", native_path.display()),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Remove native harness agent artifacts for harness-bound agents currently in
+/// `.mars/agents/` when native agent emission is disabled.
+///
+/// This keeps sync idempotent when switching from standalone mode (native
+/// agents emitted) to Meridian-managed or `agent_emission = "never"` mode
+/// (native agents suppressed). It intentionally only touches agents that still
+/// exist in the canonical `.mars/` store and declare a harness, avoiding broad
+/// deletion of user-created native harness agents.
+fn remove_native_agent_surfaces(
+    project_root: &Path,
+    mars_dir: &Path,
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) {
+    use crate::compiler::agents::HarnessKind;
+    use crate::compiler::agents::parse_agent_content;
+
+    let agents_dir = mars_dir.join("agents");
+    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                diag.warn(
+                    "native-agent-remove-read",
+                    format!("could not read {}: {e}", path.display()),
+                );
+                continue;
+            }
+        };
+
+        let mut agent_diags = Vec::new();
+        let (profile, _fm) = match parse_agent_content(&content, &mut agent_diags) {
+            Ok(r) => r,
+            Err(e) => {
+                diag.warn(
+                    "native-agent-remove-parse",
+                    format!("could not parse {}: {e}", path.display()),
+                );
+                continue;
+            }
+        };
+
+        let Some(harness) = &profile.harness else {
+            continue;
+        };
+        let agent_name = profile.name.as_deref().unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+        });
+        let file_name = match harness {
+            HarnessKind::Codex => format!("{agent_name}.toml"),
+            _ => format!("{agent_name}.md"),
+        };
+        let native_path = project_root
+            .join(harness.target_dir())
+            .join("agents")
+            .join(file_name);
+
+        if dry_run || (!native_path.exists() && native_path.symlink_metadata().is_err()) {
+            continue;
+        }
+        if let Err(e) = crate::reconcile::fs_ops::safe_remove(&native_path) {
+            diag.warn(
+                "native-agent-remove",
+                format!("could not remove {}: {e}", native_path.display()),
+            );
+        }
+    }
 }
 
 /// Dual-surface compilation: scan `.mars/agents/` for harness-bound agents and
@@ -149,7 +311,7 @@ fn dual_surface_compile(
             }
         }
 
-        // If no harness:, this is a universal agent — only .agents/ output, done.
+        // If no harness:, this is a universal agent — only .mars/ canonical output, done.
         let Some(harness) = &profile.harness else {
             continue;
         };
@@ -209,5 +371,264 @@ fn dual_surface_compile(
                 );
             }
         }
+    }
+}
+
+/// Skill-surface compilation: copy canonical `.mars/skills/` trees into every
+/// native harness skill directory.
+///
+/// `.mars/skills/` remains the canonical compiled store. Native skill copies
+/// are harness-facing artifacts, not managed targets, so this lane is separate
+/// from target sync and intentionally skips the deprecated `.agents` adapter.
+///
+/// Errors are non-fatal — emitted as diagnostics and sync continues (D9).
+fn skill_surface_compile(
+    project_root: &Path,
+    mars_dir: &Path,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) {
+    use crate::lock::ItemKind;
+    use crate::target::TargetRegistry;
+
+    let registry = TargetRegistry::new();
+    let skill_adapters: Vec<_> = registry
+        .iter()
+        .filter(|adapter| adapter.name() != ".agents")
+        .filter(|adapter| {
+            adapter
+                .default_dest_path(ItemKind::Skill, "__mars_skill_probe__")
+                .is_some()
+        })
+        .collect();
+
+    if skill_adapters.is_empty() {
+        return;
+    }
+
+    for outcome in outcomes {
+        if outcome.item_id.kind != ItemKind::Skill
+            || !matches!(outcome.action, ActionTaken::Removed)
+        {
+            continue;
+        }
+
+        let skill_name = outcome.item_id.name.as_str();
+        for adapter in &skill_adapters {
+            let Some(dest_rel) = adapter.default_dest_path(ItemKind::Skill, skill_name) else {
+                continue;
+            };
+            let native_path = project_root.join(adapter.name()).join(dest_rel.as_str());
+            if dry_run || (!native_path.exists() && native_path.symlink_metadata().is_err()) {
+                continue;
+            }
+            if let Err(e) = crate::reconcile::fs_ops::safe_remove(&native_path) {
+                diag.warn(
+                    "skill-surface-remove",
+                    format!("could not remove {}: {e}", native_path.display()),
+                );
+            }
+        }
+    }
+
+    let skills_dir = mars_dir.join("skills");
+    let Ok(entries) = std::fs::read_dir(&skills_dir) else {
+        // .mars/skills/ may not exist yet (e.g., first dry-run or no skills).
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let source_path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            diag.warn(
+                "skill-surface-read",
+                format!("could not inspect {}", source_path.display()),
+            );
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let Some(skill_name) = entry.file_name().to_str().map(str::to_owned) else {
+            diag.warn(
+                "skill-surface-name",
+                format!("skill path is not valid UTF-8: {}", source_path.display()),
+            );
+            continue;
+        };
+
+        for adapter in &skill_adapters {
+            let Some(dest_rel) = adapter.default_dest_path(ItemKind::Skill, &skill_name) else {
+                continue;
+            };
+            let native_path = project_root.join(adapter.name()).join(dest_rel.as_str());
+            if dry_run {
+                continue;
+            }
+            if let Err(e) = crate::reconcile::fs_ops::atomic_copy_dir(&source_path, &native_path) {
+                diag.warn(
+                    "skill-surface-copy",
+                    format!(
+                        "could not copy {} to {}: {e}",
+                        source_path.display(),
+                        native_path.display()
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn should_emit_native_agents(
+    agent_emission: Option<&AgentEmission>,
+    meridian_managed: bool,
+) -> bool {
+    match agent_emission.unwrap_or(&AgentEmission::Auto) {
+        AgentEmission::Always => true,
+        AgentEmission::Never => false,
+        AgentEmission::Auto => !meridian_managed,
+    }
+}
+
+#[cfg(test)]
+mod skill_surface_tests {
+    use super::*;
+    use crate::diagnostic::DiagnosticCollector;
+    use crate::lock::{ItemId, ItemKind};
+    use crate::sync::apply::{ActionOutcome, ActionTaken};
+    use crate::types::{DestPath, ItemName};
+    use tempfile::TempDir;
+
+    #[test]
+    fn native_agent_emission_defaults_to_standalone_auto() {
+        assert!(should_emit_native_agents(None, false));
+    }
+
+    #[test]
+    fn native_agent_emission_auto_suppresses_meridian_managed() {
+        assert!(!should_emit_native_agents(Some(&AgentEmission::Auto), true));
+    }
+
+    #[test]
+    fn native_agent_emission_always_ignores_meridian_managed() {
+        assert!(should_emit_native_agents(
+            Some(&AgentEmission::Always),
+            true
+        ));
+    }
+
+    #[test]
+    fn native_agent_emission_never_suppresses_standalone() {
+        assert!(!should_emit_native_agents(
+            Some(&AgentEmission::Never),
+            false
+        ));
+    }
+
+    fn skill_outcome(name: &str, action: ActionTaken) -> ActionOutcome {
+        ActionOutcome {
+            item_id: ItemId {
+                kind: ItemKind::Skill,
+                name: ItemName::from(name),
+            },
+            action,
+            dest_path: DestPath::from(format!("skills/{name}")),
+            source_name: "test-source".into(),
+            source_checksum: None,
+            installed_checksum: None,
+        }
+    }
+
+    fn agent_outcome(name: &str, action: ActionTaken) -> ActionOutcome {
+        ActionOutcome {
+            item_id: ItemId {
+                kind: ItemKind::Agent,
+                name: ItemName::from(name),
+            },
+            action,
+            dest_path: DestPath::from(format!("agents/{name}.md")),
+            source_name: "test-source".into(),
+            source_checksum: None,
+            installed_checksum: None,
+        }
+    }
+
+    #[test]
+    fn cleanup_removed_native_agents_removes_all_native_filename_shapes() {
+        let dir = TempDir::new().unwrap();
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            let agents_dir = dir.path().join(target).join("agents");
+            std::fs::create_dir_all(&agents_dir).unwrap();
+            std::fs::write(agents_dir.join("coder.md"), "# Old\n").unwrap();
+            std::fs::write(agents_dir.join("coder.toml"), "old = true\n").unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new();
+        cleanup_removed_native_agents(
+            dir.path(),
+            &[agent_outcome("coder", ActionTaken::Removed)],
+            false,
+            &mut diag,
+        );
+
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            assert!(!dir.path().join(target).join("agents/coder.md").exists());
+            assert!(!dir.path().join(target).join("agents/coder.toml").exists());
+        }
+        assert!(diag.drain().is_empty());
+    }
+
+    #[test]
+    fn skill_surface_compile_copies_skills_to_native_harness_dirs_only() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        std::fs::create_dir_all(mars_dir.join("skills/planning")).unwrap();
+        std::fs::write(mars_dir.join("skills/planning/SKILL.md"), "# Planning\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        skill_surface_compile(
+            dir.path(),
+            &mars_dir,
+            &[skill_outcome("planning", ActionTaken::Installed)],
+            false,
+            &mut diag,
+        );
+
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(target).join("skills/planning/SKILL.md"))
+                    .unwrap(),
+                "# Planning\n"
+            );
+        }
+        assert!(!dir.path().join(".agents/skills/planning/SKILL.md").exists());
+        assert!(diag.drain().is_empty());
+    }
+
+    #[test]
+    fn skill_surface_compile_removes_native_copies_for_removed_skills() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            let skill_dir = dir.path().join(target).join("skills/planning");
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(skill_dir.join("SKILL.md"), "# Old\n").unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new();
+        skill_surface_compile(
+            dir.path(),
+            &mars_dir,
+            &[skill_outcome("planning", ActionTaken::Removed)],
+            false,
+            &mut diag,
+        );
+
+        for target in [".claude", ".codex", ".opencode", ".cursor", ".pi"] {
+            assert!(!dir.path().join(target).join("skills/planning").exists());
+        }
+        assert!(diag.drain().is_empty());
     }
 }

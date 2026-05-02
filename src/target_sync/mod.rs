@@ -1,7 +1,7 @@
 //! Target sync — copy content from .mars/ canonical store to managed targets.
 //!
 //! After `apply_plan()` writes resolved content to `.mars/agents/` and `.mars/skills/`,
-//! this module copies that content to all configured target directories (`.agents/`, `.claude/`, etc.).
+//! this module copies that content to all configured native target directories (`.claude/`, etc.).
 //!
 //! All targets are managed outputs — they get copies (not symlinks) of .mars/ content.
 
@@ -17,7 +17,7 @@ use crate::types::ContentHash;
 /// A directory that mars manages — materialized from .mars/.
 #[derive(Debug, Clone)]
 pub struct ManagedTarget {
-    /// Target directory path relative to project root (e.g. ".claude", ".agents").
+    /// Target directory path relative to project root (e.g. ".claude").
     pub path: String,
 }
 

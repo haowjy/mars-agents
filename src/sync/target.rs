@@ -15,12 +15,12 @@ use crate::types::{
     ContentHash, DestPath, ItemName, RenameMap, SourceId, SourceName, SourceOrigin,
 };
 
-/// What `.agents/` should look like after sync.
+/// What the `.mars/` canonical store should look like after sync.
 ///
 /// Built from the resolved graph with intent-based filtering applied.
 #[derive(Debug, Clone)]
 pub struct TargetState {
-    /// Keyed by dest_path (relative to .agents/).
+    /// Keyed by dest_path (relative to `.mars/`).
     pub items: IndexMap<DestPath, TargetItem>,
 }
 
@@ -33,7 +33,7 @@ pub struct TargetItem {
     pub source_id: SourceId,
     /// Path to content in fetched source tree.
     pub source_path: PathBuf,
-    /// Relative path under `.agents/` (reflects rename if any).
+    /// Relative path under `.mars/` (reflects rename if any).
     pub dest_path: DestPath,
     /// SHA-256 of source content.
     pub source_hash: ContentHash,

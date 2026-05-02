@@ -26,6 +26,7 @@ fn add_with_agents_filter() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -59,6 +60,7 @@ fn rename_applies_path_mapping_during_sync() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -121,7 +123,12 @@ fn rename_skill_rewrites_agent_skill_references() {
     let agents_dir = project_root.child(".agents");
 
     mars()
-        .args(["init", "--root", project_root.path().to_str().unwrap()])
+        .args([
+            "init",
+            ".agents",
+            "--root",
+            project_root.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
 

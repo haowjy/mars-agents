@@ -1,8 +1,11 @@
 /// Per-target compilation adapters.
 ///
-/// Each target root (`.agents`, `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`)
+/// Each native target root (`.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`)
 /// has an adapter that knows how to lower agents, format config entries, translate
 /// hooks, and resolve model aliases for that target.
+///
+/// The deprecated `.agents` adapter remains available only for explicit legacy
+/// link targets; `.mars/` is the canonical compiled store.
 ///
 /// The adapter boundary isolates all per-target branching here, keeping shared
 /// compiler code free of `if target == ...` chains.
@@ -92,7 +95,7 @@ pub struct HookEntry {
 /// All methods take `&self` and return concrete types to ensure the trait can
 /// be used as `dyn TargetAdapter`.
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
-    /// Target root name (e.g., `.agents`, `.claude`, `.codex`).
+    /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
 
     // -----------------------------------------------------------------------

@@ -152,10 +152,11 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    // Check .mars/ gitignore (D29) as warning only.
+    // Check .mars/ gitignore as warning only.
     check_mars_gitignore(&ctx.project_root, &mut warnings);
+    check_legacy_agents_directory(&ctx.project_root, config.as_ref(), &mut warnings);
 
-    // Check managed targets (.agents/, .claude/, etc.) against lock checksums.
+    // Check explicitly managed native targets against lock checksums.
     if let Some(config) = &config {
         let target_divergence_count = check_target_divergence(
             &ctx.project_root,
@@ -173,6 +174,35 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     output::print_doctor(&errors, &warnings, json);
 
     if errors.is_empty() { Ok(0) } else { Ok(2) }
+}
+
+/// Warn if a legacy `.agents/` tree remains but is no longer configured as an
+/// explicit target.
+fn check_legacy_agents_directory(
+    project_root: &std::path::Path,
+    config: Option<&crate::config::Config>,
+    warnings: &mut Vec<String>,
+) {
+    let agents_dir = project_root.join(".agents");
+    if agents_dir.symlink_metadata().is_err() {
+        return;
+    }
+
+    let is_explicit_target = config.is_some_and(|config| {
+        config.settings.managed_root.as_deref() == Some(".agents")
+            || config
+                .settings
+                .targets
+                .as_ref()
+                .is_some_and(|targets| targets.iter().any(|target| target == ".agents"))
+    });
+
+    if !is_explicit_target {
+        warnings.push(
+            "legacy `.agents/` directory exists but is not an explicit target — `.mars/` is the canonical store; remove `.agents/` after confirming no local-only content remains"
+                .to_string(),
+        );
+    }
 }
 
 /// Check if .mars/ is properly gitignored (D29).
@@ -259,7 +289,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::check_target_divergence;
+    use super::{check_legacy_agents_directory, check_target_divergence};
 
     /// Returns (key, LockedItemV2) for insertion into LockFile.items.
     fn make_locked_agent(
@@ -343,5 +373,42 @@ mod tests {
                 .iter()
                 .any(|w| w == "missing in target: .claude/agents/test.md")
         );
+    }
+
+    #[test]
+    fn check_legacy_agents_directory_warns_when_not_explicit_target() {
+        let temp = TempDir::new().expect("create temp dir");
+        fs::create_dir_all(temp.path().join(".agents")).expect("create legacy dir");
+
+        let mut warnings = Vec::new();
+        check_legacy_agents_directory(
+            temp.path(),
+            Some(&crate::config::Config::default()),
+            &mut warnings,
+        );
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("legacy `.agents/` directory exists"))
+        );
+    }
+
+    #[test]
+    fn check_legacy_agents_directory_allows_explicit_target() {
+        let temp = TempDir::new().expect("create temp dir");
+        fs::create_dir_all(temp.path().join(".agents")).expect("create legacy dir");
+
+        let config = crate::config::Config {
+            settings: crate::config::Settings {
+                targets: Some(vec![".agents".to_string()]),
+                ..crate::config::Settings::default()
+            },
+            ..crate::config::Config::default()
+        };
+        let mut warnings = Vec::new();
+        check_legacy_agents_directory(temp.path(), Some(&config), &mut warnings);
+
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 }

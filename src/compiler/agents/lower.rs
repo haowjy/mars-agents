@@ -132,7 +132,7 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
     if let Some(model) = &profile.model {
         yaml.insert(yk("model"), yv(model));
     }
-    // skills — exact (Claude reads skills natively from .agents/skills/)
+    // skills — exact (Claude reads skills natively from .claude/skills/)
     let skills = eff.skills();
     if !skills.is_empty() {
         let seq: serde_yaml::Value =

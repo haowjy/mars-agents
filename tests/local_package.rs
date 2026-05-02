@@ -240,7 +240,7 @@ fn sync_prefers_mars_src_local_items_over_repo_root() {
     assert_eq!(
         fs::read_to_string(
             project
-                .child(".agents")
+                .child(".mars")
                 .child("skills")
                 .child("planning")
                 .child("SKILL.md")

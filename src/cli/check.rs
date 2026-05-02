@@ -56,6 +56,9 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         output::print_json(&report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
+        println!(
+            "  source package validates for .mars/ canonical store and native harness targets"
+        );
         println!();
 
         if report.errors.is_empty() && report.warnings.is_empty() {

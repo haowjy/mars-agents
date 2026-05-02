@@ -9,7 +9,7 @@ use toml::Value;
 use common::*;
 
 #[test]
-fn init_creates_agents_toml() {
+fn init_creates_mars_project_without_default_agents_target() {
     let dir = TempDir::new().unwrap();
 
     mars()
@@ -18,11 +18,10 @@ fn init_creates_agents_toml() {
         .success()
         .stdout(predicate::str::contains("initialized"));
 
-    let agents_dir = dir.child(".agents");
     assert!(dir.child("mars.toml").exists());
     assert!(dir.child(".mars").exists());
     assert!(!dir.child(".gitignore").exists());
-    assert!(agents_dir.exists());
+    assert!(!dir.child(".agents").exists());
 }
 
 #[test]
@@ -53,7 +52,7 @@ fn add_local_source_and_sync() {
     );
 
     // Init
-    let agents_dir = dir.child("project").child(".agents");
+    let mars_dir = dir.child("project").child(".mars");
     mars()
         .args([
             "init",
@@ -75,9 +74,9 @@ fn add_local_source_and_sync() {
         .success();
 
     // Verify files installed
-    assert!(agents_dir.child("agents").child("coder.md").exists());
+    assert!(mars_dir.child("agents").child("coder.md").exists());
     assert!(
-        agents_dir
+        mars_dir
             .child("skills")
             .child("planning")
             .child("SKILL.md")
@@ -109,7 +108,7 @@ fn add_auto_inits_project_when_root_has_no_mars_toml() {
     assert!(project.child(".mars").exists());
     assert!(
         project
-            .child(".agents")
+            .child(".mars")
             .child("agents")
             .child("coder.md")
             .exists()
@@ -199,7 +198,7 @@ fn remove_prunes_files() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[("coder", "# Coder agent")], &[]);
 
-    let agents_dir = dir.child("project").child(".agents");
+    let mars_dir = dir.child("project").child(".mars");
     mars()
         .args([
             "init",
@@ -219,7 +218,7 @@ fn remove_prunes_files() {
         .assert()
         .success();
 
-    assert!(agents_dir.child("agents").child("coder.md").exists());
+    assert!(mars_dir.child("agents").child("coder.md").exists());
 
     // Remove the source
     mars()
@@ -233,7 +232,7 @@ fn remove_prunes_files() {
         .success();
 
     // File should be pruned
-    assert!(!agents_dir.child("agents").child("coder.md").exists());
+    assert!(!mars_dir.child("agents").child("coder.md").exists());
 }
 
 #[test]

@@ -47,6 +47,7 @@ fn sync_force_overwrites_local_changes() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -93,6 +94,7 @@ fn sync_json_includes_target_outcomes() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -143,6 +145,7 @@ fn conflict_flow_with_resolve() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -201,6 +204,7 @@ fn add_skips_unmanaged_file_collision() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])
@@ -248,6 +252,7 @@ fn sync_force_overwrites_divergent_target() {
     mars()
         .args([
             "init",
+            ".agents",
             "--root",
             dir.child("project").path().to_str().unwrap(),
         ])

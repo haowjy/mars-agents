@@ -485,7 +485,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     fn invalid_windows_agent_filename_emits_diagnostic_and_skips() {
+        // This test creates a file with `:` in the name, which is only possible on
+        // non-Windows. The validation catches names that would break on Windows when
+        // created on POSIX systems.
         let tree = make_source_tree(&[("bad:name.md", "# bad"), ("coder.md", "# coder")], &[]);
         let (graph, config) = make_graph_and_config(vec![(
             "base",

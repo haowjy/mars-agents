@@ -79,10 +79,13 @@ Mars accepts several source forms:
 
 | Document | Contents |
 |---|---|
+| [agent-profiles.md](agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies, fanout, examples |
+| [agent-compilation.md](agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
 | [configuration.md](configuration.md) | `mars.toml` reference: all fields, filter modes, model alias merge precedence, settings |
 | [commands.md](commands.md) | Full CLI reference: every subcommand with flags and examples |
 | [sync-pipeline.md](sync-pipeline.md) | How sync works: resolve → target → diff → apply → sync targets → finalize |
 | [conflicts.md](conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
+| [mcp-and-hooks.md](mcp-and-hooks.md) | MCP server and hook compilation: declaring, collision resolution, stale cleanup, Windows |
 | [lock-file.md](lock-file.md) | Lock file format and semantics |
 | [local-development.md](local-development.md) | Dev workflows: overrides, local paths, submodules |
 | [troubleshooting.md](troubleshooting.md) | `mars doctor`, `mars repair`, common problems |

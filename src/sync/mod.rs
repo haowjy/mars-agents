@@ -938,7 +938,11 @@ fn validate_skill_frontmatter_in_target(
 ) {
     use crate::lock::ItemKind;
 
-    for item in target.items.values().filter(|item| item.id.kind == ItemKind::Skill) {
+    for item in target
+        .items
+        .values()
+        .filter(|item| item.id.kind == ItemKind::Skill)
+    {
         validate_skill_frontmatter_at_source(&item.source_path, item.id.name.as_str(), diag);
     }
 }

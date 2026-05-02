@@ -298,7 +298,10 @@ fn validate_json_reports_skill_legacy_field_warning() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "warning-only validate should succeed");
+    assert!(
+        output.status.success(),
+        "warning-only validate should succeed"
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let diagnostics = json["diagnostics"].as_array().unwrap();

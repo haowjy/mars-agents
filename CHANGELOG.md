@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-02
+
 ### Fixed
 - Conventional flat-skill packages with root `SKILL.md` plus bootstrap docs now discover both skill and bootstrap docs.
 - Native harness skill projection now runs inside `target_sync`, so projected skills stay expected during orphan cleanup and `mars link` can populate native skill dirs.

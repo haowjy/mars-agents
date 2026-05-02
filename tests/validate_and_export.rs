@@ -279,3 +279,36 @@ fn validate_json_strict_escalates_warnings_in_output() {
         }
     }
 }
+
+#[test]
+fn validate_json_reports_skill_legacy_field_warning() {
+    let dir = TempDir::new().unwrap();
+    let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
+    let skill_content = "---\nname: legacy\ndescription: legacy skill\nallow_implicit_invocation: false\n---\n# Legacy";
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "src",
+        &[("reader", agent_content)],
+        &[("legacy", skill_content)],
+    );
+
+    let output = mars()
+        .args(["validate", "--json", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "warning-only validate should succeed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag["code"] == "skill-schema-warning"
+                && diag["message"].as_str().is_some_and(|message| {
+                    message.contains("deprecated `allow_implicit_invocation`")
+                })
+        }),
+        "expected legacy skill deprecation warning: {stdout}"
+    );
+}

@@ -291,13 +291,6 @@ pub(crate) fn build_target(
             );
             continue;
         }
-        if item.discovered.id.kind == ItemKind::Skill {
-            validate_skill_frontmatter_at_source(
-                &source_path,
-                item.discovered.id.name.as_str(),
-                diag,
-            );
-        }
         let dest_path =
             default_dest_path(item.discovered.id.kind, item.discovered.id.name.as_str());
 
@@ -356,6 +349,8 @@ pub(crate) fn build_target(
             diag.warn("rewrite-warning", w.to_string());
         }
     }
+
+    validate_skill_frontmatter_in_target(&target_state, diag);
 
     // Validate skill references.
     let warnings = validate_skill_refs(managed_root, &target_state);
@@ -935,6 +930,17 @@ fn validate_skill_refs(
         .collect();
 
     crate::validate::check_deps(&agents, &available_skills).unwrap_or_default()
+}
+
+fn validate_skill_frontmatter_in_target(
+    target: &target::TargetState,
+    diag: &mut DiagnosticCollector,
+) {
+    use crate::lock::ItemKind;
+
+    for item in target.items.values().filter(|item| item.id.kind == ItemKind::Skill) {
+        validate_skill_frontmatter_at_source(&item.source_path, item.id.name.as_str(), diag);
+    }
 }
 
 fn validate_skill_frontmatter_at_source(

@@ -277,9 +277,7 @@ fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result
         .iter()
         .filter_map(|k| {
             let rest = k.strip_prefix("hook:")?;
-            let mut parts = rest.splitn(2, ':');
-            let event = parts.next()?;
-            let name = parts.next()?;
+            let (event, name) = rest.split_once(':')?;
             Some((codex_hook_event(event)?.to_string(), name))
         })
         .collect();

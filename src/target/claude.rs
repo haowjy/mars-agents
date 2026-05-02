@@ -311,9 +311,7 @@ fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Resul
         .iter()
         .filter_map(|k| {
             let rest = k.strip_prefix("hook:")?;
-            let mut parts = rest.splitn(2, ':');
-            let event = parts.next()?;
-            let name = parts.next()?;
+            let (event, name) = rest.split_once(':')?;
             Some((claude_hook_event(event)?.to_string(), name))
         })
         .collect();
@@ -334,27 +332,26 @@ fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Resul
         .and_then(|v| v.as_object_mut())
     {
         for (event, name) in &hook_keys {
-            if let Some(event_hooks) = hooks_map.get_mut(event) {
-                if let Some(arr) = event_hooks.as_array_mut() {
-                    arr.retain(|binding| {
-                        // Retain if we can't parse it (not ours) or if it doesn't
-                        // contain the hook name in any inner command.
-                        let Some(inner_hooks) = binding.get("hooks").and_then(|h| h.as_array())
-                        else {
-                            return true;
-                        };
-                        !inner_hooks.iter().any(|h| {
-                            h.get("command")
-                                .and_then(|c| c.as_str())
-                                .map(|cmd| {
-                                    // Exact path-segment match to avoid partial name collisions
-                                    // (e.g., "audit" must not match "audit-extended").
-                                    is_managed_hook_command_for(cmd, name)
-                                })
-                                .unwrap_or(false)
-                        })
-                    });
-                }
+            if let Some(event_hooks) = hooks_map.get_mut(event)
+                && let Some(arr) = event_hooks.as_array_mut()
+            {
+                arr.retain(|binding| {
+                    // Retain if we can't parse it (not ours) or if it doesn't
+                    // contain the hook name in any inner command.
+                    let Some(inner_hooks) = binding.get("hooks").and_then(|h| h.as_array()) else {
+                        return true;
+                    };
+                    !inner_hooks.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .map(|cmd| {
+                                // Exact path-segment match to avoid partial name collisions
+                                // (e.g., "audit" must not match "audit-extended").
+                                is_managed_hook_command_for(cmd, name)
+                            })
+                            .unwrap_or(false)
+                    })
+                });
             }
         }
     }

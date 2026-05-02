@@ -118,15 +118,15 @@ pub fn build_with_collisions_and_diag(
 
             let (dest_name, dest_path) =
                 apply_item_rename(item.id.kind, &item.id.name, &renames, source_name)?;
-            if item.id.kind == ItemKind::Agent {
-                if let Err(message) = crate::target::validate_agent_filename(dest_name.as_str()) {
-                    diag.error_with_category(
-                        "invalid-agent-filename",
-                        format!("{message}; skipping agent from source `{source_name}`"),
-                        DiagnosticCategory::Validation,
-                    );
-                    continue;
-                }
+            if item.id.kind == ItemKind::Agent
+                && let Err(message) = crate::target::validate_agent_filename(dest_name.as_str())
+            {
+                diag.error_with_category(
+                    "invalid-agent-filename",
+                    format!("{message}; skipping agent from source `{source_name}`"),
+                    DiagnosticCategory::Validation,
+                );
+                continue;
             }
             if item.id.kind == ItemKind::Skill && dest_name != item.id.name {
                 explicit_skill_renames.push(ExplicitSkillRename {

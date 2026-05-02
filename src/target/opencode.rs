@@ -233,23 +233,21 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
         .iter()
         .filter_map(|k| {
             let rest = k.strip_prefix("hook:")?;
-            let mut parts = rest.splitn(2, ':');
-            let event = parts.next()?;
-            let name = parts.next()?;
+            let (event, name) = rest.split_once(':')?;
             Some((opencode_hook_event(event)?.to_string(), name))
         })
         .collect();
 
-    if !hook_keys.is_empty() {
-        if let Some(hooks_map) = root_obj.get_mut("hooks").and_then(|v| v.as_object_mut()) {
-            for (event, name) in &hook_keys {
-                if let Some(arr) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
-                    arr.retain(|cmd| {
-                        let cmd_str = cmd.as_str().unwrap_or("");
-                        // Exact path-segment match to avoid partial name collisions.
-                        !is_managed_hook_command_for(cmd_str, name)
-                    });
-                }
+    if !hook_keys.is_empty()
+        && let Some(hooks_map) = root_obj.get_mut("hooks").and_then(|v| v.as_object_mut())
+    {
+        for (event, name) in &hook_keys {
+            if let Some(arr) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
+                arr.retain(|cmd| {
+                    let cmd_str = cmd.as_str().unwrap_or("");
+                    // Exact path-segment match to avoid partial name collisions.
+                    !is_managed_hook_command_for(cmd_str, name)
+                });
             }
         }
     }

@@ -112,12 +112,21 @@ fn sync_one_target(
 
     // Track expected paths for orphan cleanup
     let mut expected_paths: HashSet<String> = HashSet::new();
+    let is_native_harness_target = crate::target::TargetRegistry::new()
+        .get(target_name)
+        .and_then(|adapter| adapter.skill_variant_key())
+        .is_some();
 
     for outcome in outcomes {
         if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
             // Package-level bootstrap docs are Meridian-only canonical content.
             // Skill-level bootstrap docs still reach native targets as ordinary
             // files inside skill directories.
+            continue;
+        }
+        if is_native_harness_target && outcome.item_id.kind == crate::lock::ItemKind::Skill {
+            // Native harness skill surfaces are projected by skill_surface_compile()
+            // so variants/ is excluded and harness-specific SKILL.md is selected.
             continue;
         }
 
@@ -481,6 +490,40 @@ mod tests {
 
         assert_eq!(results[0].items_synced, 1);
         assert!(target.join("skills/planning/SKILL.md").exists());
+    }
+
+    #[test]
+    fn sync_skips_skills_for_native_harness_targets() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+
+        std::fs::create_dir_all(mars_dir.join("skills/planning/variants/claude")).unwrap();
+        std::fs::write(mars_dir.join("skills/planning/SKILL.md"), "# Base").unwrap();
+        std::fs::write(
+            mars_dir.join("skills/planning/variants/claude/SKILL.md"),
+            "# Claude",
+        )
+        .unwrap();
+
+        let mut outcome = make_outcome("skills/planning", ActionTaken::Installed);
+        outcome.item_id.kind = crate::lock::ItemKind::Skill;
+        let outcomes = vec![outcome];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes,
+            &managed_paths(&[]),
+            false,
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 0);
+        assert!(!target.join("skills/planning/SKILL.md").exists());
+        assert!(!target.join("skills/planning/variants").exists());
     }
 
     #[test]

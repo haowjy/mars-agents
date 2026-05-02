@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `MERIDIAN_MANAGED=1` now suppresses agent artifacts in managed targets (`.claude/agents/`, `.opencode/agents/`). Previously target sync copied agents from `.mars/` to targets even under managed mode. Introduced `AgentSurfacePolicy` enum, unified three agent cleanup paths into `reconcile_native_agent_surfaces`, and fixed `mars link` to apply the same suppression policy as `mars sync`.
+- Native harness cleanup dirs derived from `HarnessKind::all()` instead of a hardcoded list. Removed stale `.cursor` entry that isn't a `HarnessKind` variant.
+
 ## [0.2.2] - 2026-05-02
 
 ### Fixed

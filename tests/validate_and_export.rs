@@ -171,7 +171,7 @@ fn list_and_export_include_bootstrap_docs() {
         .child("mars.toml")
         .write_str(&format!(
             "[dependencies]\nsrc = {{ path = \"{}\" }}\n",
-            source.display()
+            source.display().to_string().replace('\\', "/")
         ))
         .unwrap();
 
@@ -347,7 +347,7 @@ fn list_json_includes_skill_variant_availability() {
         .child("mars.toml")
         .write_str(&format!(
             "[dependencies]\nsrc = {{ path = \"{}\" }}\n",
-            source.display()
+            source.display().to_string().replace('\\', "/")
         ))
         .unwrap();
     mars()
@@ -444,7 +444,7 @@ fn validate_json_reports_unknown_skill_variant_harness_warning() {
         .child("mars.toml")
         .write_str(&format!(
             "[dependencies]\nsrc = {{ path = \"{}\" }}\n",
-            source.display()
+            source.display().to_string().replace('\\', "/")
         ))
         .unwrap();
 

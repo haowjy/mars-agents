@@ -83,7 +83,7 @@ pub fn setup_synced_project(
 
     let toml = format!(
         "[dependencies]\n{source_name} = {{ path = \"{}\" }}\n",
-        source.display()
+        source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 

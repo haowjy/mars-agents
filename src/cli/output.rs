@@ -43,6 +43,8 @@ pub struct CatalogEntry {
     pub name: String,
     pub description: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<String>,
 }
 
 /// Print catalog view (name: description, grouped by kind).
@@ -55,10 +57,15 @@ pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filt
     if show_agents && !agents.is_empty() {
         println!("AGENTS");
         for entry in agents {
+            let variant_suffix = entry
+                .variants
+                .as_ref()
+                .map(|variants| format!(" [variants: {variants}]"))
+                .unwrap_or_default();
             if entry.description.is_empty() {
-                println!("- {}", entry.name);
+                println!("- {}{}", entry.name, variant_suffix);
             } else {
-                println!("- {}: {}", entry.name, entry.description);
+                println!("- {}{}: {}", entry.name, variant_suffix, entry.description);
             }
         }
     }
@@ -70,10 +77,15 @@ pub fn print_catalog(agents: &[CatalogEntry], skills: &[CatalogEntry], kind_filt
     if show_skills && !skills.is_empty() {
         println!("SKILLS");
         for entry in skills {
+            let variant_suffix = entry
+                .variants
+                .as_ref()
+                .map(|variants| format!(" [variants: {variants}]"))
+                .unwrap_or_default();
             if entry.description.is_empty() {
-                println!("- {}", entry.name);
+                println!("- {}{}", entry.name, variant_suffix);
             } else {
-                println!("- {}: {}", entry.name, entry.description);
+                println!("- {}{}: {}", entry.name, variant_suffix, entry.description);
             }
         }
     }

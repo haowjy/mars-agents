@@ -71,11 +71,20 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 
         let fallback_name = path_to_name(&disk_path);
         let (name, description) = read_name_description(&content_path, &fallback_name);
+        let variants = match item.kind {
+            ItemKind::Skill => {
+                let (index, _warnings) =
+                    crate::compiler::variants::index_skill_variants(&disk_path);
+                index.annotation()
+            }
+            _ => None,
+        };
 
         let entry = CatalogEntry {
             name,
             description,
             kind: item.kind.to_string(),
+            variants,
         };
 
         match item.kind {

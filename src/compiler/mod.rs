@@ -12,6 +12,8 @@ pub mod context;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
+/// Skill variant layout validation, indexing, and projection helpers.
+pub mod variants;
 /// Visibility propagation rules for passive vs effectful items (D1/D10).
 pub mod visibility;
 
@@ -458,6 +460,7 @@ fn skill_surface_compile(
             );
             continue;
         };
+        crate::compiler::variants::validate_skill_variants(&source_path, &skill_name, diag);
 
         for adapter in &skill_adapters {
             let Some(dest_rel) = adapter.default_dest_path(ItemKind::Skill, &skill_name) else {

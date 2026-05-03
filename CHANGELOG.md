@@ -8,6 +8,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `MERIDIAN_MANAGED=1` now suppresses agent artifacts in managed targets (`.claude/agents/`, `.opencode/agents/`). Previously target sync copied agents from `.mars/` to targets even under managed mode. Introduced `AgentSurfacePolicy` enum, unified three agent cleanup paths into `reconcile_native_agent_surfaces`, and fixed `mars link` to apply the same suppression policy as `mars sync`.
 - Native harness cleanup dirs derived from `HarnessKind::all()` instead of a hardcoded list. Removed stale `.cursor` entry that isn't a `HarnessKind` variant.
 
+## [0.2.5] - 2026-05-03
+
+### Changed
+- Suppressed `skill-field-dropped` and `agent-field-dropped` warnings for `Dropped` and `MeridianOnly` lossiness classifications. These are expected target-format gaps, not actionable.
+
+## [0.2.4] - 2026-05-03
+
+### Fixed
+- Version drift false positives: `compatible_with_resolved` now handles `Latest` vs `Semver` constraints. When a concrete resolved version satisfies the semver constraint, reports `Compatible` instead of `PotentiallyConflicting`. Fixes ~20 spurious "potential version drift" warnings in diamond dependency trees.
+
+## [0.2.3] - 2026-05-02
+
+### Changed
+- `.gitignore`: added `.claude/` and `.opencode/` generated artifacts.
+
 ## [0.2.2] - 2026-05-02
 
 ### Fixed

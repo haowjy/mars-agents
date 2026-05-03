@@ -192,14 +192,12 @@ mod tests {
     fn latest_with_semver_compatible_when_resolved_matches() {
         let resolved = Version::new(0, 2, 1);
         assert_eq!(
-            VersionConstraint::Latest
-                .compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
+            VersionConstraint::Latest.compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
             CompatibilityResult::Compatible
         );
         // Symmetric
         assert_eq!(
-            semver("=0.2.1")
-                .compatible_with_resolved(&VersionConstraint::Latest, Some(&resolved)),
+            semver("=0.2.1").compatible_with_resolved(&VersionConstraint::Latest, Some(&resolved)),
             CompatibilityResult::Compatible
         );
     }
@@ -208,8 +206,7 @@ mod tests {
     fn latest_with_semver_potentially_conflicting_when_resolved_mismatches() {
         let resolved = Version::new(0, 3, 0);
         assert_eq!(
-            VersionConstraint::Latest
-                .compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
+            VersionConstraint::Latest.compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
             CompatibilityResult::PotentiallyConflicting
         );
     }
@@ -217,8 +214,7 @@ mod tests {
     #[test]
     fn latest_with_semver_potentially_conflicting_without_resolved() {
         assert_eq!(
-            VersionConstraint::Latest
-                .compatible_with_resolved(&semver("=0.2.1"), None),
+            VersionConstraint::Latest.compatible_with_resolved(&semver("=0.2.1"), None),
             CompatibilityResult::PotentiallyConflicting
         );
     }

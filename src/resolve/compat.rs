@@ -59,8 +59,8 @@ impl VersionConstraint {
         other: &VersionConstraint,
         resolved_version: Option<&Version>,
     ) -> CompatibilityResult {
-        use CompatibilityResult::{Compatible, Conflicting};
-        use VersionConstraint::Semver;
+        use CompatibilityResult::{Compatible, Conflicting, PotentiallyConflicting};
+        use VersionConstraint::{Latest, Semver};
 
         match (self, other) {
             (Semver(lhs), Semver(rhs)) => {
@@ -74,6 +74,19 @@ impl VersionConstraint {
                     }
                 } else {
                     Conflicting
+                }
+            }
+            // Latest vs Semver: if the resolved version satisfies the semver
+            // constraint, they agree on the same concrete version — no drift.
+            (Latest, Semver(req)) | (Semver(req), Latest) => {
+                if let Some(version) = resolved_version {
+                    if req.matches(version) {
+                        Compatible
+                    } else {
+                        PotentiallyConflicting
+                    }
+                } else {
+                    PotentiallyConflicting
                 }
             }
             _ => self.compatible_with(other),
@@ -172,6 +185,41 @@ mod tests {
         assert_eq!(
             semver("^1.0").compatible_with_resolved(&semver(">=1.0.0, <2.0.0"), Some(&resolved)),
             CompatibilityResult::Conflicting
+        );
+    }
+
+    #[test]
+    fn latest_with_semver_compatible_when_resolved_matches() {
+        let resolved = Version::new(0, 2, 1);
+        assert_eq!(
+            VersionConstraint::Latest
+                .compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
+            CompatibilityResult::Compatible
+        );
+        // Symmetric
+        assert_eq!(
+            semver("=0.2.1")
+                .compatible_with_resolved(&VersionConstraint::Latest, Some(&resolved)),
+            CompatibilityResult::Compatible
+        );
+    }
+
+    #[test]
+    fn latest_with_semver_potentially_conflicting_when_resolved_mismatches() {
+        let resolved = Version::new(0, 3, 0);
+        assert_eq!(
+            VersionConstraint::Latest
+                .compatible_with_resolved(&semver("=0.2.1"), Some(&resolved)),
+            CompatibilityResult::PotentiallyConflicting
+        );
+    }
+
+    #[test]
+    fn latest_with_semver_potentially_conflicting_without_resolved() {
+        assert_eq!(
+            VersionConstraint::Latest
+                .compatible_with_resolved(&semver("=0.2.1"), None),
+            CompatibilityResult::PotentiallyConflicting
         );
     }
 }

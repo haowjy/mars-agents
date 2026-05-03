@@ -155,7 +155,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let merged = load_merged_aliases(ctx)?;
     let installed = models::harness::detect_installed_harnesses();
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let probe_result = probe_opencode_if_needed(&installed, is_offline, json);
+    let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
+    let probe_result = cache_outcome.result().cloned();
     if args.all {
         let availability_ctx = AvailabilityContext {
             installed: &installed,
@@ -355,7 +356,8 @@ fn run_list_catalog(
     let cache_warning = cache_warning(outcome);
     let installed = models::harness::detect_installed_harnesses();
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let probe_result = probe_opencode_if_needed(&installed, is_offline, json);
+    let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
+    let probe_result = cache_outcome.result().cloned();
     let visibility = effective_visibility(ctx, args);
     let models =
         collect_catalog_model_entries(cache, &installed, probe_result.as_ref(), is_offline);
@@ -692,32 +694,6 @@ fn effective_visibility(ctx: &MarsContext, args: &ListArgs) -> crate::config::Mo
         .unwrap_or_default()
 }
 
-fn probe_opencode_if_needed(
-    installed: &HashSet<String>,
-    is_offline: bool,
-    json: bool,
-) -> Option<OpenCodeProbeResult> {
-    if !models::probes::should_probe_opencode(installed, is_offline) {
-        return None;
-    }
-    if !json {
-        eprint!("Probing OpenCode providers... ");
-    }
-    let probe = models::probes::opencode::probe();
-    if !json {
-        if probe.provider_probe_success {
-            eprintln!(
-                "done ({} providers, {} models)",
-                probe.providers.len(),
-                probe.model_slugs.len()
-            );
-        } else {
-            eprintln!("unknown");
-        }
-    }
-    Some(probe)
-}
-
 fn annotate_resolved_availability(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
     installed: &HashSet<String>,
@@ -815,13 +791,6 @@ fn annotate_one_availability(
     probe_result: Option<&OpenCodeProbeResult>,
 ) {
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let owned_probe =
-        if probe_result.is_none() && models::probes::should_probe_opencode(installed, is_offline) {
-            Some(models::probes::opencode::probe())
-        } else {
-            None
-        };
-    let probe_result = probe_result.or(owned_probe.as_ref());
     resolved.availability = Some(models::availability::classify_model(
         &resolved.model_id,
         &resolved.provider,
@@ -1205,11 +1174,8 @@ fn run_output_passthrough(
         .as_deref()
         .map(models::harness::harness_candidates_for_provider)
         .unwrap_or_default();
-    let probe_result = if models::probes::should_probe_opencode(installed, is_offline) {
-        Some(models::probes::opencode::probe())
-    } else {
-        None
-    };
+    let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
+    let probe_result = cache_outcome.result().cloned();
     let availability = models::availability::classify_model(
         name,
         guessed_provider.as_deref().unwrap_or("unknown"),

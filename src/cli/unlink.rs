@@ -42,10 +42,8 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         }
     }
 
-    if settings_updated {
-        crate::config::save(&ctx.project_root, &config)?;
-    }
-
+    // Delete directory before saving config so a failed deletion doesn't
+    // leave settings mutated with the directory still on disk.
     let target_dir = ctx.project_root.join(&target_name);
     let removed_dir = if target_was_managed && target_dir.exists() {
         std::fs::remove_dir_all(&target_dir)?;
@@ -53,6 +51,10 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     } else {
         false
     };
+
+    if settings_updated {
+        crate::config::save(&ctx.project_root, &config)?;
+    }
 
     if json {
         output::print_json(&serde_json::json!({

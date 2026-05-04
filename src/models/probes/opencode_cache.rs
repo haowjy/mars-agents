@@ -243,12 +243,13 @@ where
             return CachedProbeOutcome::Hit(entry.result.unwrap());
         }
         let probe_result = probe();
-        write_probe_attempt(path, probe_result.clone());
-        return if probe_result.provider_probe_success {
-            CachedProbeOutcome::Miss(probe_result)
+        if probe_result.provider_probe_success {
+            write_probe_attempt(path, probe_result.clone());
+            return CachedProbeOutcome::Miss(probe_result);
         } else {
-            CachedProbeOutcome::Stale(entry.result.unwrap())
-        };
+            write_failed_attempt(path, &entry, &probe_result);
+            return CachedProbeOutcome::Stale(entry.result.unwrap());
+        }
     }
 
     let probe_result = probe();
@@ -276,6 +277,25 @@ fn write_probe_attempt(path: &Path, probe_result: OpenCodeProbeResult) {
             probe_result.error.clone()
         },
         result: Some(probe_result),
+    };
+
+    if let Err(e) = write_cache_at(path, &entry) {
+        eprintln!("debug: probe cache write failed: {e}");
+    }
+}
+
+fn write_failed_attempt(
+    path: &Path,
+    existing: &ProbeCacheEntry,
+    failed_probe: &OpenCodeProbeResult,
+) {
+    let now = now_unix_secs();
+    let entry = ProbeCacheEntry {
+        schema_version: SCHEMA_VERSION,
+        fetched_at: existing.fetched_at,
+        last_attempt_at: now,
+        last_error: failed_probe.error.clone(),
+        result: existing.result.clone(),
     };
 
     if let Err(e) = write_cache_at(path, &entry) {
@@ -411,6 +431,21 @@ mod tests {
 
         let outcome = probe_cached_impl(false, &Some(path), fail_result, || Ok(()));
         assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
+    }
+
+    #[test]
+    fn stale_cache_preserved_on_failed_probe() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(ok_result())));
+
+        let outcome = probe_cached_impl(false, &Some(path.clone()), fail_result, || Ok(()));
+
+        assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
+
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert!(on_disk.result.as_ref().unwrap().provider_probe_success);
+        assert_eq!(on_disk.fetched_at, 1);
     }
 
     #[test]

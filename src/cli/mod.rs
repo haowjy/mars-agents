@@ -25,6 +25,7 @@ pub mod rename;
 pub mod repair;
 pub mod resolve_cmd;
 pub mod sync;
+pub mod unlink;
 pub mod upgrade;
 pub mod validate;
 pub mod version;
@@ -150,6 +151,9 @@ pub enum Command {
     /// Add/remove managed target directories (e.g. .claude).
     Link(link::LinkArgs),
 
+    /// Remove a managed target directory.
+    Unlink(unlink::UnlinkArgs),
+
     /// Dry-run the compiler pipeline and report diagnostics without writing.
     Validate(validate::ValidateArgs),
 
@@ -245,6 +249,7 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Resolve(args) => resolve_cmd::run(args, ctx, json),
         Command::Override(args) => override_cmd::run(args, ctx, json),
         Command::Link(args) => link::run(args, ctx, json),
+        Command::Unlink(args) => unlink::run(args, ctx, json),
         Command::Doctor(args) => doctor::run(args, ctx, json),
         Command::Repair(args) => repair::run(args, ctx, json),
         Command::Models(args) => models::run(args, ctx, json),

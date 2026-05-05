@@ -55,16 +55,37 @@ match = ["*opus*"]
 
 ## How It Works
 
-```
-mars.toml + mars.lock (committed)
-.mars-src/              ← your own agents/skills (committed, editable)
-    ↓ mars sync
-  .mars/                ← canonical store, gitignored (rebuilt from sources)
-    ↓ copy to each target
-  .agents/, .claude/, .cursor/ (your tools read from here)
+```mermaid
+flowchart TD
+    sources["mars.toml + mars.lock<br/><i>committed</i>"]
+    local[".mars-src/<br/><i>your own agents, skills, MCP, hooks</i>"]
+    git["git sources<br/><i>resolved from mars.toml</i>"]
+
+    canonical[".mars/<br/><i>canonical store, gitignored</i>"]
+    agents["agents/ + skills/"]
+    mcp["mcp servers"]
+    hooks["lifecycle hooks"]
+
+    claude[".claude/"]
+    codex[".codex/"]
+    cursor[".cursor/"]
+    opencode[".opencode/"]
+
+    sources --> |mars sync| canonical
+    local --> canonical
+    git --> canonical
+
+    canonical --- agents
+    canonical --- mcp
+    canonical --- hooks
+
+    canonical --> |mars link| claude
+    canonical --> |mars link| codex
+    canonical --> |mars link| cursor
+    canonical --> |mars link| opencode
 ```
 
-Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files.
+Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files. Each linked target gets harness-native artifacts — agents, skills, MCP servers, and hooks compiled to match what that tool expects.
 
 Use `mars adopt` to bring an existing unmanaged file into `.mars-src/` in one step.
 

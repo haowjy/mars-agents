@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- OpenCode availability probe cache (60s TTL, stale-while-revalidate). `mars models list/resolve` no longer synchronously spawns `opencode providers list` + `opencode models` on every call — returns cached result and refreshes in the background. Eliminates ~2s per mars invocation after first probe.
 - `mars unlink <target>` top-level subcommand. Removes a managed target directory and its settings entry. Owns its logic directly (not a shim over link).
 - `cli::target` shared module for target-name normalization.
 

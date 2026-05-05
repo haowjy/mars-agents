@@ -293,6 +293,16 @@ pub struct CachedModel {
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_input: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_output: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_cache_write: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_reasoning: Option<f64>,
 }
 
 const CACHE_FILE: &str = "models-cache.json";
@@ -657,6 +667,18 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
                 .get("limit")
                 .and_then(|v| v.get("output"))
                 .and_then(|v| v.as_u64());
+            let cost = model_obj.get("cost");
+            let cost_input = cost.and_then(|v| v.get("input")).and_then(|v| v.as_f64());
+            let cost_output = cost.and_then(|v| v.get("output")).and_then(|v| v.as_f64());
+            let cost_cache_read = cost
+                .and_then(|v| v.get("cache_read"))
+                .and_then(|v| v.as_f64());
+            let cost_cache_write = cost
+                .and_then(|v| v.get("cache_write"))
+                .and_then(|v| v.as_f64());
+            let cost_reasoning = cost
+                .and_then(|v| v.get("reasoning"))
+                .and_then(|v| v.as_f64());
 
             models.push(CachedModel {
                 id: model_id.to_string(),
@@ -665,6 +687,11 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
                 description,
                 context_window,
                 max_output,
+                cost_input,
+                cost_output,
+                cost_cache_read,
+                cost_cache_write,
+                cost_reasoning,
             });
         }
     }
@@ -1452,6 +1479,13 @@ mod tests {
                         "limit": {
                             "context": 1000000,
                             "output": 128000
+                        },
+                        "cost": {
+                            "input": 5.0,
+                            "output": 25.0,
+                            "cache_read": 0.5,
+                            "cache_write": 6.25,
+                            "reasoning": 15.0
                         }
                     }
                 }
@@ -1485,6 +1519,11 @@ mod tests {
         assert_eq!(opus.description.as_deref(), Some("Claude Opus 4.6"));
         assert_eq!(opus.context_window, Some(1_000_000));
         assert_eq!(opus.max_output, Some(128_000));
+        assert_eq!(opus.cost_input, Some(5.0));
+        assert_eq!(opus.cost_output, Some(25.0));
+        assert_eq!(opus.cost_cache_read, Some(0.5));
+        assert_eq!(opus.cost_cache_write, Some(6.25));
+        assert_eq!(opus.cost_reasoning, Some(15.0));
 
         let gpt = models
             .iter()
@@ -1495,6 +1534,11 @@ mod tests {
         assert_eq!(gpt.description.as_deref(), Some("GPT-5"));
         assert_eq!(gpt.context_window, None);
         assert_eq!(gpt.max_output, None);
+        assert_eq!(gpt.cost_input, None);
+        assert_eq!(gpt.cost_output, None);
+        assert_eq!(gpt.cost_cache_read, None);
+        assert_eq!(gpt.cost_cache_write, None);
+        assert_eq!(gpt.cost_reasoning, None);
     }
 
     #[test]
@@ -1564,6 +1608,11 @@ mod tests {
                     description: None,
                     context_window: None,
                     max_output: None,
+                    cost_input: None,
+                    cost_output: None,
+                    cost_cache_read: None,
+                    cost_cache_write: None,
+                    cost_reasoning: None,
                 })
                 .collect(),
             fetched_at: Some("2025-01-01T00:00:00Z".to_string()),
@@ -3318,6 +3367,11 @@ harness = "claude"
             description: None,
             context_window: None,
             max_output: None,
+            cost_input: None,
+            cost_output: None,
+            cost_cache_read: None,
+            cost_cache_write: None,
+            cost_reasoning: None,
         }
     }
 

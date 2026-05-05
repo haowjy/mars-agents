@@ -68,7 +68,9 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     } else if target_was_managed {
         output::print_info(&format!("removed `{target_name}` from settings"));
     } else {
-        output::print_info(&format!("`{target_name}` is not a managed target; no changes made"));
+        output::print_info(&format!(
+            "`{target_name}` is not a managed target; no changes made"
+        ));
     }
 
     Ok(0)

@@ -204,6 +204,9 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 if let Some(autocompact) = r.autocompact {
                     obj["autocompact"] = serde_json::json!(autocompact);
                 }
+                if let Some(model) = cache.models.iter().find(|model| model.id == r.model_id) {
+                    add_cost_json_fields(&mut obj, model);
+                }
                 add_availability_json_fields(&mut obj, r.availability.as_ref());
                 obj
             })
@@ -254,6 +257,11 @@ struct ListModelEntry {
     harness_source: HarnessSource,
     harness_candidates: Vec<String>,
     description: Option<String>,
+    cost_input: Option<f64>,
+    cost_output: Option<f64>,
+    cost_cache_read: Option<f64>,
+    cost_cache_write: Option<f64>,
+    cost_reasoning: Option<f64>,
     matched_aliases: Vec<String>,
     availability: Option<ModelAvailability>,
 }
@@ -304,6 +312,11 @@ fn run_list_all(
                     "harness_source": model.harness_source,
                     "harness_candidates": model.harness_candidates,
                     "description": model.description,
+                    "cost_input": model.cost_input,
+                    "cost_output": model.cost_output,
+                    "cost_cache_read": model.cost_cache_read,
+                    "cost_cache_write": model.cost_cache_write,
+                    "cost_reasoning": model.cost_reasoning,
                     "matched_aliases": model.matched_aliases,
                 });
                 add_availability_json_fields(&mut obj, model.availability.as_ref());
@@ -375,6 +388,11 @@ fn run_list_catalog(
                     "harness_source": model.harness_source,
                     "harness_candidates": model.harness_candidates,
                     "description": model.description,
+                    "cost_input": model.cost_input,
+                    "cost_output": model.cost_output,
+                    "cost_cache_read": model.cost_cache_read,
+                    "cost_cache_write": model.cost_cache_write,
+                    "cost_reasoning": model.cost_reasoning,
                 });
                 add_availability_json_fields(&mut obj, model.availability.as_ref());
                 obj
@@ -617,6 +635,11 @@ fn model_entry_for_cached(
         harness_source,
         harness_candidates: models::harness::harness_candidates_for_provider(&model.provider),
         description: model.description.clone(),
+        cost_input: model.cost_input,
+        cost_output: model.cost_output,
+        cost_cache_read: model.cost_cache_read,
+        cost_cache_write: model.cost_cache_write,
+        cost_reasoning: model.cost_reasoning,
         matched_aliases: Vec::new(),
         availability: Some(models::availability::classify_model(
             &model.id,
@@ -655,6 +678,11 @@ fn model_entry_for_pinned(
         harness_source,
         harness_candidates: models::harness::harness_candidates_for_provider(&provider),
         description: description.map(str::to_string),
+        cost_input: None,
+        cost_output: None,
+        cost_cache_read: None,
+        cost_cache_write: None,
+        cost_reasoning: None,
         matched_aliases: Vec::new(),
         availability: Some(models::availability::classify_model(
             model_id,
@@ -761,6 +789,14 @@ fn add_availability_json_fields(
         obj["availability_source"] = serde_json::json!(availability.source);
         obj["runnable_paths"] = serde_json::json!(availability.runnable_paths);
     }
+}
+
+fn add_cost_json_fields(obj: &mut serde_json::Value, model: &models::CachedModel) {
+    obj["cost_input"] = serde_json::json!(model.cost_input);
+    obj["cost_output"] = serde_json::json!(model.cost_output);
+    obj["cost_cache_read"] = serde_json::json!(model.cost_cache_read);
+    obj["cost_cache_write"] = serde_json::json!(model.cost_cache_write);
+    obj["cost_reasoning"] = serde_json::json!(model.cost_reasoning);
 }
 
 fn add_probe_results_json(out: &mut serde_json::Value, probe_result: Option<&OpenCodeProbeResult>) {
@@ -1594,6 +1630,11 @@ description = "Old alias"
             description: Some(format!("desc-{id}")),
             context_window: None,
             max_output: None,
+            cost_input: None,
+            cost_output: None,
+            cost_cache_read: None,
+            cost_cache_write: None,
+            cost_reasoning: None,
         }
     }
 

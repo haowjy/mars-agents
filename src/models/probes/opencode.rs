@@ -250,8 +250,8 @@ openrouter/anthropic/claude-opus-4.7"#;
         let back: OpenCodeProbeResult = serde_json::from_str(&json).unwrap();
         assert_eq!(back.providers.get("openai"), Some(&true));
         assert_eq!(back.model_slugs, result.model_slugs);
-        assert_eq!(back.provider_probe_success, true);
-        assert_eq!(back.model_probe_success, true);
+        assert!(back.provider_probe_success);
+        assert!(back.model_probe_success);
         assert_eq!(back.error, None);
     }
 }

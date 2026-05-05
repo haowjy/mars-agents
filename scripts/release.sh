@@ -176,10 +176,9 @@ main() {
   require_branch && branch=$(require_branch)
   require_clean_tree
 
-  check "cargo fmt" "cd $ROOT_DIR && cargo fmt --check"
-  check "cargo clippy" "cd $ROOT_DIR && cargo clippy --all-targets -- -D warnings"
-  check "cargo test" "cd $ROOT_DIR && cargo test"
-  check "cargo build --release" "cd $ROOT_DIR && cargo build --release"
+  if ! "$ROOT_DIR/scripts/preflight.sh" full; then
+    FAILURES+=("check failed: preflight full")
+  fi
 
   local cargo_version
   cargo_version="$(read_cargo_version)"

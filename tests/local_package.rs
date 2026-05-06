@@ -14,11 +14,11 @@ fn full_pipeline_with_local_package_and_custom_target() {
     let project = dir.child("project");
     project.create_dir_all().unwrap();
 
-    // 1. Init with custom target (.claude)
+    // 1. Init with custom target (.custom)
     mars()
         .args([
             "init",
-            ".claude",
+            ".custom",
             "--root",
             project.path().to_str().unwrap(),
         ])
@@ -47,7 +47,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
     let config: Value = toml::from_str(&config_content).unwrap();
     assert_eq!(
         config["settings"]["managed_root"].as_str(),
-        Some(".claude"),
+        Some(".custom"),
         "managed_root should be persisted"
     );
 
@@ -91,7 +91,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .success();
 
     // 7-10. Verify items exist in target and .mars/ canonical store
-    let managed = project.child(".claude");
+    let managed = project.child(".custom");
     let local_agent_target = managed.child("agents").child("local-agent.md");
     let local_skill_target = managed.child("skills").child("local-skill");
     let external_agent = managed.child("agents").child("external-agent.md");
@@ -178,7 +178,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
     mars()
         .args([
             "init",
-            ".claude",
+            ".custom",
             "--root",
             project.path().to_str().unwrap(),
         ])

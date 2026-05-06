@@ -575,6 +575,117 @@ description: default skill
 }
 
 #[test]
+fn sync_native_agent_targets_emit_only_native_agent_artifacts() {
+    let dir = TempDir::new().unwrap();
+    let codex_agent = r#"---
+name: explorer
+description: |
+  Explorer line one
+  Explorer line two
+harness: codex
+model: gpt-5.3-codex
+approval: yolo
+sandbox: workspace-write
+tools: [Bash, Write, Edit]
+---
+# Explorer
+Use "quotes" and backslashes \\
+Keep going.
+"#;
+    let opencode_agent = r#"---
+name: integration-tester
+description: Runs integration tests
+harness: opencode
+model: kimi-k2
+tools: [Bash, Write, Edit]
+disallowed-tools: [Agent]
+---
+# Integration tester
+Run focused integration checks.
+"#;
+    let source = create_source(
+        &dir,
+        "base",
+        &[
+            ("explorer", codex_agent),
+            ("integration-tester", opencode_agent),
+        ],
+        &[],
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".codex", ".opencode"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(project.child(".mars/agents/explorer.md").exists());
+    assert!(project.child(".mars/agents/integration-tester.md").exists());
+
+    let codex_agents_dir = project.child(".codex/agents");
+    assert!(codex_agents_dir.exists());
+    assert!(!project.child(".codex/agents/explorer.md").exists());
+    assert!(
+        !project
+            .child(".codex/agents/integration-tester.md")
+            .exists()
+    );
+    assert!(project.child(".codex/agents/explorer.toml").exists());
+
+    let codex_toml =
+        fs::read_to_string(project.child(".codex/agents/explorer.toml").path()).unwrap();
+    let parsed: toml::Value = toml::from_str(&codex_toml).expect("codex TOML should parse");
+    assert!(parsed.get("agent").is_none(), "legacy [agent] table leaked");
+    assert_eq!(
+        parsed.get("name").and_then(|v| v.as_str()),
+        Some("explorer")
+    );
+    assert_eq!(
+        parsed.get("approval_policy").and_then(|v| v.as_str()),
+        Some("never")
+    );
+    assert!(
+        parsed
+            .get("developer_instructions")
+            .and_then(|v| v.as_str())
+            .is_some(),
+        "developer_instructions missing"
+    );
+
+    assert!(
+        project
+            .child(".opencode/agents/integration-tester.md")
+            .exists()
+    );
+    assert!(!project.child(".opencode/agents/explorer.md").exists());
+    let opencode_native = fs::read_to_string(
+        project
+            .child(".opencode/agents/integration-tester.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !opencode_native.contains("tools:"),
+        "native opencode artifact should not include canonical tool lists"
+    );
+}
+
+#[test]
 fn sync_preserves_selected_variant_raw_bytes_when_variant_frontmatter_is_malformed() {
     let dir = TempDir::new().unwrap();
     let base_skill =

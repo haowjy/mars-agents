@@ -112,10 +112,18 @@ fn sync_one_target(
 
     // Track expected paths for orphan cleanup
     let mut expected_paths: HashSet<String> = HashSet::new();
-    let native_skill_variant_key = crate::target::TargetRegistry::new()
-        .get(target_name)
+    let target_registry = crate::target::TargetRegistry::new();
+    let target_adapter = target_registry.get(target_name);
+    let native_skill_variant_key = target_adapter
         .and_then(|adapter| adapter.skill_variant_key())
         .map(str::to_owned);
+    let target_accepts_canonical_agents = target_adapter
+        .map(|adapter| {
+            adapter
+                .default_dest_path(crate::lock::ItemKind::Agent, "__mars_probe__")
+                .is_some()
+        })
+        .unwrap_or(true);
 
     for outcome in outcomes {
         if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
@@ -125,6 +133,20 @@ fn sync_one_target(
             continue;
         }
         let dest_rel = outcome.dest_path.as_str();
+        if outcome.item_id.kind == crate::lock::ItemKind::Agent && !target_accepts_canonical_agents
+        {
+            if matches!(outcome.action, ActionTaken::Removed) {
+                let target_path = target_root.join(dest_rel);
+                if target_path.exists() || target_path.symlink_metadata().is_ok() {
+                    if let Err(e) = fs_ops::safe_remove(&target_path) {
+                        errors.push(format!("failed to remove {dest_rel}: {e}"));
+                    } else {
+                        items_removed += 1;
+                    }
+                }
+            }
+            continue;
+        }
         match &outcome.action {
             ActionTaken::Removed => {
                 // Remove from target too
@@ -531,7 +553,7 @@ mod tests {
         let results = sync_managed_targets(
             dir.path(),
             &mars_dir,
-            &[".agents".to_string(), ".claude".to_string()],
+            &[".agents".to_string(), ".custom-target".to_string()],
             &outcomes,
             &managed_paths(&[]),
             false,
@@ -540,7 +562,66 @@ mod tests {
 
         assert_eq!(results.len(), 2);
         assert!(dir.path().join(".agents/agents/coder.md").exists());
-        assert!(dir.path().join(".claude/agents/coder.md").exists());
+        assert!(dir.path().join(".custom-target/agents/coder.md").exists());
+    }
+
+    #[test]
+    fn sync_native_targets_skip_canonical_agent_markdown_copies() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[
+                ".claude".to_string(),
+                ".codex".to_string(),
+                ".opencode".to_string(),
+                ".pi".to_string(),
+            ],
+            &outcomes,
+            &managed_paths(&[]),
+            false,
+            &mut diag,
+        );
+
+        assert_eq!(results.len(), 4);
+        assert!(results.iter().all(|outcome| outcome.items_synced == 0));
+        assert!(!dir.path().join(".claude/agents/coder.md").exists());
+        assert!(!dir.path().join(".codex/agents/coder.md").exists());
+        assert!(!dir.path().join(".opencode/agents/coder.md").exists());
+        assert!(!dir.path().join(".pi/agents/coder.md").exists());
+    }
+
+    #[test]
+    fn sync_unknown_target_still_copies_canonical_agents() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".custom-target".to_string()],
+            &outcomes,
+            &managed_paths(&[]),
+            false,
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 1);
+        assert!(dir.path().join(".custom-target/agents/coder.md").exists());
     }
 
     #[test]

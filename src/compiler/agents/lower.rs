@@ -247,7 +247,8 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
 ///
 /// Per agent-compilation-mapping.md V0 §5.4 and §10:
 /// - Preserved: name, description, model, effort (as model_reasoning_effort),
-///   sandbox (as sandbox_mode), approval (as approval_policy), body (as instructions)
+///   sandbox (as sandbox_mode), approval (as approval_policy), body
+///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
 ///   mcp-tools (approximate), mode, autocompact, model-policies, fanout
 /// - Merged: harness-overrides.codex applied to top-level fields before lowering
@@ -256,29 +257,22 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     let mut lossy = Vec::new();
     let target = "Codex";
 
-    let name = profile.name.as_deref().unwrap_or("");
-    let description = profile.description.as_deref().unwrap_or("");
-    let model = profile.model.as_deref().unwrap_or("");
-
     // Effort — exact (lowered to model_reasoning_effort)
-    let effort_str = eff.effort().map(|e| e.as_str()).unwrap_or("");
+    let effort_str = eff.effort().map(|e| e.as_str());
 
     // Sandbox — exact
-    let sandbox_str = eff.sandbox().map(|s| s.as_str()).unwrap_or("");
+    let sandbox_str = eff.sandbox().map(|s| s.as_str());
 
     // Approval — exact (lowered to approval_policy)
-    let approval_policy = eff
-        .approval()
-        .map(|a| {
-            use crate::compiler::agents::ApprovalMode;
-            match a {
-                ApprovalMode::Default => "",
-                ApprovalMode::Auto => "on-request",
-                ApprovalMode::Confirm => "untrusted",
-                ApprovalMode::Yolo => "bypass",
-            }
-        })
-        .unwrap_or("");
+    let approval_policy = eff.approval().and_then(|a| {
+        use crate::compiler::agents::ApprovalMode;
+        match a {
+            ApprovalMode::Default => None,
+            ApprovalMode::Auto => Some("on-request"),
+            ApprovalMode::Confirm => Some("untrusted"),
+            ApprovalMode::Yolo => Some("never"),
+        }
+    });
 
     // Dropped fields
     let skills = eff.skills();
@@ -343,51 +337,40 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
         });
     }
 
-    // Build TOML
-    let mut out = String::new();
-    out.push_str("[agent]\n");
-    out.push_str(&format!("name = {}\n", toml_str(name)));
-    if !description.is_empty() {
-        out.push_str(&format!("description = {}\n", toml_str(description)));
-    }
-    if !model.is_empty() {
-        out.push_str(&format!("model = {}\n", toml_str(model)));
-    }
-
-    let has_config =
-        !effort_str.is_empty() || !sandbox_str.is_empty() || !approval_policy.is_empty();
-    if has_config {
-        out.push_str("\n[agent.config]\n");
-        if !effort_str.is_empty() {
-            out.push_str(&format!(
-                "model_reasoning_effort = {}\n",
-                toml_str(effort_str)
-            ));
-        }
-        if !sandbox_str.is_empty() {
-            out.push_str(&format!("sandbox_mode = {}\n", toml_str(sandbox_str)));
-        }
-        if !approval_policy.is_empty() {
-            out.push_str(&format!(
-                "approval_policy = {}\n",
-                toml_str(approval_policy)
-            ));
-        }
+    #[derive(serde::Serialize)]
+    struct CodexAgentToml<'a> {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model_reasoning_effort: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sandbox_mode: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        approval_policy: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        developer_instructions: Option<&'a str>,
     }
 
-    if !body.is_empty() {
-        out.push_str("\n[agent.instructions]\n");
-        out.push_str(&format!("content = \"\"\"\n{}\n\"\"\"\n", body.trim_end()));
-    }
+    let doc = CodexAgentToml {
+        name: profile.name.as_deref(),
+        description: profile.description.as_deref(),
+        model: profile.model.as_deref(),
+        model_reasoning_effort: effort_str,
+        sandbox_mode: sandbox_str,
+        approval_policy,
+        developer_instructions: (!body.trim().is_empty()).then_some(body.trim_end()),
+    };
+
+    let out = toml::to_string_pretty(&doc).unwrap_or_default();
 
     LoweredOutput {
         bytes: out.into_bytes(),
         lossy_fields: lossy,
     }
-}
-
-fn toml_str(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 // ---------------------------------------------------------------------------
@@ -765,15 +748,17 @@ mod tests {
     // --- 3.3: Codex lowering ---
 
     #[test]
-    fn codex_lowering_produces_toml_with_agent_section() {
+    fn codex_lowering_produces_top_level_toml() {
         let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\napproval: auto\n---\n# Coder\nYou code.";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("[agent]"), "no [agent] section: {text}");
+        assert!(
+            !text.contains("[agent]"),
+            "legacy [agent] table leaked: {text}"
+        );
         assert!(text.contains("name = \"coder\""), "name missing");
         assert!(text.contains("model = \"gpt55\""), "model missing");
-        assert!(text.contains("[agent.config]"), "no config section");
         assert!(
             text.contains("model_reasoning_effort = \"high\""),
             "effort missing"
@@ -787,9 +772,16 @@ mod tests {
             "approval missing"
         );
         assert!(
-            text.contains("[agent.instructions]"),
-            "no instructions section"
+            text.contains("developer_instructions ="),
+            "developer instructions missing"
         );
+
+        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
+        assert!(
+            parsed.get("agent").is_none(),
+            "nested [agent] table present"
+        );
+        assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("coder"));
     }
 
     #[test]
@@ -821,6 +813,27 @@ mod tests {
         assert!(
             text.contains("sandbox_mode = \"workspace-write\""),
             "sandbox override not applied: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_lowering_multiline_instructions_are_parseable() {
+        let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
+
+        assert_eq!(
+            parsed.get("approval_policy").and_then(|v| v.as_str()),
+            Some("never")
+        );
+        assert_eq!(
+            parsed
+                .get("developer_instructions")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going."
         );
     }
 
@@ -866,6 +879,10 @@ mod tests {
         let body2 = fm2.body().to_string();
         let out2 = lower_for_harness(&HarnessKind::Codex, &profile2, &fm2, &body2);
         let text2 = String::from_utf8(out2.bytes).unwrap();
-        assert!(text2.contains("[agent]"), "not TOML format");
+        assert!(text2.contains("name = \"coder\""), "not TOML format");
+        assert!(
+            !text2.contains("[agent]"),
+            "legacy nested agent table emitted"
+        );
     }
 }

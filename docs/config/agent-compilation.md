@@ -89,13 +89,13 @@ TOML format. Codex reads this for native agent invocation.
 
 | Source field | Codex native key | Classification |
 |---|---|---|
-| `name` | `[agent].name` | exact |
-| `description` | `[agent].description` | exact |
-| `model` | `[agent].model` | exact |
-| `effort` | `[agent.config].model_reasoning_effort` | exact |
-| `sandbox` | `[agent.config].sandbox_mode` | exact |
-| `approval` | `[agent.config].approval_policy` | exact |
-| body | `[agent.instructions].content` | approximate (TOML string) |
+| `name` | `name` | exact |
+| `description` | `description` | exact |
+| `model` | `model` | exact |
+| `effort` | `model_reasoning_effort` | exact |
+| `sandbox` | `sandbox_mode` | exact |
+| `approval` | `approval_policy` | exact |
+| body | `developer_instructions` | exact |
 | `skills` | dropped | dropped |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
@@ -112,23 +112,18 @@ TOML format. Codex reads this for native agent invocation.
 | `default` | (omitted) |
 | `auto` | `"on-request"` |
 | `confirm` | `"untrusted"` |
-| `yolo` | `"bypass"` |
+| `yolo` | `"never"` |
 
 **Example output:**
 
 ```toml
-[agent]
 name = "coder"
 description = "Implementation agent for code changes"
 model = "gpt55"
-
-[agent.config]
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
-
-[agent.instructions]
-content = """
+developer_instructions = """
 # Coder
 
 You turn approved plans into working code.

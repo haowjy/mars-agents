@@ -159,7 +159,7 @@ Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once afte
 This sets `core.hooksPath = .githooks`; Git cannot auto-install hooks on clone.
 
 Hook policy:
-- Pre-commit stays fast: format check only, for cheap checkpoint commits.
+- Pre-commit is not installed by default; optional fast format-check helper lives at `.githooks/optional/pre-commit` for humans who opt in locally.
 - Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
 - Release tags must go through `scripts/release.sh`, not manual tag pushes.
 

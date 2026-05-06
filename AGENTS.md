@@ -156,9 +156,12 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
-This activates the pre-push hook, which runs the full test suite before any push.
-A pre-commit hook (fast format check only) is also provided in `.githooks/` and is activated
-automatically via `core.hooksPath`, but it is an opt-in convenience only.
+This sets `core.hooksPath = .githooks`; Git cannot auto-install hooks on clone.
+
+Hook policy:
+- Pre-commit stays fast: format check only, for cheap checkpoint commits.
+- Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
+- Release tags must go through `scripts/release.sh`, not manual tag pushes.
 
 **NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
 

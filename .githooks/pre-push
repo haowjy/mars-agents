@@ -38,12 +38,12 @@ check_release_tag_auth() {
 }
 
 while read -r local_ref local_sha remote_ref remote_sha; do
-  case "$local_ref" in
+  case "$remote_ref" in
     refs/heads/*)
       needs_full=1
       ;;
     refs/tags/v*)
-      check_release_tag_auth "$local_ref" "$local_sha"
+      check_release_tag_auth "$remote_ref" "$local_sha"
       ;;
     refs/tags/*)
       ;;

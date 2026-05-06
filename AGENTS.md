@@ -153,6 +153,33 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 | `src/validate/` | Post-sync validation (e.g. missing skill references) |
 | `src/fs/` | Low-level filesystem utilities, `FileLock`, atomic write primitives |
 
+## Git Hooks
+
+Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
+This activates the pre-push hook, which runs the full test suite before any push.
+A pre-commit hook (fast format check only) is also provided in `.githooks/` and is activated
+automatically via `core.hooksPath`, but it is an opt-in convenience only.
+
+**NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
+
+**NEVER manually create or push git tags matching `v*`.** Use `scripts/release.sh` for all releases.
+
+### Release workflow
+
+```bash
+# Prepare: run checks, bump version, commit, push branch
+scripts/release.sh prepare patch --push
+
+# Wait for CI, fix forward if needed, then:
+scripts/release.sh resume --push
+
+# Check state:
+scripts/release.sh status
+
+# Abandon a prepared release:
+scripts/release.sh abort
+```
+
 ## Dev Workflow
 
 ```bash

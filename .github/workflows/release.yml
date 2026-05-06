@@ -8,6 +8,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  verify-provenance:
+    name: Verify release provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag provenance
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+
+          if [[ "$TAG_VERSION" != "$CARGO_VERSION" ]]; then
+            echo "::error::Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Tagged commit is not reachable from $DEFAULT_BRANCH"
+            exit 1
+          fi
+
+          COMMIT_MSG=$(git log -1 --format=%s "$GITHUB_SHA")
+          if [[ "$COMMIT_MSG" != "release: v$TAG_VERSION" ]]; then
+            echo "::error::Release commit message doesn't match expected format: release: v$TAG_VERSION"
+            exit 1
+          fi
+
+          echo "Provenance verified for v$TAG_VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -144,7 +179,7 @@ jobs:
 
   pypi-publish:
     name: Publish PyPI
-    needs: [pypi-wheels, pypi-sdist]
+    needs: [pypi-wheels, pypi-sdist, verify-provenance]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -168,7 +203,7 @@ jobs:
 
   github-release:
     name: GitHub Release
-    needs: build
+    needs: [build, verify-provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -188,7 +223,7 @@ jobs:
 
   npm-publish:
     name: Publish npm packages
-    needs: build
+    needs: [build, verify-provenance]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -282,7 +317,7 @@ jobs:
 
   cargo-publish:
     name: Publish crate
-    needs: build
+    needs: [build, verify-provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: read

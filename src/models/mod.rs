@@ -3827,15 +3827,27 @@ harness = "claude"
             &stale_timestamp(),
         );
 
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(GET).path("/api.json");
-            then.status(500).body("server error");
-        });
-        let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
+        let fetch_hits = Arc::new(AtomicUsize::new(0));
 
-        let (_cache_a, outcome_a) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
-        let (_cache_b, outcome_b) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let fetch_hits_a = Arc::clone(&fetch_hits);
+        let (_cache_a, outcome_a) =
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+                fetch_hits_a.fetch_add(1, Ordering::SeqCst);
+                Err(MarsError::Http {
+                    url: "https://example.test/api.json".to_string(),
+                    status: 500,
+                    message: "request failed with HTTP status 500".to_string(),
+                })
+            })
+            .unwrap();
+
+        let fetch_hits_b = Arc::clone(&fetch_hits);
+        let (_cache_b, outcome_b) =
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+                fetch_hits_b.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![sample_cached_model("unexpected-second-refresh")])
+            })
+            .unwrap();
 
         assert!(matches!(
             outcome_a,
@@ -3847,7 +3859,7 @@ harness = "claude"
                 reason: FETCH_FAIL_COOLDOWN_REASON.to_string()
             }
         );
-        assert_eq!(mock.hits(), 1);
+        assert_eq!(fetch_hits.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -3860,19 +3872,23 @@ harness = "claude"
             &stale_timestamp(),
         );
 
-        let server = MockServer::start();
-        let mock = server.mock(|when, then| {
-            when.method(GET).path("/api.json");
-            then.status(200).json_body(serde_json::json!({
-                "openai": {
-                    "models": {}
-                }
-            }));
-        });
-        let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
+        let fetch_hits = Arc::new(AtomicUsize::new(0));
 
-        let (_cache_a, outcome_a) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
-        let (_cache_b, outcome_b) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let fetch_hits_a = Arc::clone(&fetch_hits);
+        let (_cache_a, outcome_a) =
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+                fetch_hits_a.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .unwrap();
+
+        let fetch_hits_b = Arc::clone(&fetch_hits);
+        let (_cache_b, outcome_b) =
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+                fetch_hits_b.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![sample_cached_model("unexpected-second-refresh")])
+            })
+            .unwrap();
 
         assert!(matches!(
             outcome_a,
@@ -3884,7 +3900,7 @@ harness = "claude"
                 reason: FETCH_FAIL_COOLDOWN_REASON.to_string()
             }
         );
-        assert_eq!(mock.hits(), 1);
+        assert_eq!(fetch_hits.load(Ordering::SeqCst), 1);
     }
 
     #[test]

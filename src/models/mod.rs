@@ -212,15 +212,17 @@ impl<'de> Deserialize<'de> for ModelAlias {
             }
         }
         let autocompact: Option<u32> = match raw.autocompact {
-            Some(toml::Value::Integer(value)) if value > 0 => Some(value as u32),
-            Some(toml::Value::Integer(value)) => {
-                return Err(serde::de::Error::custom(format!(
-                    "autocompact {value} must be a positive integer (token count)"
-                )));
-            }
+            Some(toml::Value::Integer(value)) => match u32::try_from(value) {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    return Err(serde::de::Error::custom(format!(
+                        "autocompact {value} is out of u32 range (0–4294967295)"
+                    )));
+                }
+            },
             Some(other) => {
                 return Err(serde::de::Error::custom(format!(
-                    "autocompact must be a positive integer (token count), got {other:?}"
+                    "autocompact must be an integer (token count), got {other:?}"
                 )));
             }
             None => None,
@@ -3218,7 +3220,7 @@ autocompact = true
         }
 
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("autocompact must be a positive integer"));
+        assert!(err.contains("autocompact must be an integer (token count)"));
     }
 
     #[test]
@@ -3279,6 +3281,61 @@ autocompact_pct = 0
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("autocompact_pct"));
         assert!(err.contains("out of range 1-100"));
+    }
+
+    #[test]
+    fn model_alias_autocompact_zero_accepted() {
+        let toml_str = r#"
+[models.opus]
+model = "claude-opus-4-6"
+autocompact = 0
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("opus").unwrap();
+        assert_eq!(alias.autocompact, Some(0u32));
+    }
+
+    #[test]
+    fn model_alias_autocompact_max_u32_accepted() {
+        let toml_str = r#"
+[models.opus]
+model = "claude-opus-4-6"
+autocompact = 4294967295
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("opus").unwrap();
+        assert_eq!(alias.autocompact, Some(4294967295u32));
+    }
+
+    #[test]
+    fn model_alias_autocompact_overflow_errors() {
+        // 4294967296 == u32::MAX + 1 — should be rejected
+        let toml_str = r#"
+[models.opus]
+model = "claude-opus-4-6"
+autocompact = 4294967296
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("out of u32 range"));
     }
 
     #[test]

@@ -262,6 +262,8 @@ exclude = ["thinking"]
 | `description` | string | no | Human-readable description shown in `mars models list` |
 | `match` | string[] | no | Glob patterns matched against the model catalog |
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
+| `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
+| `autocompact_pct` | u8 | no | Context fill percentage (1–100) that triggers compaction; alternative to `autocompact` |
 
 When `model` is omitted, Mars auto-resolves by querying the cached model catalog with `match`/`exclude` patterns and selecting the best match.
 

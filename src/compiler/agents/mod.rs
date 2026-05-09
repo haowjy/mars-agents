@@ -382,6 +382,12 @@ fn parse_override_fields(
                             allowed: "integer 0–4294967295",
                         }),
                     }
+                } else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: format!("{table_name}.autocompact"),
+                        value: format!("{v:?}"),
+                        allowed: "integer (token count)",
+                    });
                 }
             }
             "autocompact-pct" => {
@@ -395,6 +401,12 @@ fn parse_override_fields(
                             allowed: "integer 1–100",
                         });
                     }
+                } else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: format!("{table_name}.autocompact-pct"),
+                        value: format!("{v:?}"),
+                        allowed: "integer 1–100",
+                    });
                 }
             }
             "approval" => {
@@ -582,34 +594,57 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     });
 
     // autocompact:
-    let autocompact =
-        fm.get("autocompact")
-            .and_then(Value::as_u64)
-            .and_then(|n| match u32::try_from(n) {
-                Ok(v32) => Some(v32),
-                Err(_) => {
+    let autocompact = match fm.get("autocompact") {
+        None => None,
+        Some(v) => {
+            if let Some(n) = v.as_u64() {
+                match u32::try_from(n) {
+                    Ok(v32) => Some(v32),
+                    Err(_) => {
+                        diags.push(AgentDiagnostic::InvalidFieldValue {
+                            field: "autocompact".to_string(),
+                            value: n.to_string(),
+                            allowed: "integer 0–4294967295",
+                        });
+                        None
+                    }
+                }
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: "autocompact".to_string(),
+                    value: format!("{v:?}"),
+                    allowed: "integer (token count)",
+                });
+                None
+            }
+        }
+    };
+
+    // autocompact-pct:
+    let autocompact_pct = match fm.get("autocompact-pct") {
+        None => None,
+        Some(v) => {
+            if let Some(n) = v.as_u64() {
+                if (1..=100).contains(&n) {
+                    Some(n as u8)
+                } else {
                     diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: "autocompact".to_string(),
+                        field: "autocompact-pct".to_string(),
                         value: n.to_string(),
-                        allowed: "integer 0–4294967295",
+                        allowed: "integer 1–100",
                     });
                     None
                 }
-            });
-
-    // autocompact-pct:
-    let autocompact_pct = fm.get("autocompact-pct").and_then(Value::as_u64).and_then(|n| {
-        if (1..=100).contains(&n) {
-            Some(n as u8)
-        } else {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "autocompact-pct".to_string(),
-                value: n.to_string(),
-                allowed: "integer 1–100",
-            });
-            None
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: "autocompact-pct".to_string(),
+                    value: format!("{v:?}"),
+                    allowed: "integer 1–100",
+                });
+                None
+            }
         }
-    });
+    };
 
     // skills/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills();
@@ -834,6 +869,26 @@ mod tests {
         assert!(diags.is_empty());
         let claude = p.harness_overrides.claude.as_ref().unwrap();
         assert_eq!(claude.autocompact_pct, Some(75));
+    }
+
+    #[test]
+    fn autocompact_string_produces_diagnostic() {
+        let (p, diags) = parse("---\nautocompact: \"50\"\n---\n");
+        assert_eq!(p.autocompact, None);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact")
+        );
+    }
+
+    #[test]
+    fn autocompact_pct_string_produces_diagnostic() {
+        let (p, diags) = parse("---\nautocompact-pct: \"80\"\n---\n");
+        assert_eq!(p.autocompact_pct, None);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
+        );
     }
 
     #[test]

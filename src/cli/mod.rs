@@ -37,8 +37,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 use crate::error::{ConfigError, LockError, MarsError};
-use crate::types::managed_cmd;
 pub use crate::types::MarsContext;
+use crate::types::managed_cmd;
 
 /// Deprecated generic output directories still recognized for migration hints.
 pub const WELL_KNOWN: &[&str] = &[".agents"];
@@ -186,7 +186,10 @@ pub fn dispatch(cli: Cli) -> i32 {
         Err(err) => {
             eprintln!("error: {err}");
             if matches!(err, MarsError::Lock(LockError::Corrupt { .. })) {
-                eprintln!("hint: run `{}` to rebuild from mars.toml + dependencies", managed_cmd("mars repair"));
+                eprintln!(
+                    "hint: run `{}` to rebuild from mars.toml + dependencies",
+                    managed_cmd("mars repair")
+                );
             }
             err.exit_code()
         }

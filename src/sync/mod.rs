@@ -26,9 +26,9 @@ use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::{TargetItem, TargetState};
+use crate::types::managed_cmd;
 use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
-use crate::types::managed_cmd;
 
 // Re-export mutation types for public API compatibility.
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_config_mutation};

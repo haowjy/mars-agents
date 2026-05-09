@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use crate::types::managed_cmd;
+use std::path::PathBuf;
 
 /// Config-level errors
 #[derive(Debug, thiserror::Error)]

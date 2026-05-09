@@ -95,6 +95,12 @@ impl<'a> Effective<'a> {
         }
         &self.profile.disallowed_tools
     }
+
+    fn autocompact_pct(&self) -> Option<u8> {
+        self.over
+            .and_then(|o| o.autocompact_pct)
+            .or(self.profile.autocompact_pct)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +111,7 @@ impl<'a> Effective<'a> {
 ///
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, skills, tools, disallowed-tools, body
-/// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact,
+/// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact, autocompact_pct,
 ///   model-policies, harness-overrides (claude entry merged before lowering),
 ///   fanout, legacy-models
 ///
@@ -193,6 +199,13 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
     if profile.autocompact.is_some() {
         lossy.push(LossyField {
             field: "autocompact".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.autocompact_pct().is_some() {
+        lossy.push(LossyField {
+            field: "autocompact-pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -318,6 +331,13 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     if profile.autocompact.is_some() {
         lossy.push(LossyField {
             field: "autocompact".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.autocompact_pct().is_some() {
+        lossy.push(LossyField {
+            field: "autocompact-pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -471,6 +491,13 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::MeridianOnly,
         });
     }
+    if eff.autocompact_pct().is_some() {
+        lossy.push(LossyField {
+            field: "autocompact-pct".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
     if !profile.model_policies.is_empty() {
         lossy.push(LossyField {
             field: "model-policies".into(),
@@ -593,6 +620,13 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::MeridianOnly,
         });
     }
+    if eff.autocompact_pct().is_some() {
+        lossy.push(LossyField {
+            field: "autocompact-pct".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
     if !profile.model_policies.is_empty() {
         lossy.push(LossyField {
             field: "model-policies".into(),
@@ -685,7 +719,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\n---\n# Body";
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact-pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
@@ -705,6 +739,10 @@ mod tests {
         assert!(
             dropped.contains(&"autocompact"),
             "autocompact not in lossy: {dropped:?}"
+        );
+        assert!(
+            dropped.contains(&"autocompact-pct"),
+            "autocompact-pct not in lossy: {dropped:?}"
         );
     }
 

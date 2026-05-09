@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `upgrades_available` count in sync report now filters to direct deps only. Transitive dep upgrades no longer inflate the hint.
 - Skill schema: replaced `invocation: explicit | implicit` enum with two independent booleans `model-invocable` and `user-invocable` (both default true). Per-harness lowering compiles each boolean to native fields: Claude gets both natively, Codex gets `allow_implicit_invocation` for model-invocable, Pi/Cursor get `disable-model-invocation`. Old fields (`invocation`, `disable-model-invocation`, `allow_implicit_invocation`) are hard errors.
+- **BREAKING:** `autocompact` field on model aliases and agent profiles renamed from percentage (`u8`, 1–100) to token count (`u32`). New `autocompact_pct` field (`u8`, 1–100) carries the old percentage behavior. Both fields are meridian-only in native lowering. Downstream Meridian runtime owns precedence and harness conversion.
 
 ### Fixed
 - `MERIDIAN_MANAGED=1` now suppresses agent artifacts in managed targets (`.claude/agents/`, `.opencode/agents/`). Previously target sync copied agents from `.mars/` to targets even under managed mode. Introduced `AgentSurfacePolicy` enum, unified three agent cleanup paths into `reconcile_native_agent_surfaces`, and fixed `mars link` to apply the same suppression policy as `mars sync`.

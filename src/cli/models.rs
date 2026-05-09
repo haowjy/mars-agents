@@ -204,6 +204,9 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 if let Some(autocompact) = r.autocompact {
                     obj["autocompact"] = serde_json::json!(autocompact);
                 }
+                if let Some(autocompact_pct) = r.autocompact_pct {
+                    obj["autocompact_pct"] = serde_json::json!(autocompact_pct);
+                }
                 if let Some(model) = cache.models.iter().find(|model| model.id == r.model_id) {
                     add_cost_json_fields(&mut obj, model);
                 }
@@ -916,6 +919,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
             description: args.description.clone(),
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: args.model_id.clone(),
                 provider: None,
@@ -1016,6 +1020,9 @@ fn run_resolve_exact_alias(
             }
             if let Some(autocompact) = r.autocompact {
                 out["autocompact"] = serde_json::json!(autocompact);
+            }
+            if let Some(autocompact_pct) = r.autocompact_pct {
+                out["autocompact_pct"] = serde_json::json!(autocompact_pct);
             }
             add_availability_json_fields(&mut out, r.availability.as_ref());
             if let Some(warning) = cache_warning.as_deref() {
@@ -1135,6 +1142,9 @@ fn run_output_resolved(
         }
         if let Some(autocompact) = resolved.autocompact {
             out["autocompact"] = serde_json::json!(autocompact);
+        }
+        if let Some(autocompact_pct) = resolved.autocompact_pct {
+            out["autocompact_pct"] = serde_json::json!(autocompact_pct);
         }
         out["probe_cache"] = serde_json::json!(cache_outcome.cache_status());
         add_availability_json_fields(&mut out, resolved.availability.as_ref());
@@ -1568,6 +1578,7 @@ description = "Old alias"
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
                 provider: provider.to_string(),
                 match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
@@ -1587,6 +1598,7 @@ description = "Old alias"
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::PinnedWithMatch {
                 model: model.to_string(),
                 provider: Some(provider.to_string()),
@@ -1602,6 +1614,7 @@ description = "Old alias"
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: None,
@@ -1615,6 +1628,7 @@ description = "Old alias"
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: Some(provider.to_string()),

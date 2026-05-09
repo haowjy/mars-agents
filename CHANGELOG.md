@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `managed_cmd()` helper — user-facing hints say `meridian mars <cmd>` when `MERIDIAN_MANAGED=1`, `mars <cmd>` otherwise. Replaced ~20 hardcoded `mars <cmd>` references across errors, warnings, and doctor output.
 - OpenCode availability probe cache (60s TTL, stale-while-revalidate). `mars models list/resolve` no longer synchronously spawns `opencode providers list` + `opencode models` on every call — returns cached result and refreshes in the background. Eliminates ~2s per mars invocation after first probe.
 - `mars unlink <target>` top-level subcommand. Removes a managed target directory and its settings entry. Owns its logic directly (not a shim over link).
 - `cli::target` shared module for target-name normalization.
@@ -20,6 +21,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars unlink` deletes the target directory before saving config, so a failed deletion doesn't leave settings mutated with the directory still on disk.
 
 ### Changed
+- `upgrades_available` count in sync report now filters to direct deps only. Transitive dep upgrades no longer inflate the hint.
 - Skill schema: replaced `invocation: explicit | implicit` enum with two independent booleans `model-invocable` and `user-invocable` (both default true). Per-harness lowering compiles each boolean to native fields: Claude gets both natively, Codex gets `allow_implicit_invocation` for model-invocable, Pi/Cursor get `disable-model-invocation`. Old fields (`invocation`, `disable-model-invocation`, `allow_implicit_invocation`) are hard errors.
 
 ### Fixed

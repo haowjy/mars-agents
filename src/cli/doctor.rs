@@ -2,6 +2,7 @@
 
 use crate::error::MarsError;
 use crate::hash;
+use crate::types::managed_cmd;
 
 use super::output;
 
@@ -79,7 +80,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             for source_name in effective.dependencies.keys() {
                 if !lock.dependencies.contains_key(source_name) {
                     errors.push(format!(
-                        "dependency `{source_name}` is in config but not in lock — run `mars sync`"
+                        "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
+                        cmd = managed_cmd("mars sync"),
                     ));
                 }
             }
@@ -108,8 +110,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     "skill"
                 };
                 warnings.push(format!(
-                    "legacy symlinked {kind} `{}` detected in managed dir — run `mars sync` to normalize to copied content",
+                    "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
                     item.id.name,
+                    cmd = managed_cmd("mars sync"),
                 ));
             }
         }
@@ -165,9 +168,11 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &mut warnings,
         );
         if target_divergence_count > 0 {
-            warnings.push(
-                "target divergence detected; run `mars sync --force` to reset modified files or `mars repair` to restore missing files".to_string(),
-            );
+            warnings.push(format!(
+                "target divergence detected; run `{cmd1}` to reset modified files or `{cmd2}` to restore missing files",
+                cmd1 = managed_cmd("mars sync --force"),
+                cmd2 = managed_cmd("mars repair"),
+            ));
         }
     }
 

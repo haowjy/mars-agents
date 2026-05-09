@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use crate::types::managed_cmd;
 
 /// Config-level errors
 #[derive(Debug, thiserror::Error)]
@@ -7,8 +8,9 @@ pub enum ConfigError {
     NotFound { path: PathBuf },
 
     #[error(
-        "no mars.toml found from {} to filesystem root. Run `mars init` first.",
-        start.display()
+        "no mars.toml found from {} to filesystem root. Run `{cmd}` first.",
+        start.display(),
+        cmd = managed_cmd("mars init"),
     )]
     ProjectRootNotFound { start: PathBuf },
 
@@ -217,7 +219,8 @@ pub enum MarsError {
     Link { target: String, message: String },
 
     #[error(
-        "models cache is empty and cannot be refreshed: {reason}. Run `mars models refresh` to populate it."
+        "models cache is empty and cannot be refreshed: {reason}. Run `{cmd}` to populate it.",
+        cmd = managed_cmd("mars models refresh"),
     )]
     ModelCacheUnavailable { reason: String },
 

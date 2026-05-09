@@ -28,6 +28,7 @@ pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
+use crate::types::managed_cmd;
 
 // Re-export mutation types for public API compatibility.
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_config_mutation};
@@ -402,8 +403,10 @@ pub(crate) fn create_plan(
                 diag.warn(
                     "disk-lock-divergent",
                     format!(
-                        "{} diverged from mars.lock checksum; preserving local content (run `mars sync --force` or `mars repair` to reset)",
-                        target.dest_path
+                        "{} diverged from mars.lock checksum; preserving local content (run `{cmd1}` or `{cmd2}` to reset)",
+                        target.dest_path,
+                        cmd1 = managed_cmd("mars sync --force"),
+                        cmd2 = managed_cmd("mars repair"),
                     ),
                 );
             }
@@ -662,6 +665,7 @@ pub(crate) fn finalize(
         .resolved
         .loaded
         .dependency_changes;
+    let effective = &state.applied.planned.targeted.resolved.loaded.effective;
     let upgrades_available = if request.options.frozen {
         0
     } else {
@@ -669,10 +673,11 @@ pub(crate) fn finalize(
             .nodes
             .values()
             .filter(|node| {
-                matches!(
-                    (&node.resolved_ref.version, &node.latest_version),
-                    (Some(resolved), Some(latest)) if latest > resolved
-                )
+                effective.dependencies.contains_key(&node.source_name)
+                    && matches!(
+                        (&node.resolved_ref.version, &node.latest_version),
+                        (Some(resolved), Some(latest)) if latest > resolved
+                    )
             })
             .count()
     };

@@ -532,6 +532,17 @@ pub fn meridian_managed_from_env() -> bool {
     std::env::var("MERIDIAN_MANAGED").is_ok_and(|value| value == "1")
 }
 
+/// Return a command reference string suitable for the current runtime mode.
+/// When `MERIDIAN_MANAGED=1` is set (i.e. invoked through `meridian`), prefix
+/// the command with `meridian ` so that user-facing hints read correctly.
+pub fn managed_cmd(cmd: &str) -> std::borrow::Cow<'_, str> {
+    if meridian_managed_from_env() {
+        format!("meridian {cmd}").into()
+    } else {
+        cmd.into()
+    }
+}
+
 /// Stable source identity used for resolver deduplication.
 #[derive(Hash, Eq, PartialEq, Clone, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum SourceId {

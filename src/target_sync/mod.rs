@@ -13,6 +13,7 @@ use crate::error::MarsError;
 use crate::reconcile::fs_ops;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
+use crate::types::managed_cmd;
 
 /// A directory that mars manages — materialized from .mars/.
 #[derive(Debug, Clone)]
@@ -209,8 +210,10 @@ fn sync_one_target(
                                     diag.warn(
                                         "target-divergent",
                                         format!(
-                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `mars sync --force` or `mars repair` to reset)",
-                                            dest_rel
+                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
+                                            dest_rel,
+                                            cmd1 = managed_cmd("mars sync --force"),
+                                            cmd2 = managed_cmd("mars repair"),
                                         ),
                                     );
                                 }

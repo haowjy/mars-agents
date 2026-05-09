@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
+use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
@@ -560,7 +561,10 @@ fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     Diagnostic {
         level: DiagnosticLevel::Warning,
         code: "deprecated-agents-target",
-        message: "`.agents` is a deprecated link target. Run `mars unlink .agents` to remove it. Skills are now emitted to native harness dirs automatically.".to_string(),
+        message: format!(
+            "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
+            managed_cmd("mars unlink .agents"),
+        ),
         context: Some(context.to_string()),
         category: Some(DiagnosticCategory::Compatibility),
     }

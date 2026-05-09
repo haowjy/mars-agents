@@ -11,6 +11,7 @@ use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::diagnostic::Diagnostic;
 use crate::sync::SyncReport;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
+use crate::types::managed_cmd;
 
 /// Check if colored output should be used.
 ///
@@ -298,7 +299,8 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
         let _ = writeln!(
             stdout,
-            "  conflicts   {conflicts} files (run `mars resolve` after fixing)"
+            "  conflicts   {conflicts} files (run `{cmd}` after fixing)",
+            cmd = managed_cmd("mars resolve"),
         );
         let _ = stdout.reset();
     }
@@ -331,8 +333,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
         let _ = writeln!(
             stderr,
-            "  ℹ {} {noun} available — run `mars upgrade --bump` to update",
-            report.upgrades_available
+            "  ℹ {} {noun} available — run `{cmd}` to update",
+            report.upgrades_available,
+            cmd = managed_cmd("mars upgrade --bump"),
         );
         let _ = stderr.reset();
     }

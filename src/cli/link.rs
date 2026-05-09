@@ -9,6 +9,7 @@ use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind, LockFile};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ItemName;
+use crate::types::managed_cmd;
 use std::collections::HashSet;
 
 use super::output;
@@ -32,8 +33,9 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
         return Err(MarsError::Link {
             target: target_name.to_string(),
             message: format!(
-                "mars.toml not found at {} — run `mars init` first",
-                ctx.project_root.display()
+                "mars.toml not found at {} — run `{cmd}` first",
+                ctx.project_root.display(),
+                cmd = managed_cmd("mars init"),
             ),
         });
     }

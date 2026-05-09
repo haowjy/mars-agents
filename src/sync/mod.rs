@@ -1198,6 +1198,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: crate::models::ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: None,

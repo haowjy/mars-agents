@@ -50,7 +50,7 @@ Before lowering to a native artifact, mars merges the `harness-overrides.<target
 
 Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. The Codex artifact gets `model_reasoning_effort = "high"`. The `.mars/` artifact preserves both the top-level `effort: low` and the full `harness-overrides:` table for Meridian's runtime use.
 
-`OverrideFields` also contains `mcp-tools` and `autocompact`, but the current lowering merge does not read them. `mcp-tools` lowering reads from the top-level profile field directly.
+`OverrideFields` also contains `mcp-tools`, `autocompact`, and `autocompact-pct`, but the current lowering merge does not read them. `mcp-tools` lowering reads from the top-level profile field directly. `autocompact` and `autocompact-pct` are meridian-only and never lowered to any native format.
 
 ## Per-Target Field Mapping
 
@@ -76,6 +76,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `sandbox` | dropped | dropped |
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
+| `autocompact-pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `harness-overrides` | merged, then dropped | — |
 | `fanout` | dropped | meridian-only |
@@ -102,6 +103,7 @@ TOML format. Codex reads this for native agent invocation.
 | `mcp-tools` | `-c mcp.servers.<name>.command` | approximate |
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
+| `autocompact-pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
 
@@ -149,6 +151,7 @@ YAML frontmatter + markdown body.
 | `effort` | dropped from frontmatter | approximate |
 | `mcp-tools` | session payload or error | approximate |
 | `autocompact` | dropped | meridian-only |
+| `autocompact-pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
 
@@ -169,7 +172,7 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `effort` | dropped | approximate |
 | All other policy fields | dropped | dropped |
-| `autocompact`, `model-policies`, `fanout` | dropped | meridian-only |
+| `autocompact`, `autocompact-pct`, `model-policies`, `fanout` | dropped | meridian-only |
 
 ## Lossiness Model
 
@@ -211,6 +214,7 @@ Compact per-field, per-target classification:
 | `mcp-tools` | preserved | exact | approximate | approximate | n/a |
 | `effort` | preserved | exact | exact | approximate | approximate |
 | `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
+| `autocompact-pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | `skills` | preserved | exact | dropped | dropped | dropped |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | `harness-overrides` | preserved | merged | merged | merged | merged |

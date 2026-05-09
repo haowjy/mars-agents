@@ -52,7 +52,9 @@ pub struct ModelAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub autocompact: Option<u8>,
+    pub autocompact: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autocompact_pct: Option<u8>,
     #[serde(flatten)]
     pub spec: ModelSpec,
 }
@@ -103,7 +105,9 @@ pub struct ResolvedAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub autocompact: Option<u8>,
+    pub autocompact: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autocompact_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability: Option<ModelAvailability>,
 }
@@ -180,6 +184,8 @@ struct RawModelAlias {
     default_effort: Option<String>,
     #[serde(default)]
     autocompact: Option<toml::Value>,
+    #[serde(default)]
+    autocompact_pct: Option<toml::Value>,
     // Pinned mode
     #[serde(default)]
     model: Option<String>,
@@ -205,16 +211,30 @@ impl<'de> Deserialize<'de> for ModelAlias {
                 )));
             }
         }
-        let autocompact: Option<u8> = match raw.autocompact {
-            Some(toml::Value::Integer(value)) if (1..=100).contains(&value) => Some(value as u8),
+        let autocompact: Option<u32> = match raw.autocompact {
+            Some(toml::Value::Integer(value)) if value > 0 => Some(value as u32),
             Some(toml::Value::Integer(value)) => {
                 return Err(serde::de::Error::custom(format!(
-                    "autocompact {value} is out of range 1-100"
+                    "autocompact {value} must be a positive integer (token count)"
                 )));
             }
             Some(other) => {
                 return Err(serde::de::Error::custom(format!(
-                    "autocompact must be an integer 1-100, got {other:?}"
+                    "autocompact must be a positive integer (token count), got {other:?}"
+                )));
+            }
+            None => None,
+        };
+        let autocompact_pct: Option<u8> = match raw.autocompact_pct {
+            Some(toml::Value::Integer(value)) if (1..=100).contains(&value) => Some(value as u8),
+            Some(toml::Value::Integer(value)) => {
+                return Err(serde::de::Error::custom(format!(
+                    "autocompact_pct {value} is out of range 1-100"
+                )));
+            }
+            Some(other) => {
+                return Err(serde::de::Error::custom(format!(
+                    "autocompact_pct must be an integer 1-100, got {other:?}"
                 )));
             }
             None => None,
@@ -263,6 +283,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
             description: raw.description,
             default_effort,
             autocompact,
+            autocompact_pct,
             spec,
         })
     }
@@ -907,14 +928,15 @@ pub fn resolve_with_alias_prefix(
 
     let winner = candidates.into_iter().next()?;
     let provider = winner.provider.to_ascii_lowercase();
-    let (default_effort, autocompact) = match base_alias {
+    let (default_effort, autocompact, autocompact_pct) = match base_alias {
         Some(ModelAlias {
             default_effort,
             autocompact,
+            autocompact_pct,
             spec: ModelSpec::Pinned { .. } | ModelSpec::PinnedWithMatch { .. },
             ..
-        }) => (default_effort.clone(), *autocompact),
-        _ => (None, None),
+        }) => (default_effort.clone(), *autocompact, *autocompact_pct),
+        _ => (None, None, None),
     };
     let installed = harness::detect_installed_harnesses();
     let harness = harness::resolve_harness_for_provider(&provider, &installed);
@@ -934,6 +956,7 @@ pub fn resolve_with_alias_prefix(
         description: winner.description,
         default_effort,
         autocompact,
+        autocompact_pct,
         availability: None,
     })
 }
@@ -1093,6 +1116,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::AutoResolve {
                     provider: provider.to_string(),
                     match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
@@ -1256,6 +1280,7 @@ pub fn resolve_all(
                 description: alias.description.clone(),
                 default_effort: alias.default_effort.clone(),
                 autocompact: alias.autocompact,
+                autocompact_pct: alias.autocompact_pct,
                 availability: None,
             },
         );
@@ -1287,6 +1312,7 @@ pub fn resolve_one(
         description: alias.description.clone(),
         default_effort: alias.default_effort.clone(),
         autocompact: alias.autocompact,
+        autocompact_pct: alias.autocompact_pct,
         availability: None,
     })
 }
@@ -1743,6 +1769,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: model.to_string(),
                 provider: None,
@@ -1760,6 +1787,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
                 provider: provider.to_string(),
                 match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
@@ -1779,6 +1807,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::PinnedWithMatch {
                 model: model.to_string(),
                 provider: Some(provider.to_string()),
@@ -2314,6 +2343,7 @@ mod tests {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::Pinned {
                     model: "gpt-5.3-codex".to_string(),
                     provider: Some("openai".to_string()),
@@ -2344,6 +2374,7 @@ mod tests {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::Pinned {
                     model: "claude-opus-4-6".to_string(),
                     provider: Some("anthropic".to_string()),
@@ -2384,6 +2415,7 @@ mod tests {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::AutoResolve {
                     provider: "openai".to_string(),
                     match_patterns: vec!["gpt-5*".to_string()],
@@ -2416,6 +2448,7 @@ mod tests {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::Pinned {
                     model: "claude-opus-4-6".to_string(),
                     provider: None,
@@ -2447,6 +2480,7 @@ mod tests {
                 description: None,
                 default_effort: None,
                 autocompact: None,
+                autocompact_pct: None,
                 spec: ModelSpec::AutoResolve {
                     provider: "Anthropic".to_string(),
                     match_patterns: vec!["claude-opus-*".to_string()],
@@ -2516,6 +2550,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             availability: None,
         }
     }
@@ -2658,6 +2693,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: Some("anthropic".to_string()),
@@ -2682,6 +2718,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: None,
@@ -2706,6 +2743,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "my-custom-model".to_string(),
                 provider: None,
@@ -2730,6 +2768,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
                 provider: "openai".to_string(),
                 match_patterns: vec!["gpt-5*".to_string()],
@@ -2752,6 +2791,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: None,
@@ -2773,6 +2813,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: None,
@@ -2794,6 +2835,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: Some("anthropic".to_string()),
@@ -2815,6 +2857,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "claude-opus-4-6".to_string(),
                 provider: Some("anthropic".to_string()),
@@ -2833,6 +2876,7 @@ mod tests {
             description: None,
             default_effort: None,
             autocompact: None,
+            autocompact_pct: None,
             spec: ModelSpec::Pinned {
                 model: "my-custom-model".to_string(),
                 provider: Some("unknown".to_string()),
@@ -3140,11 +3184,12 @@ default_effort = "maximum"
 
     #[test]
     fn model_alias_autocompact_out_of_range_errors() {
+        // autocompact_pct out of range (>100) is a hard error
         let toml_str = r#"
 [models.opus]
 provider = "Anthropic"
 match = ["claude-opus-*"]
-autocompact = 101
+autocompact_pct = 101
 "#;
 
         #[derive(Debug, Deserialize)]
@@ -3173,7 +3218,100 @@ autocompact = true
         }
 
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("autocompact must be an integer 1-100"));
+        assert!(err.contains("autocompact must be a positive integer"));
+    }
+
+    #[test]
+    fn parses_autocompact_pct() {
+        let toml_str = r#"
+[models.opus]
+provider = "Anthropic"
+match = ["claude-opus-*"]
+autocompact_pct = 75
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("opus").unwrap();
+        assert_eq!(alias.autocompact_pct, Some(75));
+        assert_eq!(alias.autocompact, None);
+    }
+
+    #[test]
+    fn autocompact_pct_out_of_range_errors() {
+        let toml_str = r#"
+[models.opus]
+provider = "Anthropic"
+match = ["claude-opus-*"]
+autocompact_pct = 150
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("autocompact_pct"));
+        assert!(err.contains("out of range 1-100"));
+    }
+
+    #[test]
+    fn autocompact_pct_zero_errors() {
+        let toml_str = r#"
+[models.opus]
+provider = "Anthropic"
+match = ["claude-opus-*"]
+autocompact_pct = 0
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("autocompact_pct"));
+        assert!(err.contains("out of range 1-100"));
+    }
+
+    #[test]
+    fn both_autocompact_fields_round_trip() {
+        let toml_str = r#"
+[models.opus]
+model = "claude-opus-4-6"
+autocompact = 50000
+autocompact_pct = 80
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("opus").unwrap();
+        assert_eq!(alias.autocompact, Some(50000u32));
+        assert_eq!(alias.autocompact_pct, Some(80u8));
+
+        // Verify both propagate through resolve_all
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), alias.clone());
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+        let mut diag = DiagnosticCollector::new();
+        let resolved = resolve_all(&aliases, &cache, &mut diag);
+        let entry = resolved.get("opus").unwrap();
+        assert_eq!(entry.autocompact, Some(50000u32));
+        assert_eq!(entry.autocompact_pct, Some(80u8));
     }
 
     #[test]

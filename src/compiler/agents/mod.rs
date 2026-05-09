@@ -172,6 +172,7 @@ impl EffortLevel {
 pub struct OverrideFields {
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
+    pub autocompact_pct: Option<u8>,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub skills: Option<Vec<String>>,
@@ -244,6 +245,7 @@ pub struct AgentProfile {
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
+    pub autocompact_pct: Option<u8>,
 
     // --- Tool fields ---
     pub skills: Vec<String>,
@@ -379,6 +381,19 @@ fn parse_override_fields(
                             value: n.to_string(),
                             allowed: "integer 0–4294967295",
                         }),
+                    }
+                }
+            }
+            "autocompact-pct" => {
+                if let Some(n) = v.as_u64() {
+                    if (1..=100).contains(&n) {
+                        out.autocompact_pct = Some(n as u8);
+                    } else {
+                        diags.push(AgentDiagnostic::InvalidFieldValue {
+                            field: format!("{table_name}.autocompact-pct"),
+                            value: n.to_string(),
+                            allowed: "integer 1–100",
+                        });
                     }
                 }
             }
@@ -582,6 +597,20 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
                 }
             });
 
+    // autocompact-pct:
+    let autocompact_pct = fm.get("autocompact-pct").and_then(Value::as_u64).and_then(|n| {
+        if (1..=100).contains(&n) {
+            Some(n as u8)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "autocompact-pct".to_string(),
+                value: n.to_string(),
+                allowed: "integer 1–100",
+            });
+            None
+        }
+    });
+
     // skills/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills();
     let tools = fm.get("tools").map(yaml_str_list).unwrap_or_default();
@@ -621,6 +650,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         sandbox,
         effort,
         autocompact,
+        autocompact_pct,
         skills,
         tools,
         disallowed_tools,
@@ -768,6 +798,42 @@ mod tests {
         let (p, diags) = parse("---\nautocompact: 50\n---\n");
         assert!(diags.is_empty());
         assert_eq!(p.autocompact, Some(50));
+    }
+
+    #[test]
+    fn parses_autocompact_pct() {
+        let (p, diags) = parse("---\nautocompact-pct: 80\n---\n");
+        assert!(diags.is_empty());
+        assert_eq!(p.autocompact_pct, Some(80));
+    }
+
+    #[test]
+    fn autocompact_pct_out_of_range() {
+        let (p, diags) = parse("---\nautocompact-pct: 101\n---\n");
+        assert_eq!(p.autocompact_pct, None);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
+        );
+    }
+
+    #[test]
+    fn autocompact_pct_zero_out_of_range() {
+        let (p, diags) = parse("---\nautocompact-pct: 0\n---\n");
+        assert_eq!(p.autocompact_pct, None);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
+        );
+    }
+
+    #[test]
+    fn autocompact_pct_in_override() {
+        let content = "---\nharness-overrides:\n  claude:\n    autocompact-pct: 75\n---\n";
+        let (p, diags) = parse(content);
+        assert!(diags.is_empty());
+        let claude = p.harness_overrides.claude.as_ref().unwrap();
+        assert_eq!(claude.autocompact_pct, Some(75));
     }
 
     #[test]

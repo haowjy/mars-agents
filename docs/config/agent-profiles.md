@@ -11,7 +11,8 @@ harness: claude
 mode: subagent
 approval: auto
 effort: high
-autocompact: 50
+autocompact: 200000
+autocompact-pct: 80
 skills: [dev-principles, shared-workspace]
 tools: [Bash, Write, Edit, Read]
 disallowed-tools: [Agent, Bash(git revert:*)]
@@ -230,10 +231,27 @@ effort: high
 | Range | 0–4294967295 |
 | Default | none |
 
-Context window compaction threshold. Consumed by Meridian's session manager — no harness-native equivalent. Specifies the context percentage at which Meridian triggers compaction.
+Context window compaction threshold in tokens. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this many tokens.
 
 ```yaml
-autocompact: 50
+autocompact: 200000
+```
+
+---
+
+### `autocompact-pct`
+
+| | |
+|---|---|
+| Type | integer |
+| Required | no |
+| Range | 1–100 |
+| Default | none |
+
+Context window compaction threshold as a percentage of the context window. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this percentage of the available window.
+
+```yaml
+autocompact-pct: 80
 ```
 
 ---
@@ -308,7 +326,7 @@ mcp-tools: [context7, memory-bank]
 
 Per-harness override table. Overrides top-level field values when a specific harness compiles the agent. Only the fields relevant to the target harness are applied; the rest are ignored.
 
-**Overridable fields:** `effort`, `autocompact`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
+**Overridable fields:** `effort`, `autocompact`, `autocompact-pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
 
 **Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `harness-overrides`
 

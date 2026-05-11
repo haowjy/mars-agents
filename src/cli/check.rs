@@ -788,4 +788,52 @@ mod tests {
             report.warnings
         );
     }
+
+    #[test]
+    fn check_local_dep_skill_not_available_when_regular_dep_present() {
+        // Fix 2 code path: [dependencies] is non-empty (triggers resolve_available_skills),
+        // skill is only in [local-dependencies]. Before the fix, local-deps were included
+        // in the resolved graph and could silently satisfy refs. After the fix, they are
+        // stripped and the missing skill is correctly flagged as an error.
+        let dir = TempDir::new().unwrap();
+        let regular_dep_dir = TempDir::new().unwrap();
+        let local_dep_dir = TempDir::new().unwrap();
+
+        // Regular dep provides an unrelated skill — exists only to satisfy has_package_dependencies.
+        write_dep_package(
+            regular_dep_dir.path(),
+            "regular-dep",
+            "0.1.0",
+            &["unrelated-skill"],
+        );
+        // Local dep has the skill the agent references.
+        write_dep_package(
+            local_dep_dir.path(),
+            "local-dep",
+            "0.1.0",
+            &["local-only-skill"],
+        );
+        write_agent(dir.path(), "coder", &["local-only-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
+                regular_dep_dir.path().display(),
+                local_dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            !report.errors.is_empty(),
+            "skill from [local-dependencies] must not satisfy ref in publish gate — expected error: {:?}",
+            report.errors
+        );
+        let joined = report.errors.join("\n");
+        assert!(
+            joined.contains("local-only-skill"),
+            "error must name the missing skill: {joined}"
+        );
+    }
 }

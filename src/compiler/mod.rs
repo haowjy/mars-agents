@@ -339,8 +339,20 @@ fn dual_surface_compile(
         for lf in &lowered.lossy_fields {
             use crate::compiler::agents::lower::Lossiness;
             match &lf.classification {
-                // Dropped/MeridianOnly fields are expected target-format gaps — not actionable.
-                Lossiness::Dropped | Lossiness::MeridianOnly => {}
+                Lossiness::Dropped => {
+                    // Tools-field drops are actionable under strict validation.
+                    if lf.field == "tools" || lf.field.starts_with("tools.") {
+                        diag.warn(
+                            "agent-field-dropped",
+                            format!(
+                                "agent `{agent_name}`: field `{}` dropped in {}",
+                                lf.field, lf.target
+                            ),
+                        );
+                    }
+                }
+                // MeridianOnly fields are expected target-format gaps — not actionable.
+                Lossiness::MeridianOnly => {}
                 Lossiness::Approximate { note } => {
                     diag.warn(
                         "agent-field-approximate",
@@ -536,5 +548,48 @@ mod skill_surface_tests {
 
         // Native artifact should still exist
         assert!(dir.path().join(".claude/agents/coder.md").exists());
+    }
+
+    #[test]
+    fn dual_surface_keeps_canonical_tools_for_opencode() {
+        let dir = TempDir::new().unwrap();
+        let mars_agents = dir.path().join(".mars").join("agents");
+        std::fs::create_dir_all(&mars_agents).unwrap();
+        let canonical = mars_agents.join("coder.md");
+        let content = "---\nname: coder\nharness: opencode\ntools:\n  \"*\": deny\n  bash: allow\n---\n# body\n";
+        std::fs::write(&canonical, content).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        dual_surface_compile(dir.path(), &dir.path().join(".mars"), false, &mut diag);
+
+        let canonical_after = std::fs::read_to_string(&canonical).unwrap();
+        assert_eq!(canonical_after, content);
+
+        let native = std::fs::read_to_string(dir.path().join(".opencode/agents/coder.md")).unwrap();
+        assert!(
+            !native.contains("tools:"),
+            "opencode artifact must omit tools"
+        );
+    }
+
+    #[test]
+    fn dual_surface_emits_warning_for_dropped_tools_field() {
+        let dir = TempDir::new().unwrap();
+        let mars_agents = dir.path().join(".mars").join("agents");
+        std::fs::create_dir_all(&mars_agents).unwrap();
+        std::fs::write(
+            mars_agents.join("coder.md"),
+            "---\nname: coder\nharness: claude\ntools:\n  read:\n    \"*.env\": allow\n---\n# body\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        dual_surface_compile(dir.path(), &dir.path().join(".mars"), true, &mut diag);
+        let diagnostics = diag.drain();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "agent-field-dropped" && d.message.contains("tools.read"))
+        );
     }
 }

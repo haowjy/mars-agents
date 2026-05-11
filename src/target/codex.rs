@@ -3,18 +3,23 @@
 /// Handles MCP server registration and hook binding for the Codex harness.
 ///
 /// Codex-native lowering:
-/// - MCP: writes to `codex_mcp.json` (mcpServers section), env vars as plain names
+/// - MCP: writes to `config.toml` (`[mcp.servers.*]`), env vars as plain names
 /// - Hooks: writes to `codex_hooks.json` with structural hook entries
 use std::path::{Path, PathBuf};
 
+use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
+use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
 
 use super::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter, hook_command};
 
 #[derive(Debug)]
 pub struct CodexAdapter;
+
+const CODEX_CONFIG_TOML: &str = "config.toml";
+const LEGACY_CODEX_MCP_JSON: &str = "codex_mcp.json";
 
 impl TargetAdapter for CodexAdapter {
     fn name(&self) -> &str {
@@ -62,7 +67,7 @@ impl TargetAdapter for CodexAdapter {
             .collect();
 
         if !mcp_servers.is_empty() {
-            let path = write_codex_mcp_json(target_dir, &mcp_servers)?;
+            let path = write_codex_mcp_toml(target_dir, &mcp_servers)?;
             written.push(path);
         }
 
@@ -74,11 +79,50 @@ impl TargetAdapter for CodexAdapter {
         Ok(written)
     }
 
+    fn emit_pre_write_diagnostics(
+        &self,
+        entries: &[ConfigEntry],
+        target_dir: &Path,
+        diag: &mut crate::diagnostic::DiagnosticCollector,
+    ) {
+        let has_mcp_entries = entries
+            .iter()
+            .any(|entry| matches!(entry, ConfigEntry::McpServer(_)));
+        if !has_mcp_entries {
+            return;
+        }
+
+        let legacy_path = target_dir.join(LEGACY_CODEX_MCP_JSON);
+        if legacy_path.is_file() {
+            diag.info(
+                "legacy-config-cleanup",
+                format!(
+                    "target `.codex`: removing legacy MCP config `{}` during sync",
+                    legacy_path.display()
+                ),
+            );
+        }
+
+        let config_path = target_dir.join(CODEX_CONFIG_TOML);
+        if config_path.is_file()
+            && let Err(err) = parse_existing_toml_document(&config_path)
+        {
+            diag.warn(
+                "codex-config-parse-error",
+                format!(
+                    "target `.codex`: cannot parse `{}`; skipping Codex MCP writes/removals until fixed: {err}",
+                    config_path.display()
+                ),
+            );
+        }
+    }
+
     fn remove_config_entries(
         &self,
         entry_keys: &[String],
         target_dir: &Path,
     ) -> Result<(), MarsError> {
+        remove_legacy_codex_mcp_json(target_dir)?;
         remove_codex_mcp_entries(entry_keys, target_dir)?;
         remove_codex_hook_entries(entry_keys, target_dir)?;
         Ok(())
@@ -86,108 +130,158 @@ impl TargetAdapter for CodexAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// Codex MCP — `codex_mcp.json` format
+// Codex MCP — `config.toml` format
 // ---------------------------------------------------------------------------
 //
 // Codex uses plain environment variable names (no interpolation syntax).
 // Format:
-// {
-//   "mcpServers": {
-//     "server-name": {
-//       "command": "...",
-//       "args": [...],
-//       "env": ["ENV_VAR_NAME", ...]   ← list of var names, not map
-//     }
-//   }
-// }
+// [mcp.servers.my-server]
+// command = "npx"
+// args = ["-y", "my-server@latest"]
+// env = ["MY_API_KEY"]
 
-fn write_codex_mcp_json(
+fn write_codex_mcp_toml(
     target_dir: &Path,
     servers: &[&McpServerEntry],
 ) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("codex_mcp.json");
+    let path = target_dir.join(CODEX_CONFIG_TOML);
+    remove_legacy_codex_mcp_json(target_dir)?;
 
-    let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-
-    let mcp_obj = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let mcp_map = mcp_obj.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
-        })
-    })?;
+    let mut doc = load_or_new_toml_document(&path)?;
+    let mcp_servers = ensure_mcp_servers_table(&mut doc, &path)?;
 
     for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
+        let mut server_table = Table::new();
+        match server.transport {
+            McpTransport::Stdio => {
+                if let Some(command) = server.command.as_ref() {
+                    server_table["command"] = value(command.as_str());
+                }
+                server_table["args"] = toml_string_array(server.args.clone());
+            }
+            McpTransport::Http => {
+                if let Some(url) = server.url.as_ref() {
+                    server_table["url"] = value(url.as_str());
+                }
+
+                let mut bearer_token_env_var: Option<String> = None;
+                let mut http_headers = Table::new();
+                for (header, value_ref) in &server.headers {
+                    match value_ref {
+                        HeaderValue::Plain(plain_value) => {
+                            http_headers[header.as_str()] = value(plain_value.as_str());
+                        }
+                        HeaderValue::EnvRef(env_ref) => {
+                            if header.eq_ignore_ascii_case("Authorization") {
+                                bearer_token_env_var = Some(env_ref.var_name().to_string());
+                            } else {
+                                http_headers[header.as_str()] = value(env_ref.var_name());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(token_var) = bearer_token_env_var {
+                    server_table["bearer_token_env_var"] = value(token_var);
+                }
+                if !http_headers.is_empty() {
+                    server_table["http_headers"] = Item::Table(http_headers);
+                }
+            }
+        }
 
         // Codex env: list of variable names (not a map with values).
         if !server.env.is_empty() {
-            let env_list: Vec<serde_json::Value> = server
-                .env
-                .values()
-                .map(|v| serde_json::Value::String(v.clone()))
-                .collect();
-            entry["env"] = serde_json::Value::Array(env_list);
+            let env_vars: Vec<String> = server.env.values().cloned().collect();
+            server_table["env"] = toml_string_array(env_vars);
         }
 
-        mcp_map.insert(server.name.clone(), entry);
+        mcp_servers.insert(server.name.as_str(), Item::Table(server_table));
     }
 
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-
+    crate::fs::atomic_write(&path, doc.to_string().as_bytes())?;
     Ok(path)
 }
 
 fn remove_codex_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let path = target_dir.join("codex_mcp.json");
+    let path = target_dir.join(CODEX_CONFIG_TOML);
     if !path.is_file() {
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut doc = load_or_new_toml_document(&path)?;
+    let mcp_servers = ensure_mcp_servers_table(&mut doc, &path)?;
 
-    if let Some(mcp_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("mcpServers"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for key in entry_keys {
-            if let Some(name) = key.strip_prefix("mcp:") {
-                mcp_map.remove(name);
-            }
+    for key in entry_keys {
+        if let Some(name) = key.strip_prefix("mcp:") {
+            mcp_servers.remove(name);
         }
     }
 
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
+    crate::fs::atomic_write(&path, doc.to_string().as_bytes())?;
+    Ok(())
+}
+
+fn load_or_new_toml_document(path: &Path) -> Result<DocumentMut, MarsError> {
+    if !path.is_file() {
+        return Ok(DocumentMut::new());
+    }
+
+    parse_existing_toml_document(path)
+}
+
+fn parse_existing_toml_document(path: &Path) -> Result<DocumentMut, MarsError> {
+    let raw = std::fs::read_to_string(path).map_err(MarsError::from)?;
+    raw.parse::<DocumentMut>().map_err(|e| {
         MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
+            message: format!(
+                "{}: failed to parse TOML; refusing to overwrite existing config: {e}",
+                path.display()
+            ),
+        })
+    })
+}
+
+fn toml_string_array(values: impl IntoIterator<Item = String>) -> Item {
+    let mut array = Array::new();
+    for value in values {
+        array.push(value);
+    }
+    Item::Value(Value::Array(array))
+}
+
+fn ensure_mcp_servers_table<'a>(
+    doc: &'a mut DocumentMut,
+    path: &Path,
+) -> Result<&'a mut Table, MarsError> {
+    let root = doc.as_table_mut();
+
+    let mcp_item = root
+        .entry("mcp")
+        .or_insert_with(|| Item::Table(Table::new()));
+    let mcp_table = mcp_item.as_table_mut().ok_or_else(|| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{}: mcp is not a table", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-    Ok(())
+
+    let servers_item = mcp_table
+        .entry("servers")
+        .or_insert_with(|| Item::Table(Table::new()));
+    servers_item.as_table_mut().ok_or_else(|| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{}: mcp.servers is not a table", path.display()),
+        })
+    })
+}
+
+fn remove_legacy_codex_mcp_json(target_dir: &Path) -> Result<(), MarsError> {
+    let legacy_path = target_dir.join(LEGACY_CODEX_MCP_JSON);
+    if !legacy_path.is_file() {
+        return Ok(());
+    }
+
+    std::fs::remove_file(&legacy_path).map_err(MarsError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -332,15 +426,20 @@ fn codex_hook_event(event: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::DiagnosticCollector;
     use indexmap::IndexMap;
     use tempfile::TempDir;
+    use toml::Value as TomlValue;
 
     fn make_mcp_entry(name: &str) -> ConfigEntry {
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
             env: IndexMap::new(),
+            url: None,
+            headers: IndexMap::new(),
         })
     }
 
@@ -349,9 +448,36 @@ mod tests {
         env.insert("API_KEY".to_string(), "MY_SECRET".to_string());
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec![],
             env,
+            url: None,
+            headers: IndexMap::new(),
+        })
+    }
+
+    fn make_http_mcp_entry(name: &str) -> ConfigEntry {
+        let mut headers = IndexMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            HeaderValue::EnvRef(crate::compiler::mcp::EnvRef::Env {
+                var: "API_TOKEN".to_string(),
+            }),
+        );
+        headers.insert(
+            "X-Custom".to_string(),
+            HeaderValue::Plain("static-value".to_string()),
+        );
+
+        ConfigEntry::McpServer(McpServerEntry {
+            name: name.to_string(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: IndexMap::new(),
+            url: Some("https://api.example.com/mcp".to_string()),
+            headers,
         })
     }
 
@@ -376,17 +502,17 @@ mod tests {
     }
 
     #[test]
-    fn write_mcp_creates_codex_mcp_json() {
+    fn write_mcp_creates_codex_config_toml() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry("context7")];
         let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
         assert_eq!(written.len(), 1);
-        assert!(tmp.path().join("codex_mcp.json").exists());
+        assert!(tmp.path().join(CODEX_CONFIG_TOML).exists());
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_object());
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        assert!(toml["mcp"]["servers"]["context7"].is_table());
     }
 
     #[test]
@@ -396,12 +522,118 @@ mod tests {
         let entries = vec![make_mcp_entry_with_env("server")];
         adapter.write_config_entries(&entries, tmp.path()).unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
         // Codex: env is a list of variable names, not a map with values.
-        assert!(json["mcpServers"]["server"]["env"].is_array());
-        let env_arr = json["mcpServers"]["server"]["env"].as_array().unwrap();
+        assert!(toml["mcp"]["servers"]["server"]["env"].is_array());
+        let env_arr = toml["mcp"]["servers"]["server"]["env"].as_array().unwrap();
         assert!(env_arr.iter().any(|v| v.as_str() == Some("MY_SECRET")));
+    }
+
+    #[test]
+    fn write_mcp_preserves_non_mcp_toml_content() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(CODEX_CONFIG_TOML),
+            r#"
+[ui]
+theme = "dark"
+"#,
+        )
+        .unwrap();
+
+        let adapter = CodexAdapter;
+        adapter
+            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        assert_eq!(toml["ui"]["theme"].as_str(), Some("dark"));
+        assert_eq!(
+            toml["mcp"]["servers"]["context7"]["command"].as_str(),
+            Some("npx")
+        );
+    }
+
+    #[test]
+    fn write_http_mcp_uses_url_bearer_token_and_http_headers() {
+        let tmp = TempDir::new().unwrap();
+        let adapter = CodexAdapter;
+        adapter
+            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        let server = &toml["mcp"]["servers"]["remote-server"];
+        assert_eq!(server["url"].as_str(), Some("https://api.example.com/mcp"));
+        assert_eq!(server["bearer_token_env_var"].as_str(), Some("API_TOKEN"));
+        assert_eq!(
+            server["http_headers"]["X-Custom"].as_str(),
+            Some("static-value")
+        );
+        assert!(server.get("command").is_none());
+        assert!(server.get("args").is_none());
+    }
+
+    #[test]
+    fn write_mcp_removes_legacy_codex_mcp_json() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
+        let adapter = CodexAdapter;
+
+        adapter
+            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+            .unwrap();
+
+        assert!(!tmp.path().join(LEGACY_CODEX_MCP_JSON).exists());
+    }
+
+    #[test]
+    fn emit_pre_write_diagnostics_warns_about_legacy_codex_mcp_json() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
+        let adapter = CodexAdapter;
+        let mut diag = DiagnosticCollector::new();
+
+        adapter.emit_pre_write_diagnostics(&[make_mcp_entry("context7")], tmp.path(), &mut diag);
+
+        let diagnostics = diag.drain();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "legacy-config-cleanup");
+        assert!(diagnostics[0].message.contains(LEGACY_CODEX_MCP_JSON));
+    }
+
+    #[test]
+    fn emit_pre_write_diagnostics_warns_about_invalid_codex_config_toml() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), "[ui\n").unwrap();
+        let adapter = CodexAdapter;
+        let mut diag = DiagnosticCollector::new();
+
+        adapter.emit_pre_write_diagnostics(&[make_mcp_entry("context7")], tmp.path(), &mut diag);
+
+        let diagnostics = diag.drain();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "codex-config-parse-error");
+        assert!(diagnostics[0].message.contains(CODEX_CONFIG_TOML));
+    }
+
+    #[test]
+    fn write_mcp_invalid_toml_returns_error_without_clobbering_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
+
+        let adapter = CodexAdapter;
+        let err = adapter
+            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+            .expect_err("invalid TOML should fail and not be overwritten");
+        assert!(err.to_string().contains("failed to parse TOML"));
+
+        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        assert_eq!(after, original);
     }
 
     #[test]
@@ -459,10 +691,26 @@ mod tests {
             .remove_config_entries(&["mcp:to-remove".to_string()], tmp.path())
             .unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["to-remove"].is_null());
-        assert!(json["mcpServers"]["to-keep"].is_object());
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        assert!(toml["mcp"]["servers"].get("to-remove").is_none());
+        assert!(toml["mcp"]["servers"]["to-keep"].is_table());
+    }
+
+    #[test]
+    fn remove_mcp_entries_invalid_toml_returns_error_without_clobbering_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
+
+        let adapter = CodexAdapter;
+        let err = adapter
+            .remove_config_entries(&["mcp:context7".to_string()], tmp.path())
+            .expect_err("invalid TOML should fail and not be overwritten");
+        assert!(err.to_string().contains("failed to parse TOML"));
+
+        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        assert_eq!(after, original);
     }
 
     #[test]

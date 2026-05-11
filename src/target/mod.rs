@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
+use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -56,12 +57,18 @@ impl ConfigEntry {
 pub struct McpServerEntry {
     /// Server name as it appears in the target config.
     pub name: String,
-    /// Launch command.
-    pub command: String,
+    /// Transport kind.
+    pub transport: McpTransport,
+    /// Launch command (stdio only).
+    pub command: Option<String>,
     /// Launch arguments.
     pub args: Vec<String>,
     /// Env vars: config key → environment variable name (symbolic, never resolved).
     pub env: IndexMap<String, String>,
+    /// Remote URL (http only).
+    pub url: Option<String>,
+    /// HTTP headers (http only).
+    pub headers: IndexMap<String, HeaderValue>,
 }
 
 /// A hook binding entry ready to be written into a target config file.
@@ -138,6 +145,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn emit_pre_write_diagnostics(
         &self,
         _entries: &[ConfigEntry],
+        _target_dir: &Path,
         _diag: &mut crate::diagnostic::DiagnosticCollector,
     ) {
     }

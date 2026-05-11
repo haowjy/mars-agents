@@ -9,6 +9,7 @@
 /// - Env references: rendered as `${VAR_NAME}` for Claude Desktop config compat
 use std::path::{Path, PathBuf};
 
+use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::error::{ConfigError, MarsError};
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -137,10 +138,38 @@ fn write_mcp_json(target_dir: &Path, servers: &[&McpServerEntry]) -> Result<Path
     })?;
 
     for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
+        let mut entry = match server.transport {
+            McpTransport::Stdio => serde_json::json!({
+                "command": server.command,
+                "args": server.args,
+            }),
+            McpTransport::Http => {
+                let mut http_entry = serde_json::json!({
+                    "type": "http",
+                    "url": server.url,
+                });
+                if !server.headers.is_empty() {
+                    let headers_obj: serde_json::Map<String, serde_json::Value> = server
+                        .headers
+                        .iter()
+                        .map(|(k, v)| {
+                            let value = match v {
+                                HeaderValue::EnvRef(env_ref) => serde_json::Value::String(format!(
+                                    "${{{}}}",
+                                    env_ref.var_name()
+                                )),
+                                HeaderValue::Plain(plain) => {
+                                    serde_json::Value::String(plain.clone())
+                                }
+                            };
+                            (k.clone(), value)
+                        })
+                        .collect();
+                    http_entry["headers"] = serde_json::Value::Object(headers_obj);
+                }
+                http_entry
+            }
+        };
 
         if !server.env.is_empty() {
             let env_obj: serde_json::Map<String, serde_json::Value> = server
@@ -389,9 +418,12 @@ mod tests {
     fn make_mcp_entry(name: &str) -> ConfigEntry {
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
             env: IndexMap::new(),
+            url: None,
+            headers: IndexMap::new(),
         })
     }
 
@@ -400,9 +432,36 @@ mod tests {
         env.insert(env_key.to_string(), env_var.to_string());
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec![],
             env,
+            url: None,
+            headers: IndexMap::new(),
+        })
+    }
+
+    fn make_http_mcp_entry(name: &str) -> ConfigEntry {
+        let mut headers = IndexMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            HeaderValue::EnvRef(crate::compiler::mcp::EnvRef::Env {
+                var: "API_TOKEN".to_string(),
+            }),
+        );
+        headers.insert(
+            "X-Custom".to_string(),
+            HeaderValue::Plain("static-value".to_string()),
+        );
+
+        ConfigEntry::McpServer(McpServerEntry {
+            name: name.to_string(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: IndexMap::new(),
+            url: Some("https://api.example.com/mcp".to_string()),
+            headers,
         })
     }
 
@@ -484,6 +543,24 @@ mod tests {
             json["mcpServers"]["server"]["env"]["API_KEY"],
             "${MY_SECRET}"
         );
+    }
+
+    #[test]
+    fn write_mcp_http_renders_type_url_and_headers() {
+        let tmp = TempDir::new().unwrap();
+        let adapter = ClaudeAdapter;
+        adapter
+            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let server = &json["mcpServers"]["remote-server"];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], "https://api.example.com/mcp");
+        assert_eq!(server["headers"]["Authorization"], "${API_TOKEN}");
+        assert_eq!(server["headers"]["X-Custom"], "static-value");
+        assert!(server["command"].is_null());
     }
 
     #[test]

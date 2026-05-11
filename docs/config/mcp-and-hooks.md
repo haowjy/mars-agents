@@ -4,14 +4,35 @@ Packages can ship MCP server registrations and lifecycle hooks alongside their
 agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
-- **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, etc.).
+- **MCP servers** are registered per harness target (for example
+  `.claude/.mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`).
 - **Hooks** run scripts in response to harness lifecycle events
   (`session.start`, `tool.pre`, etc.) and are registered in each target's
   hook config file.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
+
+## Target-Specific MCP Output
+
+Mars lowers MCP entries to each harness's native schema:
+
+- **`.claude`**: `.mcp.json` with `mcpServers`
+  - **stdio**: `{ "command": "...", "args": [...], "env": { "KEY": "${VAR}" } }`
+  - **http**: `{ "type": "http", "url": "...", "headers": { ... } }`
+- **`.codex`**: `config.toml` with `[mcp.servers.<name>]`
+  - **stdio**: `command`, `args`, optional `env = ["MY_API_KEY"]`
+  - **http**: `url`, optional `bearer_token_env_var`, optional `[http_headers]`
+    - `Authorization = { from = "env", var = "API_TOKEN" }` lowers to
+      `bearer_token_env_var = "API_TOKEN"`
+    - Other env-ref headers lower to `http_headers` values with the var name
+  - Legacy `codex_mcp.json` is removed automatically during sync, with a
+    diagnostic entry.
+- **`.opencode`**: `opencode.json` with `mcp`
+  - Each stdio server is `{ "type": "local", "command": [cmd, ...args] }`
+  - Each HTTP server is `{ "type": "remote", "url": "...", "headers": { ... } }`
+  - Env maps to `environment`; header env refs lower to plain var-name strings
+  - Legacy `mcpServers` is migrated to `mcp` when `mcp` is absent.
 
 ## Declaring MCP Servers in a Package
 
@@ -41,6 +62,28 @@ targets = [".claude", ".codex"]
 # "exported" = propagates to transitive consumers too
 visibility = "local"
 ```
+
+Transport is explicit with `type`:
+
+- `type = "stdio"` (default when omitted)
+- `type = "http"`
+
+HTTP servers use `url` and optional headers:
+
+```toml
+type = "http"
+url  = "https://api.example.com/mcp"
+
+[headers]
+Authorization = { from = "env", var = "API_TOKEN" }
+X-Custom      = "static-value"
+```
+
+### Field legality by transport
+
+- **stdio** (default): `command` required. `url` must be absent. `headers` must be empty.
+- **http**: `url` required. `command` must be absent. `args` must be empty.
+  `headers` and `env` are allowed.
 
 **Env references** — if the server needs secrets, declare them symbolically.
 Mars never resolves the values; harnesses substitute them at runtime:

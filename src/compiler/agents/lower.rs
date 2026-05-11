@@ -10,7 +10,9 @@
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
-use crate::compiler::agents::{AgentProfile, HarnessKind, OverrideFields};
+use crate::compiler::agents::{
+    AgentProfile, HarnessKind, OverrideFields, SandboxMode, ToolAction, ToolRule, ToolsField,
+};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -82,24 +84,345 @@ impl<'a> Effective<'a> {
         &self.profile.skills
     }
 
-    fn tools(&self) -> &[String] {
-        if let Some(ov) = self.over.and_then(|o| o.tools.as_ref()) {
-            return ov;
-        }
-        &self.profile.tools
-    }
-
-    fn disallowed_tools(&self) -> &[String] {
-        if let Some(ov) = self.over.and_then(|o| o.disallowed_tools.as_ref()) {
-            return ov;
-        }
-        &self.profile.disallowed_tools
+    fn tools(&self) -> Option<&ToolsField> {
+        self.over
+            .and_then(|o| o.tools.as_ref())
+            .or(self.profile.tools.as_ref())
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
         self.over
             .and_then(|o| o.autocompact_pct)
             .or(self.profile.autocompact_pct)
+    }
+}
+
+const CAPABILITY_TO_CLAUDE_TOOLS: &[(&str, &[&str])] = &[
+    ("bash", &["Bash"]),
+    ("read", &["Read"]),
+    ("edit", &["Edit", "Write"]),
+    ("glob", &["Glob"]),
+    ("grep", &["Grep"]),
+    ("task", &["Agent"]),
+    ("web", &["WebSearch", "WebFetch"]),
+    ("lsp", &["LSP"]),
+];
+
+fn push_lossy(
+    lossy: &mut Vec<LossyField>,
+    field: impl Into<String>,
+    target: &str,
+    classification: Lossiness,
+) {
+    lossy.push(LossyField {
+        field: field.into(),
+        target: target.to_string(),
+        classification,
+    });
+}
+
+fn push_unique(dest: &mut Vec<String>, values: &[String]) {
+    for value in values {
+        if !dest.contains(value) {
+            dest.push(value.clone());
+        }
+    }
+}
+
+fn cap_to_claude_tools(cap: &str) -> Vec<String> {
+    CAPABILITY_TO_CLAUDE_TOOLS
+        .iter()
+        .find_map(|(capability, tools)| {
+            (*capability == cap).then_some(tools.iter().map(|s| (*s).to_string()).collect())
+        })
+        .unwrap_or_else(|| vec![cap.to_string()])
+}
+
+fn compile_tools_for_claude(
+    tools: Option<&ToolsField>,
+    lossy: &mut Vec<LossyField>,
+    target: &str,
+) -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let Some(tools) = tools else {
+        return (None, None);
+    };
+
+    match tools {
+        ToolsField::Shorthand(ToolAction::Allow) => (None, None),
+        ToolsField::Shorthand(ToolAction::Deny) => (Some(Vec::new()), None),
+        ToolsField::Shorthand(ToolAction::Ask) => {
+            push_lossy(
+                lossy,
+                "tools",
+                target,
+                Lossiness::Approximate {
+                    note: "Claude cannot preserve ask policy; lowered as allow",
+                },
+            );
+            (None, None)
+        }
+        ToolsField::Map(map) => {
+            let default_action = match map.get("*") {
+                Some(ToolRule::Action(action)) => action.clone(),
+                Some(ToolRule::Scoped(_)) => {
+                    push_lossy(lossy, "tools.*", target, Lossiness::Dropped);
+                    ToolAction::Allow
+                }
+                None => ToolAction::Allow,
+            };
+            if default_action == ToolAction::Ask {
+                push_lossy(
+                    lossy,
+                    "tools.*",
+                    target,
+                    Lossiness::Approximate {
+                        note: "Claude cannot preserve ask policy; lowered as allow",
+                    },
+                );
+            }
+
+            let mut allow = Vec::new();
+            let mut deny = Vec::new();
+
+            for (cap, rule) in map {
+                if cap == "*" {
+                    continue;
+                }
+                match rule {
+                    ToolRule::Scoped(_) => {
+                        push_lossy(lossy, format!("tools.{cap}"), target, Lossiness::Dropped);
+                    }
+                    ToolRule::Action(action) => {
+                        if *action == ToolAction::Ask {
+                            push_lossy(
+                                lossy,
+                                format!("tools.{cap}"),
+                                target,
+                                Lossiness::Approximate {
+                                    note: "Claude cannot preserve ask policy; lowered as allow",
+                                },
+                            );
+                        }
+                        let mapped = cap_to_claude_tools(cap);
+                        let action_as_allow = *action != ToolAction::Deny;
+                        let default_allows = default_action != ToolAction::Deny;
+                        if action_as_allow && !default_allows {
+                            push_unique(&mut allow, &mapped);
+                        } else if !action_as_allow && default_allows {
+                            push_unique(&mut deny, &mapped);
+                        }
+                    }
+                }
+            }
+
+            let tools_list = if default_action == ToolAction::Deny || !allow.is_empty() {
+                Some(allow)
+            } else {
+                None
+            };
+            let deny_list = (!deny.is_empty()).then_some(deny);
+            (tools_list, deny_list)
+        }
+    }
+}
+
+fn default_tool_action(map: &std::collections::BTreeMap<String, ToolRule>) -> ToolAction {
+    match map.get("*") {
+        Some(ToolRule::Action(action)) => action.clone(),
+        _ => ToolAction::Allow,
+    }
+}
+
+fn action_for_capability(tools: &ToolsField, capability: &str) -> ToolAction {
+    match tools {
+        ToolsField::Shorthand(action) => action.clone(),
+        ToolsField::Map(map) => match map.get(capability) {
+            Some(ToolRule::Action(action)) => action.clone(),
+            _ => default_tool_action(map),
+        },
+    }
+}
+
+fn explicit_action_for_capability(tools: &ToolsField, capability: &str) -> Option<ToolAction> {
+    match tools {
+        ToolsField::Shorthand(_) => None,
+        ToolsField::Map(map) => match map.get(capability) {
+            Some(ToolRule::Action(action)) => Some(action.clone()),
+            _ => None,
+        },
+    }
+}
+
+fn has_wildcard_allow(tools: &ToolsField) -> bool {
+    match tools {
+        ToolsField::Shorthand(action) => *action != ToolAction::Deny,
+        ToolsField::Map(map) => default_tool_action(map) != ToolAction::Deny,
+    }
+}
+
+fn infer_codex_sandbox_from_tools(tools: Option<&ToolsField>) -> &'static str {
+    let Some(tools) = tools else {
+        return "read-only";
+    };
+
+    let bash_allowed = action_for_capability(tools, "bash") != ToolAction::Deny;
+    let edit_allowed = action_for_capability(tools, "edit") != ToolAction::Deny;
+    let external_directory_allowed =
+        action_for_capability(tools, "external_directory") != ToolAction::Deny;
+    let bash_denied = explicit_action_for_capability(tools, "bash") == Some(ToolAction::Deny);
+    let edit_denied = explicit_action_for_capability(tools, "edit") == Some(ToolAction::Deny);
+
+    if (external_directory_allowed || has_wildcard_allow(tools)) && !bash_denied && !edit_denied {
+        return "danger-full-access";
+    }
+
+    if bash_allowed || edit_allowed {
+        return "workspace-write";
+    }
+
+    "read-only"
+}
+
+fn collect_codex_tools_lossiness(
+    tools: Option<&ToolsField>,
+    lossy: &mut Vec<LossyField>,
+    target: &str,
+) {
+    let Some(tools) = tools else {
+        return;
+    };
+
+    match tools {
+        ToolsField::Shorthand(ToolAction::Ask) => push_lossy(
+            lossy,
+            "tools",
+            target,
+            Lossiness::Approximate {
+                note: "Codex tools collapse to sandbox-only policy",
+            },
+        ),
+        ToolsField::Shorthand(_) => {}
+        ToolsField::Map(map) => {
+            for (cap, rule) in map {
+                // Wildcard allow/deny map exactly to sandbox semantics — no lossiness.
+                if cap == "*" {
+                    if let ToolRule::Action(ToolAction::Ask) = rule {
+                        push_lossy(
+                            lossy,
+                            "tools.*",
+                            target,
+                            Lossiness::Approximate {
+                                note: "ask lowered as allow in sandbox inference",
+                            },
+                        );
+                    }
+                    continue;
+                }
+                match rule {
+                    ToolRule::Action(ToolAction::Ask) => {
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Approximate {
+                                note: "ask lowered as allow in sandbox inference",
+                            },
+                        );
+                    }
+                    ToolRule::Scoped(_) => {
+                        push_lossy(lossy, format!("tools.{cap}"), target, Lossiness::Dropped);
+                    }
+                    _ => {
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Approximate {
+                                note: "Codex tools collapse to sandbox-only policy",
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Capability expansions for Pi — capabilities that map to multiple tool names.
+const PI_CAPABILITY_EXPANSIONS: &[(&str, &[&str])] = &[
+    ("edit", &["edit", "write"]),
+    ("web", &["websearch", "webfetch"]),
+];
+
+fn expand_pi_capability(cap: &str) -> Vec<String> {
+    PI_CAPABILITY_EXPANSIONS
+        .iter()
+        .find_map(|(c, expanded)| {
+            (*c == cap).then_some(expanded.iter().map(|s| (*s).to_string()).collect())
+        })
+        .unwrap_or_else(|| vec![cap.to_string()])
+}
+
+fn compile_tools_for_pi(
+    tools: Option<&ToolsField>,
+    lossy: &mut Vec<LossyField>,
+    target: &str,
+) -> Option<String> {
+    let tools = tools?;
+
+    match tools {
+        ToolsField::Shorthand(ToolAction::Allow) => None,
+        ToolsField::Shorthand(ToolAction::Deny) => Some(String::new()),
+        ToolsField::Shorthand(ToolAction::Ask) => {
+            push_lossy(
+                lossy,
+                "tools",
+                target,
+                Lossiness::Approximate {
+                    note: "Pi cannot preserve ask policy; lowered as allow",
+                },
+            );
+            None
+        }
+        ToolsField::Map(map) => {
+            let mut allowed = Vec::new();
+            for (cap, rule) in map {
+                if cap == "*" {
+                    if let ToolRule::Action(ToolAction::Ask) = rule {
+                        push_lossy(
+                            lossy,
+                            "tools.*",
+                            target,
+                            Lossiness::Approximate {
+                                note: "Pi cannot preserve ask policy; lowered as allow",
+                            },
+                        );
+                    }
+                    continue;
+                }
+                match rule {
+                    ToolRule::Scoped(_) => {
+                        push_lossy(lossy, format!("tools.{cap}"), target, Lossiness::Dropped);
+                    }
+                    ToolRule::Action(ToolAction::Allow) => {
+                        push_unique(&mut allowed, &expand_pi_capability(cap));
+                    }
+                    ToolRule::Action(ToolAction::Ask) => {
+                        push_unique(&mut allowed, &expand_pi_capability(cap));
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Approximate {
+                                note: "Pi cannot preserve ask policy; lowered as allow",
+                            },
+                        );
+                    }
+                    ToolRule::Action(ToolAction::Deny) => {}
+                }
+            }
+            (!allowed.is_empty()).then_some(allowed.join(", "))
+        }
     }
 }
 
@@ -145,18 +468,15 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
             serde_yaml::Value::Sequence(skills.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("skills"), seq);
     }
-    // tools — exact
-    let tools = eff.tools();
-    if !tools.is_empty() {
+    let (tools_allow, tools_deny) = compile_tools_for_claude(eff.tools(), &mut lossy, "Claude");
+    if let Some(tools) = tools_allow {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(tools.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("tools"), seq);
     }
-    // disallowed-tools — exact
-    let dt = eff.disallowed_tools();
-    if !dt.is_empty() {
+    if let Some(disallowed) = tools_deny {
         let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(dt.iter().map(|s| yv(s)).collect());
+            serde_yaml::Value::Sequence(disallowed.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("disallowed-tools"), seq);
     }
 
@@ -175,14 +495,14 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
 
     // --- Dropped / meridian-only fields ---
     let target = "Claude";
-    if profile.approval.is_some() {
+    if eff.approval().is_some() {
         lossy.push(LossyField {
             field: "approval".into(),
             target: target.into(),
             classification: Lossiness::Dropped,
         });
     }
-    if profile.sandbox.is_some() {
+    if eff.sandbox().is_some() {
         lossy.push(LossyField {
             field: "sandbox".into(),
             target: target.into(),
@@ -273,8 +593,14 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     // Effort — exact (lowered to model_reasoning_effort)
     let effort_str = eff.effort().map(|e| e.as_str());
 
-    // Sandbox — exact
-    let sandbox_str = eff.sandbox().map(|s| s.as_str());
+    // Sandbox — explicit non-default policy wins; otherwise infer from tools
+    // only when tools are present. No tools + no sandbox → omit sandbox_mode.
+    let sandbox_str = match eff.sandbox() {
+        Some(s) if *s != SandboxMode::Default => Some(s.as_str()),
+        _ => eff
+            .tools()
+            .map(|_| infer_codex_sandbox_from_tools(eff.tools())),
+    };
 
     // Approval — exact (lowered to approval_policy)
     let approval_policy = eff.approval().and_then(|a| {
@@ -296,22 +622,7 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::Dropped,
         });
     }
-    let tools = eff.tools();
-    if !tools.is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    let dt = eff.disallowed_tools();
-    if !dt.is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
+    collect_codex_tools_lossiness(eff.tools(), &mut lossy, target);
     if !profile.mcp_tools.is_empty() {
         lossy.push(LossyField {
             field: "mcp-tools".into(),
@@ -452,20 +763,6 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::Dropped,
         });
     }
-    if !eff.tools().is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.disallowed_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
     if eff.effort().is_some() {
         lossy.push(LossyField {
             field: "effort".into(),
@@ -548,6 +845,7 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
 pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
     let mut lossy = Vec::new();
     let target = "Pi";
+    let eff = Effective::new(profile, &HarnessKind::Pi);
 
     let mut yaml = serde_yaml::Mapping::new();
     let yk = |s: &str| serde_yaml::Value::String(s.to_string());
@@ -574,8 +872,11 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
         });
     }
 
+    if let Some(tools) = compile_tools_for_pi(eff.tools(), &mut lossy, target) {
+        yaml.insert(yk("tools"), yv(&tools));
+    }
+
     // Everything else is dropped
-    let eff = Effective::new(profile, &HarnessKind::Pi);
     if eff.approval().is_some() {
         lossy.push(LossyField {
             field: "approval".into(),
@@ -586,20 +887,6 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
     if eff.sandbox().is_some() {
         lossy.push(LossyField {
             field: "sandbox".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.tools().is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.disallowed_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
             target: target.into(),
             classification: Lossiness::Dropped,
         });
@@ -688,6 +975,7 @@ pub fn lower_for_harness(
 
 #[cfg(test)]
 mod tests {
+    // qa-validated: mars-tools-abstraction
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
 
@@ -701,7 +989,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_preserves_name_description_model_skills_tools_body() {
-        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools: [Bash, Write]\n---\n# Coder\nYou write code.";
+        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools:\n  \"*\": deny\n  bash: allow\n  edit: allow\n---\n# Coder\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
         let out = lower_to_claude(&profile, &fm, body);
@@ -714,7 +1002,41 @@ mod tests {
         assert!(text.contains("model: gpt55"), "model missing");
         assert!(text.contains("skills"), "skills missing");
         assert!(text.contains("tools"), "tools missing");
+        assert!(text.contains("Bash"), "bash missing");
+        assert!(text.contains("Edit"), "edit missing");
+        assert!(text.contains("Write"), "write missing");
         assert!(text.contains("# Coder"), "body missing");
+    }
+
+    #[test]
+    fn claude_tools_ask_is_approximate_and_scoped_is_dropped() {
+        let content = "---\nname: coder\nharness: claude\ntools:\n  \"*\": deny\n  bash: ask\n  read:\n    \"*.env\": allow\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(text.contains("Bash"), "ask should lower to allow");
+        assert!(!text.contains("*.env"), "scoped rule should be dropped");
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.bash" && matches!(lf.classification, Lossiness::Approximate { .. })
+        }));
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.read" && matches!(lf.classification, Lossiness::Dropped)
+        }));
+    }
+
+    #[test]
+    fn claude_tools_map_default_allow_emits_disallowed_tools() {
+        let content =
+            "---\nname: r\nharness: claude\ntools:\n  \"*\": allow\n  task: deny\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("tools: []"), "should not emit allowlist");
+        assert!(
+            text.contains("disallowed-tools"),
+            "deny list should be emitted"
+        );
+        assert!(text.contains("Agent"), "task deny should map to Agent");
     }
 
     #[test]
@@ -823,24 +1145,33 @@ mod tests {
     }
 
     #[test]
-    fn codex_lowering_drops_skills_and_tools() {
-        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools: [Bash]\ndisallowed-tools: [Agent]\n---\n# body";
+    fn codex_lowering_drops_skills_and_inferrs_sandbox_from_tools() {
+        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools:\n  \"*\": deny\n  bash: allow\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body());
-        let dropped: Vec<_> = out
+        let approx: Vec<_> = out
             .lossy_fields
             .iter()
-            .filter(|f| matches!(f.classification, Lossiness::Dropped))
+            .filter(|f| matches!(f.classification, Lossiness::Approximate { .. }))
             .map(|f| f.field.as_str())
             .collect();
-        assert!(dropped.contains(&"skills"));
-        assert!(dropped.contains(&"tools"));
-        assert!(dropped.contains(&"disallowed-tools"));
+        assert!(approx.contains(&"tools.bash"));
+        assert!(
+            out.lossy_fields
+                .iter()
+                .any(|f| { f.field == "skills" && matches!(f.classification, Lossiness::Dropped) })
+        );
+
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"workspace-write\""),
+            "sandbox should be inferred from bash allow: {text}"
+        );
     }
 
     #[test]
     fn codex_harness_override_applied() {
-        let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
+        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": deny\n  bash: allow\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: read-only\n    tools:\n      \"*\": deny\n      read: allow\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
@@ -849,9 +1180,44 @@ mod tests {
             "override not applied: {text}"
         );
         assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
+            text.contains("sandbox_mode = \"read-only\""),
             "sandbox override not applied: {text}"
         );
+        assert!(
+            out.lossy_fields.iter().any(|lf| lf.field == "tools.read"
+                && matches!(lf.classification, Lossiness::Approximate { .. })),
+            "override tools should replace top-level tools"
+        );
+        assert!(
+            !out.lossy_fields.iter().any(|lf| lf.field == "tools.bash"),
+            "top-level tools should be replaced by override tools"
+        );
+    }
+
+    #[test]
+    fn codex_infers_danger_full_access_when_default_allow_and_no_write_denies() {
+        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"danger-full-access\""),
+            "sandbox should infer danger-full-access: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_wildcard_allow_with_explicit_bash_deny_does_not_infer_danger_full_access() {
+        let content =
+            "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n  bash: deny\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"workspace-write\""),
+            "sandbox should not infer danger-full-access when bash is explicitly denied: {text}"
+        );
+        assert!(!text.contains("danger-full-access"));
     }
 
     #[test]
@@ -875,6 +1241,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn codex_ask_tool_is_compiled_as_allow_with_approximate_lossiness() {
+        let mut tools = std::collections::BTreeMap::new();
+        tools.insert("*".to_string(), ToolRule::Action(ToolAction::Deny));
+        tools.insert("bash".to_string(), ToolRule::Action(ToolAction::Ask));
+        let profile = AgentProfile {
+            name: Some("coder".to_string()),
+            description: None,
+            harness: Some(HarnessKind::Codex),
+            model: None,
+            mode: None,
+            approval: None,
+            sandbox: None,
+            effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            skills: Vec::new(),
+            tools: Some(ToolsField::Map(tools)),
+            mcp_tools: Vec::new(),
+            harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
+            model_policies: Vec::new(),
+            fanout: Vec::new(),
+        };
+
+        let out = lower_to_codex(&profile, "# body");
+        let text = String::from_utf8(out.bytes).unwrap();
+        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
+        assert!(
+            text.contains("sandbox_mode ="),
+            "sandbox_mode should be present: {text}"
+        );
+        assert!(
+            parsed
+                .get("sandbox_mode")
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "parsed TOML should include sandbox_mode: {parsed:?}"
+        );
+        assert!(out.lossy_fields.iter().any(|lf| {
+            matches!(lf.classification, Lossiness::Approximate { .. })
+                && (lf.field.contains("tools") || lf.field.contains("bash"))
+        }));
+    }
+
     // --- 3.3: OpenCode lowering ---
 
     #[test]
@@ -889,6 +1299,20 @@ mod tests {
         assert!(text.contains("mode: primary"), "mode missing");
     }
 
+    #[test]
+    fn opencode_lowering_omits_tools_fields() {
+        let content =
+            "---\nname: r\nharness: opencode\ntools:\n  \"*\": deny\n  bash: allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_opencode(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("tools:"), "tools must not be emitted");
+        assert!(
+            !text.contains("disallowed-tools"),
+            "legacy field must not appear"
+        );
+    }
+
     // --- 3.3: Pi lowering ---
 
     #[test]
@@ -901,7 +1325,83 @@ mod tests {
         assert!(text.contains("description: Pi agent"), "desc missing");
     }
 
+    #[test]
+    fn pi_lowering_emits_tools_and_flags_ask_and_scoped() {
+        let content = "---\nname: pi-agent\nharness: pi\ntools:\n  \"*\": deny\n  bash: allow\n  web: ask\n  read:\n    \"*.env\": allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_pi(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        // web expands to websearch, webfetch
+        assert!(
+            text.contains("tools: bash, websearch, webfetch"),
+            "tools list missing: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.web" && matches!(lf.classification, Lossiness::Approximate { .. })
+        }));
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.read" && matches!(lf.classification, Lossiness::Dropped)
+        }));
+    }
+
     // --- 3.3: Dispatch ---
+
+    #[test]
+    fn codex_no_tools_no_sandbox_omits_sandbox_mode() {
+        let content = "---\nname: r\nharness: codex\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("sandbox_mode"),
+            "sandbox_mode should be omitted when no tools and no sandbox: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_sandbox_default_no_tools_omits_sandbox_mode() {
+        let content = "---\nname: r\nharness: codex\nsandbox: default\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("sandbox_mode"),
+            "sandbox: default with no tools should omit sandbox_mode: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_wildcard_only_allow_no_extra_lossiness() {
+        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        // Wildcard allow/deny maps exactly to sandbox — no Approximate entries
+        let approx: Vec<_> = out
+            .lossy_fields
+            .iter()
+            .filter(|f| matches!(f.classification, Lossiness::Approximate { .. }))
+            .collect();
+        assert!(
+            approx.is_empty(),
+            "wildcard-only allow should not produce Approximate lossiness: {approx:?}"
+        );
+    }
+
+    #[test]
+    fn pi_lowering_expands_edit_and_web_capabilities() {
+        let content = "---\nname: pi-agent\nharness: pi\ntools:\n  \"*\": deny\n  edit: allow\n  web: allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_pi(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("edit, write"),
+            "edit should expand to edit, write: {text}"
+        );
+        assert!(
+            text.contains("websearch, webfetch"),
+            "web should expand to websearch, webfetch: {text}"
+        );
+    }
 
     #[test]
     fn lower_for_harness_dispatches_correctly() {

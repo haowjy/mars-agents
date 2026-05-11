@@ -243,34 +243,44 @@ fn action_for_capability(tools: &ToolsField, capability: &str) -> ToolAction {
     }
 }
 
+fn explicit_action_for_capability(tools: &ToolsField, capability: &str) -> Option<ToolAction> {
+    match tools {
+        ToolsField::Shorthand(_) => None,
+        ToolsField::Map(map) => match map.get(capability) {
+            Some(ToolRule::Action(action)) => Some(action.clone()),
+            _ => None,
+        },
+    }
+}
+
+fn has_wildcard_allow(tools: &ToolsField) -> bool {
+    match tools {
+        ToolsField::Shorthand(action) => *action != ToolAction::Deny,
+        ToolsField::Map(map) => default_tool_action(map) != ToolAction::Deny,
+    }
+}
+
 fn infer_codex_sandbox_from_tools(tools: Option<&ToolsField>) -> &'static str {
     let Some(tools) = tools else {
         return "read-only";
     };
 
-    let ext = action_for_capability(tools, "external_directory");
-    if ext != ToolAction::Deny {
+    let bash_allowed = action_for_capability(tools, "bash") != ToolAction::Deny;
+    let edit_allowed = action_for_capability(tools, "edit") != ToolAction::Deny;
+    let external_directory_allowed =
+        action_for_capability(tools, "external_directory") != ToolAction::Deny;
+    let bash_denied = explicit_action_for_capability(tools, "bash") == Some(ToolAction::Deny);
+    let edit_denied = explicit_action_for_capability(tools, "edit") == Some(ToolAction::Deny);
+
+    if (external_directory_allowed || has_wildcard_allow(tools)) && !bash_denied && !edit_denied {
         return "danger-full-access";
     }
 
-    if let ToolsField::Map(map) = tools {
-        let default = default_tool_action(map);
-        if default != ToolAction::Deny {
-            let bash = action_for_capability(tools, "bash");
-            let edit = action_for_capability(tools, "edit");
-            if bash != ToolAction::Deny || edit != ToolAction::Deny {
-                return "danger-full-access";
-            }
-        }
+    if bash_allowed || edit_allowed {
+        return "workspace-write";
     }
 
-    let bash = action_for_capability(tools, "bash");
-    let edit = action_for_capability(tools, "edit");
-    if bash != ToolAction::Deny || edit != ToolAction::Deny {
-        "workspace-write"
-    } else {
-        "read-only"
-    }
+    "read-only"
 }
 
 fn collect_codex_tools_lossiness(
@@ -965,6 +975,7 @@ pub fn lower_for_harness(
 
 #[cfg(test)]
 mod tests {
+    // qa-validated: mars-tools-abstraction
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
 
@@ -1196,6 +1207,20 @@ mod tests {
     }
 
     #[test]
+    fn codex_wildcard_allow_with_explicit_bash_deny_does_not_infer_danger_full_access() {
+        let content =
+            "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n  bash: deny\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"workspace-write\""),
+            "sandbox should not infer danger-full-access when bash is explicitly denied: {text}"
+        );
+        assert!(!text.contains("danger-full-access"));
+    }
+
+    #[test]
     fn codex_lowering_multiline_instructions_are_parseable() {
         let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
         let (profile, fm, _) = profile_from(content);
@@ -1214,6 +1239,50 @@ mod tests {
                 .unwrap_or_default(),
             "# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going."
         );
+    }
+
+    #[test]
+    fn codex_ask_tool_is_compiled_as_allow_with_approximate_lossiness() {
+        let mut tools = std::collections::BTreeMap::new();
+        tools.insert("*".to_string(), ToolRule::Action(ToolAction::Deny));
+        tools.insert("bash".to_string(), ToolRule::Action(ToolAction::Ask));
+        let profile = AgentProfile {
+            name: Some("coder".to_string()),
+            description: None,
+            harness: Some(HarnessKind::Codex),
+            model: None,
+            mode: None,
+            approval: None,
+            sandbox: None,
+            effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            skills: Vec::new(),
+            tools: Some(ToolsField::Map(tools)),
+            mcp_tools: Vec::new(),
+            harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
+            model_policies: Vec::new(),
+            fanout: Vec::new(),
+        };
+
+        let out = lower_to_codex(&profile, "# body");
+        let text = String::from_utf8(out.bytes).unwrap();
+        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
+        assert!(
+            text.contains("sandbox_mode ="),
+            "sandbox_mode should be present: {text}"
+        );
+        assert!(
+            parsed
+                .get("sandbox_mode")
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "parsed TOML should include sandbox_mode: {parsed:?}"
+        );
+        assert!(out.lossy_fields.iter().any(|lf| {
+            matches!(lf.classification, Lossiness::Approximate { .. })
+                && (lf.field.contains("tools") || lf.field.contains("bash"))
+        }));
     }
 
     // --- 3.3: OpenCode lowering ---

@@ -490,6 +490,21 @@ fn merge_deprecated_disallowed_tools(base: Option<ToolsField>, deny_list: &[Stri
     ToolsField::Map(map)
 }
 
+/// DEPRECATED: Remove after deprecation period (R08)
+fn apply_deprecated_disallowed_tools_bridge(
+    tools: Option<ToolsField>,
+    deny_list: Option<&[String]>,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<ToolsField> {
+    match deny_list {
+        Some(deny_list) => {
+            diags.push(AgentDiagnostic::DeprecatedDisallowedTools);
+            Some(merge_deprecated_disallowed_tools(tools, deny_list))
+        }
+        None => tools,
+    }
+}
+
 /// Parse a tools field value — shorthand string or capability mapping.
 ///
 /// Handles current abstract tools format only (string shorthand or mapping).
@@ -595,6 +610,7 @@ fn parse_override_fields(
     diags: &mut Vec<AgentDiagnostic>,
 ) -> OverrideFields {
     let mut out = OverrideFields::default();
+    let mut deprecated_disallowed_tools: Option<Vec<String>> = None;
 
     for (k, v) in mapping {
         let key = match k.as_str() {
@@ -693,6 +709,10 @@ fn parse_override_fields(
             "tools" => {
                 out.tools = parse_tools_field(v, &format!("{table_name}.tools"), diags);
             }
+            // DEPRECATED: Remove after deprecation period (R08)
+            "disallowed-tools" => {
+                deprecated_disallowed_tools = Some(yaml_str_list(v));
+            }
             "mcp-tools" => {
                 out.mcp_tools = Some(yaml_str_list(v));
             }
@@ -701,6 +721,12 @@ fn parse_override_fields(
             }
         }
     }
+
+    out.tools = apply_deprecated_disallowed_tools_bridge(
+        out.tools.take(),
+        deprecated_disallowed_tools.as_deref(),
+        diags,
+    );
 
     out
 }
@@ -902,10 +928,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .and_then(|v| parse_tools_field(v, "tools", diags));
     // DEPRECATED: Remove after deprecation period (R08)
     let disallowed_tools = fm.get("disallowed-tools").map(yaml_str_list);
-    if let Some(deny_list) = disallowed_tools.as_ref() {
-        diags.push(AgentDiagnostic::DeprecatedDisallowedTools);
-        tools = Some(merge_deprecated_disallowed_tools(tools, deny_list));
-    }
+    tools = apply_deprecated_disallowed_tools_bridge(tools, disallowed_tools.as_deref(), diags);
     let mcp_tools = fm.get("mcp-tools").map(yaml_str_list).unwrap_or_default();
 
     // harness-overrides:
@@ -962,6 +985,7 @@ pub fn parse_agent_content(
 
 #[cfg(test)]
 mod tests {
+    // qa-validated: mars-tools-abstraction
     use super::*;
     use crate::frontmatter::Frontmatter;
 
@@ -1162,6 +1186,18 @@ mod tests {
     }
 
     #[test]
+    fn tools_ask_shorthand_emits_invalid_field_value_and_returns_none() {
+        let (p, diags) = parse("---\ntools: ask\n---\n");
+        assert_eq!(p.tools, None);
+        assert_eq!(diags.len(), 1);
+        assert!(matches!(
+            &diags[0],
+            AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+            if field == "tools" && allowed.contains("allow, deny")
+        ));
+    }
+
+    #[test]
     fn parses_tools_map_flat_actions() {
         let (p, diags) = parse("---\ntools:\n  \"*\": deny\n  bash: allow\n  read: ask\n---\n");
         assert!(diags.is_empty());
@@ -1182,6 +1218,25 @@ mod tests {
         };
         assert_eq!(scoped.get("*"), Some(&ToolAction::Allow));
         assert_eq!(scoped.get("*.env"), Some(&ToolAction::Ask));
+    }
+
+    #[test]
+    fn tools_map_invalid_nested_scoped_action_emits_error() {
+        let (p, diags) =
+            parse("---\ntools:\n  read:\n    \"*\": allow\n    \"*.env\": INVALID_ACTION\n---\n");
+        let map = as_map(p.tools.as_ref().expect("tools expected"));
+        let scoped = match map.get("read").expect("read rule missing") {
+            ToolRule::Scoped(scoped) => scoped,
+            ToolRule::Action(_) => panic!("expected scoped rule"),
+        };
+        assert_eq!(scoped.get("*"), Some(&ToolAction::Allow));
+        assert!(!scoped.contains_key("*.env"));
+        assert!(diags.iter().any(|d| {
+            matches!(
+                d,
+                AgentDiagnostic::InvalidFieldValue { field, .. } if field == "tools.read.*.env"
+            )
+        }));
     }
 
     #[test]
@@ -1232,6 +1287,27 @@ mod tests {
     }
 
     #[test]
+    fn tools_disallowed_with_shorthand_deny_base() {
+        let (p, diags) = parse("---\ntools: deny\ndisallowed-tools: [Agent]\n---\n");
+        let deprecated_count = diags
+            .iter()
+            .filter(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
+            .count();
+        assert!(
+            (1..=2).contains(&deprecated_count),
+            "expected 1-2 deprecation diagnostics, got: {diags:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .all(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
+        );
+        let map = as_map(p.tools.as_ref().expect("tools expected"));
+        assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
+        assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
+    }
+
+    #[test]
     fn invalid_tools_action_emits_error_and_skips_entry() {
         let (p, diags) = parse("---\ntools:\n  bash: maybe\n  read: allow\n---\n");
         assert_eq!(diags.len(), 1);
@@ -1242,6 +1318,25 @@ mod tests {
         let map = as_map(p.tools.as_ref().expect("tools expected"));
         assert!(!map.contains_key("bash"));
         assert_eq!(map.get("read"), Some(&ToolRule::Action(ToolAction::Allow)));
+    }
+
+    #[test]
+    fn unknown_capability_key_is_preserved_without_error() {
+        let (p, diags) = parse(
+            "---\ntools:\n  \"*\": deny\n  bash: allow\n  future-capability-xyz: allow\n---\n",
+        );
+        let map = as_map(p.tools.as_ref().expect("tools expected"));
+        assert_eq!(
+            map.get("future-capability-xyz"),
+            Some(&ToolRule::Action(ToolAction::Allow))
+        );
+        assert!(!diags.iter().any(|d| {
+            matches!(
+                d,
+                AgentDiagnostic::InvalidFieldValue { field, .. }
+                if field.contains("future-capability-xyz")
+            )
+        }));
     }
 
     #[test]
@@ -1306,6 +1401,21 @@ mod tests {
         let map = as_map(claude.tools.as_ref().expect("tools override expected"));
         assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
         assert_eq!(map.get("bash"), Some(&ToolRule::Action(ToolAction::Allow)));
+    }
+
+    #[test]
+    fn harness_override_deprecated_disallowed_tools_warns_and_merges() {
+        let content = "---\nharness-overrides:\n  claude:\n    disallowed-tools: [Agent]\n---\n";
+        let (p, diags) = parse(content);
+        assert_eq!(diags.len(), 1);
+        assert!(matches!(
+            diags[0],
+            AgentDiagnostic::DeprecatedDisallowedTools
+        ));
+        let claude = p.harness_overrides.claude.as_ref().unwrap();
+        let map = as_map(claude.tools.as_ref().expect("tools override expected"));
+        assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Allow)));
+        assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
     }
 
     #[test]

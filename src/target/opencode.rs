@@ -248,6 +248,7 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
         Some(o) => o,
         None => return Ok(()),
     };
+    migrate_legacy_mcp_servers(root_obj);
 
     // Remove MCP entries
     if let Some(mcp_map) = root_obj.get_mut("mcp").and_then(|v| v.as_object_mut()) {
@@ -544,6 +545,39 @@ mod tests {
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(json["mcp"]["to-remove"].is_null());
+        assert!(json["mcp"]["to-keep"].is_object());
+    }
+
+    #[test]
+    fn remove_entries_migrates_legacy_mcp_servers_before_cleanup() {
+        let tmp = TempDir::new().unwrap();
+        let legacy = serde_json::json!({
+            "mcpServers": {
+                "to-remove": {
+                    "command": "npx",
+                    "args": ["-y", "legacy-mcp@latest"]
+                },
+                "to-keep": {
+                    "command": "npx",
+                    "args": ["-y", "keep-mcp@latest"]
+                }
+            }
+        });
+        std::fs::write(
+            tmp.path().join("opencode.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let adapter = OpencodeAdapter;
+        adapter
+            .remove_config_entries(&["mcp:to-remove".to_string()], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(json["mcpServers"].is_null());
         assert!(json["mcp"]["to-remove"].is_null());
         assert!(json["mcp"]["to-keep"].is_object());
     }

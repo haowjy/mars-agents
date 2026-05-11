@@ -102,6 +102,19 @@ impl TargetAdapter for CodexAdapter {
                 ),
             );
         }
+
+        let config_path = target_dir.join(CODEX_CONFIG_TOML);
+        if config_path.is_file()
+            && let Err(err) = parse_existing_toml_document(&config_path)
+        {
+            diag.warn(
+                "codex-config-parse-error",
+                format!(
+                    "target `.codex`: cannot parse `{}`; skipping Codex MCP writes/removals until fixed: {err}",
+                    config_path.display()
+                ),
+            );
+        }
     }
 
     fn remove_config_entries(
@@ -214,10 +227,19 @@ fn load_or_new_toml_document(path: &Path) -> Result<DocumentMut, MarsError> {
         return Ok(DocumentMut::new());
     }
 
+    parse_existing_toml_document(path)
+}
+
+fn parse_existing_toml_document(path: &Path) -> Result<DocumentMut, MarsError> {
     let raw = std::fs::read_to_string(path).map_err(MarsError::from)?;
-    Ok(raw
-        .parse::<DocumentMut>()
-        .unwrap_or_else(|_| DocumentMut::new()))
+    raw.parse::<DocumentMut>().map_err(|e| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!(
+                "{}: failed to parse TOML; refusing to overwrite existing config: {e}",
+                path.display()
+            ),
+        })
+    })
 }
 
 fn toml_string_array(values: impl IntoIterator<Item = String>) -> Item {
@@ -584,6 +606,37 @@ theme = "dark"
     }
 
     #[test]
+    fn emit_pre_write_diagnostics_warns_about_invalid_codex_config_toml() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), "[ui\n").unwrap();
+        let adapter = CodexAdapter;
+        let mut diag = DiagnosticCollector::new();
+
+        adapter.emit_pre_write_diagnostics(&[make_mcp_entry("context7")], tmp.path(), &mut diag);
+
+        let diagnostics = diag.drain();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "codex-config-parse-error");
+        assert!(diagnostics[0].message.contains(CODEX_CONFIG_TOML));
+    }
+
+    #[test]
+    fn write_mcp_invalid_toml_returns_error_without_clobbering_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
+
+        let adapter = CodexAdapter;
+        let err = adapter
+            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+            .expect_err("invalid TOML should fail and not be overwritten");
+        assert!(err.to_string().contains("failed to parse TOML"));
+
+        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        assert_eq!(after, original);
+    }
+
+    #[test]
     fn write_hooks_creates_codex_hooks_json() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
@@ -642,6 +695,22 @@ theme = "dark"
         let toml: TomlValue = toml::from_str(&raw).unwrap();
         assert!(toml["mcp"]["servers"].get("to-remove").is_none());
         assert!(toml["mcp"]["servers"]["to-keep"].is_table());
+    }
+
+    #[test]
+    fn remove_mcp_entries_invalid_toml_returns_error_without_clobbering_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
+        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
+
+        let adapter = CodexAdapter;
+        let err = adapter
+            .remove_config_entries(&["mcp:context7".to_string()], tmp.path())
+            .expect_err("invalid TOML should fail and not be overwritten");
+        assert!(err.to_string().contains("failed to parse TOML"));
+
+        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        assert_eq!(after, original);
     }
 
     #[test]

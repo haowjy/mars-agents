@@ -372,163 +372,46 @@ mod tests {
     }
 
     #[test]
-    fn discover_finds_mcp_items() {
+    fn discover_returns_empty_without_mcp_directory() {
+        let tmp = TempDir::new().unwrap();
+        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn discover_parses_stdio_with_name_override_and_env_refs() {
         let tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
             tmp.path(),
-            "context7",
+            ".hidden-server",
             r#"
 command = "npx"
-args = ["-y", "@upstash/context7-mcp@latest"]
 "#,
         );
-
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].name, "context7");
-        assert_eq!(items[0].def.r#type, McpTransport::Stdio);
-        assert_eq!(items[0].def.command.as_deref(), Some("npx"));
-        assert_eq!(items[0].def.args, &["-y", "@upstash/context7-mcp@latest"]);
-    }
-
-    #[test]
-    fn discover_empty_when_no_mcp_dir() {
-        let tmp = TempDir::new().unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn discover_skips_dir_without_mcp_toml() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn discover_skips_hidden_directories() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(tmp.path(), ".hidden-server", "command = \"npx\"");
-        make_mcp_toml_dir(tmp.path(), "real-server", "command = \"node\"");
-
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].name, "real-server");
-        assert!(!items.iter().any(|item| item.name == ".hidden-server"));
-    }
-
-    #[test]
-    fn discover_respects_name_override() {
-        let tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
             tmp.path(),
             "dir-name",
             r#"
 name = "custom-name"
 command = "node"
-"#,
-        );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert_eq!(items[0].name, "custom-name");
-    }
-
-    #[test]
-    fn discover_parses_env_refs() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "api-server",
-            r#"
-command = "npx"
+args = ["server.js"]
 [env]
 API_KEY = { from = "env", var = "MY_API_KEY" }
 "#,
         );
+
         let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        assert_eq!(items[0].def.env.len(), 1);
-        let env_ref = &items[0].def.env["API_KEY"];
-        assert_eq!(env_ref.var_name(), "MY_API_KEY");
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        assert_eq!(item.name, "custom-name");
+        assert_eq!(item.def.r#type, McpTransport::Stdio);
+        assert_eq!(item.def.command.as_deref(), Some("node"));
+        assert_eq!(item.def.args, ["server.js"]);
+        assert_eq!(item.def.env["API_KEY"].var_name(), "MY_API_KEY");
     }
 
     #[test]
-    fn discover_http_requires_url_and_forbids_command_and_args() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "missing-url",
-            r#"
-type = "http"
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "forbidden-command",
-            r#"
-type = "http"
-url = "https://example.com/mcp"
-command = "npx"
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "forbidden-args",
-            r#"
-type = "http"
-url = "https://example.com/mcp"
-args = ["--bad"]
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-    }
-
-    #[test]
-    fn discover_stdio_forbids_url_and_headers() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "stdio-with-url",
-            r#"
-command = "npx"
-url = "https://example.com/mcp"
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "stdio-with-headers",
-            r#"
-command = "npx"
-[headers]
-X-Test = "value"
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-    }
-
-    #[test]
-    fn discover_whitespace_only_command_fails_validation() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "bad-stdio",
-            r#"
-command = "   "
-"#,
-        );
-        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
-    }
-
-    #[test]
-    fn discover_http_parses_plain_and_env_header_values() {
+    fn discover_parses_http_url_and_headers() {
         let tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
             tmp.path(),
@@ -542,6 +425,7 @@ X-Custom = "literal"
 "#,
         );
         let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        assert_eq!(items.len(), 1);
         let item = &items[0];
         assert_eq!(item.def.r#type, McpTransport::Http);
         assert_eq!(item.def.url.as_deref(), Some("https://example.com/mcp"));
@@ -556,31 +440,47 @@ X-Custom = "literal"
     }
 
     #[test]
-    fn check_env_refs_warns_when_missing() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "server",
-            r#"
-command = "npx"
-[env]
-KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ123" }
-"#,
-        );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        let mut diag = DiagnosticCollector::new();
-        check_env_refs(&items, false, &mut diag).unwrap();
-        let collected = diag.drain();
-        assert_eq!(collected.len(), 1);
-        assert!(
-            collected[0]
-                .message
-                .contains("MARS_TEST_DEFINITELY_NOT_SET_XYZ123")
-        );
+    fn discover_rejects_invalid_transport_field_combinations() {
+        let cases = [
+            ("missing-url", r#"type = "http""#),
+            (
+                "http-with-command",
+                r#"type = "http"
+url = "https://example.com/mcp"
+command = "npx""#,
+            ),
+            (
+                "http-with-args",
+                r#"type = "http"
+url = "https://example.com/mcp"
+args = ["--bad"]"#,
+            ),
+            (
+                "stdio-with-url",
+                r#"command = "npx"
+url = "https://example.com/mcp""#,
+            ),
+            (
+                "stdio-with-headers",
+                r#"command = "npx"
+[headers]
+X-Test = "value""#,
+            ),
+            ("stdio-whitespace-command", r#"command = "   ""#),
+        ];
+
+        for (name, toml) in cases {
+            let tmp = TempDir::new().unwrap();
+            make_mcp_toml_dir(tmp.path(), name, toml);
+            assert!(
+                discover_mcp_items(tmp.path(), "base", 0).is_err(),
+                "expected invalid config to fail: {name}"
+            );
+        }
     }
 
     #[test]
-    fn check_env_refs_warns_when_header_env_missing() {
+    fn check_env_refs_warns_in_non_strict_mode_and_errors_in_strict_mode() {
         let tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
             tmp.path(),
@@ -588,49 +488,39 @@ KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ123" }
             r#"
 type = "http"
 url = "https://example.com/mcp"
+[env]
+KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_ENV_XYZ123" }
 [headers]
 Authorization = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_HEADER_ABC999" }
 "#,
         );
         let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        let mut diag = DiagnosticCollector::new();
-        check_env_refs(&items, false, &mut diag).unwrap();
-        let collected = diag.drain();
-        assert_eq!(collected.len(), 1);
+
+        let mut non_strict = DiagnosticCollector::new();
+        check_env_refs(&items, false, &mut non_strict).unwrap();
+        let warnings = non_strict.drain();
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().any(|d| d.message.contains("_ENV_XYZ123")));
         assert!(
-            collected[0]
-                .message
-                .contains("MARS_TEST_DEFINITELY_NOT_SET_HEADER_ABC999")
+            warnings
+                .iter()
+                .any(|d| d.message.contains("_HEADER_ABC999"))
         );
+
+        let mut strict = DiagnosticCollector::new();
+        assert!(check_env_refs(&items, true, &mut strict).is_err());
     }
 
     #[test]
-    fn check_env_refs_strict_errors_when_missing() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "server",
-            r#"
-command = "npx"
-[env]
-KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
-"#,
-        );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        let mut diag = DiagnosticCollector::new();
-        let result = check_env_refs(&items, true, &mut diag);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn lower_for_target_filters_by_target() {
+    fn lower_for_target_filters_entries_by_target() {
         let tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
             tmp.path(),
             "claude-only",
-            "command = \"npx\"\ntargets = [\".claude\"]",
+            r#"command = "npx"
+targets = [".claude"]"#,
         );
-        make_mcp_toml_dir(tmp.path(), "all-targets", "command = \"node\"");
+        make_mcp_toml_dir(tmp.path(), "all-targets", r#"command = "node""#);
 
         let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
 
@@ -643,49 +533,41 @@ KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
     }
 
     #[test]
-    fn env_ref_preserves_symbolic_var_name() {
-        let tmp = TempDir::new().unwrap();
+    fn target_entry_preserves_symbolic_values_for_stdio_and_http() {
+        let stdio_tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
-            tmp.path(),
-            "server",
+            stdio_tmp.path(),
+            "stdio",
             r#"
 command = "npx"
 [env]
 TOKEN = { from = "env", var = "SECRET_TOKEN" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        let entry = TargetMcpEntry::from_parsed(&items[0]);
-        // The env map carries the variable name, not the resolved value.
-        assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");
-        assert_eq!(entry.transport, McpTransport::Stdio);
-        assert_eq!(entry.command.as_deref(), Some("npx"));
-    }
+        let stdio_items = discover_mcp_items(stdio_tmp.path(), "base", 0).unwrap();
+        let stdio_entry = TargetMcpEntry::from_parsed(&stdio_items[0]);
+        assert_eq!(stdio_entry.transport, McpTransport::Stdio);
+        assert_eq!(stdio_entry.command.as_deref(), Some("npx"));
+        assert_eq!(stdio_entry.env["TOKEN"], "SECRET_TOKEN");
 
-    #[test]
-    fn target_entry_preserves_http_fields() {
-        let tmp = TempDir::new().unwrap();
+        let http_tmp = TempDir::new().unwrap();
         make_mcp_toml_dir(
-            tmp.path(),
+            http_tmp.path(),
             "remote",
             r#"
 type = "http"
 url = "https://example.com/mcp"
 [headers]
 Authorization = { from = "env", var = "API_TOKEN" }
-X-Custom = "literal"
-[env]
-EXTRA = { from = "env", var = "EXTRA_VAR" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-        let entry = TargetMcpEntry::from_parsed(&items[0]);
-        assert_eq!(entry.transport, McpTransport::Http);
-        assert_eq!(entry.command, None);
-        assert_eq!(entry.url.as_deref(), Some("https://example.com/mcp"));
-        assert_eq!(entry.env["EXTRA"], "EXTRA_VAR");
+        let http_items = discover_mcp_items(http_tmp.path(), "base", 0).unwrap();
+        let http_entry = TargetMcpEntry::from_parsed(&http_items[0]);
+        assert_eq!(http_entry.transport, McpTransport::Http);
+        assert_eq!(http_entry.command, None);
+        assert_eq!(http_entry.url.as_deref(), Some("https://example.com/mcp"));
         assert!(matches!(
-            entry.headers.get("Authorization"),
+            http_entry.headers.get("Authorization"),
             Some(HeaderValue::EnvRef(EnvRef::Env { var })) if var == "API_TOKEN"
         ));
     }

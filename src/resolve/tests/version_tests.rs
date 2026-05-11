@@ -1069,9 +1069,8 @@ fn r10_direct_dep_encountered_transitively_first_uses_lock() {
 
     // `a` is listed first — its manifest causes `shared` to be resolved transitively
     // before `shared`'s direct-dep request is processed. Without the pre-computed
-    // `direct_source_names` set, the resolver would use `is_direct=false` for the
-    // transitive call and ignore the lock, selecting MVS minimum v1.0.0 instead of
-    // the locked v1.1.0.
+    // `direct_source_names` set, the resolver would treat `shared` as transitive and
+    // ignore the lock, selecting MVS minimum v1.0.0 instead of the locked v1.1.0.
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
         (

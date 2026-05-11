@@ -27,13 +27,6 @@ pub(crate) struct PendingSource {
     pub(crate) constraint: VersionConstraint,
     pub(crate) filter: FilterMode,
     pub(crate) required_by: String,
-    /// True when this source is a direct dependency in the consumer's mars.toml.
-    /// False for transitive (manifest-discovered) dependencies.
-    /// Kept for documentation/debugging; lock decisions use `ResolverContext::is_direct_source`
-    /// (the pre-computed set) to avoid ordering bugs where a package first encountered
-    /// transitively would lose lock replay even if it also appears as a direct dep.
-    #[allow(dead_code)]
-    pub(crate) is_direct: bool,
 }
 
 #[derive(Debug, Default)]
@@ -400,7 +393,6 @@ pub(crate) fn collect_manifest_requests(
             constraint: dep_constraint,
             filter: dep_filter,
             required_by: pending_src.name.to_string(),
-            is_direct: false,
         });
     }
 

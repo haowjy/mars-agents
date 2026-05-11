@@ -365,9 +365,9 @@ fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, Stri
         let discovered =
             crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None)?;
         let package_filters = graph.filters.get(source_name);
-        for item in discovered {
+        for item in &discovered {
             if item.id.kind == crate::lock::ItemKind::Skill
-                && skill_passes_filters(item.id.name.as_ref(), package_filters)
+                && item_passes_filters(item, package_filters)
             {
                 let version_str = node
                     .resolved_ref
@@ -386,13 +386,16 @@ fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, Stri
     Ok(skills)
 }
 
-/// Returns true if a skill would be installed given the accumulated filter constraints.
+/// Returns true if a skill item would be installed given the accumulated filter constraints.
 ///
-/// Filters are accumulated with OR semantics: a skill passes if ANY filter in the list
+/// Filters are accumulated with OR semantics: an item passes if ANY filter in the list
 /// would include it (multiple requests for the same package may each install different
 /// subsets, and a skill available from any of them is usable).
-fn skill_passes_filters(
-    skill_name: &str,
+///
+/// Matches real install semantics from `seed_items_for_request`: `Exclude` checks both
+/// skill name and source path so path-based excludes are honoured in the publish gate.
+fn item_passes_filters(
+    item: &crate::discover::DiscoveredItem,
     filters: Option<&Vec<crate::config::FilterMode>>,
 ) -> bool {
     let Some(filters) = filters else {
@@ -400,11 +403,12 @@ fn skill_passes_filters(
     };
     filters.iter().any(|filter| match filter {
         crate::config::FilterMode::All => true,
-        crate::config::FilterMode::Include { skills, .. } => {
-            skills.iter().any(|s| s.as_ref() == skill_name)
-        }
+        crate::config::FilterMode::Include { skills, .. } => skills.contains(&item.id.name),
         crate::config::FilterMode::Exclude(excluded) => {
-            !excluded.iter().any(|e| e.as_ref() == skill_name)
+            let source_path = item.source_path.to_string_lossy();
+            !excluded.iter().any(|e| {
+                *e == item.id.name || crate::target::paths_equivalent(e.as_ref(), &source_path)
+            })
         }
         crate::config::FilterMode::OnlySkills => true,
         crate::config::FilterMode::OnlyAgents => false,

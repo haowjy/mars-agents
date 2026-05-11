@@ -17,9 +17,8 @@ use super::types::{ResolveOptions, ResolvedNode, VersionConstraint};
 ///
 /// `is_direct` must reflect whether this source appears as a direct dependency in mars.toml,
 /// regardless of the traversal order that led here. It is sourced from the pre-computed
-/// `ResolverContext::direct_source_names` set, not from `PendingSource::is_direct`, to
-/// avoid the ordering bug where a package first encountered as transitive would lose lock
-/// replay even if it is also a direct dep.
+/// `ResolverContext::direct_source_names` set to avoid the ordering bug where a package
+/// first encountered as transitive would lose lock replay even if it is also a direct dep.
 pub(crate) fn resolve_single_source(
     pending: &PendingSource,
     is_direct: bool,

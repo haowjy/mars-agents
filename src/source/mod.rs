@@ -1,5 +1,5 @@
 pub(crate) mod archive;
-pub mod canonical;
+pub(crate) mod canonical;
 pub mod git;
 pub(crate) mod git_cli;
 pub mod parse;

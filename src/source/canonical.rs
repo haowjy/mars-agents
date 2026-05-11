@@ -13,14 +13,13 @@
 ///
 /// # Examples
 ///
+/// ```text
+/// canonicalize_git_url("https://github.com/foo/bar")   → "github.com/foo/bar"
+/// canonicalize_git_url("git@github.com:foo/bar.git")   → "github.com/foo/bar"
+/// canonicalize_git_url("ssh://git@github.com/foo/bar") → "github.com/foo/bar"
+/// canonicalize_git_url("GITHUB.COM/Foo/Bar")           → "github.com/Foo/Bar"
 /// ```
-/// # use mars_agents::source::canonical::canonicalize_git_url;
-/// assert_eq!(canonicalize_git_url("https://github.com/foo/bar"),   "github.com/foo/bar");
-/// assert_eq!(canonicalize_git_url("git@github.com:foo/bar.git"),   "github.com/foo/bar");
-/// assert_eq!(canonicalize_git_url("ssh://git@github.com/foo/bar"), "github.com/foo/bar");
-/// assert_eq!(canonicalize_git_url("GITHUB.COM/Foo/Bar"),           "github.com/Foo/Bar");
-/// ```
-pub fn canonicalize_git_url(url: &str) -> String {
+pub(crate) fn canonicalize_git_url(url: &str) -> String {
     let mut s = url.to_string();
 
     // 1. Strip protocol prefixes

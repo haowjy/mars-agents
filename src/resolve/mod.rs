@@ -158,9 +158,9 @@ pub fn resolve(
 
     // Pre-compute the set of direct source names before resolution begins.
     // resolve_single_source uses this set (via ctx.is_direct_source) to determine
-    // whether to replay the consumer lock. Using the set instead of PendingSource::is_direct
-    // prevents the ordering bug where a package first discovered transitively would
-    // lose lock replay even if it also appears as a direct dep in mars.toml.
+    // whether to replay the consumer lock. Pre-computing the set prevents the ordering
+    // bug where a package first discovered transitively would lose lock replay even if
+    // it also appears as a direct dep in mars.toml.
     let direct_source_names: std::collections::HashSet<SourceName> =
         config.dependencies.keys().cloned().collect();
     ctx.set_direct_sources(direct_source_names);
@@ -187,7 +187,6 @@ pub fn resolve(
             constraint,
             filter: source.filter.clone(),
             required_by: "mars.toml".to_string(),
-            is_direct: true,
         });
     }
 

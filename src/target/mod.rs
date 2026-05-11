@@ -138,6 +138,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn emit_pre_write_diagnostics(
         &self,
         _entries: &[ConfigEntry],
+        _target_dir: &Path,
         _diag: &mut crate::diagnostic::DiagnosticCollector,
     ) {
     }

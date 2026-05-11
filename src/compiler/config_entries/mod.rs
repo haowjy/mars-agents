@@ -287,7 +287,7 @@ pub(crate) fn compile_config_entries(
         }
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
-        adapter.emit_pre_write_diagnostics(&entries, diag);
+        adapter.emit_pre_write_diagnostics(&entries, &target_dir, diag);
 
         if dry_run {
             current_records.insert(target_root.clone(), target_records);

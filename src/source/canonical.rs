@@ -7,8 +7,9 @@
 ///
 /// Port handling: Explicit ports in URL-style forms (`host:port/path`) are
 /// preserved. SCP-style colon (`host:path`) is distinguished by checking
-/// whether the text after the colon starts with a digit (port) vs. a path
-/// segment (convert to slash).
+/// whether the text between the colon and the next `/` (or end of string) is
+/// **entirely digits** (a real port) vs. a path segment (convert to slash).
+/// This correctly handles digit-leading path segments like `123team/repo`.
 ///
 /// # Examples
 ///
@@ -42,23 +43,24 @@ pub fn canonicalize_git_url(url: &str) -> String {
 
     // 3. Handle SCP-style colon vs port colon.
     //    After stripping userinfo we may have:
-    //      - `github.com:foo/bar`  (SCP – colon is a separator, convert to /)
-    //      - `github.com:1234/path` (URL with port – keep the colon)
-    //      - `github.com/foo/bar`  (already URL-style – no colon)
+    //      - `github.com:foo/bar`    (SCP – colon is a separator, convert to /)
+    //      - `github.com:123team/r`  (SCP – digit-leading path, convert to /)
+    //      - `github.com:1234/path`  (URL with port – keep the colon)
+    //      - `github.com/foo/bar`    (already URL-style – no colon)
     if let Some(colon_pos) = s.find(':') {
         let before_colon = &s[..colon_pos];
         let after_colon = &s[colon_pos + 1..];
-        // SCP-style: no slash before the colon (the colon is the host/path separator)
-        // and the text after the colon is NOT a port number (doesn't start with a digit)
-        // and is NOT a `//`-style remnant.
-        if !before_colon.contains('/')
-            && !after_colon.starts_with("//")
-            && !after_colon
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
-        {
-            s.replace_range(colon_pos..colon_pos + 1, "/");
+        // Only treat as a port when all characters up to the next '/' (or end of
+        // string) are ASCII digits.  A digit-leading path segment like `123team`
+        // must NOT be treated as a port.
+        if !before_colon.contains('/') && !after_colon.starts_with("//") {
+            let port_candidate = after_colon.split('/').next().unwrap_or("");
+            let is_port =
+                !port_candidate.is_empty() && port_candidate.chars().all(|c| c.is_ascii_digit());
+            if !is_port {
+                // SCP-style colon: convert to slash
+                s.replace_range(colon_pos..colon_pos + 1, "/");
+            }
         }
     }
 
@@ -240,6 +242,43 @@ mod tests {
         assert_eq!(
             canonicalize_git_url("git@github.com:org/repo.git"),
             "github.com/org/repo"
+        );
+    }
+
+    // ── SCP path with digit-leading segment (regression: was mis-detected as port)
+
+    #[test]
+    fn scp_digit_leading_path_segment() {
+        // "123team" starts with a digit but is NOT a port — must become a slash.
+        assert_eq!(
+            canonicalize_git_url("git@example.com:123team/repo.git"),
+            "example.com/123team/repo"
+        );
+    }
+
+    #[test]
+    fn scp_digit_leading_path_segment_no_git_suffix() {
+        assert_eq!(
+            canonicalize_git_url("git@example.com:9front/repo"),
+            "example.com/9front/repo"
+        );
+    }
+
+    // ── Real ports are preserved even when path follows ────────────────────
+
+    #[test]
+    fn port_only_digits_is_preserved_https() {
+        assert_eq!(
+            canonicalize_git_url("https://gitlab.com:8443/org/repo"),
+            "gitlab.com:8443/org/repo"
+        );
+    }
+
+    #[test]
+    fn port_only_digits_is_preserved_git_protocol() {
+        assert_eq!(
+            canonicalize_git_url("git://custom.host:19424/group/pkg.git"),
+            "custom.host:19424/group/pkg"
         );
     }
 

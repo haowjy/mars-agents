@@ -14,8 +14,15 @@ use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode, VersionConstraint};
 
 /// Resolve a single source to a concrete version/ref.
+///
+/// `is_direct` must reflect whether this source appears as a direct dependency in mars.toml,
+/// regardless of the traversal order that led here. It is sourced from the pre-computed
+/// `ResolverContext::direct_source_names` set, not from `PendingSource::is_direct`, to
+/// avoid the ordering bug where a package first encountered as transitive would lose lock
+/// replay even if it is also a direct dep.
 pub(crate) fn resolve_single_source(
     pending: &PendingSource,
+    is_direct: bool,
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
@@ -25,7 +32,7 @@ pub(crate) fn resolve_single_source(
     // Cargo-style lock semantics: direct deps replay the consumer lock in normal
     // sync; transitive deps ignore it (they pin their own lock on first write).
     // --frozen overrides this and replays the full graph from lock.
-    let effective_locked = if pending.is_direct || options.frozen {
+    let effective_locked = if is_direct || options.frozen {
         locked
     } else {
         None

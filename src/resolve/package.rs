@@ -29,7 +29,10 @@ pub(crate) struct PendingSource {
     pub(crate) required_by: String,
     /// True when this source is a direct dependency in the consumer's mars.toml.
     /// False for transitive (manifest-discovered) dependencies.
-    /// Controls whether the consumer lock file is consulted during resolution.
+    /// Kept for documentation/debugging; lock decisions use `ResolverContext::is_direct_source`
+    /// (the pre-computed set) to avoid ordering bugs where a package first encountered
+    /// transitively would lose lock replay even if it also appears as a direct dep.
+    #[allow(dead_code)]
     pub(crate) is_direct: bool,
 }
 
@@ -156,8 +159,10 @@ pub(crate) fn resolve_package_bottom_up(
         },
     );
 
+    let is_direct = ctx.is_direct_source(&pending_src.name);
     let (resolved_ref, latest_version) = resolve_single_source(
         pending_src,
+        is_direct,
         provider,
         locked,
         options,

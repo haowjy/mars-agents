@@ -36,7 +36,6 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
-#[cfg(test)]
 use crate::types::SourceName;
 use crate::types::SourceUrl;
 use filter::is_item_excluded;
@@ -156,6 +155,15 @@ pub fn resolve(
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
     let mut ctx = ResolverContext::new();
+
+    // Pre-compute the set of direct source names before resolution begins.
+    // resolve_single_source uses this set (via ctx.is_direct_source) to determine
+    // whether to replay the consumer lock. Using the set instead of PendingSource::is_direct
+    // prevents the ordering bug where a package first discovered transitively would
+    // lose lock replay even if it also appears as a direct dep in mars.toml.
+    let direct_source_names: std::collections::HashSet<SourceName> =
+        config.dependencies.keys().cloned().collect();
+    ctx.set_direct_sources(direct_source_names);
 
     let mut direct_requests: Vec<PendingSource> = Vec::new();
     for (name, source) in &config.dependencies {

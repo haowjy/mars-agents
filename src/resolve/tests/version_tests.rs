@@ -960,7 +960,15 @@ fn r5_frozen_replays_transitive_from_lock() {
 // R9: `mars upgrade` (no targets) maximizes all directs.
 // Covered by `maximize_mode_picks_newest` above.
 
-// R10: A source listed as both direct and transitive dep is resolved as direct (lock consulted).
+// R6: Lock records all resolved packages (direct + transitive) on first write; re-sync replays them.
+// Covered implicitly by the full sync→lock→resync integration flow in integration_tests.rs.
+
+// R10: A source listed as both direct and transitive dep is resolved as direct (lock consulted),
+// regardless of config order. Two tests verify this:
+//   - `r10_direct_and_transitive_same_source_uses_lock`: happy-path ordering (shared listed first).
+//   - `r10_direct_dep_encountered_transitively_first_uses_lock`: ordering bug regression (a listed
+//     first so shared is first seen as transitive, then encountered as direct via the pre-computed
+//     direct_source_names set in ResolverContext).
 #[test]
 fn r10_direct_and_transitive_same_source_uses_lock() {
     let dir = TempDir::new().unwrap();
@@ -988,6 +996,8 @@ fn r10_direct_and_transitive_same_source_uses_lock() {
     // Both `a` and `shared` are direct deps.
     // `shared` is listed first so it is resolved as direct (with lock) before
     // `a`'s manifest would otherwise pull it in as a transitive dep.
+    // (Happy-path ordering — see `r10_direct_dep_encountered_transitively_first_uses_lock`
+    // for the reversed-order regression test.)
     let config = make_config(vec![
         (
             "shared",
@@ -1027,6 +1037,79 @@ fn r10_direct_and_transitive_same_source_uses_lock() {
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 1, 0)),
         "direct dep appearing as transitive too must still use locked version"
+    );
+}
+
+// Regression test for the ordering bug in R10: `a` is listed first in config, so `a`'s manifest
+// pulls `shared` in as transitive before `shared`'s direct-dep entry is processed. The fix
+// pre-computes `direct_source_names` in `ResolverContext` so the lock-replay decision is a
+// source-level fact independent of traversal order.
+#[test]
+fn r10_direct_dep_encountered_transitively_first_uses_lock() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "^1.0")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions(
+        "https://example.com/shared.git",
+        vec![(1, 0, 0), (1, 1, 0), (1, 2, 0)],
+    );
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("shared", tree_shared, None);
+
+    // `a` is listed first — its manifest causes `shared` to be resolved transitively
+    // before `shared`'s direct-dep request is processed. Without the pre-computed
+    // `direct_source_names` set, the resolver would use `is_direct=false` for the
+    // transitive call and ignore the lock, selecting MVS minimum v1.0.0 instead of
+    // the locked v1.1.0.
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+        (
+            "shared",
+            git_spec("https://example.com/shared.git", Some("^1.0")),
+        ),
+    ]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: Some("a-commit".into()),
+            tree_hash: None,
+        },
+    );
+    lock.dependencies.insert(
+        "shared".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/shared.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.1.0".into()),
+            commit: Some("shared-direct-commit".into()),
+            tree_hash: None,
+        },
+    );
+
+    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    // `shared` is a direct dep → lock must be consulted → v1.1.0 regardless of order.
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 1, 0)),
+        "direct dep resolved transitively first must still replay lock (not MVS v1.0.0)"
     );
 }
 

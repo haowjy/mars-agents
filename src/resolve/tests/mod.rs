@@ -27,8 +27,15 @@ pub(crate) struct MockProvider {
     versions: HashMap<String, Vec<AvailableVersion>>,
     /// source tree paths keyed by source name (pre-created temp dirs)
     trees: HashMap<String, PathBuf>,
+    /// Optional source tree overrides keyed by (source name, version tag).
+    versioned_trees: HashMap<(String, String), PathBuf>,
     /// Manifests to return for specific source trees
     manifests: HashMap<PathBuf, Option<Manifest>>,
+    /// Optional commit sequences keyed by source name.
+    /// When set, each `fetch_git_version` call without preferred_commit rotates
+    /// through the sequence to simulate ref drift for restart-cap tests.
+    commit_sequences: HashMap<String, Vec<String>>,
+    commit_sequence_indices: RefCell<HashMap<String, usize>>,
     /// Preferred commits that should simulate an unreachable lock replay.
     unreachable_preferred_commits: HashSet<String>,
     /// Captures preferred-commit hints passed by the resolver.
@@ -42,7 +49,10 @@ impl MockProvider {
         MockProvider {
             versions: HashMap::new(),
             trees: HashMap::new(),
+            versioned_trees: HashMap::new(),
             manifests: HashMap::new(),
+            commit_sequences: HashMap::new(),
+            commit_sequence_indices: RefCell::new(HashMap::new()),
             unreachable_preferred_commits: HashSet::new(),
             seen_preferred_commits: RefCell::new(Vec::new()),
             fetch_counts: RefCell::new(HashMap::new()),
@@ -70,6 +80,29 @@ impl MockProvider {
             self.manifests.insert(tree_path.clone(), None);
         }
         self.trees.insert(name.to_string(), tree_path);
+    }
+
+    fn add_versioned_source(
+        &mut self,
+        name: &str,
+        version_tag: &str,
+        tree_path: PathBuf,
+        manifest: Option<Manifest>,
+    ) {
+        if let Some(ref m) = manifest {
+            self.manifests.insert(tree_path.clone(), Some(m.clone()));
+        } else {
+            self.manifests.insert(tree_path.clone(), None);
+        }
+        self.versioned_trees
+            .insert((name.to_string(), version_tag.to_string()), tree_path);
+    }
+
+    fn set_commit_sequence(&mut self, source_name: &str, commits: Vec<&str>) {
+        self.commit_sequences.insert(
+            source_name.to_string(),
+            commits.into_iter().map(|c| c.to_string()).collect(),
+        );
     }
 
     fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
@@ -125,16 +158,32 @@ impl SourceFetcher for MockProvider {
             });
         }
 
-        let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
+        let tree_path = self
+            .versioned_trees
+            .get(&(source_name.to_string(), version.tag.clone()))
+            .cloned()
+            .or_else(|| self.trees.get(source_name).cloned())
+            .unwrap_or_default();
+        let commit = if let Some(preferred) = preferred_commit {
+            preferred.to_string()
+        } else if let Some(sequence) = self
+            .commit_sequences
+            .get(source_name)
+            .filter(|sequence| !sequence.is_empty())
+        {
+            let mut indices = self.commit_sequence_indices.borrow_mut();
+            let idx = indices.entry(source_name.to_string()).or_insert(0);
+            let commit = sequence[*idx % sequence.len()].clone();
+            *idx += 1;
+            commit
+        } else {
+            "mock-commit".to_string()
+        };
         Ok(ResolvedRef {
             source_name: source_name.into(),
             version: Some(version.version.clone()),
             version_tag: Some(version.tag.clone()),
-            commit: Some(
-                preferred_commit
-                    .map(|c| c.into())
-                    .unwrap_or_else(|| "mock-commit".into()),
-            ),
+            commit: Some(commit.into()),
             tree_path,
         })
     }

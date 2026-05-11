@@ -407,7 +407,7 @@ fn compatible_constraints_from_two_dependents() {
 }
 
 #[test]
-fn narrower_second_constraint_causes_validation_error() {
+fn narrower_second_constraint_upgrades_mvs_selection() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -416,8 +416,9 @@ fn narrower_second_constraint_causes_validation_error() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // a requires shared >=1.0.0, b requires shared >=1.5.0
-    // First resolver picks 1.0.0 (MVS), then validation catches >=1.5.0 failure
+    // a requires shared >=1.0.0, b requires shared >=1.5.0.
+    // a is processed first: MVS picks 1.0.0.  Then b's >=1.5.0 arrives — 1.0.0 does
+    // not satisfy it, so re-resolution selects min(>=1.0.0 ∩ >=1.5.0) = 1.5.0.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -445,17 +446,12 @@ fn narrower_second_constraint_causes_validation_error() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // This should fail because MVS picked 1.0.0 but b needs >=1.5.0
-    let result = resolve(&config, &provider, None, &default_options());
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("shared"),
-        "error should mention 'shared': {err}"
-    );
-    assert!(
-        err.contains("1.5.0"),
-        "error should mention the constraint: {err}"
+    let graph = resolve(&config, &provider, None, &default_options())
+        .expect("both constraints are satisfiable; should resolve to 1.5.0");
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 5, 0)),
+        "re-resolution must upgrade shared to the minimum satisfying both >=1.0.0 and >=1.5.0"
     );
 }
 
@@ -585,7 +581,7 @@ fn same_version_revisit_skips_and_package_fetches_once() {
 }
 
 #[test]
-fn different_version_revisit_errors() {
+fn different_second_constraint_re_resolves_to_satisfying_version() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -596,6 +592,9 @@ fn different_version_revisit_errors() {
     write_minimal_package_marker(&tree_shared);
     write_skill(&tree_shared, "common");
 
+    // a requires shared >=1.0.0 → MVS picks 1.0.0.
+    // b requires shared >=2.0.0 — 1.0.0 doesn't satisfy it, so re-resolution runs.
+    // Combined constraints: >=1.0.0 ∩ >=2.0.0 → MVS selects 2.0.0.  No conflict.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -620,30 +619,17 @@ fn different_version_revisit_errors() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    let err = resolve(&config, &provider, None, &default_options()).unwrap_err();
-    match err {
-        MarsError::Resolution(ResolutionError::ItemVersionConflict {
-            item,
-            package,
-            existing,
-            requested,
-            chain,
-        }) => {
-            assert_eq!(item, "common");
-            assert_eq!(package, "shared");
-            assert!(
-                (existing == ">=1.0.0" && requested == ">=2.0.0")
-                    || (existing == ">=2.0.0" && requested == ">=1.0.0"),
-                "unexpected version conflict values: existing={existing}, requested={requested}"
-            );
-            assert!(chain == "a" || chain == "b", "unexpected chain: {chain}");
-        }
-        other => panic!("expected ItemVersionConflict, got {other:?}"),
-    }
+    let graph = resolve(&config, &provider, None, &default_options())
+        .expect(">=1.0.0 and >=2.0.0 are jointly satisfiable by 2.0.0; should not error");
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(2, 0, 0)),
+        "re-resolution must upgrade shared to 2.0.0 (min satisfying >=1.0.0 ∩ >=2.0.0)"
+    );
 }
 
 #[test]
-fn latest_and_pinned_revisit_errors_with_version_conflict() {
+fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -693,17 +679,15 @@ fn latest_and_pinned_revisit_errors_with_version_conflict() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    let (result, _diagnostics) =
-        resolve_with_diagnostics(&config, &provider, None, &default_options());
-    let err = result.expect_err("resolution should fail on pinned sibling constraint");
-    let err_text = err.to_string();
-    assert!(
-        err_text.contains("shared"),
-        "error should mention conflicting source: {err_text}"
-    );
-    assert!(
-        err_text.contains("1.0.0"),
-        "error should mention pinned version constraint: {err_text}"
+    // a (Latest) is processed first: maximize → 2.0.0.
+    // b arrives with exact =1.0.0 — 2.0.0 does not satisfy it, so re-resolution runs.
+    // Combined: Latest (maximize) ∩ =1.0.0 → only 1.0.0 satisfies, maximize picks it.
+    let graph = resolve(&config, &provider, None, &default_options())
+        .expect("Latest + exact-pin are jointly satisfiable by 1.0.0; should not error");
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 0, 0)),
+        "re-resolution must downgrade shared from 2.0.0 to 1.0.0 to satisfy the exact pin"
     );
 }
 
@@ -1473,4 +1457,465 @@ fn different_host_or_path_does_not_produce_false_convergence() {
         repo_a_id, repo_b_id,
         "Different repo paths must produce distinct SourceIds"
     );
+}
+
+// ========== Re-resolution order-independence tests ==========
+//
+// When a transitive dep is resolved under a partial constraint set and a later
+// intermediary adds a `Latest` constraint, the already-`Resolved` package must be
+// re-resolved against the full accumulated constraints so the final version is
+// order-independent.
+
+/// Primary regression: `a` is processed first, resolves `shared` to 1.0.0 (MVS
+/// under `>=1.0.0, <2.0.0`).  Then `b` is processed and adds a `Latest` constraint
+/// on `shared`.  The `Resolved` branch must detect the version shift and upgrade the
+/// registry entry to 1.2.0.
+#[test]
+fn transitive_latest_constraint_upgrades_already_resolved_version() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    // `a` depends on `shared` with a semver bound: MVS would pick 1.0.0.
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![(
+            "shared",
+            "https://example.com/shared.git",
+            ">=1.0.0, <2.0.0",
+        )],
+    );
+    // `b` depends on `shared` with no version constraint → Latest → maximize.
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 2, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_source("shared", tree_shared, None);
+
+    // `a` appears first in config — will be processed first, resolving `shared` to
+    // 1.0.0 under MVS.  `b`'s `Latest` constraint must then trigger re-resolution
+    // to 1.2.0.
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+
+    assert_eq!(graph.nodes.len(), 3, "a, b, shared should all be resolved");
+    let shared_node = &graph.nodes["shared"];
+    assert_eq!(
+        shared_node.resolved_ref.version,
+        Some(Version::new(1, 2, 0)),
+        "shared must resolve to 1.2.0 (Latest+semver maximizes within >=1.0,<2.0)"
+    );
+}
+
+/// Symmetric case: `b` is processed first (Latest → 1.2.0), then `a` adds
+/// `>=1.0.0, <2.0.0`.  Since 1.2.0 already satisfies the semver bound, re-resolution
+/// should keep `shared` at 1.2.0.  Verifies order-independence — the result must
+/// match the primary regression test above.
+#[test]
+fn transitive_latest_constraint_order_independent_b_first() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![(
+            "shared",
+            "https://example.com/shared.git",
+            ">=1.0.0, <2.0.0",
+        )],
+    );
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 2, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_source("shared", tree_shared, None);
+
+    // `b` first: Latest selects 1.2.0.  `a` arrives with `>=1.0.0, <2.0.0` which
+    // 1.2.0 satisfies — no version change, no re-resolution needed, stays at 1.2.0.
+    let config = make_config(vec![
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+    ]);
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+
+    assert_eq!(graph.nodes.len(), 3, "a, b, shared should all be resolved");
+    let shared_node = &graph.nodes["shared"];
+    assert_eq!(
+        shared_node.resolved_ref.version,
+        Some(Version::new(1, 2, 0)),
+        "shared must resolve to 1.2.0 regardless of processing order"
+    );
+}
+
+#[test]
+fn restart_fresh_context_drops_removed_transitive_dependency_and_lock_entry() {
+    let dir = TempDir::new().unwrap();
+    let tree_a_v1 = dir.path().join("a-v1");
+    let tree_a_v2 = dir.path().join("a-v2");
+    let tree_b = dir.path().join("b");
+    let tree_x = dir.path().join("x");
+    std::fs::create_dir_all(&tree_a_v1).unwrap();
+    std::fs::create_dir_all(&tree_a_v2).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&tree_x).unwrap();
+
+    // A@v1 depends on X; A@v2 drops X.
+    let manifest_a_v1 = make_manifest(
+        "a",
+        "1.0.0",
+        vec![("x", "https://example.com/x.git", ">=1.0.0")],
+    );
+    let manifest_a_v2 = make_manifest("a", "2.0.0", vec![]);
+    // B contributes a late Latest constraint on A to force restart to v2.
+    let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/x.git", vec![(1, 0, 0)]);
+    provider.add_versioned_source("a", "v1.0.0", tree_a_v1, Some(manifest_a_v1));
+    provider.add_versioned_source("a", "v2.0.0", tree_a_v2, Some(manifest_a_v2));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_source("x", tree_x, None);
+
+    let config = make_config(vec![
+        (
+            "a",
+            git_spec("https://example.com/a.git", Some(">=1.0.0, <3.0.0")),
+        ),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    assert!(
+        !graph.nodes.contains_key("x"),
+        "X should be absent after fresh-context restart on A@v2"
+    );
+
+    let lock = crate::lock::build(
+        &graph,
+        &crate::sync::apply::ApplyResult {
+            outcomes: Vec::new(),
+        },
+        &LockFile::empty(),
+        std::collections::BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(
+        !lock.dependencies.contains_key("x"),
+        "lock dependencies should not keep removed transitive dep X"
+    );
+}
+
+#[test]
+fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
+    let dir = TempDir::new().unwrap();
+    let tree_a_v1 = dir.path().join("a-v1");
+    let tree_a_v2 = dir.path().join("a-v2");
+    let tree_b = dir.path().join("b");
+    let tree_y = dir.path().join("y");
+    std::fs::create_dir_all(&tree_a_v1).unwrap();
+    std::fs::create_dir_all(&tree_a_v2).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&tree_y).unwrap();
+
+    // A@v1 has no deps; A@v2 introduces Y.
+    let manifest_a_v1 = make_manifest("a", "1.0.0", vec![]);
+    let manifest_a_v2 = make_manifest(
+        "a",
+        "2.0.0",
+        vec![("y", "https://example.com/y.git", ">=1.0.0")],
+    );
+    // Late Latest from B forces A to v2.
+    let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/y.git", vec![(1, 0, 0)]);
+    provider.add_versioned_source("a", "v1.0.0", tree_a_v1, Some(manifest_a_v1));
+    provider.add_versioned_source("a", "v2.0.0", tree_a_v2, Some(manifest_a_v2));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_source("y", tree_y, None);
+
+    let config = make_config(vec![
+        (
+            "a",
+            git_spec("https://example.com/a.git", Some(">=1.0.0, <3.0.0")),
+        ),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    assert!(
+        graph.nodes.contains_key("y"),
+        "Y should be present after A re-resolves to v2"
+    );
+
+    let y_filters = graph
+        .filters
+        .get("y")
+        .expect("Y must receive materialization filters on restart");
+    assert!(
+        y_filters
+            .iter()
+            .any(|filter| matches!(filter, FilterMode::All)),
+        "Y should receive an unfiltered materialization request so sync includes it"
+    );
+}
+
+#[test]
+fn restart_replaces_locked_commit_when_latest_revisit_changes_ref_without_version_change() {
+    let dir = TempDir::new().unwrap();
+    let tree_shared = dir.path().join("shared");
+    let tree_b = dir.path().join("b");
+    std::fs::create_dir_all(&tree_shared).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_source("shared", tree_shared, None);
+    provider.add_source("b", tree_b, Some(manifest_b));
+
+    let config = make_config(vec![
+        (
+            "shared",
+            git_spec("https://example.com/shared.git", Some("^1.0")),
+        ),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let locked_commit = "locked-sha-123";
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "shared".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/shared.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: Some(locked_commit.into()),
+            tree_hash: None,
+        },
+    );
+
+    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 0, 0))
+    );
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.commit.as_deref(),
+        Some("mock-commit"),
+        "restart should replace locked replay commit when Latest changes selected ref"
+    );
+}
+
+#[test]
+fn monotonic_restart_converges_for_more_than_32_packages() {
+    let dir = TempDir::new().unwrap();
+    let mut provider = MockProvider::new();
+    let mut dependencies = IndexMap::new();
+    const PAIR_COUNT: usize = 40;
+
+    for idx in 0..PAIR_COUNT {
+        let a_name = format!("a-{idx}");
+        let b_name = format!("b-{idx}");
+        let a_url = format!("https://example.com/{a_name}.git");
+        let b_url = format!("https://example.com/{b_name}.git");
+        let tree_a = dir.path().join(&a_name);
+        let tree_b = dir.path().join(&b_name);
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(&tree_b).unwrap();
+
+        let manifest_b = make_manifest(&b_name, "1.0.0", vec![(&a_name, &a_url, "")]);
+
+        provider.add_versions(&a_url, vec![(1, 0, 0), (2, 0, 0)]);
+        provider.add_versions(&b_url, vec![(1, 0, 0)]);
+        provider.add_source(&a_name, tree_a, None);
+        provider.add_source(&b_name, tree_b, Some(manifest_b));
+
+        let a_spec = git_spec(&a_url, Some(">=1.0.0, <3.0.0"));
+        dependencies.insert(
+            SourceName::from(a_name.clone()),
+            EffectiveDependency {
+                name: a_name.clone().into(),
+                id: source_id_for_spec(&a_spec, None),
+                spec: a_spec,
+                subpath: None,
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+
+        let b_spec = git_spec(&b_url, Some("v1.0.0"));
+        dependencies.insert(
+            SourceName::from(b_name.clone()),
+            EffectiveDependency {
+                name: b_name.clone().into(),
+                id: source_id_for_spec(&b_spec, None),
+                spec: b_spec,
+                subpath: None,
+                filter: FilterMode::All,
+                rename: RenameMap::new(),
+                is_overridden: false,
+                original_git: None,
+            },
+        );
+    }
+
+    let config = EffectiveConfig {
+        dependencies,
+        settings: Settings::default(),
+    };
+
+    let graph = resolve(&config, &provider, None, &default_options())
+        .expect("monotonic one-restart-per-package convergence should succeed");
+
+    assert_eq!(graph.nodes.len(), PAIR_COUNT * 2);
+    for idx in 0..PAIR_COUNT {
+        let a_name = format!("a-{idx}");
+        assert_eq!(
+            graph
+                .nodes
+                .get(a_name.as_str())
+                .expect("each A package should resolve")
+                .resolved_ref
+                .version,
+            Some(Version::new(2, 0, 0)),
+            "{a_name} should converge to the latest satisfying version after restart"
+        );
+    }
+}
+
+#[test]
+fn restart_override_preserves_latest_version_metadata() {
+    let dir = TempDir::new().unwrap();
+    let tree_shared = dir.path().join("shared");
+    let tree_b = dir.path().join("b");
+    std::fs::create_dir_all(&tree_shared).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions(
+        "https://example.com/shared.git",
+        vec![(1, 0, 0), (1, 2, 0), (2, 0, 0)],
+    );
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_source("shared", tree_shared, None);
+    provider.add_source("b", tree_b, Some(manifest_b));
+
+    let config = make_config(vec![
+        (
+            "shared",
+            git_spec("https://example.com/shared.git", Some(">=1.0.0, <2.0.0")),
+        ),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    let shared = graph.nodes.get("shared").expect("shared should resolve");
+    assert_eq!(shared.resolved_ref.version, Some(Version::new(1, 2, 0)));
+    assert_eq!(
+        shared.latest_version,
+        Some(Version::new(2, 0, 0)),
+        "latest_version should survive override-based restart"
+    );
+    assert!(
+        provider.fetch_count("shared") > 1,
+        "shared should be re-resolved at least once to exercise override path"
+    );
+}
+
+#[test]
+fn oscillating_ref_selection_errors_with_ref_cycle() {
+    let dir = TempDir::new().unwrap();
+    let tree_shared = dir.path().join("shared");
+    let tree_b = dir.path().join("b");
+    std::fs::create_dir_all(&tree_shared).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_source("shared", tree_shared, None);
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.set_commit_sequence("shared", vec!["osc-a", "osc-b"]);
+
+    let config = make_config(vec![
+        (
+            "shared",
+            git_spec("https://example.com/shared.git", Some("^1.0")),
+        ),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+
+    let result = resolve(&config, &provider, None, &default_options());
+    match result {
+        Err(MarsError::Resolution(ResolutionError::VersionConflict { name, message })) => {
+            assert_eq!(name, "shared");
+            assert!(
+                message.contains("resolution oscillation detected for `shared`"),
+                "oscillation message should name package: {message}"
+            );
+            assert!(
+                message.contains("v1.0.0@osc-a") || message.contains("v1.0.0@osc-b"),
+                "oscillation message should include ref cycle details: {message}"
+            );
+        }
+        other => panic!("expected oscillation VersionConflict, got {other:?}"),
+    }
 }

@@ -214,6 +214,13 @@ pub enum MarsError {
     )]
     LockedCommitUnreachable { commit: String, url: String },
 
+    /// Internal control-flow signal: the resolver detected that an already-resolved
+    /// package would select a different ref under the full accumulated constraint set.
+    /// Caught by the `resolve()` driver to trigger a fresh-context restart.
+    /// Never surfaces to end users.
+    #[error("(internal: resolution restart needed for `{package}`)")]
+    ResolutionRestartNeeded { package: String },
+
     /// Link operation error — conflict, missing target, or invalid link metadata.
     #[error("link error: {target}: {message}")]
     Link { target: String, message: String },
@@ -277,6 +284,9 @@ impl MarsError {
             | MarsError::Http { .. }
             | MarsError::GitCli { .. }
             | MarsError::Internal(_) => 3,
+            MarsError::ResolutionRestartNeeded { .. } => {
+                unreachable!("ResolutionRestartNeeded is an internal signal caught by resolve()")
+            }
         }
     }
 }

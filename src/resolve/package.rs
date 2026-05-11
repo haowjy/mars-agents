@@ -116,6 +116,80 @@ pub(crate) fn resolve_package_bottom_up(
         ctx.package_states().get(&pending_src.name),
         Some(PackageResolutionState::Resolved)
     ) {
+        // Re-resolution check: when a new constraint arrives on an already-resolved
+        // git package, check whether the full accumulated constraint set (now including
+        // the new constraint) would select a different version or commit than what is
+        // currently in the registry.
+        //
+        // If so, emit `ResolutionRestartNeeded` — the driver will start a fresh
+        // `ResolverContext`, carry the correct (new) ref as an override, and re-run
+        // the bottom-up phase from scratch. B1 (stale manifest-derived constraints) and
+        // B2 (new deps not materialized) are both avoided by construction: the fresh
+        // context has no stale state, and the override is used at first-resolution time
+        // (which runs the normal seeding path).
+        //
+        // Fast paths that skip the check:
+        //   Path sources — no version selection, never change.
+        //   RefPin constraints — fixed refs, semver re-selection doesn't apply.
+        //   Semver(req) where existing version already satisfies req — MVS minimum is
+        //     already at least as high as the new lower bound, and maximization status
+        //     hasn't changed, so the selection is stable.
+        let needs_check = matches!(pending_src.spec, SourceSpec::Git(_))
+            && !matches!(pending_src.constraint, VersionConstraint::RefPin(_));
+
+        if needs_check {
+            let existing_ref = ctx
+                .registry()
+                .get(&pending_src.name)
+                .map(|p| p.node.resolved_ref.clone());
+
+            // Fast path: semver constraint already satisfied → selection cannot change.
+            let skip = match (&pending_src.constraint, &existing_ref) {
+                (VersionConstraint::Semver(req), Some(ref_)) => {
+                    ref_.version.as_ref().is_some_and(|v| req.matches(v))
+                }
+                _ => false, // Latest or no existing ref → must run full check
+            };
+
+            if !skip {
+                let is_direct = ctx.is_direct_source(&pending_src.name);
+                let (new_ref, latest_version) = resolve_single_source(
+                    pending_src,
+                    is_direct,
+                    provider,
+                    locked,
+                    options,
+                    ctx.version_constraints(),
+                    diag,
+                )?;
+
+                // Compare version AND commit (N3: same semver, different commit when
+                // maximize policy changes after a locked-commit first-pass).
+                let ref_changed = existing_ref.as_ref().is_none_or(|existing| {
+                    new_ref.version != existing.version
+                        || new_ref.commit != existing.commit
+                        || new_ref.tree_path != existing.tree_path
+                });
+
+                if ref_changed {
+                    let new_rooted = apply_subpath(
+                        &pending_src.name,
+                        &new_ref.tree_path,
+                        pending_src.subpath.as_ref(),
+                    )?;
+                    ctx.set_pending_restart(
+                        pending_src.name.clone(),
+                        new_ref,
+                        new_rooted,
+                        latest_version,
+                    );
+                    return Err(MarsError::ResolutionRestartNeeded {
+                        package: pending_src.name.to_string(),
+                    });
+                }
+            }
+        }
+
         if seed_items {
             let package =
                 ctx.registry()
@@ -152,21 +226,39 @@ pub(crate) fn resolve_package_bottom_up(
         },
     );
 
+    // Check for a version override carried from a prior restart pass.
+    // When the driver restarts after a would-change detection, it seeds the fresh
+    // context with the correct (new) ref for the package that triggered the restart.
+    // Using it here ensures that when `resolve_package_bottom_up` is first called
+    // for this package in the new pass, it immediately uses the right version without
+    // having to trigger another restart. B1 and B2 are avoided because:
+    //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
+    //   B2: we fall through to normal first-resolution logic below, which runs the
+    //       same seed_items / filter path as any non-overridden first resolution.
     let is_direct = ctx.is_direct_source(&pending_src.name);
-    let (resolved_ref, latest_version) = resolve_single_source(
-        pending_src,
-        is_direct,
-        provider,
-        locked,
-        options,
-        ctx.version_constraints(),
-        diag,
-    )?;
-    let rooted_ref = apply_subpath(
-        &pending_src.name,
-        &resolved_ref.tree_path,
-        pending_src.subpath.as_ref(),
-    )?;
+    let (resolved_ref, latest_version, rooted_ref) =
+        if let Some((override_ref, override_rooted, override_latest_version)) =
+            ctx.version_override(&pending_src.name).cloned()
+        {
+            // Use pre-computed ref and latest-version metadata from prior pass.
+            (override_ref, override_latest_version, override_rooted)
+        } else {
+            let (ref_, latest) = resolve_single_source(
+                pending_src,
+                is_direct,
+                provider,
+                locked,
+                options,
+                ctx.version_constraints(),
+                diag,
+            )?;
+            let rooted = apply_subpath(
+                &pending_src.name,
+                &ref_.tree_path,
+                pending_src.subpath.as_ref(),
+            )?;
+            (ref_, latest, rooted)
+        };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest)?;

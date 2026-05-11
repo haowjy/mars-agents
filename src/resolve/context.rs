@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
+use semver::Version;
 
 use super::filter::push_filter_constraint;
 use super::{
     PackageResolutionState, PackageVersions, PendingItem, RegisteredPackage, ResolvedGraph,
-    ResolvedNode, VersionConstraint, VisitedSet,
+    ResolvedNode, RootedSourceRef, VersionConstraint, VisitedSet,
 };
 use crate::config::FilterMode;
+use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
 
 /// Mutable resolver state threaded through bottom-up resolution and DFS traversal.
@@ -24,6 +26,18 @@ pub struct ResolverContext {
     /// Used by `resolve_single_source` to determine whether to replay the consumer
     /// lock — a source-level fact, not per-request, so ordering cannot affect it.
     direct_source_names: HashSet<SourceName>,
+    /// Version overrides carried from a prior restart pass.
+    ///
+    /// When a restart is triggered because package X would resolve to a different
+    /// version under the full accumulated constraint set, the driver carries the
+    /// correct (new) ref into the fresh context via this map. The first-resolution
+    /// branch in `resolve_package_bottom_up` checks this map and uses the override
+    /// directly, so the same constraint-accumulation pattern does NOT re-trigger a
+    /// restart on the next pass.
+    version_overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef, Option<Version>)>,
+    /// Pending restart info set by `resolve_package_bottom_up` just before it returns
+    /// `ResolutionRestartNeeded`. The driver reads this before discarding the context.
+    pending_restart: Option<(SourceName, ResolvedRef, RootedSourceRef, Option<Version>)>,
 }
 
 impl Default for ResolverContext {
@@ -44,6 +58,8 @@ impl ResolverContext {
             visited: VisitedSet::new(),
             package_versions: PackageVersions::new(),
             direct_source_names: HashSet::new(),
+            version_overrides: HashMap::new(),
+            pending_restart: None,
         }
     }
 
@@ -57,6 +73,45 @@ impl ResolverContext {
     /// Used by `resolve_single_source` to decide whether to replay the consumer lock.
     pub(super) fn is_direct_source(&self, name: &SourceName) -> bool {
         self.direct_source_names.contains(name)
+    }
+
+    /// Set version overrides from a prior restart pass.
+    /// These are used by `resolve_package_bottom_up` to skip re-resolution for
+    /// packages where the correct version was already computed.
+    pub(super) fn set_version_overrides(
+        &mut self,
+        overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef, Option<Version>)>,
+    ) {
+        self.version_overrides = overrides;
+    }
+
+    /// Look up an override for the first resolution of `name`.
+    /// Returns the pre-computed (ResolvedRef, RootedSourceRef, latest_version) if present.
+    pub(super) fn version_override(
+        &self,
+        name: &SourceName,
+    ) -> Option<&(ResolvedRef, RootedSourceRef, Option<Version>)> {
+        self.version_overrides.get(name)
+    }
+
+    /// Record the restart info: the package that triggered a restart and the ref
+    /// it should be resolved to on the next pass. Called by `resolve_package_bottom_up`
+    /// just before returning `ResolutionRestartNeeded`.
+    pub(super) fn set_pending_restart(
+        &mut self,
+        package: SourceName,
+        new_ref: ResolvedRef,
+        new_rooted: RootedSourceRef,
+        latest_version: Option<Version>,
+    ) {
+        self.pending_restart = Some((package, new_ref, new_rooted, latest_version));
+    }
+
+    /// Drain the pending restart info. Called by the driver after catching the signal.
+    pub(super) fn take_pending_restart(
+        &mut self,
+    ) -> Option<(SourceName, ResolvedRef, RootedSourceRef, Option<Version>)> {
+        self.pending_restart.take()
     }
 
     pub(super) fn registry(&self) -> &IndexMap<SourceName, RegisteredPackage> {

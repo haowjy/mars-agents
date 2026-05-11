@@ -318,7 +318,7 @@ fn latest_resolves_to_newest() {
 }
 
 #[test]
-fn latest_constraint_does_not_skip_sibling_semver_validation() {
+fn latest_and_semver_constraints_re_resolve_to_intersection() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -327,6 +327,10 @@ fn latest_constraint_does_not_skip_sibling_semver_validation() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
+    // a uses "latest" for shared → maximize → 2.0.0 (available: 1.0.0, 2.0.0).
+    // b uses "^1.0" (= >=1.0.0, <2.0.0) → 2.0.0 doesn't satisfy <2.0.0, triggering
+    // re-resolution.  Combined: Latest (maximize) ∩ ^1.0 → satisfying = [1.0.0] →
+    // maximize picks 1.0.0.  Both constraints are jointly satisfiable.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -351,16 +355,12 @@ fn latest_constraint_does_not_skip_sibling_semver_validation() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    let result = resolve(&config, &provider, None, &default_options());
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("shared"),
-        "error should mention the conflicting source: {err}"
-    );
-    assert!(
-        err.contains("^1.0"),
-        "error should mention the violated semver constraint: {err}"
+    let graph = resolve(&config, &provider, None, &default_options())
+        .expect("latest + ^1.0 are jointly satisfiable by 1.0.0; should not error");
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 0, 0)),
+        "re-resolution must select 1.0.0 (max version satisfying both latest-maximize and ^1.0)"
     );
 }
 

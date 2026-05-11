@@ -18,6 +18,7 @@ mod skill;
 mod types;
 mod version;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 #[cfg(test)]
@@ -88,6 +89,23 @@ fn apply_item_version_policy(
     }
 }
 
+fn same_resolved_ref(a: &ResolvedRef, b: &ResolvedRef) -> bool {
+    a.version == b.version
+        && a.version_tag == b.version_tag
+        && a.commit == b.commit
+        && a.tree_path == b.tree_path
+}
+
+fn describe_resolved_ref(resolved: &ResolvedRef) -> String {
+    let version = resolved
+        .version_tag
+        .clone()
+        .or_else(|| resolved.version.as_ref().map(ToString::to_string))
+        .unwrap_or_else(|| "no-version".to_string());
+    let commit = resolved.commit.as_deref().unwrap_or("no-commit");
+    format!("{version}@{commit}")
+}
+
 /// Lists semver-tagged versions available for a git source.
 pub trait VersionLister {
     fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError>;
@@ -147,6 +165,29 @@ impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestRe
 ///
 /// When `locked` is provided, prefer locked versions when constraints allow
 /// (reproducible builds).
+///
+/// ## Fresh-context restart algorithm
+///
+/// The bottom-up traversal can discover that an already-resolved package would
+/// select a different version under the full accumulated constraint set (e.g.
+/// a `Latest` constraint from a later-processed package changes the optimum).
+/// When this happens `resolve_package_bottom_up` emits `ResolutionRestartNeeded`.
+///
+/// The driver handles this by:
+///   1. Reading the "correct" (new) ref from the context.
+///   2. Carrying it as an override into a fresh `ResolverContext`.
+///   3. Restarting the bottom-up phase from scratch.
+///
+/// On the next pass the override is used at first-resolution time — the package
+/// starts at the right version, so the same constraint pattern does NOT re-trigger
+/// a restart. B1 (stale manifest-derived constraints) and B2 (new deps not
+/// materialized) are avoided by construction because the fresh context has no stale
+/// state and the override falls through to the normal first-resolution code path.
+///
+/// Convergence is guaranteed in practice because versions only move in one direction
+/// (upward under maximize, toward the minimum satisfying intersection under MVS).
+/// If a package starts bouncing between previously-seen refs, the driver reports
+/// a true per-package oscillation with the observed ref cycle.
 pub fn resolve(
     config: &EffectiveConfig,
     provider: &dyn SourceProvider,
@@ -154,55 +195,117 @@ pub fn resolve(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
-    let mut ctx = ResolverContext::new();
-
-    // Pre-compute the set of direct source names before resolution begins.
-    // resolve_single_source uses this set (via ctx.is_direct_source) to determine
-    // whether to replay the consumer lock. Pre-computing the set prevents the ordering
-    // bug where a package first discovered transitively would lose lock replay even if
-    // it also appears as a direct dep in mars.toml.
+    // Pre-compute direct source names (stable across restarts — determined by config).
     let direct_source_names: std::collections::HashSet<SourceName> =
         config.dependencies.keys().cloned().collect();
-    ctx.set_direct_sources(direct_source_names);
 
-    let mut direct_requests: Vec<PendingSource> = Vec::new();
-    for (name, source) in &config.dependencies {
-        let is_upgrade_target = options.maximize
-            && (options.upgrade_targets.is_empty() || options.upgrade_targets.contains(name));
-        let constraint = match &source.spec {
-            SourceSpec::Git(git) => {
-                if options.bump_direct_constraints && is_upgrade_target {
-                    VersionConstraint::Latest
-                } else {
-                    parse_version_constraint(git.version.as_deref())
+    // Build direct requests (stable across restarts — determined by config + options).
+    let direct_requests: Vec<PendingSource> = {
+        let mut reqs = Vec::new();
+        for (name, source) in &config.dependencies {
+            let is_upgrade_target = options.maximize
+                && (options.upgrade_targets.is_empty() || options.upgrade_targets.contains(name));
+            let constraint = match &source.spec {
+                SourceSpec::Git(git) => {
+                    if options.bump_direct_constraints && is_upgrade_target {
+                        VersionConstraint::Latest
+                    } else {
+                        parse_version_constraint(git.version.as_deref())
+                    }
                 }
+                SourceSpec::Path(_) => VersionConstraint::Latest,
+            };
+            reqs.push(PendingSource {
+                name: name.clone(),
+                source_id: source.id.clone(),
+                spec: source.spec.clone(),
+                subpath: source.subpath.clone(),
+                constraint,
+                filter: source.filter.clone(),
+                required_by: "mars.toml".to_string(),
+            });
+        }
+        reqs
+    };
+
+    // Version overrides carried across restarts:
+    // package → (correct ref, correct rooted, latest_version metadata).
+    let mut version_overrides: HashMap<
+        SourceName,
+        (ResolvedRef, RootedSourceRef, Option<semver::Version>),
+    > = HashMap::new();
+    // Per-package restart history used for true oscillation detection.
+    let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
+
+    // Restart loop: normally executes once. Restarts only when a package would
+    // resolve differently under the full constraint set than it did at first-resolution
+    // time (order-dependent constraint accumulation bug).
+    let ctx = loop {
+        let mut ctx = ResolverContext::new();
+        ctx.set_direct_sources(direct_source_names.clone());
+        ctx.set_version_overrides(version_overrides.clone());
+
+        // Bottom-up phase: resolve all packages (with version selection) and seed items.
+        let bottom_up_result = (|| -> Result<(), MarsError> {
+            for request in direct_requests
+                .iter()
+                .filter(|request| filter::is_unfiltered_request(&request.filter))
+            {
+                resolve_package_bottom_up(
+                    request, true, provider, locked, options, diag, &mut ctx,
+                )?;
             }
-            SourceSpec::Path(_) => VersionConstraint::Latest,
-        };
-        direct_requests.push(PendingSource {
-            name: name.clone(),
-            source_id: source.id.clone(),
-            spec: source.spec.clone(),
-            subpath: source.subpath.clone(),
-            constraint,
-            filter: source.filter.clone(),
-            required_by: "mars.toml".to_string(),
-        });
-    }
+            for request in direct_requests
+                .iter()
+                .filter(|request| !filter::is_unfiltered_request(&request.filter))
+            {
+                resolve_package_bottom_up(
+                    request, true, provider, locked, options, diag, &mut ctx,
+                )?;
+            }
+            Ok(())
+        })();
 
-    for request in direct_requests
-        .iter()
-        .filter(|request| filter::is_unfiltered_request(&request.filter))
-    {
-        resolve_package_bottom_up(request, true, provider, locked, options, diag, &mut ctx)?;
-    }
-    for request in direct_requests
-        .iter()
-        .filter(|request| !filter::is_unfiltered_request(&request.filter))
-    {
-        resolve_package_bottom_up(request, true, provider, locked, options, diag, &mut ctx)?;
-    }
+        match bottom_up_result {
+            Err(MarsError::ResolutionRestartNeeded { package }) => {
+                // Read the override info before discarding ctx.
+                let Some((pkg_name, new_ref, new_rooted, latest_version)) =
+                    ctx.take_pending_restart()
+                else {
+                    return Err(MarsError::Internal(format!(
+                        "missing pending restart payload for `{package}`"
+                    )));
+                };
+                let history = restart_history.entry(pkg_name.clone()).or_default();
+                if let Some(cycle_start) = history
+                    .iter()
+                    .position(|seen| same_resolved_ref(seen, &new_ref))
+                {
+                    let mut cycle: Vec<String> = history[cycle_start..]
+                        .iter()
+                        .map(describe_resolved_ref)
+                        .collect();
+                    cycle.push(describe_resolved_ref(&new_ref));
+                    return Err(MarsError::Resolution(ResolutionError::VersionConflict {
+                        name: pkg_name.to_string(),
+                        message: format!(
+                            "resolution oscillation detected for `{pkg_name}`: {}",
+                            cycle.join(" -> ")
+                        ),
+                    }));
+                }
+                history.push(new_ref.clone());
+                version_overrides.insert(pkg_name, (new_ref, new_rooted, latest_version));
+                // Discard ctx and retry with updated overrides.
+                continue;
+            }
+            Err(other) => return Err(other),
+            Ok(()) => break ctx,
+        }
+    };
 
+    // Item DFS phase: traverse seeded items, resolve skill deps.
+    let mut ctx = ctx;
     while let Some(pending_item) = ctx.pop_pending() {
         let (resolved_ref, skill_deps) = {
             let Some(package) = ctx.registry().get(&pending_item.package) else {

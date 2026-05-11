@@ -7,6 +7,7 @@
 /// - Hooks: writes to `opencode.json` (hooks section with plugin hook format)
 use std::path::{Path, PathBuf};
 
+use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -130,14 +131,23 @@ fn write_opencode_config(
         })?;
 
         for server in servers {
-            let mut command = Vec::with_capacity(server.args.len() + 1);
-            command.push(serde_json::Value::String(server.command.clone()));
-            command.extend(server.args.iter().cloned().map(serde_json::Value::String));
-
-            let mut entry = serde_json::json!({
-                "type": "local",
-                "command": command,
-            });
+            let mut entry = match server.transport {
+                McpTransport::Stdio => {
+                    let mut command = Vec::with_capacity(server.args.len() + 1);
+                    if let Some(command_name) = server.command.as_ref() {
+                        command.push(serde_json::Value::String(command_name.clone()));
+                    }
+                    command.extend(server.args.iter().cloned().map(serde_json::Value::String));
+                    serde_json::json!({
+                        "type": "local",
+                        "command": command,
+                    })
+                }
+                McpTransport::Http => serde_json::json!({
+                    "type": "remote",
+                    "url": server.url,
+                }),
+            };
 
             // OpenCode: env as plain name map (no interpolation)
             if !server.env.is_empty() {
@@ -147,6 +157,23 @@ fn write_opencode_config(
                     .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                     .collect();
                 entry["environment"] = serde_json::Value::Object(env_obj);
+            }
+
+            if !server.headers.is_empty() {
+                let headers_obj: serde_json::Map<String, serde_json::Value> = server
+                    .headers
+                    .iter()
+                    .map(|(k, v)| {
+                        let value = match v {
+                            HeaderValue::EnvRef(env_ref) => {
+                                serde_json::Value::String(env_ref.var_name().to_string())
+                            }
+                            HeaderValue::Plain(plain) => serde_json::Value::String(plain.clone()),
+                        };
+                        (k.clone(), value)
+                    })
+                    .collect();
+                entry["headers"] = serde_json::Value::Object(headers_obj);
             }
 
             mcp_map.insert(server.name.clone(), entry);
@@ -341,9 +368,35 @@ mod tests {
         env.insert("TOKEN".to_string(), "MY_TOKEN".to_string());
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "node".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("node".to_string()),
             args: vec!["server.js".to_string()],
             env,
+            url: None,
+            headers: IndexMap::new(),
+        })
+    }
+
+    fn make_http_mcp_entry(name: &str) -> ConfigEntry {
+        let mut headers = IndexMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            HeaderValue::EnvRef(crate::compiler::mcp::EnvRef::Env {
+                var: "API_TOKEN".to_string(),
+            }),
+        );
+        headers.insert(
+            "X-Custom".to_string(),
+            HeaderValue::Plain("static-value".to_string()),
+        );
+        ConfigEntry::McpServer(McpServerEntry {
+            name: name.to_string(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: IndexMap::new(),
+            url: Some("https://api.example.com/mcp".to_string()),
+            headers,
         })
     }
 
@@ -408,6 +461,24 @@ mod tests {
         let command = json["mcp"]["server"]["command"].as_array().unwrap();
         assert_eq!(command[0], "node");
         assert_eq!(command[1], "server.js");
+    }
+
+    #[test]
+    fn write_http_mcp_uses_remote_type_url_and_plain_headers() {
+        let tmp = TempDir::new().unwrap();
+        let adapter = OpencodeAdapter;
+        adapter
+            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let server = &json["mcp"]["remote-server"];
+        assert_eq!(server["type"], "remote");
+        assert_eq!(server["url"], "https://api.example.com/mcp");
+        assert_eq!(server["headers"]["Authorization"], "API_TOKEN");
+        assert_eq!(server["headers"]["X-Custom"], "static-value");
+        assert!(server["command"].is_null());
     }
 
     #[test]

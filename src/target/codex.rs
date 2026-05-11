@@ -7,6 +7,7 @@
 /// - Hooks: writes to `codex_hooks.json` with structural hook entries
 use std::path::{Path, PathBuf};
 
+use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -138,8 +139,43 @@ fn write_codex_mcp_toml(
 
     for server in servers {
         let mut server_table = Table::new();
-        server_table["command"] = value(server.command.as_str());
-        server_table["args"] = toml_string_array(server.args.clone());
+        match server.transport {
+            McpTransport::Stdio => {
+                if let Some(command) = server.command.as_ref() {
+                    server_table["command"] = value(command.as_str());
+                }
+                server_table["args"] = toml_string_array(server.args.clone());
+            }
+            McpTransport::Http => {
+                if let Some(url) = server.url.as_ref() {
+                    server_table["url"] = value(url.as_str());
+                }
+
+                let mut bearer_token_env_var: Option<String> = None;
+                let mut http_headers = Table::new();
+                for (header, value_ref) in &server.headers {
+                    match value_ref {
+                        HeaderValue::Plain(plain_value) => {
+                            http_headers[header.as_str()] = value(plain_value.as_str());
+                        }
+                        HeaderValue::EnvRef(env_ref) => {
+                            if header.eq_ignore_ascii_case("Authorization") {
+                                bearer_token_env_var = Some(env_ref.var_name().to_string());
+                            } else {
+                                http_headers[header.as_str()] = value(env_ref.var_name());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(token_var) = bearer_token_env_var {
+                    server_table["bearer_token_env_var"] = value(token_var);
+                }
+                if !http_headers.is_empty() {
+                    server_table["http_headers"] = Item::Table(http_headers);
+                }
+            }
+        }
 
         // Codex env: list of variable names (not a map with values).
         if !server.env.is_empty() {
@@ -376,9 +412,12 @@ mod tests {
     fn make_mcp_entry(name: &str) -> ConfigEntry {
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
             env: IndexMap::new(),
+            url: None,
+            headers: IndexMap::new(),
         })
     }
 
@@ -387,9 +426,36 @@ mod tests {
         env.insert("API_KEY".to_string(), "MY_SECRET".to_string());
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            command: "npx".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("npx".to_string()),
             args: vec![],
             env,
+            url: None,
+            headers: IndexMap::new(),
+        })
+    }
+
+    fn make_http_mcp_entry(name: &str) -> ConfigEntry {
+        let mut headers = IndexMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            HeaderValue::EnvRef(crate::compiler::mcp::EnvRef::Env {
+                var: "API_TOKEN".to_string(),
+            }),
+        );
+        headers.insert(
+            "X-Custom".to_string(),
+            HeaderValue::Plain("static-value".to_string()),
+        );
+
+        ConfigEntry::McpServer(McpServerEntry {
+            name: name.to_string(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            env: IndexMap::new(),
+            url: Some("https://api.example.com/mcp".to_string()),
+            headers,
         })
     }
 
@@ -466,6 +532,33 @@ theme = "dark"
             toml["mcp"]["servers"]["context7"]["command"].as_str(),
             Some("npx")
         );
+    }
+
+    #[test]
+    fn write_http_mcp_uses_url_bearer_token_and_http_headers() {
+        let tmp = TempDir::new().unwrap();
+        let adapter = CodexAdapter;
+        adapter
+            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
+            .unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        let server = &toml["mcp"]["servers"]["remote-server"];
+        assert_eq!(
+            server["url"].as_str(),
+            Some("https://api.example.com/mcp")
+        );
+        assert_eq!(
+            server["bearer_token_env_var"].as_str(),
+            Some("API_TOKEN")
+        );
+        assert_eq!(
+            server["http_headers"]["X-Custom"].as_str(),
+            Some("static-value")
+        );
+        assert!(server.get("command").is_none());
+        assert!(server.get("args").is_none());
     }
 
     #[test]

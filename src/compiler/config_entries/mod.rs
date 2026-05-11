@@ -173,9 +173,12 @@ pub(crate) fn compile_config_entries(
             entries_with_source.push((
                 ConfigEntry::McpServer(McpServerEntry {
                     name: e.name,
+                    transport: e.transport,
                     command: e.command,
                     args: e.args,
                     env: e.env.into_iter().collect(),
+                    url: e.url,
+                    headers: e.headers,
                 }),
                 source,
             ));

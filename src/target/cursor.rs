@@ -164,10 +164,13 @@ fn write_cursor_mcp_json(
                         .iter()
                         .map(|(k, v)| {
                             let value = match v {
-                                HeaderValue::EnvRef(env_ref) => {
-                                    serde_json::Value::String(format!("${{env:{}}}", env_ref.var_name()))
+                                HeaderValue::EnvRef(env_ref) => serde_json::Value::String(format!(
+                                    "${{env:{}}}",
+                                    env_ref.var_name()
+                                )),
+                                HeaderValue::Plain(plain) => {
+                                    serde_json::Value::String(plain.clone())
                                 }
-                                HeaderValue::Plain(plain) => serde_json::Value::String(plain.clone()),
                             };
                             (k.clone(), value)
                         })

@@ -320,12 +320,7 @@ fn collect_codex_tools_lossiness(
                         );
                     }
                     ToolRule::Scoped(_) => {
-                        push_lossy(
-                            lossy,
-                            format!("tools.{cap}"),
-                            target,
-                            Lossiness::Dropped,
-                        );
+                        push_lossy(lossy, format!("tools.{cap}"), target, Lossiness::Dropped);
                     }
                     _ => {
                         push_lossy(
@@ -592,7 +587,9 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     // only when tools are present. No tools + no sandbox → omit sandbox_mode.
     let sandbox_str = match eff.sandbox() {
         Some(s) if *s != SandboxMode::Default => Some(s.as_str()),
-        _ => eff.tools().map(|_| infer_codex_sandbox_from_tools(eff.tools())),
+        _ => eff
+            .tools()
+            .map(|_| infer_codex_sandbox_from_tools(eff.tools())),
     };
 
     // Approval — exact (lowered to approval_policy)

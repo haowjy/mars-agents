@@ -460,10 +460,7 @@ fn convert_deprecated_tools_list(list: &[String]) -> ToolsField {
 /// inserted as deny entries. If no base tools field exists, defaults to `*: allow`.
 ///
 /// DEPRECATED: Remove after deprecation period (R08)
-fn merge_deprecated_disallowed_tools(
-    base: Option<ToolsField>,
-    deny_list: &[String],
-) -> ToolsField {
+fn merge_deprecated_disallowed_tools(base: Option<ToolsField>, deny_list: &[String]) -> ToolsField {
     let mut map = match base {
         Some(ToolsField::Map(map)) => map,
         Some(ToolsField::Shorthand(ToolAction::Allow)) | None => {

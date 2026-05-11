@@ -545,14 +545,8 @@ theme = "dark"
         let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
         let toml: TomlValue = toml::from_str(&raw).unwrap();
         let server = &toml["mcp"]["servers"]["remote-server"];
-        assert_eq!(
-            server["url"].as_str(),
-            Some("https://api.example.com/mcp")
-        );
-        assert_eq!(
-            server["bearer_token_env_var"].as_str(),
-            Some("API_TOKEN")
-        );
+        assert_eq!(server["url"].as_str(), Some("https://api.example.com/mcp"));
+        assert_eq!(server["bearer_token_env_var"].as_str(), Some("API_TOKEN"));
         assert_eq!(
             server["http_headers"]["X-Custom"].as_str(),
             Some("static-value")

@@ -106,7 +106,10 @@ impl McpServerDef {
 
         let invalid = |message: String| {
             MarsError::Config(ConfigError::Invalid {
-                message: format!("invalid MCP server in {} ({transport}): {message}", source_path.display()),
+                message: format!(
+                    "invalid MCP server in {} ({transport}): {message}",
+                    source_path.display()
+                ),
             })
         };
 
@@ -124,7 +127,9 @@ impl McpServerDef {
                     ));
                 }
                 if self.url.is_some() {
-                    return Err(invalid("`url` is only allowed for http transport".to_string()));
+                    return Err(invalid(
+                        "`url` is only allowed for http transport".to_string(),
+                    ));
                 }
                 if !self.headers.is_empty() {
                     return Err(invalid(
@@ -149,7 +154,9 @@ impl McpServerDef {
                     ));
                 }
                 if !self.args.is_empty() {
-                    return Err(invalid("`args` is forbidden for http transport".to_string()));
+                    return Err(invalid(
+                        "`args` is forbidden for http transport".to_string(),
+                    ));
                 }
             }
         }

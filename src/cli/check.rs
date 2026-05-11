@@ -329,18 +329,27 @@ fn has_package_dependencies(base: &Path) -> bool {
     config.package.is_some() && !config.dependencies.is_empty()
 }
 
-/// Resolve the dependency graph and collect all available skills.
+/// Resolve the dependency graph and collect available skills, respecting package filters.
 ///
 /// Returns a map of `skill_name → (source_name, version_string)`.
 /// Fails closed — if resolution cannot complete, returns an error.
+///
+/// Uses only `[dependencies]` from mars.toml — excludes `[local-dependencies]` (dev-only)
+/// and ignores mars.local.toml overrides (local dev paths). This matches what consumers
+/// see when they depend on this package.
 fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, String)>, MarsError> {
     use crate::resolve::{ResolveOptions, resolve};
     use crate::source::GlobalCache;
     use crate::sync::provider::RealSourceProvider;
 
     let config = crate::config::load(base)?;
-    let local = crate::config::load_local(base)?;
-    let effective = crate::config::merge(config, local)?;
+    // Publish gate: use only mars.toml [dependencies].
+    // Strip [local-dependencies] (dev-only, not exported to consumers) and skip
+    // mars.local.toml (local dev path overrides that don't exist on consumers).
+    let mut publish_config = config.clone();
+    publish_config.local_dependencies.clear();
+    let effective = crate::config::merge(publish_config, crate::config::LocalConfig::default())?;
+
     let cache = GlobalCache::new()?;
     let provider = RealSourceProvider {
         cache: &cache,
@@ -355,8 +364,11 @@ fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, Stri
     for (source_name, node) in &graph.nodes {
         let discovered =
             crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None)?;
+        let package_filters = graph.filters.get(source_name);
         for item in discovered {
-            if item.id.kind == crate::lock::ItemKind::Skill {
+            if item.id.kind == crate::lock::ItemKind::Skill
+                && skill_passes_filters(item.id.name.as_ref(), package_filters)
+            {
                 let version_str = node
                     .resolved_ref
                     .version
@@ -372,6 +384,31 @@ fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, Stri
     }
 
     Ok(skills)
+}
+
+/// Returns true if a skill would be installed given the accumulated filter constraints.
+///
+/// Filters are accumulated with OR semantics: a skill passes if ANY filter in the list
+/// would include it (multiple requests for the same package may each install different
+/// subsets, and a skill available from any of them is usable).
+fn skill_passes_filters(
+    skill_name: &str,
+    filters: Option<&Vec<crate::config::FilterMode>>,
+) -> bool {
+    let Some(filters) = filters else {
+        return true; // no filter constraint → all items pass
+    };
+    filters.iter().any(|filter| match filter {
+        crate::config::FilterMode::All => true,
+        crate::config::FilterMode::Include { skills, .. } => {
+            skills.iter().any(|s| s.as_ref() == skill_name)
+        }
+        crate::config::FilterMode::Exclude(excluded) => {
+            !excluded.iter().any(|e| e.as_ref() == skill_name)
+        }
+        crate::config::FilterMode::OnlySkills => true,
+        crate::config::FilterMode::OnlyAgents => false,
+    })
 }
 
 fn format_searched_packages(graph_skills: &HashMap<String, (String, String)>) -> String {
@@ -650,6 +687,105 @@ mod tests {
             report.errors.is_empty(),
             "expected no errors when skill is in dep: {:?}",
             report.errors
+        );
+    }
+
+    // ── Fix 1: Filter bypass — excluded skill must not satisfy a ref ──────────────
+
+    #[test]
+    fn check_excluded_skill_in_dep_is_not_available() {
+        // A skill that exists in the dep package but is excluded via filter
+        // must not satisfy an agent skill reference — the filter bypass is the bug.
+        let dir = TempDir::new().unwrap();
+        let dep_dir = TempDir::new().unwrap();
+
+        // Dep provides "ext-skill" and "other-skill", but consumer excludes "ext-skill".
+        write_dep_package(
+            dep_dir.path(),
+            "dep-pkg",
+            "0.1.0",
+            &["ext-skill", "other-skill"],
+        );
+        write_agent(dir.path(), "coder", &["ext-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", exclude = [\"ext-skill\"] }}\n",
+                dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            !report.errors.is_empty(),
+            "excluded skill must not satisfy ref — expected error, got none: {:?}",
+            report.errors
+        );
+        let joined = report.errors.join("\n");
+        assert!(
+            joined.contains("ext-skill"),
+            "error must mention the missing skill: {joined}"
+        );
+    }
+
+    #[test]
+    fn check_only_agents_filter_makes_skills_unavailable() {
+        // only_agents = true means skills are NOT installed from the dep.
+        let dir = TempDir::new().unwrap();
+        let dep_dir = TempDir::new().unwrap();
+
+        write_dep_package(dep_dir.path(), "dep-pkg", "0.1.0", &["ext-skill"]);
+        write_agent(dir.path(), "coder", &["ext-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", only_agents = true }}\n",
+                dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            !report.errors.is_empty(),
+            "only_agents filter must make skills unavailable — expected error: {:?}",
+            report.errors
+        );
+    }
+
+    // ── Fix 2: Local config leakage — local-dependencies must not satisfy refs ────
+
+    #[test]
+    fn check_local_dependency_skill_does_not_satisfy_ref() {
+        // Skills from [local-dependencies] are dev-only and must not satisfy
+        // skill references in the publish gate check.
+        let dir = TempDir::new().unwrap();
+        let local_dep_dir = TempDir::new().unwrap();
+
+        write_dep_package(local_dep_dir.path(), "local-dep", "0.1.0", &["local-skill"]);
+        write_agent(dir.path(), "coder", &["local-skill"]);
+        // [package] + [local-dependencies] only, no [dependencies]
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
+                local_dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        // has_package_dependencies checks config.dependencies (not local_dependencies),
+        // so this will be false → falls through to local-only warning path.
+        // That's the correct behavior: local-only validation, external ref → warning.
+        let report = super::check_dir(dir.path()).unwrap();
+        // local-skill is not in the local package, so it should warn (not error)
+        // since we're in local-only mode (no [dependencies]).
+        let has_warning = report.warnings.iter().any(|w| w.contains("local-skill"));
+        assert!(
+            has_warning,
+            "local-skill from [local-dependencies] must not satisfy ref in publish gate — expected warning: {:?}",
+            report.warnings
         );
     }
 }

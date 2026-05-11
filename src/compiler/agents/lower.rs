@@ -11,7 +11,7 @@
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 use crate::compiler::agents::{
-    AgentProfile, HarnessKind, OverrideFields, ToolAction, ToolRule, ToolsField,
+    AgentProfile, HarnessKind, OverrideFields, SandboxMode, ToolAction, ToolRule, ToolsField,
 };
 use crate::frontmatter::Frontmatter;
 
@@ -294,28 +294,68 @@ fn collect_codex_tools_lossiness(
         ToolsField::Shorthand(_) => {}
         ToolsField::Map(map) => {
             for (cap, rule) in map {
-                if let ToolRule::Action(ToolAction::Ask) = rule {
-                    push_lossy(
-                        lossy,
-                        format!("tools.{cap}"),
-                        target,
-                        Lossiness::Approximate {
-                            note: "ask lowered as allow in sandbox inference",
-                        },
-                    );
+                // Wildcard allow/deny map exactly to sandbox semantics — no lossiness.
+                if cap == "*" {
+                    if let ToolRule::Action(ToolAction::Ask) = rule {
+                        push_lossy(
+                            lossy,
+                            "tools.*",
+                            target,
+                            Lossiness::Approximate {
+                                note: "ask lowered as allow in sandbox inference",
+                            },
+                        );
+                    }
                     continue;
                 }
-                push_lossy(
-                    lossy,
-                    format!("tools.{cap}"),
-                    target,
-                    Lossiness::Approximate {
-                        note: "Codex tools collapse to sandbox-only policy",
-                    },
-                );
+                match rule {
+                    ToolRule::Action(ToolAction::Ask) => {
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Approximate {
+                                note: "ask lowered as allow in sandbox inference",
+                            },
+                        );
+                    }
+                    ToolRule::Scoped(_) => {
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Dropped,
+                        );
+                    }
+                    _ => {
+                        push_lossy(
+                            lossy,
+                            format!("tools.{cap}"),
+                            target,
+                            Lossiness::Approximate {
+                                note: "Codex tools collapse to sandbox-only policy",
+                            },
+                        );
+                    }
+                }
             }
         }
     }
+}
+
+/// Capability expansions for Pi — capabilities that map to multiple tool names.
+const PI_CAPABILITY_EXPANSIONS: &[(&str, &[&str])] = &[
+    ("edit", &["edit", "write"]),
+    ("web", &["websearch", "webfetch"]),
+];
+
+fn expand_pi_capability(cap: &str) -> Vec<String> {
+    PI_CAPABILITY_EXPANSIONS
+        .iter()
+        .find_map(|(c, expanded)| {
+            (*c == cap).then_some(expanded.iter().map(|s| (*s).to_string()).collect())
+        })
+        .unwrap_or_else(|| vec![cap.to_string()])
 }
 
 fn compile_tools_for_pi(
@@ -359,9 +399,11 @@ fn compile_tools_for_pi(
                     ToolRule::Scoped(_) => {
                         push_lossy(lossy, format!("tools.{cap}"), target, Lossiness::Dropped);
                     }
-                    ToolRule::Action(ToolAction::Allow) => allowed.push(cap.to_string()),
+                    ToolRule::Action(ToolAction::Allow) => {
+                        push_unique(&mut allowed, &expand_pi_capability(cap));
+                    }
                     ToolRule::Action(ToolAction::Ask) => {
-                        allowed.push(cap.to_string());
+                        push_unique(&mut allowed, &expand_pi_capability(cap));
                         push_lossy(
                             lossy,
                             format!("tools.{cap}"),
@@ -546,11 +588,12 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     // Effort — exact (lowered to model_reasoning_effort)
     let effort_str = eff.effort().map(|e| e.as_str());
 
-    // Sandbox — explicit policy wins; otherwise infer from tools.
-    let sandbox_str = eff
-        .sandbox()
-        .map(|s| s.as_str())
-        .or_else(|| Some(infer_codex_sandbox_from_tools(eff.tools())));
+    // Sandbox — explicit non-default policy wins; otherwise infer from tools
+    // only when tools are present. No tools + no sandbox → omit sandbox_mode.
+    let sandbox_str = match eff.sandbox() {
+        Some(s) if *s != SandboxMode::Default => Some(s.as_str()),
+        _ => eff.tools().map(|_| infer_codex_sandbox_from_tools(eff.tools())),
+    };
 
     // Approval — exact (lowered to approval_policy)
     let approval_policy = eff.approval().and_then(|a| {
@@ -1222,8 +1265,9 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
+        // web expands to websearch, webfetch
         assert!(
-            text.contains("tools: bash, web"),
+            text.contains("tools: bash, websearch, webfetch"),
             "tools list missing: {text}"
         );
         assert!(out.lossy_fields.iter().any(|lf| {
@@ -1235,6 +1279,63 @@ mod tests {
     }
 
     // --- 3.3: Dispatch ---
+
+    #[test]
+    fn codex_no_tools_no_sandbox_omits_sandbox_mode() {
+        let content = "---\nname: r\nharness: codex\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("sandbox_mode"),
+            "sandbox_mode should be omitted when no tools and no sandbox: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_sandbox_default_no_tools_omits_sandbox_mode() {
+        let content = "---\nname: r\nharness: codex\nsandbox: default\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("sandbox_mode"),
+            "sandbox: default with no tools should omit sandbox_mode: {text}"
+        );
+    }
+
+    #[test]
+    fn codex_wildcard_only_allow_no_extra_lossiness() {
+        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        // Wildcard allow/deny maps exactly to sandbox — no Approximate entries
+        let approx: Vec<_> = out
+            .lossy_fields
+            .iter()
+            .filter(|f| matches!(f.classification, Lossiness::Approximate { .. }))
+            .collect();
+        assert!(
+            approx.is_empty(),
+            "wildcard-only allow should not produce Approximate lossiness: {approx:?}"
+        );
+    }
+
+    #[test]
+    fn pi_lowering_expands_edit_and_web_capabilities() {
+        let content = "---\nname: pi-agent\nharness: pi\ntools:\n  \"*\": deny\n  edit: allow\n  web: allow\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_pi(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("edit, write"),
+            "edit should expand to edit, write: {text}"
+        );
+        assert!(
+            text.contains("websearch, webfetch"),
+            "web should expand to websearch, webfetch: {text}"
+        );
+    }
 
     #[test]
     fn lower_for_harness_dispatches_correctly() {

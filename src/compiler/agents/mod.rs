@@ -386,6 +386,7 @@ fn yaml_str_list(val: &Value) -> Vec<String> {
     }
 }
 
+// DEPRECATED: Remove after deprecation period (R08)
 const CLAUDE_TO_ABSTRACT: &[(&str, &str)] = &[
     ("Bash", "bash"),
     ("Read", "read"),
@@ -399,6 +400,7 @@ const CLAUDE_TO_ABSTRACT: &[(&str, &str)] = &[
     ("LSP", "lsp"),
 ];
 
+/// DEPRECATED: Remove after deprecation period (R08)
 fn map_legacy_claude_tool_name(name: &str) -> String {
     CLAUDE_TO_ABSTRACT
         .iter()
@@ -433,7 +435,17 @@ fn parse_tool_action(
     }
 }
 
-fn tools_map_from_legacy_list(list: &[String]) -> ToolsField {
+// ---------------------------------------------------------------------------
+// Deprecated tools parsing — DEPRECATED: Remove after deprecation period (R08)
+// ---------------------------------------------------------------------------
+
+/// Convert a deprecated `tools: [Bash, Write, ...]` list into an abstract tools map.
+///
+/// Legacy Claude-native tool names are mapped to abstract capability names.
+/// Emits [`AgentDiagnostic::DeprecatedToolsList`] via the caller.
+///
+/// DEPRECATED: Remove after deprecation period (R08)
+fn convert_deprecated_tools_list(list: &[String]) -> ToolsField {
     let mut map = BTreeMap::new();
     map.insert("*".to_string(), ToolRule::Action(ToolAction::Deny));
     for key in list.iter().map(|tool| map_legacy_claude_tool_name(tool)) {
@@ -442,7 +454,16 @@ fn tools_map_from_legacy_list(list: &[String]) -> ToolsField {
     ToolsField::Map(map)
 }
 
-fn merge_disallowed_into_tools(base: Option<ToolsField>, deny_list: &[String]) -> ToolsField {
+/// Merge a deprecated `disallowed-tools: [Agent, ...]` list into an existing tools field.
+///
+/// Legacy Claude-native tool names are mapped to abstract capability names and
+/// inserted as deny entries. If no base tools field exists, defaults to `*: allow`.
+///
+/// DEPRECATED: Remove after deprecation period (R08)
+fn merge_deprecated_disallowed_tools(
+    base: Option<ToolsField>,
+    deny_list: &[String],
+) -> ToolsField {
     let mut map = match base {
         Some(ToolsField::Map(map)) => map,
         Some(ToolsField::Shorthand(ToolAction::Allow)) | None => {
@@ -472,6 +493,11 @@ fn merge_disallowed_into_tools(base: Option<ToolsField>, deny_list: &[String]) -
     ToolsField::Map(map)
 }
 
+/// Parse a tools field value — shorthand string or capability mapping.
+///
+/// Handles current abstract tools format only (string shorthand or mapping).
+/// Deprecated list form (`tools: [Bash, ...]`) is routed through
+/// [`convert_deprecated_tools_list`] at the call site.
 fn parse_tools_field(
     val: &Value,
     field_name: &str,
@@ -499,6 +525,7 @@ fn parse_tools_field(
                 None
             }
         },
+        // DEPRECATED: Remove after deprecation period (R08)
         Value::Sequence(seq) => {
             diags.push(AgentDiagnostic::DeprecatedToolsList);
             let list = seq
@@ -506,7 +533,7 @@ fn parse_tools_field(
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            Some(tools_map_from_legacy_list(&list))
+            Some(convert_deprecated_tools_list(&list))
         }
         Value::Mapping(mapping) => {
             let mut out = BTreeMap::new();
@@ -876,10 +903,11 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     let mut tools = fm
         .get("tools")
         .and_then(|v| parse_tools_field(v, "tools", diags));
+    // DEPRECATED: Remove after deprecation period (R08)
     let disallowed_tools = fm.get("disallowed-tools").map(yaml_str_list);
     if let Some(deny_list) = disallowed_tools.as_ref() {
         diags.push(AgentDiagnostic::DeprecatedDisallowedTools);
-        tools = Some(merge_disallowed_into_tools(tools, deny_list));
+        tools = Some(merge_deprecated_disallowed_tools(tools, deny_list));
     }
     let mcp_tools = fm.get("mcp-tools").map(yaml_str_list).unwrap_or_default();
 
@@ -898,7 +926,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     // fanout:
     let fanout = fm.get("fanout").map(parse_fanout).unwrap_or_default();
 
-    // Legacy models: field
+    // DEPRECATED: Remove after deprecation period (R08)
     if fm.get("models").is_some() {
         diags.push(AgentDiagnostic::LegacyModelsField);
     }

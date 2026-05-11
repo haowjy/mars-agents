@@ -60,6 +60,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
             skills: vec![],
         },
         required_by: "root".to_string(),
+        is_direct: true,
     };
 
     let seeded = super::package::seed_items_for_request(&pending, &package);

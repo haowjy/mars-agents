@@ -22,6 +22,15 @@ pub(crate) fn resolve_single_source(
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+    // Cargo-style lock semantics: direct deps replay the consumer lock in normal
+    // sync; transitive deps ignore it (they pin their own lock on first write).
+    // --frozen overrides this and replays the full graph from lock.
+    let effective_locked = if pending.is_direct || options.frozen {
+        locked
+    } else {
+        None
+    };
+
     match &pending.spec {
         crate::config::SourceSpec::Path(path) => {
             // Path sources: no version resolution, just use the path
@@ -37,7 +46,7 @@ pub(crate) fn resolve_single_source(
                 .map(|c| c.as_slice())
                 .unwrap_or(&[]),
             provider,
-            locked,
+            effective_locked,
             options,
             diag,
         ),

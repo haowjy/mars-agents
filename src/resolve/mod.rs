@@ -179,6 +179,7 @@ pub fn resolve(
             constraint,
             filter: source.filter.clone(),
             required_by: "mars.toml".to_string(),
+            is_direct: true,
         });
     }
 

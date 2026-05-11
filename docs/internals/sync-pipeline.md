@@ -195,8 +195,11 @@ writes them to per-target config files.
    field → hook name.
 7. Translate universal hook events to native target events (with lossiness
    classification); drop events with no native support and emit a warning.
-8. Write entries to target config files via target adapters (`.mcp.json`,
-   `settings.json`, etc.). Non-fatal per-target.
+8. Write entries to target config files via target adapters (for example:
+   `.claude/.mcp.json`, `.codex/config.toml` `[mcp.servers.*]`,
+   `.opencode/opencode.json` `"mcp"` + `"type":"local"`). Non-fatal per-target.
+   - Codex writer removes legacy `.codex/codex_mcp.json` if present.
+   - OpenCode writer migrates legacy `mcpServers` to `mcp` when `mcp` is absent.
 9. Compare current config entries against the previous lock to find stale
    entries, then remove them via `adapter.remove_config_entries()`.
 

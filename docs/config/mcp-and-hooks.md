@@ -4,14 +4,28 @@ Packages can ship MCP server registrations and lifecycle hooks alongside their
 agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
-- **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, etc.).
+- **MCP servers** are registered per harness target (for example
+  `.claude/.mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`).
 - **Hooks** run scripts in response to harness lifecycle events
   (`session.start`, `tool.pre`, etc.) and are registered in each target's
   hook config file.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
+
+## Target-Specific MCP Output
+
+Mars lowers MCP entries to each harness's native schema:
+
+- **`.claude`**: `.mcp.json` with `mcpServers`
+- **`.codex`**: `config.toml` with `[mcp.servers.<name>]`
+  - `env` is a list of variable names (`["MY_API_KEY"]`)
+  - Legacy `codex_mcp.json` is removed automatically during sync, with a
+    diagnostic entry.
+- **`.opencode`**: `opencode.json` with `mcp`
+  - Each stdio server is `{ "type": "local", "command": [cmd, ...args] }`
+  - Env maps to `environment`
+  - Legacy `mcpServers` is migrated to `mcp` when `mcp` is absent.
 
 ## Declaring MCP Servers in a Package
 

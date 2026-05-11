@@ -361,6 +361,55 @@ mod tests {
         assert_eq!(checked_out, v020_commit);
     }
 
+    #[test]
+    fn fetch_existing_cached_git_repo_updates_tags_before_checkout() {
+        let remote = init_repo();
+        run_git(remote.path(), ["tag", "v1.0.0"]);
+
+        let cache_root = TempDir::new().unwrap();
+        let cache = GlobalCache {
+            root: cache_root.path().join("cache"),
+        };
+        fs::create_dir_all(cache.archives_dir()).unwrap();
+        fs::create_dir_all(cache.git_dir()).unwrap();
+
+        let url = format!("file://{}", remote.path().display());
+
+        let mut first_diag = DiagnosticCollector::new();
+        let first = fetch(
+            &url,
+            None,
+            "local-source",
+            &cache,
+            &FetchOptions::default(),
+            &mut first_diag,
+        )
+        .unwrap();
+        assert_eq!(first.version, Some(Version::new(1, 0, 0)));
+        assert_eq!(first.version_tag.as_deref(), Some("v1.0.0"));
+
+        let v200_commit = commit_file(remote.path(), "README.md", "v2.0.0\n", "release v2.0.0");
+        run_git(remote.path(), ["tag", "v2.0.0"]);
+
+        let mut second_diag = DiagnosticCollector::new();
+        let second = fetch(
+            &url,
+            None,
+            "local-source",
+            &cache,
+            &FetchOptions::default(),
+            &mut second_diag,
+        )
+        .unwrap();
+
+        assert_eq!(second.version, Some(Version::new(2, 0, 0)));
+        assert_eq!(second.version_tag.as_deref(), Some("v2.0.0"));
+        assert_eq!(second.commit.as_deref(), Some(v200_commit.as_str()));
+
+        let checked_out = run_git(&second.tree_path, ["rev-parse", "HEAD"]);
+        assert_eq!(checked_out, v200_commit);
+    }
+
     // ==================== is_github_host tests ====================
 
     #[test]

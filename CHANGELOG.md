@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Existing git mirror fetch now pulls tags (`git fetch --depth 1 --tags --prune-tags origin`). Previously the cached mirror update ran without `--tags`, so newly-pushed upstream tags were discoverable via `ls-remote` but missing from the local mirror — leading to `pathspec 'vX.Y.Z' did not match any file(s) known to git` on `mars sync` whenever a dependency cut a new release between syncs.
+
 ### Added
 - Cargo-style transitive resolver semantics. Consumer lock now replayed only for direct deps; transitives resolve fresh from constraints each sync. `--frozen` still replays full graph. Pre-computed `direct_source_names` makes lock replay order-independent (direct dep first seen transitively still gets lock replay). 8 new EARS regression tests cover the selection policy.
 - Canonical git URL identity. Shared `canonicalize_git_url` in `src/source/canonical.rs` normalizes SSH/HTTPS forms, trailing slashes, `.git` suffix, default port. Adopted in cache key generation, dirname generation, and `SourceId` construction so the same upstream converges to one cache entry/lock entry regardless of URL form. Includes SCP-vs-port detection for digit-leading path segments.

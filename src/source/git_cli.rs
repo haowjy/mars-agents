@@ -104,7 +104,7 @@ pub(crate) fn fetch_git_clone(
         run_git(&args, &cache.git_dir(), "clone git source into cache")?;
     } else {
         run_git(
-            &["fetch", "--depth", "1", "origin"],
+            &["fetch", "--depth", "1", "--tags", "--prune-tags", "origin"],
             &cache_path,
             "fetch cached git source",
         )?;

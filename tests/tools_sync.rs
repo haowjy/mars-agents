@@ -153,7 +153,7 @@ fn sync_deprecated_tools_list_preserved_as_abstract_in_canonical() {
 }
 
 #[test]
-fn sync_tools_lossiness_surfaced_in_sync_output() {
+fn sync_tools_lossiness_warns_on_sync_and_fails_strict_validation() {
     let dir = TempDir::new().unwrap();
     let project = setup_project_with_source(&dir, &[".claude"], &[scoped_tools_agent()]);
 
@@ -171,17 +171,6 @@ fn sync_tools_lossiness_surfaced_in_sync_output() {
         stderr.contains("agent-field-dropped") || stderr.contains("dropped"),
         "sync should warn about dropped scoped tools field: {stderr}"
     );
-}
-
-#[test]
-fn sync_tools_lossiness_strict_fails() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_project_with_source(&dir, &[".claude"], &[scoped_tools_agent()]);
-
-    mars()
-        .args(["sync", "--root", project.to_str().unwrap()])
-        .assert()
-        .success();
 
     mars()
         .args(["validate", "--strict", "--root", project.to_str().unwrap()])

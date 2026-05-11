@@ -364,7 +364,7 @@ mod tests {
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
-    fn make_mcp_entry(name: &str) -> ConfigEntry {
+    fn make_stdio_mcp_entry(name: &str) -> ConfigEntry {
         let mut env = IndexMap::new();
         env.insert("TOKEN".to_string(), "MY_TOKEN".to_string());
         ConfigEntry::McpServer(McpServerEntry {
@@ -401,16 +401,6 @@ mod tests {
         })
     }
 
-    fn make_hook_entry(name: &str, native: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
-            name: name.to_string(),
-            event: "tool.pre".to_string(),
-            native_event: native.to_string(),
-            script_path: format!("/hooks/{name}/run.sh"),
-            order: 0,
-        })
-    }
-
     fn make_hook_entry_with_path(name: &str, native: &str, script_path: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
@@ -422,81 +412,37 @@ mod tests {
     }
 
     #[test]
-    fn write_config_entries_creates_opencode_json() {
+    fn write_config_entries_merges_mcp_and_hooks_into_single_file() {
         let tmp = TempDir::new().unwrap();
         let adapter = OpencodeAdapter;
-        let entries = vec![make_mcp_entry("context7")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
-        assert_eq!(written.len(), 1);
-        assert!(tmp.path().join("opencode.json").exists());
-
-        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcp"]["context7"].is_object());
-        assert_eq!(json["mcp"]["context7"]["type"], "local");
-    }
-
-    #[test]
-    fn write_mcp_env_as_plain_name_map() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = OpencodeAdapter;
-        let entries = vec![make_mcp_entry("server")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        // OpenCode: env is a plain name map (not interpolated)
-        assert_eq!(json["mcp"]["server"]["environment"]["TOKEN"], "MY_TOKEN");
-    }
-
-    #[test]
-    fn write_mcp_command_merges_command_and_args() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = OpencodeAdapter;
-        adapter
-            .write_config_entries(&[make_mcp_entry("server")], tmp.path())
+        let written = adapter
+            .write_config_entries(
+                &[
+                    make_stdio_mcp_entry("local-server"),
+                    make_http_mcp_entry("remote-server"),
+                    make_hook_entry_with_path("audit", "tool:before", "/hooks/audit/run.sh"),
+                ],
+                tmp.path(),
+            )
             .unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let command = json["mcp"]["server"]["command"].as_array().unwrap();
-        assert_eq!(command[0], "node");
-        assert_eq!(command[1], "server.js");
-    }
-
-    #[test]
-    fn write_http_mcp_uses_remote_type_url_and_plain_headers() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = OpencodeAdapter;
-        adapter
-            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
-            .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let server = &json["mcp"]["remote-server"];
-        assert_eq!(server["type"], "remote");
-        assert_eq!(server["url"], "https://api.example.com/mcp");
-        assert_eq!(server["headers"]["Authorization"], "API_TOKEN");
-        assert_eq!(server["headers"]["X-Custom"], "static-value");
-        assert!(server["command"].is_null());
-    }
-
-    #[test]
-    fn write_hooks_into_same_file() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = OpencodeAdapter;
-        let entries = vec![
-            make_mcp_entry("ctx"),
-            make_hook_entry("audit", "tool:before"),
-        ];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
-        // Both written to a single file.
         assert_eq!(written.len(), 1);
-
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcp"]["ctx"].is_object());
+
+        let local = &json["mcp"]["local-server"];
+        assert_eq!(local["type"], "local");
+        assert_eq!(local["command"][0], "node");
+        assert_eq!(local["command"][1], "server.js");
+        assert_eq!(local["environment"]["TOKEN"], "MY_TOKEN");
+
+        let remote = &json["mcp"]["remote-server"];
+        assert_eq!(remote["type"], "remote");
+        assert_eq!(remote["url"], "https://api.example.com/mcp");
+        assert_eq!(remote["headers"]["Authorization"], "API_TOKEN");
+        assert_eq!(remote["headers"]["X-Custom"], "static-value");
+        assert!(remote["command"].is_null());
+
         assert!(json["hooks"]["tool:before"].is_array());
     }
 
@@ -533,20 +479,37 @@ mod tests {
     }
 
     #[test]
-    fn remove_entries_removes_mcp_and_hooks() {
+    fn remove_entries_removes_selected_mcp_and_hook_entries() {
         let tmp = TempDir::new().unwrap();
         let adapter = OpencodeAdapter;
-        let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(
+                &[
+                    make_stdio_mcp_entry("to-remove"),
+                    make_stdio_mcp_entry("to-keep"),
+                    make_hook_entry_with_path("audit", "tool:before", "/hooks/audit/run.sh"),
+                    make_hook_entry_with_path("audit", "tool:after", "/hooks/audit/run.sh"),
+                ],
+                tmp.path(),
+            )
+            .unwrap();
 
         adapter
-            .remove_config_entries(&["mcp:to-remove".to_string()], tmp.path())
+            .remove_config_entries(
+                &[
+                    "mcp:to-remove".to_string(),
+                    "hook:tool.pre:audit".to_string(),
+                ],
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(json["mcp"]["to-remove"].is_null());
         assert!(json["mcp"]["to-keep"].is_object());
+        assert!(json["hooks"]["tool:before"].as_array().unwrap().is_empty());
+        assert_eq!(json["hooks"]["tool:after"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -594,7 +557,7 @@ mod tests {
                 }
             },
             "hooks": {
-                "tool:before": ["bash \"/hooks/audit/run.sh\""]
+                "tool:before": [r#"bash "/hooks/audit/run.sh""#]
             }
         });
         std::fs::write(
@@ -605,7 +568,14 @@ mod tests {
 
         let adapter = OpencodeAdapter;
         adapter
-            .write_config_entries(&[make_hook_entry("audit", "tool:before")], tmp.path())
+            .write_config_entries(
+                &[make_hook_entry_with_path(
+                    "audit",
+                    "tool:before",
+                    "/hooks/audit/run.sh",
+                )],
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();

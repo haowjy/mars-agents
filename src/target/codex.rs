@@ -431,26 +431,14 @@ mod tests {
     use tempfile::TempDir;
     use toml::Value as TomlValue;
 
-    fn make_mcp_entry(name: &str) -> ConfigEntry {
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            transport: McpTransport::Stdio,
-            command: Some("npx".to_string()),
-            args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
-            env: IndexMap::new(),
-            url: None,
-            headers: IndexMap::new(),
-        })
-    }
-
-    fn make_mcp_entry_with_env(name: &str) -> ConfigEntry {
+    fn make_stdio_mcp_entry(name: &str) -> ConfigEntry {
         let mut env = IndexMap::new();
         env.insert("API_KEY".to_string(), "MY_SECRET".to_string());
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
             transport: McpTransport::Stdio,
             command: Some("npx".to_string()),
-            args: vec![],
+            args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
             env,
             url: None,
             headers: IndexMap::new(),
@@ -481,16 +469,6 @@ mod tests {
         })
     }
 
-    fn make_hook_entry(name: &str, native: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
-            name: name.to_string(),
-            event: "tool.pre".to_string(),
-            native_event: native.to_string(),
-            script_path: format!("/hooks/{name}/run.sh"),
-            order: 0,
-        })
-    }
-
     fn make_hook_entry_with_path(name: &str, native: &str, script_path: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
@@ -502,36 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn write_mcp_creates_codex_config_toml() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry("context7")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
-        assert_eq!(written.len(), 1);
-        assert!(tmp.path().join(CODEX_CONFIG_TOML).exists());
-
-        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        let toml: TomlValue = toml::from_str(&raw).unwrap();
-        assert!(toml["mcp"]["servers"]["context7"].is_table());
-    }
-
-    #[test]
-    fn write_mcp_env_as_list_of_var_names() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry_with_env("server")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        let toml: TomlValue = toml::from_str(&raw).unwrap();
-        // Codex: env is a list of variable names, not a map with values.
-        assert!(toml["mcp"]["servers"]["server"]["env"].is_array());
-        let env_arr = toml["mcp"]["servers"]["server"]["env"].as_array().unwrap();
-        assert!(env_arr.iter().any(|v| v.as_str() == Some("MY_SECRET")));
-    }
-
-    #[test]
-    fn write_mcp_preserves_non_mcp_toml_content() {
+    fn write_mcp_uses_config_toml_schema_and_preserves_non_mcp_content() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(
             tmp.path().join(CODEX_CONFIG_TOML),
@@ -541,115 +490,108 @@ theme = "dark"
 "#,
         )
         .unwrap();
+        std::fs::write(tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
 
         let adapter = CodexAdapter;
         adapter
-            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+            .write_config_entries(
+                &[
+                    make_stdio_mcp_entry("stdio-server"),
+                    make_http_mcp_entry("http-server"),
+                ],
+                tmp.path(),
+            )
             .unwrap();
+
+        assert!(!tmp.path().join(LEGACY_CODEX_MCP_JSON).exists());
 
         let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
         let toml: TomlValue = toml::from_str(&raw).unwrap();
         assert_eq!(toml["ui"]["theme"].as_str(), Some("dark"));
-        assert_eq!(
-            toml["mcp"]["servers"]["context7"]["command"].as_str(),
-            Some("npx")
-        );
-    }
 
-    #[test]
-    fn write_http_mcp_uses_url_bearer_token_and_http_headers() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        adapter
-            .write_config_entries(&[make_http_mcp_entry("remote-server")], tmp.path())
-            .unwrap();
+        let stdio = &toml["mcp"]["servers"]["stdio-server"];
+        assert_eq!(stdio["command"].as_str(), Some("npx"));
+        assert_eq!(stdio["args"][0].as_str(), Some("-y"));
+        let env_arr = stdio["env"].as_array().unwrap();
+        assert!(env_arr.iter().any(|v| v.as_str() == Some("MY_SECRET")));
 
-        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        let toml: TomlValue = toml::from_str(&raw).unwrap();
-        let server = &toml["mcp"]["servers"]["remote-server"];
-        assert_eq!(server["url"].as_str(), Some("https://api.example.com/mcp"));
-        assert_eq!(server["bearer_token_env_var"].as_str(), Some("API_TOKEN"));
+        let http = &toml["mcp"]["servers"]["http-server"];
+        assert_eq!(http["url"].as_str(), Some("https://api.example.com/mcp"));
+        assert_eq!(http["bearer_token_env_var"].as_str(), Some("API_TOKEN"));
         assert_eq!(
-            server["http_headers"]["X-Custom"].as_str(),
+            http["http_headers"]["X-Custom"].as_str(),
             Some("static-value")
         );
-        assert!(server.get("command").is_none());
-        assert!(server.get("args").is_none());
+        assert!(http.get("command").is_none());
     }
 
     #[test]
-    fn write_mcp_removes_legacy_codex_mcp_json() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
+    fn emit_pre_write_diagnostics_flags_legacy_cleanup_and_toml_parse_errors() {
         let adapter = CodexAdapter;
 
-        adapter
-            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
-            .unwrap();
+        let legacy_tmp = TempDir::new().unwrap();
+        std::fs::write(legacy_tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
+        let mut legacy_diag = DiagnosticCollector::new();
+        adapter.emit_pre_write_diagnostics(
+            &[make_stdio_mcp_entry("context7")],
+            legacy_tmp.path(),
+            &mut legacy_diag,
+        );
+        let legacy_messages = legacy_diag.drain();
+        assert_eq!(legacy_messages.len(), 1);
+        assert_eq!(legacy_messages[0].code, "legacy-config-cleanup");
 
-        assert!(!tmp.path().join(LEGACY_CODEX_MCP_JSON).exists());
+        let invalid_tmp = TempDir::new().unwrap();
+        std::fs::write(
+            invalid_tmp.path().join(CODEX_CONFIG_TOML),
+            "[ui
+",
+        )
+        .unwrap();
+        let mut invalid_diag = DiagnosticCollector::new();
+        adapter.emit_pre_write_diagnostics(
+            &[make_stdio_mcp_entry("context7")],
+            invalid_tmp.path(),
+            &mut invalid_diag,
+        );
+        let invalid_messages = invalid_diag.drain();
+        assert_eq!(invalid_messages.len(), 1);
+        assert_eq!(invalid_messages[0].code, "codex-config-parse-error");
     }
 
     #[test]
-    fn emit_pre_write_diagnostics_warns_about_legacy_codex_mcp_json() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(LEGACY_CODEX_MCP_JSON), "{}").unwrap();
+    fn invalid_toml_is_not_clobbered_during_write_or_remove() {
+        let original = r#"[ui]
+theme = "dark"
+invalid =
+"#;
+
+        let write_tmp = TempDir::new().unwrap();
+        std::fs::write(write_tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
         let adapter = CodexAdapter;
-        let mut diag = DiagnosticCollector::new();
-
-        adapter.emit_pre_write_diagnostics(&[make_mcp_entry("context7")], tmp.path(), &mut diag);
-
-        let diagnostics = diag.drain();
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "legacy-config-cleanup");
-        assert!(diagnostics[0].message.contains(LEGACY_CODEX_MCP_JSON));
-    }
-
-    #[test]
-    fn emit_pre_write_diagnostics_warns_about_invalid_codex_config_toml() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), "[ui\n").unwrap();
-        let adapter = CodexAdapter;
-        let mut diag = DiagnosticCollector::new();
-
-        adapter.emit_pre_write_diagnostics(&[make_mcp_entry("context7")], tmp.path(), &mut diag);
-
-        let diagnostics = diag.drain();
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "codex-config-parse-error");
-        assert!(diagnostics[0].message.contains(CODEX_CONFIG_TOML));
-    }
-
-    #[test]
-    fn write_mcp_invalid_toml_returns_error_without_clobbering_existing_file() {
-        let tmp = TempDir::new().unwrap();
-        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
-        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
-
-        let adapter = CodexAdapter;
-        let err = adapter
-            .write_config_entries(&[make_mcp_entry("context7")], tmp.path())
+        let write_err = adapter
+            .write_config_entries(&[make_stdio_mcp_entry("context7")], write_tmp.path())
             .expect_err("invalid TOML should fail and not be overwritten");
-        assert!(err.to_string().contains("failed to parse TOML"));
+        assert!(write_err.to_string().contains("failed to parse TOML"));
+        assert_eq!(
+            std::fs::read_to_string(write_tmp.path().join(CODEX_CONFIG_TOML)).unwrap(),
+            original
+        );
 
-        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        assert_eq!(after, original);
+        let remove_tmp = TempDir::new().unwrap();
+        std::fs::write(remove_tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
+        let remove_err = adapter
+            .remove_config_entries(&["mcp:context7".to_string()], remove_tmp.path())
+            .expect_err("invalid TOML should fail and not be overwritten");
+        assert!(remove_err.to_string().contains("failed to parse TOML"));
+        assert_eq!(
+            std::fs::read_to_string(remove_tmp.path().join(CODEX_CONFIG_TOML)).unwrap(),
+            original
+        );
     }
 
     #[test]
-    fn write_hooks_creates_codex_hooks_json() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_hook_entry("audit", "pre-exec")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["hooks"]["pre-exec"].is_array());
-    }
-
-    #[test]
-    fn write_hooks_replaces_existing_managed_hook_with_same_event_and_name() {
+    fn write_hooks_replaces_existing_managed_hook_for_same_name_and_event() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         adapter
@@ -681,46 +623,51 @@ theme = "dark"
     }
 
     #[test]
-    fn remove_mcp_entries_removes_by_name() {
+    fn remove_entries_clean_up_mcp_and_only_matching_hook_event() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
 
         adapter
-            .remove_config_entries(&["mcp:to-remove".to_string()], tmp.path())
+            .write_config_entries(
+                &[
+                    make_stdio_mcp_entry("to-remove"),
+                    make_stdio_mcp_entry("to-keep"),
+                    make_hook_entry_with_path("audit", "pre-exec", "/pkg/hooks/audit/run.sh"),
+                    make_hook_entry_with_path("audit", "post-exec", "/pkg/hooks/audit/run.sh"),
+                ],
+                tmp.path(),
+            )
             .unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        let toml: TomlValue = toml::from_str(&raw).unwrap();
+        adapter
+            .remove_config_entries(
+                &[
+                    "mcp:to-remove".to_string(),
+                    "hook:tool.pre:audit".to_string(),
+                ],
+                tmp.path(),
+            )
+            .unwrap();
+
+        let raw_toml = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
+        let toml: TomlValue = toml::from_str(&raw_toml).unwrap();
         assert!(toml["mcp"]["servers"].get("to-remove").is_none());
         assert!(toml["mcp"]["servers"]["to-keep"].is_table());
+
+        let raw_hooks = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw_hooks).unwrap();
+        assert!(json["hooks"]["pre-exec"].as_array().unwrap().is_empty());
+        assert_eq!(json["hooks"]["post-exec"].as_array().unwrap().len(), 1);
     }
 
     #[test]
-    fn remove_mcp_entries_invalid_toml_returns_error_without_clobbering_existing_file() {
-        let tmp = TempDir::new().unwrap();
-        let original = "[ui]\ntheme = \"dark\"\ninvalid =\n";
-        std::fs::write(tmp.path().join(CODEX_CONFIG_TOML), original).unwrap();
-
-        let adapter = CodexAdapter;
-        let err = adapter
-            .remove_config_entries(&["mcp:context7".to_string()], tmp.path())
-            .expect_err("invalid TOML should fail and not be overwritten");
-        assert!(err.to_string().contains("failed to parse TOML"));
-
-        let after = std::fs::read_to_string(tmp.path().join(CODEX_CONFIG_TOML)).unwrap();
-        assert_eq!(after, original);
-    }
-
-    #[test]
-    fn remove_hook_entries_matches_backslash_commands() {
+    fn remove_hook_entries_match_windows_backslash_paths_without_partial_name_collision() {
         let tmp = TempDir::new().unwrap();
         let existing = serde_json::json!({
             "hooks": {
                 "pre-exec": [
-                    "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"",
-                    "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\""
+                    r#"bash "C:\\pkg\\hooks\\audit\\run.sh""#,
+                    r#"bash "C:\\pkg\\hooks\\audit-extended\\run.sh""#
                 ]
             }
         });
@@ -737,28 +684,5 @@ theme = "dark"
         let hooks = json["hooks"]["pre-exec"].as_array().unwrap();
         assert_eq!(hooks.len(), 1);
         assert!(hooks[0].as_str().unwrap().contains("audit-extended"));
-    }
-
-    #[test]
-    fn remove_hook_entries_scopes_by_universal_event() {
-        let tmp = TempDir::new().unwrap();
-        let existing = serde_json::json!({
-            "hooks": {
-                "pre-exec": ["bash \"/pkg/hooks/audit/run.sh\""],
-                "post-exec": ["bash \"/pkg/hooks/audit/run.sh\""]
-            }
-        });
-        std::fs::write(
-            tmp.path().join("codex_hooks.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["hooks"]["pre-exec"].as_array().unwrap().is_empty());
-        assert_eq!(json["hooks"]["post-exec"].as_array().unwrap().len(), 1);
     }
 }

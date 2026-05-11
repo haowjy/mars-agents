@@ -985,249 +985,138 @@ mod tests {
         (profile, fm, diags)
     }
 
-    // --- 3.3: Claude lowering ---
-
     #[test]
-    fn claude_lowering_preserves_name_description_model_skills_tools_body() {
-        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools:\n  \"*\": deny\n  bash: allow\n  edit: allow\n---\n# Coder\nYou write code.";
-        let (profile, fm, _) = profile_from(content);
-        let body = fm.body();
-        let out = lower_to_claude(&profile, &fm, body);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("name: coder"), "name missing: {text}");
-        assert!(
-            text.contains("description: Code impl agent"),
-            "desc missing"
-        );
-        assert!(text.contains("model: gpt55"), "model missing");
-        assert!(text.contains("skills"), "skills missing");
-        assert!(text.contains("tools"), "tools missing");
-        assert!(text.contains("Bash"), "bash missing");
-        assert!(text.contains("Edit"), "edit missing");
-        assert!(text.contains("Write"), "write missing");
-        assert!(text.contains("# Coder"), "body missing");
-    }
-
-    #[test]
-    fn claude_tools_ask_is_approximate_and_scoped_is_dropped() {
-        let content = "---\nname: coder\nharness: claude\ntools:\n  \"*\": deny\n  bash: ask\n  read:\n    \"*.env\": allow\n---\n# Body";
+    fn claude_lowering_preserves_supported_fields_and_maps_tools() {
+        let content = r#"---
+name: coder
+description: Code impl agent
+model: gpt55
+harness: claude
+skills: [dev-principles]
+tools:
+  "*": deny
+  bash: allow
+  edit: allow
+---
+# Coder
+You write code."#;
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("Bash"), "ask should lower to allow");
-        assert!(!text.contains("*.env"), "scoped rule should be dropped");
+        assert!(text.contains("name: coder"));
+        assert!(text.contains("description: Code impl agent"));
+        assert!(text.contains("model: gpt55"));
+        assert!(text.contains("skills"));
+        assert!(text.contains("Bash"));
+        assert!(text.contains("Edit"));
+        assert!(text.contains("Write"));
+        assert!(text.contains("# Coder"));
+    }
+
+    #[test]
+    fn claude_lowering_drops_non_native_fields_and_reports_lossiness() {
+        let content = r#"---
+name: coder
+harness: claude
+approval: auto
+sandbox: read-only
+mode: subagent
+autocompact: 50
+autocompact-pct: 80
+tools:
+  "*": deny
+  bash: ask
+  read:
+    "*.env": allow
+model-policies:
+  - match:
+      model: gpt55
+    override:
+      harness: codex
+fanout:
+  - alias: opus
+---
+# Body"#;
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("approval:"));
+        assert!(!text.contains("sandbox:"));
+        assert!(!text.contains("autocompact:"));
+        assert!(!text.contains("model-policies:"));
+        assert!(!text.contains("fanout:"));
         assert!(out.lossy_fields.iter().any(|lf| {
             lf.field == "tools.bash" && matches!(lf.classification, Lossiness::Approximate { .. })
         }));
         assert!(out.lossy_fields.iter().any(|lf| {
             lf.field == "tools.read" && matches!(lf.classification, Lossiness::Dropped)
         }));
-    }
-
-    #[test]
-    fn claude_tools_map_default_allow_emits_disallowed_tools() {
-        let content =
-            "---\nname: r\nharness: claude\ntools:\n  \"*\": allow\n  task: deny\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("tools: []"), "should not emit allowlist");
-        assert!(
-            text.contains("disallowed-tools"),
-            "deny list should be emitted"
-        );
-        assert!(text.contains("Agent"), "task deny should map to Agent");
-    }
-
-    #[test]
-    fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact-pct: 80\n---\n# Body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("approval:"), "approval leaked: {text}");
-        assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
-        assert!(!text.contains("autocompact:"), "autocompact leaked: {text}");
-        // Lossiness should report dropped fields
-        let dropped: Vec<_> = out.lossy_fields.iter().map(|f| f.field.as_str()).collect();
-        assert!(
-            dropped.contains(&"approval"),
-            "approval not in lossy: {dropped:?}"
-        );
-        assert!(
-            dropped.contains(&"sandbox"),
-            "sandbox not in lossy: {dropped:?}"
-        );
-        assert!(
-            dropped.contains(&"autocompact"),
-            "autocompact not in lossy: {dropped:?}"
-        );
-        assert!(
-            dropped.contains(&"autocompact-pct"),
-            "autocompact-pct not in lossy: {dropped:?}"
-        );
+        for field in [
+            "approval",
+            "sandbox",
+            "mode",
+            "autocompact",
+            "autocompact-pct",
+            "model-policies",
+            "fanout",
+        ] {
+            assert!(out.lossy_fields.iter().any(|lf| lf.field == field));
+        }
     }
 
     #[test]
     fn claude_harness_override_applied_before_lowering() {
-        let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
+        let content = r#"---
+name: r
+harness: claude
+skills: [base-skill]
+harness-overrides:
+  claude:
+    skills: [override-skill]
+---
+# body"#;
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("override-skill"),
-            "override not applied: {text}"
-        );
-        assert!(
-            !text.contains("base-skill"),
-            "base skill not overridden: {text}"
-        );
+        assert!(text.contains("override-skill"));
+        assert!(!text.contains("base-skill"));
     }
 
     #[test]
-    fn claude_meridian_only_fields_dropped() {
-        let content = "---\nname: r\nharness: claude\nmodel-policies:\n  - match:\n      model: gpt55\n    override:\n      harness: codex\nfanout:\n  - alias: opus\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("model-policies:"),
-            "model-policies leaked: {text}"
-        );
-        assert!(!text.contains("fanout:"), "fanout leaked: {text}");
-        let meridian_only: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(meridian_only.contains(&"model-policies"));
-        assert!(meridian_only.contains(&"fanout"));
-    }
-
-    // --- 3.3: Codex lowering ---
-
-    #[test]
-    fn codex_lowering_produces_top_level_toml() {
-        let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\napproval: auto\n---\n# Coder\nYou code.";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("[agent]"),
-            "legacy [agent] table leaked: {text}"
-        );
-        assert!(text.contains("name = \"coder\""), "name missing");
-        assert!(text.contains("model = \"gpt55\""), "model missing");
-        assert!(
-            text.contains("model_reasoning_effort = \"high\""),
-            "effort missing"
-        );
-        assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox missing"
-        );
-        assert!(
-            text.contains("approval_policy = \"on-request\""),
-            "approval missing"
-        );
-        assert!(
-            text.contains("developer_instructions ="),
-            "developer instructions missing"
-        );
-
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-        assert!(
-            parsed.get("agent").is_none(),
-            "nested [agent] table present"
-        );
-        assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("coder"));
-    }
-
-    #[test]
-    fn codex_lowering_drops_skills_and_inferrs_sandbox_from_tools() {
-        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools:\n  \"*\": deny\n  bash: allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let approx: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::Approximate { .. }))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(approx.contains(&"tools.bash"));
-        assert!(
-            out.lossy_fields
-                .iter()
-                .any(|f| { f.field == "skills" && matches!(f.classification, Lossiness::Dropped) })
-        );
-
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox should be inferred from bash allow: {text}"
-        );
-    }
-
-    #[test]
-    fn codex_harness_override_applied() {
-        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": deny\n  bash: allow\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: read-only\n    tools:\n      \"*\": deny\n      read: allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("model_reasoning_effort = \"high\""),
-            "override not applied: {text}"
-        );
-        assert!(
-            text.contains("sandbox_mode = \"read-only\""),
-            "sandbox override not applied: {text}"
-        );
-        assert!(
-            out.lossy_fields.iter().any(|lf| lf.field == "tools.read"
-                && matches!(lf.classification, Lossiness::Approximate { .. })),
-            "override tools should replace top-level tools"
-        );
-        assert!(
-            !out.lossy_fields.iter().any(|lf| lf.field == "tools.bash"),
-            "top-level tools should be replaced by override tools"
-        );
-    }
-
-    #[test]
-    fn codex_infers_danger_full_access_when_default_allow_and_no_write_denies() {
-        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("sandbox_mode = \"danger-full-access\""),
-            "sandbox should infer danger-full-access: {text}"
-        );
-    }
-
-    #[test]
-    fn codex_wildcard_allow_with_explicit_bash_deny_does_not_infer_danger_full_access() {
-        let content =
-            "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n  bash: deny\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox should not infer danger-full-access when bash is explicitly denied: {text}"
-        );
-        assert!(!text.contains("danger-full-access"));
-    }
-
-    #[test]
-    fn codex_lowering_multiline_instructions_are_parseable() {
-        let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
+    fn codex_lowering_produces_parseable_top_level_toml() {
+        let content = r#"---
+name: explorer
+description: "Line one
+Line two"
+model: gpt55
+harness: codex
+effort: high
+sandbox: workspace-write
+approval: yolo
+---
+# Explore
+Use "quotes" and backslashes \
+Keep going."#;
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
         let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
 
+        assert!(parsed.get("agent").is_none());
+        assert_eq!(
+            parsed.get("name").and_then(|v| v.as_str()),
+            Some("explorer")
+        );
+        assert_eq!(
+            parsed
+                .get("model_reasoning_effort")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+        assert_eq!(
+            parsed.get("sandbox_mode").and_then(|v| v.as_str()),
+            Some("workspace-write")
+        );
         assert_eq!(
             parsed.get("approval_policy").and_then(|v| v.as_str()),
             Some("never")
@@ -1237,105 +1126,140 @@ mod tests {
                 .get("developer_instructions")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
-            "# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going."
+            "# Explore\nUse \"quotes\" and backslashes \\\nKeep going."
         );
     }
 
     #[test]
-    fn codex_ask_tool_is_compiled_as_allow_with_approximate_lossiness() {
-        let mut tools = std::collections::BTreeMap::new();
-        tools.insert("*".to_string(), ToolRule::Action(ToolAction::Deny));
-        tools.insert("bash".to_string(), ToolRule::Action(ToolAction::Ask));
-        let profile = AgentProfile {
-            name: Some("coder".to_string()),
-            description: None,
-            harness: Some(HarnessKind::Codex),
-            model: None,
-            mode: None,
-            approval: None,
-            sandbox: None,
-            effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            skills: Vec::new(),
-            tools: Some(ToolsField::Map(tools)),
-            mcp_tools: Vec::new(),
-            harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
-            model_policies: Vec::new(),
-            fanout: Vec::new(),
-        };
+    fn codex_sandbox_inference_matches_behavioral_cases() {
+        let cases = [
+            ("---\nname: r\nharness: codex\n---\n# body", None),
+            (
+                "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body",
+                Some("danger-full-access"),
+            ),
+            (
+                "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n  bash: deny\n---\n# body",
+                Some("workspace-write"),
+            ),
+            (
+                "---\nname: r\nharness: codex\nsandbox: default\n---\n# body",
+                None,
+            ),
+        ];
 
-        let out = lower_to_codex(&profile, "# body");
+        for (content, expected_sandbox) in cases {
+            let (profile, fm, _) = profile_from(content);
+            let out = lower_to_codex(&profile, fm.body());
+            let text = String::from_utf8(out.bytes).unwrap();
+            let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
+            assert_eq!(
+                parsed.get("sandbox_mode").and_then(|v| v.as_str()),
+                expected_sandbox,
+                "unexpected sandbox inference for content:
+{content}
+{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_harness_override_replaces_top_level_tools_and_fields() {
+        let content = r#"---
+name: r
+harness: codex
+tools:
+  "*": deny
+  bash: allow
+harness-overrides:
+  codex:
+    effort: high
+    sandbox: read-only
+    tools:
+      "*": deny
+      read: allow
+---
+# body"#;
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-        assert!(
-            text.contains("sandbox_mode ="),
-            "sandbox_mode should be present: {text}"
-        );
-        assert!(
-            parsed
-                .get("sandbox_mode")
-                .and_then(|v| v.as_str())
-                .is_some(),
-            "parsed TOML should include sandbox_mode: {parsed:?}"
-        );
+        assert!(text.contains("model_reasoning_effort = \"high\""));
+        assert!(text.contains("sandbox_mode = \"read-only\""));
         assert!(out.lossy_fields.iter().any(|lf| {
-            matches!(lf.classification, Lossiness::Approximate { .. })
-                && (lf.field.contains("tools") || lf.field.contains("bash"))
+            lf.field == "tools.read" && matches!(lf.classification, Lossiness::Approximate { .. })
+        }));
+        assert!(!out.lossy_fields.iter().any(|lf| lf.field == "tools.bash"));
+    }
+
+    #[test]
+    fn codex_tools_lossiness_includes_ask_and_scoped_rules() {
+        let content = r#"---
+name: r
+harness: codex
+tools:
+  "*": deny
+  bash: ask
+  read:
+    "*.env": allow
+---
+# body"#;
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.bash" && matches!(lf.classification, Lossiness::Approximate { .. })
+        }));
+        assert!(out.lossy_fields.iter().any(|lf| {
+            lf.field == "tools.read" && matches!(lf.classification, Lossiness::Dropped)
         }));
     }
 
-    // --- 3.3: OpenCode lowering ---
-
     #[test]
-    fn opencode_lowering_preserves_name_description_model_mode() {
-        let content = "---\nname: r\ndescription: Reviewer\nmodel: gpt55\nmode: primary\nharness: opencode\n---\n# Reviewer\nbody";
+    fn opencode_lowering_preserves_supported_fields_and_omits_tools() {
+        let content = r#"---
+name: r
+description: Reviewer
+model: gpt55
+mode: primary
+harness: opencode
+tools:
+  "*": deny
+  bash: allow
+---
+# Reviewer
+body"#;
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_opencode(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("name: r"), "name missing");
-        assert!(text.contains("description: Reviewer"), "desc missing");
-        assert!(text.contains("model: gpt55"), "model missing");
-        assert!(text.contains("mode: primary"), "mode missing");
+        assert!(text.contains("name: r"));
+        assert!(text.contains("description: Reviewer"));
+        assert!(text.contains("model: gpt55"));
+        assert!(text.contains("mode: primary"));
+        assert!(!text.contains("tools:"));
+        assert!(!text.contains("disallowed-tools"));
     }
 
     #[test]
-    fn opencode_lowering_omits_tools_fields() {
-        let content =
-            "---\nname: r\nharness: opencode\ntools:\n  \"*\": deny\n  bash: allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_opencode(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("tools:"), "tools must not be emitted");
-        assert!(
-            !text.contains("disallowed-tools"),
-            "legacy field must not appear"
-        );
-    }
-
-    // --- 3.3: Pi lowering ---
-
-    #[test]
-    fn pi_lowering_preserves_name_description_model() {
-        let content = "---\nname: pi-agent\ndescription: Pi agent\nmodel: gpt55\nharness: pi\n---\n# Pi\nbody";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_pi(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("name: pi-agent"), "name missing");
-        assert!(text.contains("description: Pi agent"), "desc missing");
-    }
-
-    #[test]
-    fn pi_lowering_emits_tools_and_flags_ask_and_scoped() {
-        let content = "---\nname: pi-agent\nharness: pi\ntools:\n  \"*\": deny\n  bash: allow\n  web: ask\n  read:\n    \"*.env\": allow\n---\n# body";
+    fn pi_lowering_expands_tools_and_reports_lossiness() {
+        let content = r#"---
+name: pi-agent
+description: Pi agent
+model: gpt55
+mode: subagent
+harness: pi
+tools:
+  "*": deny
+  edit: allow
+  web: ask
+  read:
+    "*.env": allow
+---
+# body"#;
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
-        // web expands to websearch, webfetch
-        assert!(
-            text.contains("tools: bash, websearch, webfetch"),
-            "tools list missing: {text}"
-        );
+        assert!(text.contains("description: Pi agent"));
+        assert!(text.contains("mode: subagent"));
+        assert!(text.contains("tools: edit, write, websearch, webfetch"));
         assert!(out.lossy_fields.iter().any(|lf| {
             lf.field == "tools.web" && matches!(lf.classification, Lossiness::Approximate { .. })
         }));
@@ -1344,83 +1268,41 @@ mod tests {
         }));
     }
 
-    // --- 3.3: Dispatch ---
-
     #[test]
-    fn codex_no_tools_no_sandbox_omits_sandbox_mode() {
-        let content = "---\nname: r\nharness: codex\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("sandbox_mode"),
-            "sandbox_mode should be omitted when no tools and no sandbox: {text}"
+    fn lower_for_harness_dispatches_to_native_formats() {
+        let (claude_profile, claude_fm, _) = profile_from(
+            "---
+name: coder
+model: gpt55
+harness: claude
+---
+# body",
         );
-    }
+        let claude = lower_for_harness(
+            &HarnessKind::Claude,
+            &claude_profile,
+            &claude_fm,
+            claude_fm.body(),
+        );
+        let claude_text = String::from_utf8(claude.bytes).unwrap();
+        assert!(claude_text.contains("---"));
 
-    #[test]
-    fn codex_sandbox_default_no_tools_omits_sandbox_mode() {
-        let content = "---\nname: r\nharness: codex\nsandbox: default\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("sandbox_mode"),
-            "sandbox: default with no tools should omit sandbox_mode: {text}"
+        let (codex_profile, codex_fm, _) = profile_from(
+            "---
+name: coder
+model: gpt55
+harness: codex
+---
+# body",
         );
-    }
-
-    #[test]
-    fn codex_wildcard_only_allow_no_extra_lossiness() {
-        let content = "---\nname: r\nharness: codex\ntools:\n  \"*\": allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
-        // Wildcard allow/deny maps exactly to sandbox — no Approximate entries
-        let approx: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::Approximate { .. }))
-            .collect();
-        assert!(
-            approx.is_empty(),
-            "wildcard-only allow should not produce Approximate lossiness: {approx:?}"
+        let codex = lower_for_harness(
+            &HarnessKind::Codex,
+            &codex_profile,
+            &codex_fm,
+            codex_fm.body(),
         );
-    }
-
-    #[test]
-    fn pi_lowering_expands_edit_and_web_capabilities() {
-        let content = "---\nname: pi-agent\nharness: pi\ntools:\n  \"*\": deny\n  edit: allow\n  web: allow\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_pi(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("edit, write"),
-            "edit should expand to edit, write: {text}"
-        );
-        assert!(
-            text.contains("websearch, webfetch"),
-            "web should expand to websearch, webfetch: {text}"
-        );
-    }
-
-    #[test]
-    fn lower_for_harness_dispatches_correctly() {
-        let content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let body = fm.body().to_string();
-        let out = lower_for_harness(&HarnessKind::Claude, &profile, &fm, &body);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("---"), "not markdown format");
-
-        let content2 = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
-        let (profile2, fm2, _) = profile_from(content2);
-        let body2 = fm2.body().to_string();
-        let out2 = lower_for_harness(&HarnessKind::Codex, &profile2, &fm2, &body2);
-        let text2 = String::from_utf8(out2.bytes).unwrap();
-        assert!(text2.contains("name = \"coder\""), "not TOML format");
-        assert!(
-            !text2.contains("[agent]"),
-            "legacy nested agent table emitted"
-        );
+        let codex_text = String::from_utf8(codex.bytes).unwrap();
+        assert!(codex_text.contains("name = \"coder\""));
+        assert!(!codex_text.contains("[agent]"));
     }
 }

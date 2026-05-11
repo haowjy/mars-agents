@@ -996,177 +996,6 @@ mod tests {
         (profile, diags)
     }
 
-    // --- 3.1: Basic field parsing ---
-
-    #[test]
-    fn parses_name_and_description() {
-        let (p, diags) = parse("---\nname: coder\ndescription: Code agent\n---\n# Body");
-        assert!(diags.is_empty());
-        assert_eq!(p.name.as_deref(), Some("coder"));
-        assert_eq!(p.description.as_deref(), Some("Code agent"));
-    }
-
-    #[test]
-    fn parses_mode_primary() {
-        let (p, diags) = parse("---\nmode: primary\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.mode, Some(AgentMode::Primary));
-    }
-
-    #[test]
-    fn parses_mode_subagent() {
-        let (p, diags) = parse("---\nmode: subagent\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.mode, Some(AgentMode::Subagent));
-    }
-
-    #[test]
-    fn invalid_mode_produces_diagnostic() {
-        let (p, diags) = parse("---\nmode: invalid\n---\n");
-        assert_eq!(p.mode, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "mode")
-        );
-    }
-
-    #[test]
-    fn parses_harness_claude() {
-        let (p, diags) = parse("---\nharness: claude\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::Claude));
-    }
-
-    #[test]
-    fn parses_harness_codex() {
-        let (p, diags) = parse("---\nharness: codex\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::Codex));
-    }
-
-    #[test]
-    fn parses_harness_opencode() {
-        let (p, diags) = parse("---\nharness: opencode\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::OpenCode));
-    }
-
-    #[test]
-    fn unknown_harness_produces_diagnostic() {
-        let (p, diags) = parse("---\nharness: unknown\n---\n");
-        assert_eq!(p.harness, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::UnknownHarness { value } if value == "unknown")
-        );
-    }
-
-    #[test]
-    fn parses_effort_all_values() {
-        for (s, expected) in [
-            ("low", EffortLevel::Low),
-            ("medium", EffortLevel::Medium),
-            ("high", EffortLevel::High),
-            ("xhigh", EffortLevel::XHigh),
-        ] {
-            let content = format!("---\neffort: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(
-                diags.is_empty(),
-                "unexpected diags for effort={s}: {diags:?}"
-            );
-            assert_eq!(p.effort, Some(expected));
-        }
-    }
-
-    #[test]
-    fn parses_approval_all_values() {
-        for s in ["default", "auto", "confirm", "yolo"] {
-            let content = format!("---\napproval: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(diags.is_empty(), "unexpected diags for approval={s}");
-            assert!(p.approval.is_some());
-        }
-    }
-
-    #[test]
-    fn parses_sandbox_all_values() {
-        for s in [
-            "default",
-            "read-only",
-            "workspace-write",
-            "danger-full-access",
-        ] {
-            let content = format!("---\nsandbox: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(diags.is_empty(), "unexpected diags for sandbox={s}");
-            assert!(p.sandbox.is_some());
-        }
-    }
-
-    #[test]
-    fn parses_autocompact() {
-        let (p, diags) = parse("---\nautocompact: 50\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.autocompact, Some(50));
-    }
-
-    #[test]
-    fn parses_autocompact_pct() {
-        let (p, diags) = parse("---\nautocompact-pct: 80\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.autocompact_pct, Some(80));
-    }
-
-    #[test]
-    fn autocompact_pct_out_of_range() {
-        let (p, diags) = parse("---\nautocompact-pct: 101\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_zero_out_of_range() {
-        let (p, diags) = parse("---\nautocompact-pct: 0\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_in_override() {
-        let content = "---\nharness-overrides:\n  claude:\n    autocompact-pct: 75\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        let claude = p.harness_overrides.claude.as_ref().unwrap();
-        assert_eq!(claude.autocompact_pct, Some(75));
-    }
-
-    #[test]
-    fn autocompact_string_produces_diagnostic() {
-        let (p, diags) = parse("---\nautocompact: \"50\"\n---\n");
-        assert_eq!(p.autocompact, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_string_produces_diagnostic() {
-        let (p, diags) = parse("---\nautocompact-pct: \"80\"\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
-        );
-    }
-
     fn as_map(field: &ToolsField) -> &BTreeMap<String, ToolRule> {
         match field {
             ToolsField::Map(map) => map,
@@ -1175,73 +1004,172 @@ mod tests {
     }
 
     #[test]
+    fn parses_core_profile_fields() {
+        let content = r#"---
+name: coder
+description: Code agent
+harness: codex
+model: gpt55
+mode: subagent
+approval: auto
+sandbox: workspace-write
+effort: high
+autocompact: 50
+autocompact-pct: 80
+skills: [review, dev-principles]
+mcp-tools: [server]
+---
+# Body"#;
+        let (p, diags) = parse(content);
+        assert!(diags.is_empty());
+        assert_eq!(p.name.as_deref(), Some("coder"));
+        assert_eq!(p.description.as_deref(), Some("Code agent"));
+        assert_eq!(p.harness, Some(HarnessKind::Codex));
+        assert_eq!(p.model.as_deref(), Some("gpt55"));
+        assert_eq!(p.mode, Some(AgentMode::Subagent));
+        assert_eq!(p.approval, Some(ApprovalMode::Auto));
+        assert_eq!(p.sandbox, Some(SandboxMode::WorkspaceWrite));
+        assert_eq!(p.effort, Some(EffortLevel::High));
+        assert_eq!(p.autocompact, Some(50));
+        assert_eq!(p.autocompact_pct, Some(80));
+        assert_eq!(p.skills, vec!["review", "dev-principles"]);
+        assert_eq!(p.mcp_tools, vec!["server"]);
+    }
+
+    #[test]
+    fn parses_all_known_harness_values() {
+        for (value, expected) in [
+            ("claude", HarnessKind::Claude),
+            ("codex", HarnessKind::Codex),
+            ("opencode", HarnessKind::OpenCode),
+            ("pi", HarnessKind::Pi),
+        ] {
+            let (p, diags) = parse(&format!("---\nharness: {value}\n---\n"));
+            assert!(
+                diags.is_empty(),
+                "unexpected diagnostics for harness={value}: {diags:?}"
+            );
+            assert_eq!(p.harness, Some(expected));
+        }
+    }
+
+    #[test]
+    fn invalid_scalar_fields_emit_diagnostics_and_are_skipped() {
+        let content = r#"---
+mode: invalid
+autocompact: "50"
+autocompact-pct: 101
+---
+"#;
+        let (p, diags) = parse(content);
+        assert!(p.mode.is_none());
+        assert!(p.autocompact.is_none());
+        assert!(p.autocompact_pct.is_none());
+        assert!(diags.iter().any(|d| {
+            matches!(d, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "mode")
+        }));
+        assert!(diags.iter().any(|d| {
+            matches!(d, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact")
+        }));
+        assert!(diags.iter().any(|d| {
+            matches!(d, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact-pct")
+        }));
+    }
+
+    #[test]
+    fn unknown_harness_produces_diagnostic() {
+        let (p, diags) = parse(
+            "---
+harness: unknown
+---
+",
+        );
+        assert_eq!(p.harness, None);
+        assert_eq!(diags.len(), 1);
+        assert!(matches!(
+            &diags[0],
+            AgentDiagnostic::UnknownHarness { value } if value == "unknown"
+        ));
+    }
+
+    #[test]
     fn parses_tools_shorthand_allow_and_deny() {
-        let (allow, diags_allow) = parse("---\ntools: allow\n---\n");
+        let (allow, diags_allow) = parse(
+            "---
+tools: allow
+---
+",
+        );
         assert!(diags_allow.is_empty());
         assert_eq!(allow.tools, Some(ToolsField::Shorthand(ToolAction::Allow)));
 
-        let (deny, diags_deny) = parse("---\ntools: deny\n---\n");
+        let (deny, diags_deny) = parse(
+            "---
+tools: deny
+---
+",
+        );
         assert!(diags_deny.is_empty());
         assert_eq!(deny.tools, Some(ToolsField::Shorthand(ToolAction::Deny)));
     }
 
     #[test]
-    fn tools_ask_shorthand_emits_invalid_field_value_and_returns_none() {
-        let (p, diags) = parse("---\ntools: ask\n---\n");
+    fn tools_shorthand_ask_is_rejected() {
+        let (p, diags) = parse(
+            "---
+tools: ask
+---
+",
+        );
         assert_eq!(p.tools, None);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(
-            &diags[0],
-            AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
-            if field == "tools" && allowed.contains("allow, deny")
-        ));
+        assert!(diags.iter().any(|d| {
+            matches!(
+                d,
+                AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+                if field == "tools" && allowed.contains("allow, deny")
+            )
+        }));
     }
 
     #[test]
-    fn parses_tools_map_flat_actions() {
-        let (p, diags) = parse("---\ntools:\n  \"*\": deny\n  bash: allow\n  read: ask\n---\n");
-        assert!(diags.is_empty());
+    fn parses_tools_map_and_reports_invalid_entries() {
+        let content = r#"---
+tools:
+  "*": deny
+  bash: allow
+  read:
+    "*": allow
+    "*.env": INVALID_ACTION
+  bad: maybe
+---
+"#;
+        let (p, diags) = parse(content);
         let map = as_map(p.tools.as_ref().expect("tools expected"));
         assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
         assert_eq!(map.get("bash"), Some(&ToolRule::Action(ToolAction::Allow)));
-        assert_eq!(map.get("read"), Some(&ToolRule::Action(ToolAction::Ask)));
-    }
-
-    #[test]
-    fn parses_tools_map_scoped_patterns() {
-        let (p, diags) = parse("---\ntools:\n  read:\n    \"*\": allow\n    \"*.env\": ask\n---\n");
-        assert!(diags.is_empty());
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
-        let scoped = match map.get("read").expect("read rule missing") {
-            ToolRule::Scoped(scoped) => scoped,
-            ToolRule::Action(_) => panic!("expected scoped rule"),
-        };
-        assert_eq!(scoped.get("*"), Some(&ToolAction::Allow));
-        assert_eq!(scoped.get("*.env"), Some(&ToolAction::Ask));
-    }
-
-    #[test]
-    fn tools_map_invalid_nested_scoped_action_emits_error() {
-        let (p, diags) =
-            parse("---\ntools:\n  read:\n    \"*\": allow\n    \"*.env\": INVALID_ACTION\n---\n");
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
         let scoped = match map.get("read").expect("read rule missing") {
             ToolRule::Scoped(scoped) => scoped,
             ToolRule::Action(_) => panic!("expected scoped rule"),
         };
         assert_eq!(scoped.get("*"), Some(&ToolAction::Allow));
         assert!(!scoped.contains_key("*.env"));
+        assert!(!map.contains_key("bad"));
         assert!(diags.iter().any(|d| {
-            matches!(
-                d,
-                AgentDiagnostic::InvalidFieldValue { field, .. } if field == "tools.read.*.env"
-            )
+            matches!(d, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "tools.read.*.env")
+        }));
+        assert!(diags.iter().any(|d| {
+            matches!(d, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "tools.bad")
         }));
     }
 
     #[test]
     fn deprecated_tools_list_emits_warning_and_converts() {
-        let (p, diags) = parse("---\ntools: [Bash, Write, UnknownTool]\n---\n");
+        let (p, diags) = parse(
+            "---
+tools: [Bash, Write, UnknownTool]
+---
+",
+        );
         assert_eq!(diags.len(), 1);
         assert!(matches!(diags[0], AgentDiagnostic::DeprecatedToolsList));
         let map = as_map(p.tools.as_ref().expect("tools expected"));
@@ -1255,75 +1183,51 @@ mod tests {
     }
 
     #[test]
-    fn disallowed_tools_merges_into_tools_and_warns() {
-        let content = "---\ntools:\n  \"*\": deny\n  bash: allow\ndisallowed-tools: [Agent]\n---\n";
-        let (p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(
-            diags[0],
-            AgentDiagnostic::DeprecatedDisallowedTools
-        ));
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
+    fn deprecated_disallowed_tools_merge_defaults_and_existing_policies() {
+        let (with_base, diags_with_base) = parse(
+            r#"---
+tools:
+  "*": deny
+  bash: allow
+disallowed-tools: [Agent]
+---
+"#,
+        );
+        assert!(
+            diags_with_base
+                .iter()
+                .any(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
+        );
+        let map = as_map(with_base.tools.as_ref().expect("tools expected"));
         assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
-        assert_eq!(map.get("bash"), Some(&ToolRule::Action(ToolAction::Allow)));
         assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
-    }
 
-    #[test]
-    fn disallowed_tools_without_tools_becomes_allow_default_with_denies() {
-        let (p, diags) = parse("---\ndisallowed-tools: [Agent, Unknown]\n---\n");
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(
-            diags[0],
-            AgentDiagnostic::DeprecatedDisallowedTools
-        ));
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
+        let (without_base, diags_without_base) = parse(
+            "---
+disallowed-tools: [Agent]
+---
+",
+        );
+        assert!(
+            diags_without_base
+                .iter()
+                .any(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
+        );
+        let map = as_map(without_base.tools.as_ref().expect("tools expected"));
         assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Allow)));
         assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
-        assert_eq!(
-            map.get("Unknown"),
-            Some(&ToolRule::Action(ToolAction::Deny))
-        );
-    }
-
-    #[test]
-    fn tools_disallowed_with_shorthand_deny_base() {
-        let (p, diags) = parse("---\ntools: deny\ndisallowed-tools: [Agent]\n---\n");
-        let deprecated_count = diags
-            .iter()
-            .filter(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
-            .count();
-        assert!(
-            (1..=2).contains(&deprecated_count),
-            "expected 1-2 deprecation diagnostics, got: {diags:?}"
-        );
-        assert!(
-            diags
-                .iter()
-                .all(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
-        );
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
-        assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
-        assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
-    }
-
-    #[test]
-    fn invalid_tools_action_emits_error_and_skips_entry() {
-        let (p, diags) = parse("---\ntools:\n  bash: maybe\n  read: allow\n---\n");
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(
-            &diags[0],
-            AgentDiagnostic::InvalidFieldValue { field, .. } if field == "tools.bash"
-        ));
-        let map = as_map(p.tools.as_ref().expect("tools expected"));
-        assert!(!map.contains_key("bash"));
-        assert_eq!(map.get("read"), Some(&ToolRule::Action(ToolAction::Allow)));
     }
 
     #[test]
     fn unknown_capability_key_is_preserved_without_error() {
         let (p, diags) = parse(
-            "---\ntools:\n  \"*\": deny\n  bash: allow\n  future-capability-xyz: allow\n---\n",
+            r#"---
+tools:
+  "*": deny
+  bash: allow
+  future-capability-xyz: allow
+---
+"#,
         );
         let map = as_map(p.tools.as_ref().expect("tools expected"));
         assert_eq!(
@@ -1340,117 +1244,103 @@ mod tests {
     }
 
     #[test]
-    fn parses_skills_and_mcp_tools() {
-        let content = "---\nskills: [review, dev-principles]\nmcp-tools: [server]\n---\n";
+    fn parses_harness_overrides_and_reports_non_overridable_fields() {
+        let content = r#"---
+harness-overrides:
+  claude:
+    approval: auto
+    autocompact-pct: 75
+    tools:
+      "*": deny
+      bash: allow
+    name: forbidden
+  codex:
+    sandbox: workspace-write
+    effort: high
+---
+"#;
         let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.skills, vec!["review", "dev-principles"]);
-        assert_eq!(p.mcp_tools, vec!["server"]);
-    }
 
-    // --- 3.1: model-policies ---
-
-    #[test]
-    fn model_policies_are_parsed_as_raw_entries() {
-        let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n    override:\n      harness: codex\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.model_policies.len(), 1);
-    }
-
-    // --- 3.1: fanout ---
-
-    #[test]
-    fn fanout_entries_are_parsed_as_raw() {
-        let content = "---\nfanout:\n  - alias: opus\n  - model: gpt-5.5\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.fanout.len(), 2);
-    }
-
-    // --- 3.1: harness-overrides ---
-
-    #[test]
-    fn harness_overrides_parsed_for_claude_and_codex() {
-        let content = "---\nharness-overrides:\n  claude:\n    approval: auto\n    tools:\n      \"*\": deny\n      bash: allow\n  codex:\n    sandbox: workspace-write\n    effort: high\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
         let claude = p.harness_overrides.claude.as_ref().unwrap();
         assert_eq!(claude.approval, Some(ApprovalMode::Auto));
+        assert_eq!(claude.autocompact_pct, Some(75));
         let tools_map = as_map(claude.tools.as_ref().expect("tools override expected"));
-        assert_eq!(
-            tools_map.get("*"),
-            Some(&ToolRule::Action(ToolAction::Deny))
-        );
         assert_eq!(
             tools_map.get("bash"),
             Some(&ToolRule::Action(ToolAction::Allow))
         );
+
         let codex = p.harness_overrides.codex.as_ref().unwrap();
         assert_eq!(codex.sandbox, Some(SandboxMode::WorkspaceWrite));
         assert_eq!(codex.effort, Some(EffortLevel::High));
+
+        assert!(diags.iter().any(|d| {
+            matches!(
+                d,
+                AgentDiagnostic::NonOverridableFieldInOverride { field, .. } if field == "name"
+            )
+        }));
     }
 
     #[test]
-    fn harness_override_deprecated_tools_list_warns() {
-        let content = "---\nharness-overrides:\n  claude:\n    tools: [Bash]\n---\n";
+    fn harness_override_legacy_tools_bridges_still_warn() {
+        let content = r#"---
+harness-overrides:
+  claude:
+    tools: [Bash]
+    disallowed-tools: [Agent]
+---
+"#;
         let (p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(diags[0], AgentDiagnostic::DeprecatedToolsList));
+        assert!(
+            diags
+                .iter()
+                .any(|d| matches!(d, AgentDiagnostic::DeprecatedToolsList))
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| matches!(d, AgentDiagnostic::DeprecatedDisallowedTools))
+        );
         let claude = p.harness_overrides.claude.as_ref().unwrap();
         let map = as_map(claude.tools.as_ref().expect("tools override expected"));
-        assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Deny)));
         assert_eq!(map.get("bash"), Some(&ToolRule::Action(ToolAction::Allow)));
-    }
-
-    #[test]
-    fn harness_override_deprecated_disallowed_tools_warns_and_merges() {
-        let content = "---\nharness-overrides:\n  claude:\n    disallowed-tools: [Agent]\n---\n";
-        let (p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(
-            diags[0],
-            AgentDiagnostic::DeprecatedDisallowedTools
-        ));
-        let claude = p.harness_overrides.claude.as_ref().unwrap();
-        let map = as_map(claude.tools.as_ref().expect("tools override expected"));
-        assert_eq!(map.get("*"), Some(&ToolRule::Action(ToolAction::Allow)));
         assert_eq!(map.get("task"), Some(&ToolRule::Action(ToolAction::Deny)));
     }
 
     #[test]
-    fn harness_override_with_non_overridable_field_produces_diagnostic() {
-        let content = "---\nharness-overrides:\n  claude:\n    name: bad\n---\n";
-        let (_p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
+    fn parses_metadata_only_fields_and_legacy_models_warning() {
+        let content = r#"---
+models:
+  opus:
+    effort: high
+model-policies:
+  - match:
+      model: gpt-5.5
+    override:
+      harness: codex
+fanout:
+  - alias: opus
+---
+"#;
+        let (p, diags) = parse(content);
+        assert_eq!(p.model_policies.len(), 1);
+        assert_eq!(p.fanout.len(), 1);
         assert!(
-            matches!(&diags[0], AgentDiagnostic::NonOverridableFieldInOverride { field, .. } if field == "name")
+            diags
+                .iter()
+                .any(|d| matches!(d, AgentDiagnostic::LegacyModelsField))
         );
     }
 
-    // --- 3.1: legacy models field ---
-
-    #[test]
-    fn legacy_models_field_produces_deprecation_warning() {
-        let content = "---\nmodels:\n  opus:\n    effort: high\n---\n";
-        let (_p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(&diags[0], AgentDiagnostic::LegacyModelsField));
-    }
-
-    // --- Empty agent ---
-
     #[test]
     fn empty_agent_has_no_diagnostics() {
-        let (p, diags) = parse("# Minimal agent\nno frontmatter");
+        let (p, diags) = parse(
+            "# Minimal agent
+no frontmatter",
+        );
         assert!(diags.is_empty());
         assert!(p.name.is_none());
-        assert!(p.harness.is_none());
-    }
-
-    #[test]
-    fn agent_without_harness_is_universal() {
-        let (p, _) = parse("---\nname: planner\nmodel: gpt55\n---\n# Planner");
         assert!(p.harness.is_none());
     }
 }

@@ -271,28 +271,40 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
 
     // ── Skill dependency check ───────────────────────────────────────
     let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
-    let dependency_skills = dependency_skills_from_lock(base);
-    let mut external_deps: HashMap<String, Vec<String>> = HashMap::new();
 
-    for (agent_name, skills) in &agent_skill_refs {
-        for skill in skills {
-            if !available.contains(skill.as_str()) && !dependency_skills.contains(skill.as_str()) {
-                external_deps
-                    .entry(skill.clone())
-                    .or_default()
-                    .push(agent_name.clone());
+    if has_package_dependencies(base) {
+        // Graph-backed validation: resolve deps fresh from constraints, check
+        // skill refs against local skills + all resolved dependency packages.
+        match resolve_available_skills(base) {
+            Ok(graph_skills) => {
+                for (agent_name, skills) in &agent_skill_refs {
+                    for skill in skills {
+                        if !available.contains(skill.as_str()) && !graph_skills.contains_key(skill)
+                        {
+                            errors.push(format!(
+                                "agent `{agent_name}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                                format_searched_packages(&graph_skills)
+                            ));
+                        }
+                    }
+                }
+            }
+            Err(resolve_err) => {
+                errors.push(format!(
+                    "dependency graph resolution failed: {resolve_err}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+                ));
             }
         }
-    }
-
-    if !external_deps.is_empty() {
-        let mut sorted: Vec<_> = external_deps.iter().collect();
-        sorted.sort_by_key(|(name, _)| name.as_str());
-        for (skill, agents) in &sorted {
-            warnings.push(format!(
-                "external dependency: `{skill}` (referenced by: {})",
-                agents.join(", ")
-            ));
+    } else {
+        // No [dependencies] — local-only validation, emit warnings for external refs.
+        for (agent_name, skills) in &agent_skill_refs {
+            for skill in skills {
+                if !available.contains(skill.as_str()) {
+                    warnings.push(format!(
+                        "external dependency: `{skill}` (referenced by: {agent_name})"
+                    ));
+                }
+            }
         }
     }
 
@@ -305,69 +317,120 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     })
 }
 
-fn dependency_skills_from_lock(base: &Path) -> HashSet<String> {
-    let Ok(lock) = crate::lock::load(base) else {
-        return HashSet::new();
+/// Check if mars.toml has `[package]` and at least one `[dependencies]` entry.
+///
+/// Both are required to trigger graph-backed validation: `[package]` indicates
+/// this is a publishable source package, and `[dependencies]` means there are
+/// skills that could come from external packages.
+fn has_package_dependencies(base: &Path) -> bool {
+    let Ok(config) = crate::config::load(base) else {
+        return false;
     };
-
-    lock.flat_items()
-        .into_iter()
-        .filter(|(_, item)| item.kind == crate::lock::ItemKind::Skill)
-        .filter_map(|(dest_path, _)| skill_name_from_dest_path(dest_path.as_str()))
-        .collect()
+    config.package.is_some() && !config.dependencies.is_empty()
 }
 
-fn skill_name_from_dest_path(dest_path: &str) -> Option<String> {
-    let mut components = dest_path.split('/');
-    let prefix = components.next()?;
-    if prefix != "skills" {
-        return None;
+/// Resolve the dependency graph and collect all available skills.
+///
+/// Returns a map of `skill_name → (source_name, version_string)`.
+/// Fails closed — if resolution cannot complete, returns an error.
+fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, String)>, MarsError> {
+    use crate::resolve::{ResolveOptions, resolve};
+    use crate::source::GlobalCache;
+    use crate::sync::provider::RealSourceProvider;
+
+    let config = crate::config::load(base)?;
+    let local = crate::config::load_local(base)?;
+    let effective = crate::config::merge(config, local)?;
+    let cache = GlobalCache::new()?;
+    let provider = RealSourceProvider {
+        cache: &cache,
+        project_root: base,
+    };
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let options = ResolveOptions::default(); // no lock, not frozen, not maximizing
+
+    let graph = resolve(&effective, &provider, None, &options, &mut diag)?;
+
+    let mut skills: HashMap<String, (String, String)> = HashMap::new();
+    for (source_name, node) in &graph.nodes {
+        let discovered =
+            crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None)?;
+        for item in discovered {
+            if item.id.kind == crate::lock::ItemKind::Skill {
+                let version_str = node
+                    .resolved_ref
+                    .version
+                    .as_ref()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                skills.insert(
+                    item.id.name.to_string(),
+                    (source_name.to_string(), version_str),
+                );
+            }
+        }
     }
 
-    components.next().map(str::to_string)
+    Ok(skills)
+}
+
+fn format_searched_packages(graph_skills: &HashMap<String, (String, String)>) -> String {
+    let mut packages: Vec<(&str, &str)> = graph_skills
+        .values()
+        .map(|(name, ver)| (name.as_str(), ver.as_str()))
+        .collect();
+    packages.sort();
+    packages.dedup();
+    if packages.is_empty() {
+        "no dependency packages resolved".to_string()
+    } else {
+        packages
+            .iter()
+            .map(|(name, ver)| format!("{name}@{ver}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
-    use crate::types::{ContentHash, DestPath, SourceName};
     use tempfile::TempDir;
 
     fn write_agent(path: &Path, filename: &str, skills: &[&str]) {
         let agents = path.join("agents");
         std::fs::create_dir_all(&agents).unwrap();
-        let skills = skills.join(", ");
+        let skills_str = skills.join(", ");
         std::fs::write(
             agents.join(format!("{filename}.md")),
             format!(
-                "---\nname: {filename}\ndescription: test agent\nskills: [{skills}]\n---\n# Agent"
+                "---\nname: {filename}\ndescription: test agent\nskills: [{skills_str}]\n---\n# Agent"
             ),
         )
         .unwrap();
     }
 
-    fn write_lock_skill(path: &Path, skill_name: &str) {
-        let mut lock = LockFile::empty();
-        let dest_path = DestPath::from(format!("skills/{skill_name}"));
-        let key = format!("skill/{skill_name}");
-        lock.items.insert(
-            key,
-            LockedItemV2 {
-                source: SourceName::from("dep-source"),
-                kind: ItemKind::Skill,
-                version: None,
-                source_checksum: ContentHash::from("source-hash"),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path,
-                    installed_checksum: ContentHash::from("installed-hash"),
-                }],
-            },
-        );
-        crate::lock::write(path, &lock).unwrap();
+    /// Create a minimal path-dep source package with the given skills.
+    fn write_dep_package(path: &Path, name: &str, version: &str, skills: &[&str]) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(
+            path.join("mars.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n\n[dependencies]\n"),
+        )
+        .unwrap();
+        for skill_name in skills {
+            let skill_dir = path.join("skills").join(skill_name);
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("---\nname: {skill_name}\ndescription: test skill\n---\n# Skill"),
+            )
+            .unwrap();
+        }
     }
+
+    // ── Structural checks (unchanged) ─────────────────────────────────
 
     #[cfg(unix)]
     #[test]
@@ -376,22 +439,17 @@ mod tests {
         let agents = dir.path().join("agents");
         std::fs::create_dir_all(&agents).unwrap();
 
-        // Real agent
         std::fs::write(
             agents.join("real.md"),
             "---\nname: real\ndescription: real agent\n---\n# Real",
         )
         .unwrap();
-
-        // Symlinked agent pointing to the real one
         std::os::unix::fs::symlink(agents.join("real.md"), agents.join("linked.md")).unwrap();
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
         };
-        // Should succeed (the symlink is warned, not errored)
         let code = super::run(&args, true).unwrap();
-        // No structural errors — the real agent is valid
         assert_eq!(code, 0);
     }
 
@@ -407,11 +465,8 @@ mod tests {
             "---\nname: real-skill\ndescription: a skill\n---\n# Skill",
         )
         .unwrap();
-
-        // Symlinked skill dir
         std::os::unix::fs::symlink(&real_skill, skills.join("linked-skill")).unwrap();
 
-        // Also add an agent so the package isn't empty
         let agents = dir.path().join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(
@@ -443,30 +498,36 @@ mod tests {
         assert_eq!(code, 0);
     }
 
+    // ── P3: No [dependencies] → local-only path, external refs are warnings ──
+
     #[test]
-    fn check_suppresses_warning_for_dependency_provided_skill() {
+    fn check_no_dependencies_warns_for_external_skill() {
+        // No mars.toml → has_package_dependencies returns false → warning path.
         let dir = TempDir::new().unwrap();
-        write_agent(dir.path(), "coder", &["ext-skill"]);
-        write_lock_skill(dir.path(), "ext-skill");
+        write_agent(dir.path(), "coder", &["missing-skill"]);
 
         let report = super::check_dir(dir.path()).unwrap();
-        let has_external_warning = report
+        assert!(
+            report.errors.is_empty(),
+            "expected no errors in local-only mode: {:?}",
+            report.errors
+        );
+        let has_warning = report
             .warnings
             .iter()
-            .any(|w| w.contains("external dependency: `ext-skill`"));
-
+            .any(|w| w.contains("external dependency: `missing-skill`"));
         assert!(
-            !has_external_warning,
-            "unexpected external dependency warning: {:?}",
+            has_warning,
+            "expected warning for missing-skill: {:?}",
             report.warnings
         );
     }
 
     #[test]
     fn check_warns_for_truly_missing_external_skill() {
+        // No mars.toml → local-only path → skill ref that isn't local → warning.
         let dir = TempDir::new().unwrap();
         write_agent(dir.path(), "coder", &["missing-skill"]);
-        write_lock_skill(dir.path(), "some-other-skill");
 
         let report = super::check_dir(dir.path()).unwrap();
         let has_missing_warning = report
@@ -478,6 +539,117 @@ mod tests {
             has_missing_warning,
             "expected missing external dependency warning, got: {:?}",
             report.warnings
+        );
+    }
+
+    // ── P1 + P4 + P9: [dependencies] present, resolution fails → error with hint ─
+
+    #[test]
+    fn check_with_unresolvable_dep_fails_closed_with_remediation_hint() {
+        // P1: mars.toml with [dependencies] triggers graph resolution.
+        // P4: resolution fails (non-existent path) → fail-closed error.
+        // P9: error message includes remediation ("mars version --force").
+        let dir = TempDir::new().unwrap();
+        write_agent(dir.path(), "coder", &["some-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            // [package] required to trigger graph-backed validation.
+            // Absolute path that does not exist — resolution must fail.
+            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            !report.errors.is_empty(),
+            "expected errors when dep cannot be resolved"
+        );
+        let joined = report.errors.join("\n");
+        assert!(
+            joined.contains("mars version --force"),
+            "error must include remediation hint: {joined}"
+        );
+    }
+
+    // ── P2 + P8: [dependencies] resolve, skill missing from graph → error ────────
+
+    #[test]
+    fn check_missing_skill_in_resolved_graph_is_error() {
+        // P2: skill not in graph → error (not warning).
+        // P8: error message includes agent name, skill name, searched packages.
+        let dir = TempDir::new().unwrap();
+        let dep_dir = TempDir::new().unwrap();
+
+        // Path dep provides "provided-skill", NOT "missing-skill".
+        write_dep_package(dep_dir.path(), "dep-pkg", "0.1.0", &["provided-skill"]);
+
+        write_agent(dir.path(), "coder", &["missing-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            !report.errors.is_empty(),
+            "expected error for missing skill, got: {:?}",
+            report.errors
+        );
+        let joined = report.errors.join("\n");
+        // P8: error includes agent name, skill name, searched packages, and remediation.
+        assert!(
+            joined.contains("coder"),
+            "error must name the agent: {joined}"
+        );
+        assert!(
+            joined.contains("missing-skill"),
+            "error must name the missing skill: {joined}"
+        );
+        assert!(
+            joined.contains("searched:"),
+            "error must list searched packages: {joined}"
+        );
+        assert!(
+            joined.contains("hint:"),
+            "error must include remediation guidance: {joined}"
+        );
+        // Warnings must NOT contain missing-skill (it is now an error).
+        let has_warning = report.warnings.iter().any(|w| w.contains("missing-skill"));
+        assert!(
+            !has_warning,
+            "missing skill must be error, not warning: {:?}",
+            report.warnings
+        );
+    }
+
+    // ── Skill provided by path dep passes (graph-backed success) ─────────────────
+
+    #[test]
+    fn check_skill_provided_by_path_dep_passes() {
+        // When the skill is found in a resolved path dependency, no error.
+        let dir = TempDir::new().unwrap();
+        let dep_dir = TempDir::new().unwrap();
+
+        write_dep_package(dep_dir.path(), "dep-pkg", "0.1.0", &["ext-skill"]);
+        write_agent(dir.path(), "coder", &["ext-skill"]);
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            format!(
+                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                dep_dir.path().display()
+            ),
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        assert!(
+            report.errors.is_empty(),
+            "expected no errors when skill is in dep: {:?}",
+            report.errors
         );
     }
 }

@@ -17,12 +17,15 @@ pub struct VersionArgs {
     /// Push branch and tag to origin after versioning
     #[arg(long)]
     pub push: bool,
+    /// Force version even if package check fails (bypass publish gate)
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Run `mars version`.
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     require_clean_working_tree(&ctx.project_root)?;
-    require_package_check(&ctx.project_root)?;
+    require_package_check(&ctx.project_root, args.force)?;
 
     let mut config = crate::config::load(&ctx.project_root)?;
     let package = config
@@ -129,7 +132,7 @@ fn require_clean_working_tree(project_root: &Path) -> Result<(), MarsError> {
     Ok(())
 }
 
-fn require_package_check(project_root: &Path) -> Result<(), MarsError> {
+fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsError> {
     // Skip check if this isn't a source package (no agents/, skills/, or SKILL.md)
     let has_agents = project_root.join("agents").is_dir();
     let has_skills = project_root.join("skills").is_dir();
@@ -138,15 +141,27 @@ fn require_package_check(project_root: &Path) -> Result<(), MarsError> {
         return Ok(());
     }
 
-    let report = check::check_dir(project_root)?;
-    if !report.errors.is_empty() {
-        let mut message = "package check failed:".to_string();
-        for error in &report.errors {
-            message.push_str(&format!("\n  - {error}"));
+    match check::check_dir(project_root) {
+        Ok(report) if report.errors.is_empty() => Ok(()),
+        Ok(report) if force => {
+            for error in &report.errors {
+                eprintln!("warning (--force): {error}");
+            }
+            Ok(())
         }
-        return Err(ConfigError::Invalid { message }.into());
+        Ok(report) => {
+            let mut message = "package check failed:".to_string();
+            for error in &report.errors {
+                message.push_str(&format!("\n  - {error}"));
+            }
+            Err(ConfigError::Invalid { message }.into())
+        }
+        Err(e) if force => {
+            eprintln!("warning (--force): check failed: {e}");
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 fn parse_release_version(value: &str, field_name: &str) -> Result<Version, MarsError> {
@@ -454,6 +469,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -485,6 +501,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -519,6 +536,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -547,6 +565,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -574,6 +593,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -595,6 +615,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -612,6 +633,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -628,6 +650,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: false,
+            force: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -650,6 +673,7 @@ mod tests {
         let args = VersionArgs {
             bump: "patch".to_string(),
             push: true,
+            force: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -661,5 +685,60 @@ mod tests {
 
         let remote_tag = run_git_test(repo.path(), ["ls-remote", "--tags", "origin", "v0.1.1"]);
         assert!(remote_tag.contains("refs/tags/v0.1.1"));
+    }
+
+    // ── P5: check errors abort version ───────────────────────────────────────────
+
+    #[test]
+    fn run_aborts_when_package_check_fails() {
+        // P5: an unresolvable dependency causes check to fail, version is not bumped.
+        let (repo, ctx) = init_repo_with_mars_toml(
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p5\" }\n",
+        );
+
+        let args = VersionArgs {
+            bump: "patch".to_string(),
+            push: false,
+            force: false,
+        };
+
+        let err = run(&args, &ctx, true).unwrap_err();
+        assert!(
+            err.to_string().contains("package check failed"),
+            "expected package check failure: {err}"
+        );
+
+        let config = crate::config::load(repo.path()).unwrap();
+        assert_eq!(
+            config.package.unwrap().version,
+            "0.1.0",
+            "version must not be bumped after check failure"
+        );
+    }
+
+    // ── P6: --force bypasses check errors ────────────────────────────────────────
+
+    #[test]
+    fn run_force_bypasses_package_check_errors() {
+        // P6: --force proceeds despite check errors, emits warnings to stderr.
+        let (repo, ctx) = init_repo_with_mars_toml(
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p6\" }\n",
+        );
+
+        let args = VersionArgs {
+            bump: "patch".to_string(),
+            push: false,
+            force: true,
+        };
+
+        let exit = run(&args, &ctx, true).unwrap();
+        assert_eq!(exit, 0);
+
+        let config = crate::config::load(repo.path()).unwrap();
+        assert_eq!(
+            config.package.unwrap().version,
+            "0.1.1",
+            "version must be bumped with --force"
+        );
     }
 }

@@ -272,39 +272,48 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     // ── Skill dependency check ───────────────────────────────────────
     let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
 
-    if has_package_dependencies(base) {
-        // Graph-backed validation: resolve deps fresh from constraints, check
-        // skill refs against local skills + all resolved dependency packages.
-        match resolve_available_skills(base) {
-            Ok(graph_skills) => {
-                for (agent_name, skills) in &agent_skill_refs {
-                    for skill in skills {
-                        if !available.contains(skill.as_str()) && !graph_skills.contains_key(skill)
-                        {
-                            errors.push(format!(
-                                "agent `{agent_name}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
-                                format_searched_packages(&graph_skills)
-                            ));
+    match has_package_dependencies(base) {
+        Ok(true) => {
+            // Graph-backed validation: resolve deps fresh from constraints, check
+            // skill refs against local skills + all resolved dependency packages.
+            match resolve_available_skills(base) {
+                Ok(graph_skills) => {
+                    for (agent_name, skills) in &agent_skill_refs {
+                        for skill in skills {
+                            if !available.contains(skill.as_str())
+                                && !graph_skills.contains_key(skill)
+                            {
+                                errors.push(format!(
+                                    "agent `{agent_name}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                                    format_searched_packages(&graph_skills)
+                                ));
+                            }
                         }
                     }
                 }
-            }
-            Err(resolve_err) => {
-                errors.push(format!(
-                    "dependency graph resolution failed: {resolve_err}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-                ));
-            }
-        }
-    } else {
-        // No [dependencies] — local-only validation, emit warnings for external refs.
-        for (agent_name, skills) in &agent_skill_refs {
-            for skill in skills {
-                if !available.contains(skill.as_str()) {
-                    warnings.push(format!(
-                        "external dependency: `{skill}` (referenced by: {agent_name})"
+                Err(resolve_err) => {
+                    errors.push(format!(
+                        "dependency graph resolution failed: {resolve_err}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
                     ));
                 }
             }
+        }
+        Ok(false) => {
+            // No [dependencies] — local-only validation, emit warnings for external refs.
+            for (agent_name, skills) in &agent_skill_refs {
+                for skill in skills {
+                    if !available.contains(skill.as_str()) {
+                        warnings.push(format!(
+                            "external dependency: `{skill}` (referenced by: {agent_name})"
+                        ));
+                    }
+                }
+            }
+        }
+        Err(config_err) => {
+            errors.push(format!(
+                "failed to load mars.toml for dependency checks: {config_err}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
+            ));
         }
     }
 
@@ -322,11 +331,12 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
 /// Both are required to trigger graph-backed validation: `[package]` indicates
 /// this is a publishable source package, and `[dependencies]` means there are
 /// skills that could come from external packages.
-fn has_package_dependencies(base: &Path) -> bool {
-    let Ok(config) = crate::config::load(base) else {
-        return false;
-    };
-    config.package.is_some() && !config.dependencies.is_empty()
+fn has_package_dependencies(base: &Path) -> Result<bool, MarsError> {
+    match crate::config::load(base) {
+        Ok(config) => Ok(config.package.is_some() && !config.dependencies.is_empty()),
+        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => Ok(false),
+        Err(err) => Err(err),
+    }
 }
 
 /// Resolve the dependency graph and collect available skills, respecting package filters.
@@ -469,6 +479,10 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    fn toml_path(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
     }
 
     // ── Structural checks (unchanged) ─────────────────────────────────
@@ -629,7 +643,7 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
-                dep_dir.path().display()
+                toml_path(dep_dir.path())
             ),
         )
         .unwrap();
@@ -681,7 +695,7 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
-                dep_dir.path().display()
+                toml_path(dep_dir.path())
             ),
         )
         .unwrap();
@@ -715,7 +729,7 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", exclude = [\"ext-skill\"] }}\n",
-                dep_dir.path().display()
+                toml_path(dep_dir.path())
             ),
         )
         .unwrap();
@@ -745,7 +759,7 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", only_agents = true }}\n",
-                dep_dir.path().display()
+                toml_path(dep_dir.path())
             ),
         )
         .unwrap();
@@ -774,7 +788,7 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
-                local_dep_dir.path().display()
+                toml_path(local_dep_dir.path())
             ),
         )
         .unwrap();
@@ -822,8 +836,8 @@ mod tests {
             dir.path().join("mars.toml"),
             format!(
                 "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
-                regular_dep_dir.path().display(),
-                local_dep_dir.path().display()
+                toml_path(regular_dep_dir.path()),
+                toml_path(local_dep_dir.path())
             ),
         )
         .unwrap();
@@ -838,6 +852,34 @@ mod tests {
         assert!(
             joined.contains("local-only-skill"),
             "error must name the missing skill: {joined}"
+        );
+    }
+
+    #[test]
+    fn check_invalid_config_reports_error_instead_of_falling_back_to_local_only() {
+        let dir = TempDir::new().unwrap();
+        write_agent(dir.path(), "coder", &["missing-skill"]);
+        // Intentionally invalid TOML (Windows-style path escapes in basic string).
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"C:\\Users\\dev\\dep\" }\n",
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+        let joined = report.errors.join("\n");
+        assert!(
+            joined.contains("failed to load mars.toml for dependency checks"),
+            "expected config parse/load error to surface: {joined}"
+        );
+        let has_local_warning = report
+            .warnings
+            .iter()
+            .any(|w| w.contains("external dependency: `missing-skill`"));
+        assert!(
+            !has_local_warning,
+            "must not silently fall back to local-only warnings on invalid config: {:?}",
+            report.warnings
         );
     }
 }

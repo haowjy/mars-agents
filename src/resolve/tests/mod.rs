@@ -360,7 +360,12 @@ fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
 
 fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
     match spec {
-        SourceSpec::Git(g) => SourceId::git_with_subpath(g.url.clone(), subpath),
+        SourceSpec::Git(g) => {
+            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                g.url.as_ref(),
+            ));
+            SourceId::git_with_subpath(canonical_url, subpath)
+        }
         SourceSpec::Path(path) => SourceId::Path {
             canonical: path.clone(),
             subpath,

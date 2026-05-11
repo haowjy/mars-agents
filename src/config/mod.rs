@@ -646,7 +646,12 @@ impl FilterConfig {
 
 fn source_id_for_spec(root: &Path, spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
     match spec {
-        SourceSpec::Git(git) => SourceId::git_with_subpath(git.url.clone(), subpath.clone()),
+        SourceSpec::Git(git) => {
+            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                git.url.as_ref(),
+            ));
+            SourceId::git_with_subpath(canonical_url, subpath.clone())
+        }
         SourceSpec::Path(path) => match SourceId::path_with_subpath(root, path, subpath.clone()) {
             Ok(id) => id,
             Err(_) => {

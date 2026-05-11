@@ -93,42 +93,15 @@ pub fn safe_component_with_hash(raw: &str) -> String {
 
 /// Generate a cache directory component for a git clone URL.
 pub fn git_cache_component(url: &str) -> Result<String, MarsError> {
-    Ok(safe_component_with_hash(normalize_git_url(url)))
+    Ok(safe_component_with_hash(
+        &crate::source::canonical::canonicalize_git_url(url),
+    ))
 }
 
 /// Generate a cache directory component for an archive URL + SHA.
 pub fn archive_cache_component(url: &str, sha: &str) -> Result<String, MarsError> {
     let combined = format!("{url}@{sha}");
     Ok(safe_component_with_hash(&combined))
-}
-
-/// Normalize a git URL for cache key generation.
-///
-/// Strips protocol prefixes, handles SSH shorthand, strips .git suffix.
-fn normalize_git_url(url: &str) -> &str {
-    let mut s = url;
-
-    // Strip common protocol prefixes
-    for prefix in &["https://", "http://", "ssh://", "git://"] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            s = rest;
-            break;
-        }
-    }
-
-    // Handle SSH shorthand: git@github.com:foo/bar -> github.com:foo/bar
-    // Keep the colon for now, safe_component will convert it.
-    if let Some(rest) = s.strip_prefix("git@") {
-        s = rest;
-    }
-
-    // Strip trailing .git
-    if let Some(rest) = s.strip_suffix(".git") {
-        s = rest;
-    }
-
-    // Strip trailing slash
-    s.strip_suffix('/').unwrap_or(s)
 }
 
 /// Resolve the global cache root directory.

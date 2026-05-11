@@ -342,10 +342,11 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
+    // SourceId stores the canonical URL (no protocol, no .git suffix)
     assert_eq!(
         dep_node.source_id,
         SourceId::git_with_subpath(
-            SourceUrl::from("https://example.com/dep.git"),
+            SourceUrl::from("example.com/dep"),
             Some(SourceSubpath::new("plugins/foo").unwrap())
         )
     );
@@ -1258,11 +1259,218 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
 
     let dep_node = graph.nodes.get("dep").expect("dep should be in graph");
     // No subpath declared → identity must have subpath = None
+    // SourceId stores the canonical URL (no protocol, no .git suffix)
     assert_eq!(
         dep_node.source_id,
-        SourceId::git_with_subpath(SourceUrl::from("https://example.com/dep.git"), None)
+        SourceId::git_with_subpath(SourceUrl::from("example.com/dep"), None)
     );
     // package_root equals checkout_root when subpath is None
     assert_eq!(dep_node.rooted_ref.package_root, tree_dep);
     assert_eq!(dep_node.rooted_ref.checkout_root, tree_dep);
+}
+
+// ========== URL Identity Convergence Tests ==========
+//
+// These tests verify that SSH and HTTPS URL forms of the same repository
+// canonicalize to the same SourceId, preventing false-duplicate cache entries
+// and enabling correct deduplication in the resolver.
+
+/// SSH and HTTPS forms of the same repo produce equal canonical SourceIds.
+#[test]
+fn ssh_and_https_url_forms_have_same_canonical_source_id() {
+    let ssh_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "git@example.com:org/repo.git",
+        )),
+        None,
+    );
+    let https_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "https://example.com/org/repo.git",
+        )),
+        None,
+    );
+    assert_eq!(
+        ssh_id, https_id,
+        "SSH and HTTPS of the same repo must produce equal SourceIds"
+    );
+}
+
+/// Two direct deps with different names that both resolve to the same canonical URL
+/// are detected as a duplicate-identity conflict.
+#[test]
+fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("shared");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    // Register versions for the SSH URL (used by spec of dep-a)
+    provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
+    // Register versions for the HTTPS URL (used by spec of dep-b)
+    provider.add_versions("https://example.com/org/shared.git", vec![(1, 0, 0)]);
+    provider.add_source("dep-a", tree.clone(), None);
+    provider.add_source("dep-b", tree, None);
+
+    // Both deps canonicalize to the same SourceId
+    let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        "https://example.com/org/shared.git",
+    ));
+    let mut deps = IndexMap::new();
+    deps.insert(
+        SourceName::from("dep-a"),
+        EffectiveDependency {
+            name: "dep-a".into(),
+            id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
+            subpath: None,
+            filter: FilterMode::All,
+            rename: RenameMap::new(),
+            is_overridden: false,
+            original_git: None,
+        },
+    );
+    deps.insert(
+        SourceName::from("dep-b"),
+        EffectiveDependency {
+            name: "dep-b".into(),
+            id: SourceId::git_with_subpath(canonical_url, None),
+            spec: git_spec("https://example.com/org/shared.git", Some("v1.0.0")),
+            subpath: None,
+            filter: FilterMode::All,
+            rename: RenameMap::new(),
+            is_overridden: false,
+            original_git: None,
+        },
+    );
+    let config = EffectiveConfig {
+        dependencies: deps,
+        settings: Settings::default(),
+    };
+
+    let err = resolve(&config, &provider, None, &default_options())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("duplicate source identity"),
+        "SSH and HTTPS of same repo should be detected as duplicate: {err}"
+    );
+}
+
+/// A transitive dep declared with HTTPS form converges with a direct dep declared
+/// with SSH form of the same repo — no SourceIdentityMismatch is raised.
+#[test]
+fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    // Manifest for "a" declares "shared" with HTTPS URL form
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![("shared", "https://example.com/org/shared.git", ">=1.0.0")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    // SSH URL form — used by the direct dep's spec for version resolution
+    provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("shared", tree_shared, None);
+
+    // Direct dep "shared" uses SSH URL, but stores the canonical SourceId.
+    // SSH form: git@example.com:org/shared.git → canonical: example.com/org/shared
+    // HTTPS form: https://example.com/org/shared.git → canonical: example.com/org/shared
+    // Both are the same canonical, so the resolver should not raise SourceIdentityMismatch.
+    let ssh_canonical = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        "git@example.com:org/shared.git",
+    ));
+    let mut deps = IndexMap::new();
+    deps.insert(
+        SourceName::from("a"),
+        EffectiveDependency {
+            name: "a".into(),
+            id: SourceId::git_with_subpath(
+                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                    "https://example.com/a.git",
+                )),
+                None,
+            ),
+            spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+            subpath: None,
+            filter: FilterMode::All,
+            rename: RenameMap::new(),
+            is_overridden: false,
+            original_git: None,
+        },
+    );
+    deps.insert(
+        SourceName::from("shared"),
+        EffectiveDependency {
+            name: "shared".into(),
+            id: SourceId::git_with_subpath(ssh_canonical, None),
+            spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
+            subpath: None,
+            filter: FilterMode::All,
+            rename: RenameMap::new(),
+            is_overridden: false,
+            original_git: None,
+        },
+    );
+    let config = EffectiveConfig {
+        dependencies: deps,
+        settings: Settings::default(),
+    };
+
+    // Resolution must succeed — SSH and HTTPS forms of the same repo converge.
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    assert!(
+        graph.nodes.contains_key("shared"),
+        "shared should be resolved"
+    );
+    assert!(graph.nodes.contains_key("a"), "a should be resolved");
+}
+
+/// TRUE mismatches (different host or path) still produce errors — canonicalization
+/// does not collapse genuinely different repos into the same identity.
+#[test]
+fn different_host_or_path_does_not_produce_false_convergence() {
+    // Different hosts → different SourceIds
+    let github_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "https://github.com/org/repo.git",
+        )),
+        None,
+    );
+    let gitlab_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "https://gitlab.com/org/repo.git",
+        )),
+        None,
+    );
+    assert_ne!(
+        github_id, gitlab_id,
+        "Different hosts must produce distinct SourceIds"
+    );
+
+    // Different paths on the same host → different SourceIds
+    let repo_a_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "https://github.com/org/repo-a.git",
+        )),
+        None,
+    );
+    let repo_b_id = SourceId::git_with_subpath(
+        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+            "https://github.com/org/repo-b.git",
+        )),
+        None,
+    );
+    assert_ne!(
+        repo_a_id, repo_b_id,
+        "Different repo paths must produce distinct SourceIds"
+    );
 }

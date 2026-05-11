@@ -25,8 +25,8 @@ pub struct FetchOptions {
 
 /// Normalize a git URL to a filesystem-safe directory name.
 ///
-/// Strips protocol prefixes and replaces `/` and `:` with `_`.
-/// Strips trailing `.git` suffix.
+/// Delegates to [`super::canonical::canonicalize_git_url`] for uniform URL
+/// normalization, then replaces `/` with `_` to produce a single path component.
 ///
 /// Examples:
 /// - `https://github.com/foo/bar` -> `github.com_foo_bar`
@@ -34,39 +34,7 @@ pub struct FetchOptions {
 /// - `git@github.com:foo/bar.git` -> `github.com_foo_bar`
 /// - `ssh://git@github.com/foo/bar` -> `github.com_foo_bar`
 pub fn url_to_dirname(url: &str) -> String {
-    let mut s = url.to_string();
-
-    // Strip common protocol prefixes
-    for prefix in &["https://", "http://", "ssh://", "git://"] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            s = rest.to_string();
-            break;
-        }
-    }
-
-    // Handle SSH shorthand: git@github.com:foo/bar -> github.com/foo/bar
-    if let Some(rest) = s.strip_prefix("git@") {
-        s = rest.to_string();
-        if let Some(colon_pos) = s.find(':') {
-            let after_colon = &s[colon_pos + 1..];
-            if !after_colon.starts_with("//") {
-                s.replace_range(colon_pos..colon_pos + 1, "/");
-            }
-        }
-    }
-
-    // Strip trailing .git
-    if let Some(rest) = s.strip_suffix(".git") {
-        s = rest.to_string();
-    }
-
-    // Strip trailing slash
-    if let Some(rest) = s.strip_suffix('/') {
-        s = rest.to_string();
-    }
-
-    // Replace `/` with `_`
-    s.replace('/', "_")
+    super::canonical::canonicalize_git_url(url).replace('/', "_")
 }
 
 /// Parse a tag name as a semver version tag.

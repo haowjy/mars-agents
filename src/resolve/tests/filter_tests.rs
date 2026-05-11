@@ -140,13 +140,15 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("dep", tree_dep, None);
 
+    let a_spec = git_spec("https://example.com/a.git", Some("v1.0.0"));
+    let dep_spec = git_spec("https://example.com/dep.git", Some("v1.0.0"));
     let mut dependencies = IndexMap::new();
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
             name: "a".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
-            spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
+            id: source_id_for_spec(&a_spec, None),
+            spec: a_spec,
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
@@ -158,8 +160,8 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
         SourceName::from("dep"),
         EffectiveDependency {
             name: "dep".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/dep.git")),
-            spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
+            id: source_id_for_spec(&dep_spec, None),
+            spec: dep_spec,
             subpath: None,
             filter: FilterMode::Include {
                 agents: vec![],

@@ -361,6 +361,7 @@ pub fn lower_for_target<'a>(items: &'a [ParsedMcpItem], target_root: &str) -> Ve
 
 #[cfg(test)]
 mod tests {
+    // qa-validated: mars-tools-abstraction
     use super::*;
     use tempfile::TempDir;
 
@@ -403,6 +404,18 @@ args = ["-y", "@upstash/context7-mcp@latest"]
         std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();
         let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn discover_skips_hidden_directories() {
+        let tmp = TempDir::new().unwrap();
+        make_mcp_toml_dir(tmp.path(), ".hidden-server", "command = \"npx\"");
+        make_mcp_toml_dir(tmp.path(), "real-server", "command = \"node\"");
+
+        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "real-server");
+        assert!(!items.iter().any(|item| item.name == ".hidden-server"));
     }
 
     #[test]
@@ -496,6 +509,19 @@ url = "https://example.com/mcp"
 command = "npx"
 [headers]
 X-Test = "value"
+"#,
+        );
+        assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());
+    }
+
+    #[test]
+    fn discover_whitespace_only_command_fails_validation() {
+        let tmp = TempDir::new().unwrap();
+        make_mcp_toml_dir(
+            tmp.path(),
+            "bad-stdio",
+            r#"
+command = "   "
 "#,
         );
         assert!(discover_mcp_items(tmp.path(), "base", 0).is_err());

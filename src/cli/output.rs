@@ -172,6 +172,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
+        declared_targets: Vec<String>,
+        declared_primary_agent: Option<String>,
     }
 
     let mut installed = 0;
@@ -222,6 +224,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
+        declared_targets: report.declared_targets.clone(),
+        declared_primary_agent: report.declared_primary_agent.clone(),
     })
     .unwrap_or_else(|_| serde_json::json!({}))
 }

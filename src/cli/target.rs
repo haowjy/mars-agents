@@ -1,6 +1,29 @@
-//! Shared target-name validation for `link` and `unlink` commands.
+//! Shared target-name validation for `link`, `unlink`, and `init` commands.
 
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
+
+/// Validate that a target is a simple directory name, not a path.
+///
+/// Returns an error if the target contains path separators, is empty, or is a
+/// dot-only component. Used by `mars init` and `load_manifest` target validation.
+pub fn validate_target(target: &str) -> Result<(), MarsError> {
+    if target.contains('/') || target.contains('\\') {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "`{target}` looks like a path — TARGET should be a directory name \
+                 like `.claude` or `.codex`. Use `--root` to specify project root."
+            ),
+        }));
+    }
+    if target == "." || target == ".." || target.is_empty() {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "`{target}` is not a valid target name — use a directory name like `.claude` or `.codex`."
+            ),
+        }));
+    }
+    Ok(())
+}
 
 /// Normalize and validate a target directory name.
 ///
@@ -25,7 +48,32 @@ pub fn normalize_target_name(target: &str) -> Result<String, MarsError> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_target_name;
+    use super::*;
+
+    #[test]
+    fn validate_target_accepts_simple_names() {
+        assert!(validate_target(".agents").is_ok());
+        assert!(validate_target(".claude").is_ok());
+        assert!(validate_target("my-agents").is_ok());
+    }
+
+    #[test]
+    fn validate_target_rejects_paths() {
+        assert!(validate_target("./foo").is_err());
+        assert!(validate_target("foo/bar").is_err());
+        assert!(validate_target("/absolute/path").is_err());
+    }
+
+    #[test]
+    fn validate_target_rejects_dots() {
+        assert!(validate_target(".").is_err());
+        assert!(validate_target("..").is_err());
+    }
+
+    #[test]
+    fn validate_target_rejects_empty() {
+        assert!(validate_target("").is_err());
+    }
 
     #[test]
     fn normalize_strips_trailing_slash() {

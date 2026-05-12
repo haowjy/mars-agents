@@ -39,6 +39,17 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<PackageTargets>,
+}
+
+/// Package-level target requirements declared in mars.toml `[package]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PackageTargets {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
 }
 
 mod toml_path_serde {
@@ -349,7 +360,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 /// path dependencies.
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let diagnostics = Vec::new();
+    let mut diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let parsed: Config =
@@ -359,6 +370,24 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
+            // Validate package.targets.required entries — warn on invalid names
+            // (not a hard error for forward compatibility with new target types).
+            if let Some(ref targets) = package.targets {
+                for target_name in &targets.required {
+                    if crate::cli::target::validate_target(target_name).is_err() {
+                        diagnostics.push(Diagnostic {
+                            level: DiagnosticLevel::Warning,
+                            code: "invalid-package-target",
+                            message: format!(
+                                "package target `{}` is not a valid target name",
+                                target_name
+                            ),
+                            context: Some("package.targets.required".to_string()),
+                            category: Some(DiagnosticCategory::Compatibility),
+                        });
+                    }
+                }
+            }
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
@@ -973,6 +1002,10 @@ path = "/local/path"
 name = "sample"
 version = "0.1.0"
 description = "sample package"
+primary_agent = "coder"
+
+[package.targets]
+required = [".claude"]
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -996,6 +1029,14 @@ targets = [".claude", ".cursor"]
         assert_eq!(
             reloaded.package.as_ref().map(|p| p.name.as_str()),
             Some("sample")
+        );
+        assert_eq!(
+            reloaded.package.as_ref().and_then(|p| p.primary_agent.as_deref()),
+            Some("coder")
+        );
+        assert_eq!(
+            reloaded.package.as_ref().and_then(|p| p.targets.as_ref()).map(|t| t.required.as_slice()),
+            Some(&[".claude".to_string()][..])
         );
         assert_eq!(reloaded.dependencies.len(), 2);
         assert_eq!(
@@ -2279,4 +2320,112 @@ skills = ["prompt-helper"]
             "expected forward-slash override path: {toml_str}"
         );
     }
+    #[test]
+    fn parse_package_with_targets_and_primary_agent() {
+        let toml_str = r#"
+[package]
+name = "my-pkg"
+version = "0.1.0"
+primary_agent = "coder"
+
+[package.targets]
+required = [".claude", ".cursor"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let pkg = config.package.unwrap();
+        assert_eq!(pkg.name, "my-pkg");
+        assert_eq!(pkg.primary_agent.as_deref(), Some("coder"));
+        let targets = pkg.targets.unwrap();
+        assert_eq!(targets.required, vec![".claude", ".cursor"]);
+    }
+
+    #[test]
+    fn parse_package_without_targets_still_works() {
+        let toml_str = r#"
+[package]
+name = "legacy-pkg"
+version = "1.0.0"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let pkg = config.package.unwrap();
+        assert_eq!(pkg.name, "legacy-pkg");
+        assert!(pkg.primary_agent.is_none());
+        assert!(pkg.targets.is_none());
+    }
+
+    #[test]
+    fn package_targets_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let original = r#"
+[package]
+name = "roundtrip-pkg"
+version = "0.2.0"
+primary_agent = "reviewer"
+
+[package.targets]
+required = [".claude"]
+"#;
+        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
+
+        let config = load(dir.path()).unwrap();
+        save(dir.path(), &config).unwrap();
+        let reloaded = load(dir.path()).unwrap();
+
+        let pkg = reloaded.package.unwrap();
+        assert_eq!(pkg.name, "roundtrip-pkg");
+        assert_eq!(pkg.primary_agent.as_deref(), Some("reviewer"));
+        let targets = pkg.targets.unwrap();
+        assert_eq!(targets.required, vec![".claude"]);
+    }
+
+    #[test]
+    fn load_manifest_includes_targets_and_primary_agent() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "manifest-pkg"
+version = "0.3.0"
+primary_agent = "coder"
+
+[package.targets]
+required = [".claude"]
+"#,
+        )
+        .unwrap();
+
+        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
+        assert!(diagnostics.is_empty());
+        let manifest = manifest.unwrap();
+        assert_eq!(manifest.package.name, "manifest-pkg");
+        assert_eq!(manifest.package.primary_agent.as_deref(), Some("coder"));
+        let targets = manifest.package.targets.unwrap();
+        assert_eq!(targets.required, vec![".claude"]);
+    }
+
+    #[test]
+    fn load_manifest_warns_on_invalid_package_target() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "bad-targets-pkg"
+version = "0.1.0"
+
+[package.targets]
+required = ["not/a/valid/target"]
+"#,
+        )
+        .unwrap();
+
+        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
+        assert!(manifest.is_some());
+        assert!(
+            diagnostics.iter().any(|d| d.code == "invalid-package-target"),
+            "expected invalid-package-target warning, got: {diagnostics:?}"
+        );
+    }
+
 }

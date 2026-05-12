@@ -1217,6 +1217,8 @@ mod tests {
                 name: name.to_string(),
                 version: "1.0.0".to_string(),
                 description: None,
+                primary_agent: None,
+                targets: None,
             },
             dependencies: IndexMap::new(),
             models,

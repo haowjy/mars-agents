@@ -25,9 +25,11 @@ model-policies:
       alias: opus
     override:
       effort: high
-fanout:
-  - alias: opus
-  - alias: codex
+    fallback-order: 1
+  - match:
+      alias: codex
+    override: {}
+    fallback-order: 2
 ---
 
 # Coder
@@ -348,7 +350,11 @@ At compile time, the matching override block is merged into the lowered artifact
 
 ### `model-policies`
 
-Runtime routing rules consumed by Meridian. Each entry specifies a `match` condition and an `override` to apply when the condition is true.
+Runtime routing rules consumed by Meridian. Each entry specifies:
+
+- `match` — one selector (`alias`, `model`, or `model-glob`)
+- `override` — policy fields to apply when matched
+- `fallback-order` (optional) — positive integer that orders fallback candidates for inventory/runtime fallback routing
 
 ```yaml
 model-policies:
@@ -356,33 +362,18 @@ model-policies:
       alias: opus
     override:
       effort: high
+    fallback-order: 1
   - match:
       model: gpt-5.5
     override:
       harness: codex
       effort: medium
+    fallback-order: 2
 ```
 
 `model-policies` is Meridian-only — it is preserved in the `.mars/` artifact but stripped from all harness-native compiled outputs.
 
 Mars currently preserves entries as opaque metadata. The `match`/`override` structure above is the Meridian-consumed schema, but mars only validates that `model-policies` is a sequence; it does not validate each entry's internal shape.
-
----
-
-### `fanout`
-
-Declares additional model candidates for inventory display in `meridian spawn --list`. Entries describe fallback or alternative models the agent can run on.
-
-```yaml
-fanout:
-  - alias: opus
-  - alias: codex
-  - model: gpt-5.5
-```
-
-`fanout` is Meridian-only — preserved in `.mars/` but stripped from harness-native artifacts.
-
-Mars currently preserves fanout entries as opaque metadata and only validates that `fanout` is a sequence; it does not validate each entry's internal shape.
 
 ---
 
@@ -395,7 +386,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 | Invalid field value (e.g. `effort: ultra`) | Error — field is skipped |
 | Unknown harness name | Warning — field is skipped |
 | Non-overridable field in override block | Warning — field is skipped |
-| Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |
+| Legacy `models:` field | Warning — deprecated; use `model-policies:` (with `fallback-order` for fallback/inventory candidates) |
 | Unknown top-level fields | Tolerated (forward compatibility) |
 
 Diagnostics are emitted during `mars sync` and `mars validate`. Errors in a field skip that field; the rest of the profile is used.

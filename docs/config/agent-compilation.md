@@ -77,9 +77,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
 | `autocompact-pct` | dropped | meridian-only |
-| `model-policies` | dropped | meridian-only |
+| `model-policies` (including `fallback-order`) | dropped | meridian-only |
 | `harness-overrides` | merged, then dropped | — |
-| `fanout` | dropped | meridian-only |
 | `harness` | dropped | dropped |
 
 `approval` and `sandbox` policy fields are applied at launch time by Meridian through its harness projection layer, not stored in the agent file.
@@ -104,8 +103,7 @@ TOML format. Codex reads this for native agent invocation.
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
 | `autocompact-pct` | dropped | meridian-only |
-| `model-policies` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
+| `model-policies` (including `fallback-order`) | dropped | meridian-only |
 
 **Approval value mapping:**
 
@@ -152,8 +150,7 @@ YAML frontmatter + markdown body.
 | `mcp-tools` | session payload or error | approximate |
 | `autocompact` | dropped | meridian-only |
 | `autocompact-pct` | dropped | meridian-only |
-| `model-policies` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
+| `model-policies` (including `fallback-order`) | dropped | meridian-only |
 
 `skills` are not emitted into the OpenCode agent artifact. Skill availability comes from separate skill-surface compilation to `.opencode/skills/`.
 
@@ -172,7 +169,7 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `effort` | dropped | approximate |
 | All other policy fields | dropped | dropped |
-| `autocompact`, `autocompact-pct`, `model-policies`, `fanout` | dropped | meridian-only |
+| `autocompact`, `autocompact-pct`, `model-policies` (including `fallback-order`) | dropped | meridian-only |
 
 ## Lossiness Model
 
@@ -216,9 +213,8 @@ Compact per-field, per-target classification:
 | `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | `autocompact-pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | `skills` | preserved | exact | dropped | dropped | dropped |
-| `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
+| `model-policies` (including `fallback-order`) | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | `harness-overrides` | preserved | merged | merged | merged | merged |
-| `fanout` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
 | body | preserved | exact | approximate | exact | exact |
 
 ## Stale Artifact Cleanup

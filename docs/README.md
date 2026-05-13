@@ -82,7 +82,7 @@ Mars accepts several source forms:
 | Document | Contents |
 |---|---|
 | [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: all fields, filter modes, model alias merge precedence, settings |
-| [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies, fanout, examples |
+| [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies with fallback-order, examples |
 | [config/agent-compilation.md](config/agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
 | [config/skill-compilation.md](config/skill-compilation.md) | Skill frontmatter schema, per-harness lowering, skill variants layout and projection |
 | [config/bootstrap-docs.md](config/bootstrap-docs.md) | Bootstrap doc two-tier layout, BOOTSTRAP.md authoring, and `meridian bootstrap` |

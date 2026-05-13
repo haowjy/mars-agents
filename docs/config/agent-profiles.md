@@ -25,11 +25,9 @@ model-policies:
       alias: opus
     override:
       effort: high
-    fallback-order: 1
   - match:
       alias: codex
     override: {}
-    fallback-order: 2
 ---
 
 # Coder
@@ -354,7 +352,7 @@ Runtime routing rules consumed by Meridian. Each entry specifies:
 
 - `match` — one selector (`alias`, `model`, or `model-glob`)
 - `override` — policy fields to apply when matched
-- `fallback-order` (optional) — positive integer that orders fallback candidates for inventory/runtime fallback routing
+- `no-fallback` (optional) — when `true`, excludes the rule from fallback candidate selection
 
 ```yaml
 model-policies:
@@ -362,14 +360,17 @@ model-policies:
       alias: opus
     override:
       effort: high
-    fallback-order: 1
   - match:
       model: gpt-5.5
     override:
       harness: codex
       effort: medium
-    fallback-order: 2
+    no-fallback: true
 ```
+
+Fallback candidates are implicit: rules are considered in `model-policies` list order.
+Earlier entries have higher fallback priority. Rules using `match.model-glob` are
+override-only and never fallback candidates.
 
 `model-policies` is Meridian-only — it is preserved in the `.mars/` artifact but stripped from all harness-native compiled outputs.
 
@@ -386,7 +387,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 | Invalid field value (e.g. `effort: ultra`) | Error — field is skipped |
 | Unknown harness name | Warning — field is skipped |
 | Non-overridable field in override block | Warning — field is skipped |
-| Legacy `models:` field | Warning — deprecated; use `model-policies:` (with `fallback-order` for fallback/inventory candidates) |
+| Legacy `models:` field | Warning — deprecated; use `model-policies:` (list order controls fallback candidates; use `no-fallback: true` to opt out) |
 | Unknown top-level fields | Tolerated (forward compatibility) |
 
 Diagnostics are emitted during `mars sync` and `mars validate`. Errors in a field skip that field; the rest of the profile is used.

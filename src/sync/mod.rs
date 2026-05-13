@@ -705,10 +705,10 @@ pub(crate) fn finalize(
 fn collect_declared_targets(graph: &ResolvedGraph) -> Vec<String> {
     let mut targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for node in graph.nodes.values() {
-        if let Some(manifest) = &node.manifest {
-            if let Some(pkg_targets) = &manifest.package.targets {
-                targets.extend(pkg_targets.required.iter().cloned());
-            }
+        if let Some(manifest) = &node.manifest
+            && let Some(pkg_targets) = &manifest.package.targets
+        {
+            targets.extend(pkg_targets.required.iter().cloned());
         }
     }
     targets.into_iter().collect()
@@ -720,12 +720,11 @@ fn collect_declared_primary_agent(
 ) -> Option<String> {
     // First direct dependency (in config insertion order) that declares primary_agent.
     for dep_name in effective.dependencies.keys() {
-        if let Some(node) = graph.nodes.get(dep_name) {
-            if let Some(manifest) = &node.manifest {
-                if let Some(ref agent) = manifest.package.primary_agent {
-                    return Some(agent.clone());
-                }
-            }
+        if let Some(node) = graph.nodes.get(dep_name)
+            && let Some(manifest) = &node.manifest
+            && let Some(ref agent) = manifest.package.primary_agent
+        {
+            return Some(agent.clone());
         }
     }
     None

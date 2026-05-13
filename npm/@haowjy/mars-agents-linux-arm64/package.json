@@ -1,17 +1,17 @@
 {
-  "name": "@meridian-flow/mars-agents-linux-x64",
+  "name": "@haowjy/mars-agents-linux-arm64",
   "version": "0.4.1",
-  "description": "mars binary for Linux x64",
+  "description": "mars binary for Linux ARM64",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/meridian-flow/mars-agents.git"
+    "url": "git+https://github.com/haowjy/mars-agents.git"
   },
   "os": [
     "linux"
   ],
   "cpu": [
-    "x64"
+    "arm64"
   ],
   "libc": [
     "glibc"

@@ -1,11 +1,11 @@
 {
-  "name": "@haowjy/mars-agents-win32-x64",
+  "name": "@meridian-flow/mars-agents-win32-x64",
   "version": "0.4.1",
   "description": "mars binary for Windows x64",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/haowjy/mars-agents.git"
+    "url": "git+https://github.com/meridian-flow/mars-agents.git"
   },
   "os": [
     "win32"

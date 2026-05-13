@@ -11,7 +11,7 @@ fn read(path: &str) -> String {
 #[test]
 fn npm_stub_declares_windows_optional_package() {
     let stub: serde_json::Value =
-        serde_json::from_str(&read("npm/@haowjy/mars-agents/package.json"))
+        serde_json::from_str(&read("npm/@meridian-flow/mars-agents/package.json"))
             .expect("stub package json");
     let optional = stub
         .get("optionalDependencies")
@@ -19,20 +19,21 @@ fn npm_stub_declares_windows_optional_package() {
         .expect("optionalDependencies");
 
     assert!(
-        optional.contains_key("@haowjy/mars-agents-win32-x64"),
+        optional.contains_key("@meridian-flow/mars-agents-win32-x64"),
         "stub package must install the Windows x64 binary package"
     );
 }
 
 #[test]
 fn windows_npm_package_publishes_exe_only_for_win32_x64() {
-    let pkg: serde_json::Value =
-        serde_json::from_str(&read("npm/@haowjy/mars-agents-win32-x64/package.json"))
-            .expect("windows package json");
+    let pkg: serde_json::Value = serde_json::from_str(&read(
+        "npm/@meridian-flow/mars-agents-win32-x64/package.json",
+    ))
+    .expect("windows package json");
 
     assert_eq!(
         pkg.get("name").and_then(serde_json::Value::as_str),
-        Some("@haowjy/mars-agents-win32-x64")
+        Some("@meridian-flow/mars-agents-win32-x64")
     );
     assert_eq!(
         pkg.get("os").and_then(serde_json::Value::as_array),
@@ -50,9 +51,9 @@ fn windows_npm_package_publishes_exe_only_for_win32_x64() {
 
 #[test]
 fn npm_launcher_routes_windows_to_exe_package() {
-    let launcher = read("npm/@haowjy/mars-agents/bin/mars");
+    let launcher = read("npm/@meridian-flow/mars-agents/bin/mars");
 
-    assert!(launcher.contains("\"win32 x64\": \"@haowjy/mars-agents-win32-x64\""));
+    assert!(launcher.contains("\"win32 x64\": \"@meridian-flow/mars-agents-win32-x64\""));
     assert!(launcher.contains("process.platform === \"win32\" ? \"mars.exe\" : \"mars\""));
     assert!(launcher.contains("win32-x64"));
 }
@@ -68,10 +69,9 @@ fn release_workflow_builds_and_publishes_windows_artifacts() {
     assert!(workflow.contains("mars.exe init --root $tmp"));
     assert!(workflow.contains("mars.exe doctor --root $tmp"));
     assert!(workflow.contains("cp \"$GITHUB_WORKSPACE/artifacts/$binary\" mars.exe"));
-    assert!(
-        workflow
-            .contains("publish_platform npm/@haowjy/mars-agents-win32-x64 mars-windows-x64.exe")
-    );
+    assert!(workflow.contains(
+        "publish_platform npm/@meridian-flow/mars-agents-win32-x64 mars-windows-x64.exe"
+    ));
 }
 
 #[test]

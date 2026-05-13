@@ -1031,11 +1031,18 @@ targets = [".claude", ".cursor"]
             Some("sample")
         );
         assert_eq!(
-            reloaded.package.as_ref().and_then(|p| p.primary_agent.as_deref()),
+            reloaded
+                .package
+                .as_ref()
+                .and_then(|p| p.primary_agent.as_deref()),
             Some("coder")
         );
         assert_eq!(
-            reloaded.package.as_ref().and_then(|p| p.targets.as_ref()).map(|t| t.required.as_slice()),
+            reloaded
+                .package
+                .as_ref()
+                .and_then(|p| p.targets.as_ref())
+                .map(|t| t.required.as_slice()),
             Some(&[".claude".to_string()][..])
         );
         assert_eq!(reloaded.dependencies.len(), 2);
@@ -2339,9 +2346,10 @@ required = ["not/a/valid/target"]
         let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
         assert!(manifest.is_some());
         assert!(
-            diagnostics.iter().any(|d| d.code == "invalid-package-target"),
+            diagnostics
+                .iter()
+                .any(|d| d.code == "invalid-package-target"),
             "expected invalid-package-target warning, got: {diagnostics:?}"
         );
     }
-
 }

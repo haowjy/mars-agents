@@ -9,7 +9,7 @@ A package manager for AI agent profiles and skills. Install agents and skills fr
 | Cargo | `cargo install mars-agents` |
 | pip / uv | `uv tool install mars-agents` or `pip install mars-agents` |
 | npm | `npm install -g @meridian-flow/mars-agents` |
-| Prebuilt binaries | [GitHub Releases](https://github.com/meridian-flow/mars-agents/releases) |
+| Prebuilt binaries | [GitHub Releases](https://github.com/haowjy/mars-agents/releases) |
 
 ## Quick Start
 

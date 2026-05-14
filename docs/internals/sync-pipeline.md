@@ -181,14 +181,10 @@ writes them to per-target config files.
 
 1. Discover `mcp/<name>/mcp.toml` items from each package (local first, then
    dependencies in topological order).
-   - Parse and validate transport schema:
-     - `type = "stdio"` (default): requires `command`, forbids `url` and `headers`
-     - `type = "http"`: requires `url`, forbids `command` and non-empty `args`
 2. Discover `hooks/<name>/hook.toml` items from each package.
 3. Filter items whose `visibility` is `"local"` (default) when they originate
    from a dependency — only `"exported"` items cross the package boundary.
-4. Check env references (both `env` and header env refs) — warn (or error under
-   `--strict`) for missing env vars.
+4. Check env references — warn (or error under `--strict`) for missing env vars.
 5. Resolve per-target MCP name collisions:
    - `_self` (local package) wins over any dependency, silently.
    - Among dependencies, earlier `[dependencies]` declaration order wins; a
@@ -199,17 +195,8 @@ writes them to per-target config files.
    field → hook name.
 7. Translate universal hook events to native target events (with lossiness
    classification); drop events with no native support and emit a warning.
-8. Write entries to target config files via target adapters (for example:
-   `.claude/.mcp.json`, `.codex/config.toml` `[mcp.servers.*]`,
-   `.opencode/opencode.json` `"mcp"`).
-   - stdio lowers to existing native stdio records.
-   - http lowers to native remote/http records:
-     - Claude: `"type":"http"` + `url` + `headers`
-     - Codex: `url`, optional `bearer_token_env_var`, optional `http_headers`
-     - OpenCode: `"type":"remote"` + `url` + `headers`
-   Non-fatal per-target.
-   - Codex writer removes legacy `.codex/codex_mcp.json` if present.
-   - OpenCode writer migrates legacy `mcpServers` to `mcp` when `mcp` is absent.
+8. Write entries to target config files via target adapters (`.mcp.json`,
+   `settings.json`, etc.). Non-fatal per-target.
 9. Compare current config entries against the previous lock to find stale
    entries, then remove them via `adapter.remove_config_entries()`.
 

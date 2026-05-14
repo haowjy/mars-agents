@@ -39,17 +39,6 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_agent: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub targets: Option<PackageTargets>,
-}
-
-/// Package-level target requirements declared in mars.toml `[package]`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct PackageTargets {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub required: Vec<String>,
 }
 
 mod toml_path_serde {
@@ -360,7 +349,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 /// path dependencies.
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let mut diagnostics = Vec::new();
+    let diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let parsed: Config =
@@ -370,24 +359,6 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
-            // Validate package.targets.required entries — warn on invalid names
-            // (not a hard error for forward compatibility with new target types).
-            if let Some(ref targets) = package.targets {
-                for target_name in &targets.required {
-                    if crate::cli::target::validate_target(target_name).is_err() {
-                        diagnostics.push(Diagnostic {
-                            level: DiagnosticLevel::Warning,
-                            code: "invalid-package-target",
-                            message: format!(
-                                "package target `{}` is not a valid target name",
-                                target_name
-                            ),
-                            context: Some("package.targets.required".to_string()),
-                            category: Some(DiagnosticCategory::Compatibility),
-                        });
-                    }
-                }
-            }
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
@@ -1002,10 +973,6 @@ path = "/local/path"
 name = "sample"
 version = "0.1.0"
 description = "sample package"
-primary_agent = "coder"
-
-[package.targets]
-required = [".claude"]
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -1029,21 +996,6 @@ targets = [".claude", ".cursor"]
         assert_eq!(
             reloaded.package.as_ref().map(|p| p.name.as_str()),
             Some("sample")
-        );
-        assert_eq!(
-            reloaded
-                .package
-                .as_ref()
-                .and_then(|p| p.primary_agent.as_deref()),
-            Some("coder")
-        );
-        assert_eq!(
-            reloaded
-                .package
-                .as_ref()
-                .and_then(|p| p.targets.as_ref())
-                .map(|t| t.required.as_slice()),
-            Some(&[".claude".to_string()][..])
         );
         assert_eq!(reloaded.dependencies.len(), 2);
         assert_eq!(
@@ -2325,31 +2277,6 @@ skills = ["prompt-helper"]
         assert!(
             toml_str.contains("C:/Users/dev/local-pkg"),
             "expected forward-slash override path: {toml_str}"
-        );
-    }
-    #[test]
-    fn load_manifest_warns_on_invalid_package_target() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "bad-targets-pkg"
-version = "0.1.0"
-
-[package.targets]
-required = ["not/a/valid/target"]
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(manifest.is_some());
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "invalid-package-target"),
-            "expected invalid-package-target warning, got: {diagnostics:?}"
         );
     }
 }

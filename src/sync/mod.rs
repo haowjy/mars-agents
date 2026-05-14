@@ -45,10 +45,6 @@ pub struct SyncReport {
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     /// Whether this was a dry run (`--diff`). Affects output wording only.
     pub dry_run: bool,
-    /// Union of all package-declared target directories from resolved packages.
-    pub declared_targets: Vec<String>,
-    /// Primary agent from the first direct dependency that declares one.
-    pub declared_primary_agent: Option<String>,
 }
 
 impl SyncReport {
@@ -686,9 +682,6 @@ pub(crate) fn finalize(
             .count()
     };
 
-    let declared_targets = collect_declared_targets(graph);
-    let declared_primary_agent = collect_declared_primary_agent(graph, effective);
-
     Ok(SyncReport {
         applied: state.applied.applied,
         pruned: Vec::new(),
@@ -697,37 +690,7 @@ pub(crate) fn finalize(
         upgrades_available,
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
-        declared_targets,
-        declared_primary_agent,
     })
-}
-
-fn collect_declared_targets(graph: &ResolvedGraph) -> Vec<String> {
-    let mut targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for node in graph.nodes.values() {
-        if let Some(manifest) = &node.manifest
-            && let Some(pkg_targets) = &manifest.package.targets
-        {
-            targets.extend(pkg_targets.required.iter().cloned());
-        }
-    }
-    targets.into_iter().collect()
-}
-
-fn collect_declared_primary_agent(
-    graph: &ResolvedGraph,
-    effective: &EffectiveConfig,
-) -> Option<String> {
-    // First direct dependency (in config insertion order) that declares primary_agent.
-    for dep_name in effective.dependencies.keys() {
-        if let Some(node) = graph.nodes.get(dep_name)
-            && let Some(manifest) = &node.manifest
-            && let Some(ref agent) = manifest.package.primary_agent
-        {
-            return Some(agent.clone());
-        }
-    }
-    None
 }
 
 fn declaration_ordered_dep_models(
@@ -1254,8 +1217,6 @@ mod tests {
                 name: name.to_string(),
                 version: "1.0.0".to_string(),
                 description: None,
-                primary_agent: None,
-                targets: None,
             },
             dependencies: IndexMap::new(),
             models,

@@ -32,6 +32,26 @@ pub(super) struct InitializedProject {
     pub already_initialized: bool,
 }
 
+/// Validate that a target is a simple directory name, not a path.
+fn validate_target(target: &str) -> Result<(), MarsError> {
+    if target.contains('/') || target.contains('\\') {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "`{target}` looks like a path — TARGET should be a directory name \
+                 like `.claude` or `.codex`. Use `--root` to specify project root."
+            ),
+        }));
+    }
+    if target == "." || target == ".." || target.is_empty() {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "`{target}` is not a valid target name — use a directory name like `.claude` or `.codex`."
+            ),
+        }));
+    }
+    Ok(())
+}
+
 fn ensure_consumer_config(project_root: &Path) -> Result<bool, MarsError> {
     let config_path = project_root.join("mars.toml");
     if config_path.exists() {
@@ -55,7 +75,7 @@ pub(super) fn initialize_project(
     let already_initialized = ensure_consumer_config(&project_root)?;
 
     let managed_root = if let Some(target) = explicit_init_target(&project_root, target_override)? {
-        super::target::validate_target(&target)?;
+        validate_target(&target)?;
         let managed_root = project_root.join(&target);
         std::fs::create_dir_all(&managed_root)?;
         persist_managed_root(&project_root, Some(&target))?;
@@ -152,7 +172,6 @@ fn persist_managed_root(project_root: &Path, target: Option<&str>) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::target::validate_target;
     use tempfile::TempDir;
 
     #[test]

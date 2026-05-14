@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/meridian-flow/mars-agents.git"
+    "url": "git+https://github.com/haowjy/mars-agents.git"
   },
   "os": [
     "darwin"

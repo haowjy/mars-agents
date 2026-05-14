@@ -7,7 +7,6 @@
 /// - Hooks: dropped — Cursor has limited/undocumented hook surface (lossiness: dropped)
 use std::path::{Path, PathBuf};
 
-use crate::compiler::mcp::{HeaderValue, McpTransport};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ItemKind;
@@ -37,7 +36,6 @@ impl TargetAdapter for CursorAdapter {
     fn emit_pre_write_diagnostics(
         &self,
         entries: &[ConfigEntry],
-        _target_dir: &Path,
         diag: &mut crate::diagnostic::DiagnosticCollector,
     ) {
         CursorAdapter::emit_hook_lossiness_diagnostics(entries, diag);
@@ -148,38 +146,10 @@ fn write_cursor_mcp_json(
     })?;
 
     for server in servers {
-        let mut entry = match server.transport {
-            McpTransport::Stdio => serde_json::json!({
-                "command": server.command,
-                "args": server.args,
-            }),
-            McpTransport::Http => {
-                let mut http_entry = serde_json::json!({
-                    "type": "http",
-                    "url": server.url,
-                });
-                if !server.headers.is_empty() {
-                    let headers_obj: serde_json::Map<String, serde_json::Value> = server
-                        .headers
-                        .iter()
-                        .map(|(k, v)| {
-                            let value = match v {
-                                HeaderValue::EnvRef(env_ref) => serde_json::Value::String(format!(
-                                    "${{env:{}}}",
-                                    env_ref.var_name()
-                                )),
-                                HeaderValue::Plain(plain) => {
-                                    serde_json::Value::String(plain.clone())
-                                }
-                            };
-                            (k.clone(), value)
-                        })
-                        .collect();
-                    http_entry["headers"] = serde_json::Value::Object(headers_obj);
-                }
-                http_entry
-            }
-        };
+        let mut entry = serde_json::json!({
+            "command": server.command,
+            "args": server.args,
+        });
 
         // Cursor env: `${env:VAR_NAME}` interpolation syntax.
         if !server.env.is_empty() {
@@ -258,12 +228,9 @@ mod tests {
         }
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_string(),
-            transport: McpTransport::Stdio,
-            command: Some("npx".to_string()),
+            command: "npx".to_string(),
             args: vec![],
             env,
-            url: None,
-            headers: IndexMap::new(),
         })
     }
 

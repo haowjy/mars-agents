@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-14
+
 ### Fixed
 - Existing git mirror fetch now pulls tags (`git fetch --depth 1 --tags --prune-tags origin`). Previously the cached mirror update ran without `--tags`, so newly-pushed upstream tags were discoverable via `ls-remote` but missing from the local mirror — leading to `pathspec 'vX.Y.Z' did not match any file(s) known to git` on `mars sync` whenever a dependency cut a new release between syncs.
 

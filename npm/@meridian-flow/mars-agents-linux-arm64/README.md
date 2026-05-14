@@ -9,4 +9,4 @@ npm install -g @meridian-flow/mars-agents
 ```
 
 Project README:
-<https://github.com/meridian-flow/mars-agents>
+<https://github.com/haowjy/mars-agents>

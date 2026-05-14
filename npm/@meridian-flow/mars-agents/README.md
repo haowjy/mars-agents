@@ -21,8 +21,8 @@ Supported prebuilt platforms:
 If your platform is not supported, install from source instead:
 
 ```bash
-cargo install --git https://github.com/meridian-flow/mars-agents
+cargo install --git https://github.com/haowjy/mars-agents
 ```
 
 Project README:
-<https://github.com/meridian-flow/mars-agents>
+<https://github.com/haowjy/mars-agents>

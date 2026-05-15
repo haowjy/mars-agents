@@ -191,12 +191,16 @@ Mars releases are CI-owned. Never manually `git tag` or edit version numbers for
 
 The release flow is:
 
-1. Normal changes land on `main`.
-2. `.github/workflows/release-on-main.yml` computes the next patch from `v*` tags.
-3. CI updates Cargo, PyPI, and npm package versions, promotes `CHANGELOG.md`, commits `release: vX.Y.Z`, and pushes `vX.Y.Z`.
-4. `.github/workflows/release.yml` publishes PyPI, npm, crates.io, and GitHub release artifacts from that tag.
+1. A PR with a `release:*` label lands on `main`.
+2. `.github/workflows/release-on-main.yml` reads the PR label for the pushed commit.
+3. CI skips when no `release:*` label is present or when `release:skip` is present.
+4. CI computes the next patch from `v*` tags.
+5. CI updates Cargo, PyPI, and npm package versions, promotes `CHANGELOG.md`, commits `release: vX.Y.Z`, and pushes `vX.Y.Z`.
+6. `.github/workflows/release.yml` publishes PyPI, npm, crates.io, and GitHub release artifacts from that tag.
 
-Put `release:skip` in the pushed head commit message to skip auto-release.
+Put `release:skip` in the pushed head commit message to skip auto-release even
+when a release label is present. Direct pushes to `main` skip auto-release
+because there is no PR label to inspect.
 
 Manual tagging bypasses provenance and can ship version mismatches.
 
@@ -204,6 +208,9 @@ Manual tagging bypasses provenance and can ship version mismatches.
 
 **Update CHANGELOG.md `[Unreleased]` as you work** — CI promotes it to a new `[X.Y.Z] - YYYY-MM-DD` section during release.
 
-Normal auto-release calls the publish workflow directly. Manual/backfill `v*` tag pushes also trigger GitHub Actions to build and publish to PyPI, npm, and crates.io.
+Normal auto-release calls the publish workflow directly. Manual/backfill `v*`
+tag pushes also trigger GitHub Actions to build and publish to PyPI, npm, and
+crates.io. Manual tags must point at a valid release commit: versions already
+bumped, changelog promoted, and commit subject `release: vX.Y.Z`.
 
 **Note:** `mars version` is for prompt packages only (repos with agents/skills). For mars-agents itself, use the CI release flow.

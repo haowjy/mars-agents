@@ -7,6 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Release workflow: PR merges release only with a `release:*` label. CI creates the patch release commit and `vX.Y.Z` tag, then directly runs artifact publishing. Missing labels, `release:skip`, or direct `main` pushes skip auto-release. Tag pushes remain a manual/backfill publish path.
 - `scripts/release.sh` deprecated. Stable releases are CI-owned.
+- `scripts/manually-release.sh` added for emergency/backfill releases. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
+- Workflow docs: document label-gated auto-release and manual tag backfill behavior.
 - `mars check`: parse and report malformed `model-policies` shape. Missing or empty `override` allowed; malformed `match`, `no-fallback`, or non-mapping `override` fails package check and `mars version`.
 - Agent profile `autocompact_pct` spelling now matches `mars.toml` model aliases and Meridian generated artifacts.
 

@@ -161,26 +161,18 @@ This sets `core.hooksPath = .githooks`; Git cannot auto-install hooks on clone.
 Hook policy:
 - Pre-commit is not installed by default; optional fast format-check helper lives at `.githooks/optional/pre-commit` for humans who opt in locally.
 - Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
-- Release tags must go through `scripts/release.sh`, not manual tag pushes.
+- Release tags are CI-owned after normal pushes to `main`, not manual tag pushes.
 
 **NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
 
-**NEVER manually create or push git tags matching `v*`.** Use `scripts/release.sh` for all releases.
+**NEVER manually create or push git tags matching `v*`.** CI creates release tags.
 
 ### Release workflow
 
 ```bash
-# Prepare: run checks, bump version, commit, push branch
-scripts/release.sh prepare patch --push
-
-# Wait for CI, fix forward if needed, then:
-scripts/release.sh resume --push
-
-# Check state:
-scripts/release.sh status
-
-# Abandon a prepared release:
-scripts/release.sh abort
+# Merge or push normal changes to main.
+# CI bumps the patch version, promotes changelog, commits release: vX.Y.Z, tags vX.Y.Z,
+# and runs artifact publishing directly.
 ```
 
 ## Dev Workflow
@@ -195,26 +187,23 @@ Integration tests under `tests/`. Prefer keeping changes localized to one module
 
 ## Releasing
 
-**Always use the release script. Never manually `git tag` or edit version numbers.**
+Mars releases are CI-owned. Never manually `git tag` or edit version numbers for stable releases.
 
-The script gates on fmt, clippy (`-D warnings`), tests, and release build before tagging. Manual tagging bypasses all of these — clippy failures, test regressions, and version mismatches will ship and break CI.
+The release flow is:
 
-```bash
-scripts/release.sh patch --push    # bump, commit, tag, push → triggers CI
-scripts/release.sh 1.2.3 --push    # explicit version
-scripts/release.sh patch           # dry run (no push)
-```
+1. Normal changes land on `main`.
+2. `.github/workflows/release-on-main.yml` computes the next patch from `v*` tags.
+3. CI updates Cargo, PyPI, and npm package versions, promotes `CHANGELOG.md`, commits `release: vX.Y.Z`, and pushes `vX.Y.Z`.
+4. `.github/workflows/release.yml` publishes PyPI, npm, crates.io, and GitHub release artifacts from that tag.
 
-The script handles:
-- Pre-release checks (fmt, clippy, tests, release build)
-- Version bump in **both** Cargo.toml and pyproject.toml (keeps them in sync)
-- Commit and annotated tag creation
-- Optional push to origin
+Put `release:skip` in the pushed head commit message to skip auto-release.
 
-**Do not manually edit version numbers** — the script keeps Cargo.toml and pyproject.toml in sync. Manual edits cause version mismatches that break PyPI publishing.
+Manual tagging bypasses provenance and can ship version mismatches.
 
-**Update CHANGELOG.md before releasing** — move entries from `[Unreleased]` to a new `[X.Y.Z] - YYYY-MM-DD` section. The release script doesn't touch the changelog.
+**Do not manually edit version numbers** — CI keeps Cargo.toml, pyproject.toml, Cargo.lock, and npm packages in sync.
 
-The `v*` tag triggers GitHub Actions to build and publish to PyPI, npm, and crates.io.
+**Update CHANGELOG.md `[Unreleased]` as you work** — CI promotes it to a new `[X.Y.Z] - YYYY-MM-DD` section during release.
 
-**Note:** `mars version` is for prompt packages only (repos with agents/skills). For mars-agents itself, use the shell script.
+Normal auto-release calls the publish workflow directly. Manual/backfill `v*` tag pushes also trigger GitHub Actions to build and publish to PyPI, npm, and crates.io.
+
+**Note:** `mars version` is for prompt packages only (repos with agents/skills). For mars-agents itself, use the CI release flow.

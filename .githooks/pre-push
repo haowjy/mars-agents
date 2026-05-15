@@ -3,38 +3,25 @@ set -euo pipefail
 
 ZERO_SHA="0000000000000000000000000000000000000000"
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-GIT_DIR="$(git rev-parse --absolute-git-dir)"
-AUTH_FILE="$GIT_DIR/mars-release/auth.json"
 needs_full=0
-
-json_field() {
-  local field="$1"
-  grep -m 1 "^[[:space:]]*\"$field\"[[:space:]]*:" "$AUTH_FILE" \
-    | sed 's/^[[:space:]]*"[^"]*"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/'
-}
 
 block_release_tag() {
   local message="$1"
   printf 'ERROR: %s\n' "$message" >&2
-  printf 'Release tags (v*) must be pushed through scripts/release.sh resume --push.\n' >&2
+  printf 'Release tags (v*) are CI-owned. Push normal changes to main; CI creates release tags.\n' >&2
+  printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
   exit 1
 }
 
 check_release_tag_auth() {
   local ref="$1"
   local local_sha="$2"
+  local remote_sha="$3"
   local tag="${ref#refs/tags/}"
 
   [[ "$local_sha" != "$ZERO_SHA" ]] || block_release_tag "refusing to delete release tag $tag"
-  [[ -f "$AUTH_FILE" ]] || block_release_tag "missing release authorization for $tag: $AUTH_FILE"
-
-  local target_sha auth_tag auth_target
-  target_sha="$(git rev-parse "$ref^{}")" || block_release_tag "failed to resolve target for $tag"
-  auth_tag="$(json_field tag)"
-  auth_target="$(json_field target_sha)"
-
-  [[ "$auth_tag" = "$tag" ]] || block_release_tag "release authorization tag mismatch: expected $tag, found ${auth_tag:-<missing>}"
-  [[ "$auth_target" = "$target_sha" ]] || block_release_tag "release authorization target mismatch for $tag"
+  [[ "$remote_sha" = "$ZERO_SHA" ]] || block_release_tag "refusing to update release tag $tag"
+  block_release_tag "refusing direct push of release tag $tag"
 }
 
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -43,7 +30,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       needs_full=1
       ;;
     refs/tags/v*)
-      check_release_tag_auth "$remote_ref" "$local_sha"
+      check_release_tag_auth "$remote_ref" "$local_sha" "$remote_sha"
       ;;
     refs/tags/*)
       ;;

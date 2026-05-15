@@ -26,16 +26,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Shared preflight
+        if: matrix.rust == 'stable'
+        run: scripts/preflight.sh full
+
       - name: Build
+        if: matrix.rust != 'stable'
         run: cargo build
 
       - name: Test
+        if: matrix.rust != 'stable'
         run: cargo test
 
       - name: Clippy
+        if: matrix.rust != 'stable'
         run: cargo clippy -- -D warnings
 
       - name: Format check
+        if: matrix.rust != 'stable'
         run: cargo fmt --check
 
   check-windows:

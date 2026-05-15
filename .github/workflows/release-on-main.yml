@@ -1,0 +1,250 @@
+name: Release on main
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    if: "${{ !startsWith(github.event.head_commit.message, 'release: v') && !contains(github.event.head_commit.message, 'release:skip') }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.push_release.outputs.tag }}
+    concurrency:
+      group: release-on-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Anchor release on current main
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin main --force
+          git checkout -B main origin/main
+
+          if ! git cat-file -e "${TRIGGER_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not available in local checkout."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "${TRIGGER_SHA}" HEAD; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not an ancestor of current main tip $(git rev-parse HEAD)."
+            exit 1
+          fi
+
+          echo "Anchored release workspace to main tip $(git rev-parse HEAD) for trigger ${TRIGGER_SHA}."
+
+      - name: Skip when trigger already released
+        id: release_guard
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          is_stable_semver_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          git fetch --tags --force
+
+          existing_release_tag=""
+          existing_release_commit=""
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            [[ "${commit_subject}" == release:\ v* ]] || continue
+            parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
+            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" "${parent_commit}"; then
+              continue
+            fi
+
+            while IFS= read -r commit_tag; do
+              [[ -n "${commit_tag}" ]] || continue
+              if ! is_stable_semver_tag "${commit_tag}"; then
+                echo "::notice::Ignoring non-stable tag ${commit_tag} on release commit ${commit_hash}."
+                continue
+              fi
+              existing_release_tag="${commit_tag}"
+              existing_release_commit="${commit_hash}"
+              break 2
+            done < <(git tag --points-at "${commit_hash}" --list 'v*')
+          done < <(git log --format=$'%H\t%s' main)
+
+          if [[ -n "${existing_release_tag}" ]]; then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Trigger ${TRIGGER_SHA} already released by ${existing_release_tag} on commit ${existing_release_commit}."
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure release identity
+        if: steps.release_guard.outputs.already_released != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run shared preflight
+        if: steps.release_guard.outputs.already_released != 'true'
+        run: scripts/preflight.sh full
+
+      - name: Compute next patch version
+        if: steps.release_guard.outputs.already_released != 'true'
+        id: next_version
+        run: |
+          bump_version() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<<"${version}"
+            patch=$((patch + 1))
+            echo "${major}.${minor}.${patch}"
+          }
+
+          base_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
+          if [[ -z "${base_tag}" ]]; then
+            base_version="0.0.0"
+            echo "::notice::No stable v* tags found. Bootstrapping from ${base_version}."
+          else
+            base_version="${base_tag#v}"
+            echo "::notice::Using latest stable release tag ${base_tag}."
+          fi
+
+          next_version="$(bump_version "${base_version}")"
+          while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
+            colliding_tag="v${next_version}"
+            colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
+            colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
+            echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
+            base_version="${next_version}"
+            next_version="$(bump_version "${base_version}")"
+          done
+
+          echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
+          echo "Computed next version ${next_version} from base ${base_version}."
+
+      - name: Update release files
+        if: steps.release_guard.outputs.already_released != 'true'
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          sed -i -E "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" Cargo.toml
+          sed -i -E "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" pyproject.toml
+
+          for pkg in npm/@meridian-flow/mars-agents*/package.json; do
+            [[ -f "${pkg}" ]] || continue
+            node -e "
+              const fs = require('fs');
+              const path = '${pkg}';
+              const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+              pkg.version = '${NEXT_VERSION}';
+              for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+                pkg.optionalDependencies[dep] = '${NEXT_VERSION}';
+              }
+              fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+            "
+          done
+
+          cargo check --quiet
+
+          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
+            today="$(date -u +%Y-%m-%d)"
+            tmp_file="$(mktemp)"
+            awk -v version="${NEXT_VERSION}" -v date="${today}" '
+              BEGIN { promoted = 0 }
+              {
+                if (!promoted && $0 == "## [Unreleased]") {
+                  print "## [Unreleased]"
+                  print ""
+                  print "## [" version "] - " date
+                  promoted = 1
+                  next
+                }
+                print
+              }
+            ' CHANGELOG.md > "${tmp_file}"
+            mv "${tmp_file}" CHANGELOG.md
+          else
+            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          fi
+
+      - name: Commit release changes
+        if: steps.release_guard.outputs.already_released != 'true'
+        id: commit_release
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          git add Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/mars-agents*/package.json
+          git commit -m "release: v${NEXT_VERSION}"
+          echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit and tag
+        if: steps.release_guard.outputs.already_released != 'true'
+        id: push_release
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          TRIGGER_SHA: ${{ github.sha }}
+          RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
+        run: |
+          release_commit_sha="${RELEASE_COMMIT_SHA}"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              release_commit_sha="$(git rev-parse HEAD)"
+              break
+            fi
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::Failed to push release commit to main after ${attempt} attempts."
+              exit 1
+            fi
+
+            echo "::warning::Push to main failed on attempt ${attempt}; rebasing onto latest origin/main and retrying."
+            git fetch origin main --force
+            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" origin/main; then
+              echo "::error::Trigger commit ${TRIGGER_SHA} is no longer an ancestor of origin/main; refusing to release."
+              exit 1
+            fi
+            git rebase origin/main
+          done
+
+          if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+            tag_commit="$(git rev-parse "v${NEXT_VERSION}^{commit}")"
+            if [[ "${tag_commit}" != "${release_commit_sha}" ]]; then
+              echo "::error::Tag v${NEXT_VERSION} already exists on ${tag_commit}, expected ${release_commit_sha}."
+              exit 1
+            fi
+            echo "::notice::Tag v${NEXT_VERSION} already exists on release commit ${release_commit_sha}."
+          else
+            git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
+          fi
+
+          git push origin "v${NEXT_VERSION}"
+          echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write

@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,11 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Verify tag provenance
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
           DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
@@ -28,12 +36,13 @@ jobs:
             exit 1
           fi
 
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "origin/$DEFAULT_BRANCH"; then
             echo "::error::Tagged commit is not reachable from $DEFAULT_BRANCH"
             exit 1
           fi
 
-          COMMIT_MSG=$(git log -1 --format=%s "$GITHUB_SHA")
+          COMMIT_MSG=$(git log -1 --format=%s "$RELEASE_SHA")
           if [[ "$COMMIT_MSG" != "release: v$TAG_VERSION" ]]; then
             echo "::error::Release commit message doesn't match expected format: release: v$TAG_VERSION"
             exit 1
@@ -66,6 +75,8 @@ jobs:
             artifact: mars-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -146,6 +157,8 @@ jobs:
             artifact: wheels-windows-x64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -165,6 +178,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1
@@ -209,6 +224,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -218,6 +235,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: artifacts/mars-*
 
@@ -229,6 +247,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -246,7 +266,9 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches Cargo.toml
         run: |
@@ -323,6 +345,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 

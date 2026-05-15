@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Release workflow: auto-release on normal `main` pushes. CI creates the patch release commit and `vX.Y.Z` tag, then directly runs artifact publishing. Tag pushes remain a manual/backfill publish path. `release:skip` in the pushed head commit message skips auto-release.
+- `scripts/release.sh` deprecated. Stable releases are CI-owned.
 - `mars check`: parse and report malformed `model-policies` shape. Missing or empty `override` allowed; malformed `match`, `no-fallback`, or non-mapping `override` fails package check and `mars version`.
 - Agent profile `autocompact_pct` spelling now matches `mars.toml` model aliases and Meridian generated artifacts.
 

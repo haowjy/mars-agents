@@ -205,7 +205,7 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
     }
     if eff.autocompact_pct().is_some() {
         lossy.push(LossyField {
-            field: "autocompact-pct".into(),
+            field: "autocompact_pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -337,7 +337,7 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     }
     if eff.autocompact_pct().is_some() {
         lossy.push(LossyField {
-            field: "autocompact-pct".into(),
+            field: "autocompact_pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -493,7 +493,7 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
     }
     if eff.autocompact_pct().is_some() {
         lossy.push(LossyField {
-            field: "autocompact-pct".into(),
+            field: "autocompact_pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -622,7 +622,7 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
     }
     if eff.autocompact_pct().is_some() {
         lossy.push(LossyField {
-            field: "autocompact-pct".into(),
+            field: "autocompact_pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact-pct: 80\n---\n# Body";
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body());
         let text = String::from_utf8(out.bytes).unwrap();
@@ -741,8 +741,8 @@ mod tests {
             "autocompact not in lossy: {dropped:?}"
         );
         assert!(
-            dropped.contains(&"autocompact-pct"),
-            "autocompact-pct not in lossy: {dropped:?}"
+            dropped.contains(&"autocompact_pct"),
+            "autocompact_pct not in lossy: {dropped:?}"
         );
     }
 

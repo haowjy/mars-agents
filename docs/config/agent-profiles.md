@@ -12,7 +12,7 @@ mode: subagent
 approval: auto
 effort: high
 autocompact: 200000
-autocompact-pct: 80
+autocompact_pct: 80
 skills: [dev-principles, shared-workspace]
 tools: [Bash, Write, Edit, Read]
 disallowed-tools: [Agent, Bash(git revert:*)]
@@ -239,7 +239,7 @@ autocompact: 200000
 
 ---
 
-### `autocompact-pct`
+### `autocompact_pct`
 
 | | |
 |---|---|
@@ -251,7 +251,7 @@ autocompact: 200000
 Context window compaction threshold as a percentage of the context window. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this percentage of the available window.
 
 ```yaml
-autocompact-pct: 80
+autocompact_pct: 80
 ```
 
 ---
@@ -326,7 +326,7 @@ mcp-tools: [context7, memory-bank]
 
 Per-harness override table. Overrides top-level field values when a specific harness compiles the agent. Only the fields relevant to the target harness are applied; the rest are ignored.
 
-**Overridable fields:** `effort`, `autocompact`, `autocompact-pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
+**Overridable fields:** `effort`, `autocompact`, `autocompact_pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
 
 **Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `harness-overrides`
 
@@ -365,7 +365,7 @@ model-policies:
 
 `model-policies` is Meridian-only — it is preserved in the `.mars/` artifact but stripped from all harness-native compiled outputs.
 
-Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. Runtime consumers own the meaning of override keys.
+Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. `override` may be omitted or empty. Runtime consumers own the meaning and spelling of override keys.
 
 ---
 
@@ -398,7 +398,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 | Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |
 | Unknown top-level fields | Tolerated (forward compatibility) |
 
-Diagnostics are emitted during `mars sync` and `mars validate`. Errors in a field skip that field; the rest of the profile is used.
+Diagnostics are emitted during `mars sync` and `mars validate`. `mars check` and `mars version` use the same parser diagnostics as package-gating errors. Errors in a field skip that field during sync/validate; package gates fail until the source package is fixed.
 
 ---
 

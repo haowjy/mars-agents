@@ -716,6 +716,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn run_aborts_when_agent_model_policy_is_malformed() {
+        let (repo, ctx) = init_repo_with_mars_toml(
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
+        );
+        std::fs::write(
+            repo.path().join("agents/test-agent.md"),
+            "---\nname: test-agent\ndescription: test\nmodel-policies:\n  - match:\n      alias: gpt55\n      model: gpt-5.5\n---\n# Test",
+        )
+        .unwrap();
+        run_git_test(repo.path(), ["add", "agents/test-agent.md"]);
+        run_git_test(repo.path(), ["commit", "-m", "malformed agent policy"]);
+
+        let args = VersionArgs {
+            bump: "patch".to_string(),
+            push: false,
+            force: false,
+        };
+
+        let err = run(&args, &ctx, true).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("package check failed") && message.contains("model-policies[1].match"),
+            "expected model-policies package check failure: {message}"
+        );
+
+        let config = crate::config::load(repo.path()).unwrap();
+        assert_eq!(
+            config.package.unwrap().version,
+            "0.1.0",
+            "version must not be bumped after agent profile check failure"
+        );
+    }
+
     // ── P6: --force bypasses check errors ────────────────────────────────────────
 
     #[test]

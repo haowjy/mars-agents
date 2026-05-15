@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `mars check`: parse and report malformed `model-policies` shape. Missing or empty `override` allowed; malformed `match`, `no-fallback`, or non-mapping `override` fails package check and `mars version`.
+- Agent profile `autocompact_pct` spelling now matches `mars.toml` model aliases and Meridian generated artifacts.
 
 ## [0.4.4] - 2026-05-14
 

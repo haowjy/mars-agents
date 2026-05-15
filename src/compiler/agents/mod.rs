@@ -201,12 +201,24 @@ impl HarnessOverrides {
     }
 }
 
-/// Marker for a validated `model-policies:` entry.
+/// Parsed `model-policies:` entry.
 ///
 /// Per the spec (D43), model-policies are consumed by Meridian at runtime.
 /// Mars parses them at compile time only for validation and preservation.
-#[derive(Debug, Clone)]
-pub struct ModelPolicyEntry;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPolicyEntry {
+    pub match_type: ModelPolicyMatchType,
+    pub match_value: String,
+    pub no_fallback: bool,
+    pub overrides: serde_yaml::Mapping,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPolicyMatchType {
+    Model,
+    Alias,
+    ModelGlob,
+}
 
 /// Marker for a validated fanout inventory entry (`fanout:`).
 ///
@@ -489,11 +501,146 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
     out
 }
 
-fn parse_model_policies(val: &Value) -> Vec<ModelPolicyEntry> {
-    match val {
-        Value::Sequence(seq) => seq.iter().map(|_| ModelPolicyEntry).collect(),
-        _ => vec![],
+fn push_model_policy_invalid(
+    diags: &mut Vec<AgentDiagnostic>,
+    field: impl Into<String>,
+    value: impl Into<String>,
+    allowed: &'static str,
+) {
+    diags.push(AgentDiagnostic::InvalidFieldValue {
+        field: field.into(),
+        value: value.into(),
+        allowed,
+    });
+}
+
+fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ModelPolicyEntry> {
+    let Some(seq) = val.as_sequence() else {
+        push_model_policy_invalid(
+            diags,
+            "model-policies",
+            format!("{val:?}"),
+            "sequence of rules",
+        );
+        return vec![];
+    };
+
+    let mut out = Vec::new();
+    for (index, entry) in seq.iter().enumerate() {
+        let position = index + 1;
+        let Some(rule) = entry.as_mapping() else {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}]"),
+                format!("{entry:?}"),
+                "mapping with match and override",
+            );
+            continue;
+        };
+
+        let match_value = rule.get(Value::String("match".to_string()));
+        let Some(match_mapping) = match_value.and_then(Value::as_mapping) else {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}].match"),
+                match_value
+                    .map(|value| format!("{value:?}"))
+                    .unwrap_or_else(|| "<missing>".to_string()),
+                "mapping with exactly one of model, alias, model-glob",
+            );
+            continue;
+        };
+
+        let normalized_match_keys: Vec<&str> =
+            match_mapping.keys().filter_map(Value::as_str).collect();
+        if normalized_match_keys.len() != 1 {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}].match"),
+                format!("{match_mapping:?}"),
+                "exactly one of model, alias, model-glob",
+            );
+            continue;
+        }
+        let match_key = normalized_match_keys[0];
+        if !matches!(match_key, "model" | "alias" | "model-glob") {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}].match"),
+                match_key,
+                "model, alias, model-glob",
+            );
+            continue;
+        }
+        let raw_match_value = match_mapping.get(Value::String(match_key.to_string()));
+        let Some(match_text) = raw_match_value.and_then(Value::as_str).map(str::trim) else {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}].match.{match_key}"),
+                raw_match_value
+                    .map(|value| format!("{value:?}"))
+                    .unwrap_or_else(|| "<missing>".to_string()),
+                "non-empty string",
+            );
+            continue;
+        };
+        if match_text.is_empty() {
+            push_model_policy_invalid(
+                diags,
+                format!("model-policies[{position}].match.{match_key}"),
+                "<empty>",
+                "non-empty string",
+            );
+            continue;
+        }
+
+        let override_value = rule.get(Value::String("override".to_string()));
+        let empty_override = serde_yaml::Mapping::new();
+        let override_mapping = match override_value {
+            None | Some(Value::Null) => &empty_override,
+            Some(value) => {
+                let Some(mapping) = value.as_mapping() else {
+                    push_model_policy_invalid(
+                        diags,
+                        format!("model-policies[{position}].override"),
+                        format!("{value:?}"),
+                        "mapping",
+                    );
+                    continue;
+                };
+                mapping
+            }
+        };
+
+        let no_fallback = match rule.get(Value::String("no-fallback".to_string())) {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(value)) => *value,
+            Some(value) => {
+                push_model_policy_invalid(
+                    diags,
+                    format!("model-policies[{position}].no-fallback"),
+                    format!("{value:?}"),
+                    "boolean",
+                );
+                continue;
+            }
+        };
+
+        let match_type = match match_key {
+            "model" => ModelPolicyMatchType::Model,
+            "alias" => ModelPolicyMatchType::Alias,
+            "model-glob" => ModelPolicyMatchType::ModelGlob,
+            _ => unreachable!("match_key was validated above"),
+        };
+
+        out.push(ModelPolicyEntry {
+            match_type,
+            match_value: match_text.to_string(),
+            no_fallback,
+            overrides: override_mapping.clone(),
+        });
     }
+    out
 }
 
 fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
@@ -664,7 +811,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     // model-policies:
     let model_policies = fm
         .get("model-policies")
-        .map(parse_model_policies)
+        .map(|value| parse_model_policies(value, diags))
         .unwrap_or_default();
 
     // fanout:
@@ -910,6 +1057,49 @@ mod tests {
         let (p, diags) = parse(content);
         assert!(diags.is_empty());
         assert_eq!(p.model_policies.len(), 1);
+        assert_eq!(p.model_policies[0].match_type, ModelPolicyMatchType::Model);
+        assert_eq!(p.model_policies[0].match_value, "gpt-5.5");
+        assert!(p.model_policies[0].overrides.contains_key("harness"));
+    }
+
+    #[test]
+    fn model_policy_empty_override_is_valid_for_fallback_candidate() {
+        let content =
+            "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    override: {}\n---\n";
+        let (p, diags) = parse(content);
+        assert!(diags.is_empty());
+        assert_eq!(p.model_policies.len(), 1);
+        assert!(p.model_policies[0].overrides.is_empty());
+    }
+
+    #[test]
+    fn model_policy_empty_override_is_valid_for_no_fallback_rule() {
+        let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    no-fallback: true\n    override: {}\n---\n";
+        let (p, diags) = parse(content);
+        assert!(diags.is_empty());
+        assert_eq!(p.model_policies.len(), 1);
+        assert!(p.model_policies[0].no_fallback);
+        assert!(p.model_policies[0].overrides.is_empty());
+    }
+
+    #[test]
+    fn model_policy_missing_override_is_valid() {
+        let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n---\n";
+        let (p, diags) = parse(content);
+        assert!(diags.is_empty());
+        assert_eq!(p.model_policies.len(), 1);
+        assert!(p.model_policies[0].overrides.is_empty());
+    }
+
+    #[test]
+    fn malformed_model_policy_produces_diagnostic() {
+        let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n      alias: gpt55\n    override:\n      harness: codex\n---\n";
+        let (p, diags) = parse(content);
+        assert!(p.model_policies.is_empty());
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-policies[1].match")
+        );
     }
 
     // --- 3.1: fanout ---

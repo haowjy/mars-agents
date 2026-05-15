@@ -126,6 +126,18 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
                                 .map(str::to_string)
                                 .unwrap_or_else(|| filename.clone());
 
+                            let mut agent_diags = Vec::new();
+                            let _profile =
+                                crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
+                            for diagnostic in agent_diags {
+                                let message = format!("agent `{name}`: {}", diagnostic.message());
+                                if diagnostic.is_error() {
+                                    errors.push(message);
+                                } else {
+                                    warnings.push(message);
+                                }
+                            }
+
                             if fm.name().is_none() {
                                 warnings.push(format!(
                                     "agent `{filename}` has no `name` in frontmatter"
@@ -462,6 +474,12 @@ mod tests {
         .unwrap();
     }
 
+    fn write_agent_content(path: &Path, filename: &str, content: &str) {
+        let agents = path.join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join(format!("{filename}.md")), content).unwrap();
+    }
+
     /// Create a minimal path-dep source package with the given skills.
     fn write_dep_package(path: &Path, name: &str, version: &str, skills: &[&str]) {
         std::fs::create_dir_all(path).unwrap();
@@ -594,6 +612,24 @@ mod tests {
             has_missing_warning,
             "expected missing external dependency warning, got: {:?}",
             report.warnings
+        );
+    }
+
+    #[test]
+    fn check_errors_for_malformed_agent_model_policy() {
+        let dir = TempDir::new().unwrap();
+        write_agent_content(
+            dir.path(),
+            "browser-tester",
+            "---\nname: browser-tester\ndescription: browser test\nmodel-policies:\n  - match:\n      alias: gpt55\n      model: gpt-5.5\n---\n# Browser Tester",
+        );
+
+        let report = super::check_dir(dir.path()).unwrap();
+
+        let joined = report.errors.join("\n");
+        assert!(
+            joined.contains("model-policies[1].match"),
+            "expected model-policies match error: {joined}"
         );
     }
 

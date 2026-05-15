@@ -348,7 +348,7 @@ At compile time, the matching override block is merged into the lowered artifact
 
 ### `model-policies`
 
-Runtime routing rules consumed by Meridian. Each entry specifies a `match` condition and an `override` to apply when the condition is true.
+Runtime routing rules consumed by Meridian. Each entry specifies a `match` condition and may specify an `override` to apply when the condition is true. Omit `override` or set `override: {}` when the entry exists only to declare fallback order.
 
 ```yaml
 model-policies:
@@ -365,7 +365,7 @@ model-policies:
 
 `model-policies` is Meridian-only — it is preserved in the `.mars/` artifact but stripped from all harness-native compiled outputs.
 
-Mars currently preserves entries as opaque metadata. The `match`/`override` structure above is the Meridian-consumed schema, but mars only validates that `model-policies` is a sequence; it does not validate each entry's internal shape.
+Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. Runtime consumers own the meaning of override keys.
 
 ---
 
@@ -392,7 +392,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 
 | Condition | Severity |
 |---|---|
-| Invalid field value (e.g. `effort: ultra`) | Error — field is skipped |
+| Invalid field value (e.g. `effort: ultra`, malformed `model-policies`) | Error — field is skipped |
 | Unknown harness name | Warning — field is skipped |
 | Non-overridable field in override block | Warning — field is skipped |
 | Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |

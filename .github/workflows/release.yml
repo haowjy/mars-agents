@@ -25,6 +25,7 @@ jobs:
       - name: Verify tag provenance
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -49,8 +50,6 @@ jobs:
           fi
 
           echo "Provenance verified for v$TAG_VERSION"
-        env:
-          GH_TOKEN: ${{ github.token }}
 
   build:
     name: Build (${{ matrix.target }})

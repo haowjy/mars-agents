@@ -38,5 +38,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 
 if [[ "$needs_full" = 1 ]]; then
+  # Hooks inherit Git's local repository environment. The preflight suite
+  # creates temporary git repositories; leaving GIT_DIR/GIT_WORK_TREE set makes
+  # those nested git commands operate on this checkout instead of their temp
+  # repos.
+  unset $(git rev-parse --local-env-vars)
   exec "$ROOT_DIR/scripts/preflight.sh" full
 fi

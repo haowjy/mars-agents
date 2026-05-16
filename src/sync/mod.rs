@@ -12,7 +12,6 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector};
@@ -354,7 +353,7 @@ pub(crate) fn build_target(
     validate_skill_frontmatter_in_target(&target_state, diag);
 
     // Validate skill references.
-    let warnings = validate_skill_refs(managed_root, &target_state);
+    let warnings = validate_skill_refs(&target_state);
 
     // Prevent managed installs from overwriting unmanaged files.
     let unmanaged_collisions =
@@ -914,11 +913,9 @@ fn has_version_changes(changes: &[DependencyUpsertChange]) -> bool {
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
-fn validate_skill_refs(
-    install_target: &std::path::Path,
-    target: &target::TargetState,
-) -> Vec<ValidationWarning> {
+fn validate_skill_refs(target: &target::TargetState) -> Vec<ValidationWarning> {
     use crate::lock::ItemKind;
+    use crate::validate::{extract_skills_from_content, find_suggestion};
 
     // Collect available skill names
     let available_skills: HashSet<String> = target
@@ -928,25 +925,30 @@ fn validate_skill_refs(
         .map(|item| item.id.name.to_string())
         .collect();
 
-    // Collect agents with their paths
-    let agents: Vec<(String, PathBuf)> = target
+    let mut warnings = Vec::new();
+
+    for item in target
         .items
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
-        .map(|item| {
-            let disk_path = item.dest_path.resolve(install_target);
-            // If the file exists on disk, use that (may have local edits).
-            // Otherwise, use the source path.
-            let path = if disk_path.exists() {
-                disk_path
-            } else {
-                item.source_path.clone()
-            };
-            (item.id.name.to_string(), path)
-        })
-        .collect();
+    {
+        let content = match &item.rewritten_content {
+            Some(content) => content.clone(),
+            None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
+        };
+        for skill_name in extract_skills_from_content(&content) {
+            if !available_skills.contains(&skill_name) {
+                let suggestion = find_suggestion(&skill_name, &available_skills);
+                warnings.push(ValidationWarning::MissingSkill {
+                    agent: item.id.clone(),
+                    skill_name,
+                    suggestion,
+                });
+            }
+        }
+    }
 
-    crate::validate::check_deps(&agents, &available_skills).unwrap_or_default()
+    warnings
 }
 
 fn validate_skill_frontmatter_in_target(
@@ -1003,6 +1005,7 @@ mod tests {
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use indexmap::IndexMap;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Helper to set up a complete sync context with temp dirs.
@@ -1738,6 +1741,120 @@ mod tests {
         for action in &sync_plan2.actions {
             assert!(matches!(action, plan::PlannedAction::Skip { .. }));
         }
+    }
+
+    #[test]
+    fn validate_skill_refs_ignores_stale_installed_agent_content() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(&[("design-lead.md", "# Design Lead\n")], &[]);
+        fs::create_dir_all(fixture.managed_root().join("agents")).unwrap();
+        fs::write(
+            fixture.managed_root().join("agents/design-lead.md"),
+            "---\nskills: [handoff]\n---\n# Stale Design Lead\n",
+        )
+        .unwrap();
+
+        let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+
+        let warnings = validate_skill_refs(&target);
+
+        assert!(
+            warnings.is_empty(),
+            "target source removed the missing ref, but stale installed content produced {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn validate_skill_refs_warns_for_missing_target_source_ref() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(
+            &[("coder.md", "---\nskills: [missing-skill]\n---\n# Coder\n")],
+            &[],
+        );
+
+        let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+
+        let warnings = validate_skill_refs(&target);
+
+        assert_eq!(warnings.len(), 1);
+        match &warnings[0] {
+            ValidationWarning::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => {
+                assert_eq!(agent.name, "coder");
+                assert_eq!(skill_name, "missing-skill");
+                assert_eq!(suggestion, &None);
+            }
+        }
+    }
+
+    #[test]
+    fn validate_skill_refs_uses_rewritten_content() {
+        let fixture = TestFixture::new();
+        let source_path = fixture.project_root().join("source-agent.md");
+        fs::write(
+            &source_path,
+            "---\nskills: [old-skill]\n---\n# Source content before rewrite\n",
+        )
+        .unwrap();
+        let skill_path = fixture.project_root().join("skills").join("new-skill");
+        fs::create_dir_all(&skill_path).unwrap();
+        fs::write(skill_path.join("SKILL.md"), "# New Skill\n").unwrap();
+
+        let source_name = SourceName::from("base");
+        let source_id = SourceId::Path {
+            canonical: fixture.project_root().to_path_buf(),
+            subpath: None,
+        };
+        let mut items = IndexMap::new();
+        items.insert(
+            DestPath::new("agents/coder.md").unwrap(),
+            TargetItem {
+                id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: "coder".into(),
+                },
+                source_name: source_name.clone(),
+                origin: SourceOrigin::Dependency(source_name.clone()),
+                source_id: source_id.clone(),
+                source_path,
+                dest_path: DestPath::new("agents/coder.md").unwrap(),
+                source_hash: ContentHash::from("sha256:source"),
+                is_flat_skill: false,
+                rewritten_content: Some(
+                    "---\nskills: [new-skill]\n---\n# Rewritten content\n".to_string(),
+                ),
+            },
+        );
+        items.insert(
+            DestPath::new("skills/new-skill").unwrap(),
+            TargetItem {
+                id: ItemId {
+                    kind: ItemKind::Skill,
+                    name: "new-skill".into(),
+                },
+                source_name: source_name.clone(),
+                origin: SourceOrigin::Dependency(source_name),
+                source_id,
+                source_path: skill_path,
+                dest_path: DestPath::new("skills/new-skill").unwrap(),
+                source_hash: ContentHash::from("sha256:skill"),
+                is_flat_skill: false,
+                rewritten_content: None,
+            },
+        );
+        let target = TargetState { items };
+
+        let warnings = validate_skill_refs(&target);
+
+        assert!(
+            warnings.is_empty(),
+            "validation should use rewritten content instead of stale source content: {warnings:?}"
+        );
     }
 
     #[test]

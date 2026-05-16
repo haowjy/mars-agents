@@ -48,7 +48,7 @@ pub fn parse_skill_skills(skill_path: &Path) -> Result<Vec<String>, MarsError> {
 /// Extract skills list from markdown content with YAML frontmatter.
 ///
 /// Defensive: returns empty vec on any parse failure.
-fn extract_skills_from_content(content: &str) -> Vec<String> {
+pub(crate) fn extract_skills_from_content(content: &str) -> Vec<String> {
     match frontmatter::parse(content) {
         Ok(fm) => fm.skills(),
         Err(_) => Vec::new(),
@@ -93,7 +93,7 @@ pub fn check_deps(
 ///
 /// Checks if any available skill name contains the missing name as a
 /// substring or vice versa. No edit distance library needed for v1.
-fn find_suggestion(missing: &str, available: &HashSet<String>) -> Option<String> {
+pub(crate) fn find_suggestion(missing: &str, available: &HashSet<String>) -> Option<String> {
     let missing_lower = missing.to_lowercase();
 
     // Sort for deterministic suggestion when multiple match

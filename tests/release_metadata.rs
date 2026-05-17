@@ -173,8 +173,13 @@ fn release_on_main_duplicate_guard_is_release_kind_aware() {
     assert!(workflow.contains("if is_rc_tag \"${commit_tag}\"; then"));
     assert!(workflow.contains("if [[ \"${release_kind}\" == \"stable\" ]]; then"));
     assert!(workflow.contains("continue"));
+    assert_before(
+        &workflow,
+        "if [[ \"${release_kind}\" == \"stable\" ]]; then",
+        "echo \"::notice::Ignoring RC tag ${commit_tag} for stable release intent; stable rerun may promote this trigger.\"",
+    );
     assert!(workflow.contains(
-        "continue\n                fi\n                existing_release_tag=\"${commit_tag}\""
+        "echo \"::notice::Ignoring RC tag ${commit_tag} for stable release intent; stable rerun may promote this trigger.\"\n                  continue\n                fi\n                existing_release_tag=\"${commit_tag}\""
     ));
     assert!(workflow.contains("echo \"already_released=true\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("echo \"already_released=false\" >> \"$GITHUB_OUTPUT\""));

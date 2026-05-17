@@ -2,6 +2,13 @@
 
 Mars is an agent package manager. It installs agent profiles and skills from git/local sources into a `.mars/` canonical store, then copies managed content into target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
+## Target Support Status
+
+- `.claude`, `.codex`, `.opencode` are first-class external harness materialization targets.
+- `.cursor` is supported as an **experimental** materialization target. Keep Cursor support explicit in docs and tests, but avoid implying the Cursor surface is as stable as Claude/Codex/OpenCode.
+- `.pi` is intended to become a first-class Meridian-owned target for Meridian's Pi flavor and extension surface, but that first-class contract is still under active design/development.
+- Do not add a new first-class target unless it has a real native artifact shape and tests for the lowering/materialization semantics.
+
 ## Critical Invariants
 
 ### Mars does NOT own target directories

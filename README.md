@@ -1,6 +1,18 @@
 # mars
 
-A package manager for AI agent profiles and skills. Install agents and skills from git sources into Claude Code, Cursor, Codex, OpenCode — any tool that reads from a config directory.
+A package manager for AI agent profiles and skills. Install agents and skills from git sources into Claude Code, Codex, OpenCode, Cursor, and other agent harness config directories.
+
+## Target Status
+
+Mars materializes harness-native artifacts for multiple targets:
+
+| Target | Status | Notes |
+|---|---|---|
+| `.claude` | First-class | Claude Code agents, skills, MCP, hooks, and settings surfaces. |
+| `.codex` | First-class | Codex project instruction and agent-facing surfaces. |
+| `.opencode` | First-class | OpenCode agent and permission surfaces. |
+| `.cursor` | Experimental | Cursor CLI/config support exists, but semantics can change as Cursor's agent surface evolves. |
+| `.pi` | Future first-class | Meridian-owned Pi flavor and extension surface; under active design/development. |
 
 ## Install
 

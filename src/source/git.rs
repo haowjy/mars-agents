@@ -215,6 +215,8 @@ mod tests {
     fn init_repo() -> TempDir {
         let repo = TempDir::new().unwrap();
         run_git(repo.path(), ["init", "."]);
+        run_git(repo.path(), ["config", "user.name", "Mars Test"]);
+        run_git(repo.path(), ["config", "user.email", "mars@example.com"]);
 
         fs::write(repo.path().join("README.md"), "initial\n").unwrap();
         run_git(repo.path(), ["add", "."]);

@@ -402,6 +402,8 @@ mod tests {
     fn init_repo_with_mars_toml(mars_toml: &str) -> (TempDir, super::super::MarsContext) {
         let repo = TempDir::new().unwrap();
         run_git_test(repo.path(), ["init", "."]);
+        run_git_test(repo.path(), ["config", "user.name", "Mars Test"]);
+        run_git_test(repo.path(), ["config", "user.email", "mars@example.com"]);
 
         std::fs::create_dir_all(repo.path().join(".agents")).unwrap();
         std::fs::create_dir_all(repo.path().join("agents")).unwrap();

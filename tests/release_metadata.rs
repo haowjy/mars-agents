@@ -193,6 +193,16 @@ fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
         "Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
     ));
     assert!(!workflow.contains(
+        "remote_status=$?\n              if [[ \"${remote_status}\" -eq 1 ]]; then"
+    ));
+    assert_eq!(
+        workflow
+            .matches("remote_tag_commit=\"$(resolve_remote_tag_commit \"${tag_ref}\" \"${release_remote_url}\")\" && remote_status=0 || remote_status=$?")
+            .count(),
+        2,
+        "both tag push helpers should capture resolver exit status explicitly"
+    );
+    assert!(!workflow.contains(
         "Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
     ));
     assert!(workflow.contains("if [[ \"${remote_status}\" -eq 1 ]]; then"));

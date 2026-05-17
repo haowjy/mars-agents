@@ -1,0 +1,253 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use indexmap::IndexMap;
+
+use crate::build::bundle::{ExecutionPolicy, Routing};
+use crate::compiler::agents::{AgentProfile, ApprovalMode, EffortLevel, HarnessKind, SandboxMode};
+use crate::error::{ConfigError, MarsError};
+use crate::models::{self, ModelAlias, ModelSpec, ModelsCache};
+
+pub struct PolicyInput<'a> {
+    pub project_root: &'a Path,
+    pub profile: &'a AgentProfile,
+    pub model_override: Option<&'a str>,
+    pub harness_override: Option<&'a str>,
+    pub effort_override: Option<&'a str>,
+    pub approval_override: Option<&'a str>,
+    pub sandbox_override: Option<&'a str>,
+}
+
+pub struct ResolvedPolicy {
+    pub routing: Routing,
+    pub execution_policy: ExecutionPolicy,
+    pub provenance: BTreeMap<String, String>,
+    pub warnings: Vec<String>,
+}
+
+pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsError> {
+    let mut warnings = Vec::new();
+    let mut provenance = BTreeMap::new();
+
+    let aliases = load_merged_aliases(input.project_root)?;
+    let cache = load_models_cache(input.project_root)?;
+
+    let (model_token, model_source) = match input.model_override {
+        Some(model) => (model.to_string(), "cli".to_string()),
+        None => match input.profile.model.as_deref() {
+            Some(model) => (model.to_string(), "profile".to_string()),
+            None => {
+                return Err(MarsError::Config(ConfigError::Invalid {
+                    message: "launch-bundle requires a model (set `model:` in the agent profile or pass `--model`)"
+                        .to_string(),
+                }));
+            }
+        },
+    };
+
+    let alias = aliases.get(&model_token);
+    let model = if let Some(alias) = alias {
+        match resolve_alias_model_id(alias, &cache) {
+            Some(model_id) => model_id,
+            None => {
+                warnings.push(format!(
+                    "model alias `{model_token}` did not resolve from cached catalog; using token as model id"
+                ));
+                model_token.clone()
+            }
+        }
+    } else {
+        model_token.clone()
+    };
+    provenance.insert("model_source".to_string(), model_source);
+
+    let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
+    let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
+    let (harness, harness_source) = if let Some(harness) = input.harness_override {
+        (harness.to_string(), "cli")
+    } else if let Some(harness) = profile_harness {
+        (harness.to_string(), "profile")
+    } else if let Some(harness) = alias_harness {
+        (harness.to_string(), "alias")
+    } else {
+        warnings.push("harness not set by CLI/profile/alias; defaulting to `claude`".to_string());
+        ("claude".to_string(), "default")
+    };
+    provenance.insert("harness_source".to_string(), harness_source.to_string());
+
+    let (effort, effort_source) = resolve_effort(&input, alias);
+    provenance.insert("effort_source".to_string(), effort_source);
+
+    let (approval, approval_source) = resolve_approval(&input);
+    provenance.insert("approval_source".to_string(), approval_source);
+
+    let (sandbox, sandbox_source) = resolve_sandbox(&input);
+    provenance.insert("sandbox_source".to_string(), sandbox_source);
+
+    let (autocompact, autocompact_source) = resolve_autocompact(&input, alias);
+    provenance.insert("autocompact_source".to_string(), autocompact_source);
+
+    let (autocompact_pct, autocompact_pct_source) = resolve_autocompact_pct(&input, alias);
+    provenance.insert("autocompact_pct_source".to_string(), autocompact_pct_source);
+
+    Ok(ResolvedPolicy {
+        routing: Routing {
+            model,
+            model_token,
+            harness,
+        },
+        execution_policy: ExecutionPolicy {
+            effort,
+            approval,
+            sandbox,
+            autocompact,
+            autocompact_pct,
+            timeout: None,
+        },
+        provenance,
+        warnings,
+    })
+}
+
+fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
+    let mars_dir = project_root.join(".mars");
+    models::read_cache(&mars_dir)
+}
+
+fn resolve_alias_model_id(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+            Some(model.clone())
+        }
+        ModelSpec::AutoResolve {
+            provider,
+            match_patterns,
+            exclude_patterns,
+        } => models::auto_resolve(provider, match_patterns, exclude_patterns, cache),
+    }
+}
+
+fn load_merged_aliases(project_root: &Path) -> Result<IndexMap<String, ModelAlias>, MarsError> {
+    let mut merged = models::builtin_aliases();
+
+    let merged_path = project_root.join(".mars").join("models-merged.json");
+    if let Ok(content) = std::fs::read_to_string(&merged_path)
+        && let Ok(cached) = serde_json::from_str::<IndexMap<String, ModelAlias>>(&content)
+    {
+        for (name, alias) in cached {
+            merged.insert(name, alias);
+        }
+    }
+
+    if let Ok(config) = crate::config::load(project_root) {
+        for (name, alias) in &config.models {
+            merged.insert(name.clone(), alias.clone());
+        }
+    }
+
+    Ok(merged)
+}
+
+fn resolve_effort(input: &PolicyInput<'_>, alias: Option<&ModelAlias>) -> (Option<String>, String) {
+    if let Some(effort) = input.effort_override {
+        return (Some(effort.to_string()), "cli".to_string());
+    }
+    if let Some(effort) = input.profile.effort.as_ref() {
+        return (
+            Some(effort_level_to_str(effort).to_string()),
+            "profile".to_string(),
+        );
+    }
+    if let Some(effort) = alias.and_then(|entry| entry.default_effort.clone()) {
+        return (Some(effort), "alias".to_string());
+    }
+    (None, "unset".to_string())
+}
+
+fn resolve_approval(input: &PolicyInput<'_>) -> (Option<String>, String) {
+    if let Some(approval) = input.approval_override {
+        return (Some(approval.to_string()), "cli".to_string());
+    }
+    if let Some(approval) = input.profile.approval.as_ref() {
+        return (
+            Some(approval_mode_to_str(approval).to_string()),
+            "profile".to_string(),
+        );
+    }
+    (None, "unset".to_string())
+}
+
+fn resolve_sandbox(input: &PolicyInput<'_>) -> (Option<String>, String) {
+    if let Some(sandbox) = input.sandbox_override {
+        return (Some(sandbox.to_string()), "cli".to_string());
+    }
+    if let Some(sandbox) = input.profile.sandbox.as_ref() {
+        return (
+            Some(sandbox_mode_to_str(sandbox).to_string()),
+            "profile".to_string(),
+        );
+    }
+    (None, "unset".to_string())
+}
+
+fn resolve_autocompact(
+    input: &PolicyInput<'_>,
+    alias: Option<&ModelAlias>,
+) -> (Option<u32>, String) {
+    if let Some(autocompact) = input.profile.autocompact {
+        return (Some(autocompact), "profile".to_string());
+    }
+    if let Some(autocompact) = alias.and_then(|entry| entry.autocompact) {
+        return (Some(autocompact), "alias".to_string());
+    }
+    (None, "unset".to_string())
+}
+
+fn resolve_autocompact_pct(
+    input: &PolicyInput<'_>,
+    alias: Option<&ModelAlias>,
+) -> (Option<u8>, String) {
+    if let Some(autocompact_pct) = input.profile.autocompact_pct {
+        return (Some(autocompact_pct), "profile".to_string());
+    }
+    if let Some(autocompact_pct) = alias.and_then(|entry| entry.autocompact_pct) {
+        return (Some(autocompact_pct), "alias".to_string());
+    }
+    (None, "unset".to_string())
+}
+
+fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
+    match harness {
+        HarnessKind::Claude => "claude",
+        HarnessKind::Codex => "codex",
+        HarnessKind::OpenCode => "opencode",
+        HarnessKind::Pi => "pi",
+    }
+}
+
+fn effort_level_to_str(effort: &EffortLevel) -> &'static str {
+    match effort {
+        EffortLevel::Low => "low",
+        EffortLevel::Medium => "medium",
+        EffortLevel::High => "high",
+        EffortLevel::XHigh => "xhigh",
+    }
+}
+
+fn approval_mode_to_str(mode: &ApprovalMode) -> &'static str {
+    match mode {
+        ApprovalMode::Default => "default",
+        ApprovalMode::Auto => "auto",
+        ApprovalMode::Confirm => "confirm",
+        ApprovalMode::Yolo => "yolo",
+    }
+}
+
+fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
+    match mode {
+        SandboxMode::Default => "default",
+        SandboxMode::ReadOnly => "read-only",
+        SandboxMode::WorkspaceWrite => "workspace-write",
+        SandboxMode::DangerFullAccess => "danger-full-access",
+    }
+}

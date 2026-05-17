@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- `release-on-main` tag push retries now verify expected tag commit before/after retries, fail fast on wrong-commit collisions, and treat refetch-discovered expected tags as success.
+- `release-on-main` tag push retries now verify expected tag commit before/after retries, confirm remote tag commit via `git ls-remote` (including annotated tag peel refs), fail fast on wrong-commit collisions, and only treat confirmed remote tags as success.
 
 ## [0.4.7-rc.1] - 2026-05-17
 

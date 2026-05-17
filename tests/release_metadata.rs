@@ -176,9 +176,26 @@ fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
     assert!(workflow.contains(
         "Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
     ));
+    assert_eq!(
+        workflow
+            .matches("git ls-remote --tags \"${resolve_remote_url}\" \"refs/tags/${resolve_tag_ref}\" \"refs/tags/${resolve_tag_ref}^{}\"")
+            .count(),
+        2,
+        "both tag push helpers must verify remote tag refs including peeled annotated tag"
+    );
     assert!(workflow.contains(
+        "Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+    ));
+    assert!(workflow.contains(
+        "Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+    ));
+    assert!(workflow.contains(
+        "Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+    ));
+    assert!(!workflow.contains(
         "Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
     ));
+    assert!(workflow.contains("if [[ \"${remote_status}\" -eq 1 ]]; then"));
     assert!(workflow.contains("after refetch on failed attempt ${attempt}"));
     assert!(workflow.contains("echo \"tag=${MISSING_TAG}\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag"));

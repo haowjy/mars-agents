@@ -268,6 +268,24 @@ jobs:
         run: |
           git fetch --tags --force
 
+          push_tag_with_retry() {
+            local tag_ref="$1"
+            for attempt in 1 2 3; do
+              if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
+                return 0
+              fi
+
+              if [[ "${attempt}" -eq 3 ]]; then
+                echo "::error::Failed to push tag ${tag_ref} after ${attempt} attempts."
+                return 1
+              fi
+
+              echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
+              git fetch --tags --force
+              sleep $((attempt * 2))
+            done
+          }
+
           if git rev-parse -q --verify "refs/tags/${MISSING_TAG}" >/dev/null; then
             tag_commit="$(git rev-parse "${MISSING_TAG}^{commit}")"
             if [[ "${tag_commit}" != "${MISSING_TAG_COMMIT}" ]]; then
@@ -279,7 +297,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "${MISSING_TAG}" "${MISSING_TAG_COMMIT}" -m "Release ${MISSING_TAG#v}"
-            git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${MISSING_TAG}"
+            push_tag_with_retry "${MISSING_TAG}"
             echo "::notice::Created missing tag ${MISSING_TAG} for existing release commit ${MISSING_TAG_COMMIT}."
           fi
 
@@ -432,6 +450,24 @@ jobs:
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
 
+          push_tag_with_retry() {
+            local tag_ref="$1"
+            for attempt in 1 2 3; do
+              if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
+                return 0
+              fi
+
+              if [[ "${attempt}" -eq 3 ]]; then
+                echo "::error::Failed to push tag ${tag_ref} after ${attempt} attempts."
+                return 1
+              fi
+
+              echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
+              git fetch --tags --force
+              sleep $((attempt * 2))
+            done
+          }
+
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               release_commit_sha="$(git rev-parse HEAD)"
@@ -463,7 +499,7 @@ jobs:
             git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi
 
-          git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/v${NEXT_VERSION}"
+          push_tag_with_retry "v${NEXT_VERSION}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
 
   publish:

@@ -25,6 +25,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars build launch-bundle` now accepts `cursor` as a harness target, marks `provenance.harness_stability = "experimental"`, and emits an explicit experimental warning.
 - Agent `harness-overrides.<harness>.native-config` now parses with shape-only validation and flows to launch bundle `execution_policy.native_config` (matching harness only, omitted when empty). Portable-key collisions warn but preserve values.
 - Portable tool policy now supports `tools` map syntax (`allow`/`deny`) with mixed allow+deny preservation, consistent tool-name normalization, and harness-override replacement semantics for `tools`, `disallowed-tools`, and `mcp-tools` in launch bundles.
+- Main-merge auto-release now defaults to RC for ambiguous `release:*` labels. Stable requires explicit `release:patch` or `release:stable`.
+- Auto-release now computes RC versions as `vX.Y.Z-rc.N` from next stable patch base and writes PyPI version as PEP 440 `X.Y.ZrcN`.
+- Publish workflow now marks RC GitHub releases as prerelease and publishes RC npm packages under dist-tag `rc` (stable stays `latest`).
+- Release provenance now validates stable + RC commit subject, Cargo semver tag match, PyPI RC mapping (`vX.Y.Z-rc.N` -> `X.Y.ZrcN`), and npm package metadata version alignment (`version` + `optionalDependencies`).
+- Release provenance now also verifies `CHANGELOG.md` has a semver release heading matching the tag version (`## [X.Y.Z] - ...` or `## [X.Y.Z-rc.N] - ...`).
+- Auto-release tag push now uses `${{ github.token }}` for the `v*` push (while keeping main-branch push behavior) to avoid duplicate `release.yml` runs when checkout used `RELEASE_TOKEN`.
 
 ## [0.4.6] - 2026-05-16
 

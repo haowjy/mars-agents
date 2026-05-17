@@ -81,28 +81,60 @@ jobs:
             exit 0
           fi
 
-          if grep -q '^release:' <<<"${labels}"; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Release label present; releasing."
-          else
+          release_labels="$(grep '^release:' <<<"${labels}" || true)"
+          if [[ -z "${release_labels}" ]]; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::No release:* label present; skipping release."
+            exit 0
           fi
+
+          unknown_release_labels="$(grep '^release:' <<<"${labels}" | grep -vxE 'release:(skip|patch|stable|rc)' || true)"
+          has_stable_label=false
+          has_rc_label=false
+
+          if grep -qxE 'release:(patch|stable)' <<<"${release_labels}"; then
+            has_stable_label=true
+          fi
+          if grep -qx 'release:rc' <<<"${release_labels}"; then
+            has_rc_label=true
+          fi
+
+          release_kind="rc"
+          if [[ -n "${unknown_release_labels}" ]]; then
+            echo "::notice::Unknown release label(s) detected (${unknown_release_labels//$'\n'/, }); defaulting to prerelease (rc)."
+          elif [[ "${has_rc_label}" == "true" ]]; then
+            echo "::notice::release:rc label present; creating prerelease (rc)."
+          elif [[ "${has_stable_label}" == "true" ]]; then
+            release_kind="stable"
+            echo "::notice::release:patch/release:stable label present; creating stable patch release."
+          else
+            echo "::notice::release:* label present without explicit stable label; defaulting to prerelease (rc)."
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Resolved release kind: ${release_kind}."
 
       - name: Skip when trigger already released
         if: steps.release_intent.outputs.should_release == 'true'
         id: release_guard
         env:
           TRIGGER_SHA: ${{ github.sha }}
+          RELEASE_KIND: ${{ steps.release_intent.outputs.release_kind }}
         run: |
-          is_stable_semver_tag() {
+          is_stable_tag() {
             grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          is_rc_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' <<<"$1"
           }
 
           git fetch --tags --force
 
           existing_release_tag=""
           existing_release_commit=""
+          release_kind="${RELEASE_KIND:-rc}"
           while IFS=$'\t' read -r commit_hash commit_subject; do
             [[ "${commit_subject}" == release:\ v* ]] || continue
             parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
@@ -112,13 +144,25 @@ jobs:
 
             while IFS= read -r commit_tag; do
               [[ -n "${commit_tag}" ]] || continue
-              if ! is_stable_semver_tag "${commit_tag}"; then
-                echo "::notice::Ignoring non-stable tag ${commit_tag} on release commit ${commit_hash}."
-                continue
+              if is_stable_tag "${commit_tag}"; then
+                existing_release_tag="${commit_tag}"
+                existing_release_commit="${commit_hash}"
+                break 2
               fi
-              existing_release_tag="${commit_tag}"
-              existing_release_commit="${commit_hash}"
-              break 2
+
+              if is_rc_tag "${commit_tag}"; then
+                if [[ "${release_kind}" == "stable" ]]; then
+                  echo "::notice::Ignoring RC tag ${commit_tag} for stable release intent; stable rerun may promote this trigger."
+                  continue
+                fi
+                existing_release_tag="${commit_tag}"
+                existing_release_commit="${commit_hash}"
+                break 2
+              fi
+
+              if grep -Eq '^v' <<<"${commit_tag}"; then
+                echo "::notice::Ignoring non-release tag ${commit_tag} on release commit ${commit_hash}."
+              fi
             done < <(git tag --points-at "${commit_hash}" --list 'v*')
           done < <(git log --format=$'%H\t%s' main)
 
@@ -139,9 +183,11 @@ jobs:
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         run: scripts/preflight.sh full
 
-      - name: Compute next patch version
+      - name: Compute next release version
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         id: next_version
+        env:
+          RELEASE_KIND: ${{ steps.release_intent.outputs.release_kind }}
         run: |
           bump_version() {
             local version="$1"
@@ -151,7 +197,16 @@ jobs:
             echo "${major}.${minor}.${patch}"
           }
 
-          base_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
+          git fetch --tags --force
+
+          base_tag=""
+          while IFS= read -r candidate_tag; do
+            if grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"${candidate_tag}"; then
+              base_tag="${candidate_tag}"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-version:refname)
+
           if [[ -z "${base_tag}" ]]; then
             base_version="0.0.0"
             echo "::notice::No stable v* tags found. Bootstrapping from ${base_version}."
@@ -160,27 +215,50 @@ jobs:
             echo "::notice::Using latest stable release tag ${base_tag}."
           fi
 
-          next_version="$(bump_version "${base_version}")"
-          while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
-            colliding_tag="v${next_version}"
-            colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
-            colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
-            echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
-            base_version="${next_version}"
-            next_version="$(bump_version "${base_version}")"
-          done
+          next_patch="$(bump_version "${base_version}")"
+          if [[ "${RELEASE_KIND}" == "stable" ]]; then
+            next_version="${next_patch}"
+            while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
+              colliding_tag="v${next_version}"
+              colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
+              colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
+              echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
+              base_version="${next_version}"
+              next_patch="$(bump_version "${base_version}")"
+              next_version="${next_patch}"
+            done
+            python_version="${next_version}"
+          else
+            escaped_next_patch="$(sed 's/\./\\./g' <<<"${next_patch}")"
+            max_rc=0
+            while IFS= read -r rc_tag; do
+              if [[ "${rc_tag}" =~ ^v${escaped_next_patch}-rc\.([0-9]+)$ ]]; then
+                rc_number="${BASH_REMATCH[1]}"
+                if (( rc_number > max_rc )); then
+                  max_rc="${rc_number}"
+                fi
+              fi
+            done < <(git tag --list "v${next_patch}-rc.*")
+
+            next_rc=$((max_rc + 1))
+            next_version="${next_patch}-rc.${next_rc}"
+            python_version="${next_patch}rc${next_rc}"
+          fi
 
           echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
+          echo "python_version=${python_version}" >> "$GITHUB_OUTPUT"
+          echo "release_kind=${RELEASE_KIND}" >> "$GITHUB_OUTPUT"
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
-          echo "Computed next version ${next_version} from base ${base_version}."
+          echo "Computed next ${RELEASE_KIND} version ${next_version} (python=${python_version}) from base ${base_version}."
 
       - name: Update release files
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          PYTHON_VERSION: ${{ steps.next_version.outputs.python_version }}
         run: |
           sed -i -E "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" Cargo.toml
-          sed -i -E "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" pyproject.toml
+          sed -i -E "0,/^version = \".*\"/s//version = \"${PYTHON_VERSION}\"/" pyproject.toml
 
           for pkg in npm/@meridian-flow/mars-agents*/package.json; do
             [[ -f "${pkg}" ]] || continue
@@ -236,6 +314,8 @@ jobs:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           TRIGGER_SHA: ${{ github.sha }}
           RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
 
@@ -270,7 +350,7 @@ jobs:
             git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi
 
-          git push origin "v${NEXT_VERSION}"
+          git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/v${NEXT_VERSION}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
 
   publish:

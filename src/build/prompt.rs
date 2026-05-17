@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::build::bundle::SupplementalDoc;
-use crate::compiler::agents::{AgentMode, parse_agent_content};
+use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};
 use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
+use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::Frontmatter;
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
@@ -34,6 +35,7 @@ struct ParsedAgentInventory {
     name: String,
     description: String,
     model: Option<String>,
+    fanout: Vec<String>,
     mode: AgentMode,
 }
 
@@ -45,7 +47,7 @@ pub fn compile_prompt_surface(
     harness_id: &str,
     selected_model_token: &str,
     canonical_model_id: &str,
-) -> PromptCompilation {
+) -> Result<PromptCompilation, MarsError> {
     let _ = (selected_model_token, canonical_model_id);
 
     let requested_skills = requested_skill_order(profile_skills, extra_skills);
@@ -93,7 +95,7 @@ pub fn compile_prompt_surface(
         .map(|loaded| loaded.document.name.clone())
         .collect::<Vec<_>>();
 
-    let inventory_prompt = build_inventory_prompt(mars_dir, &mut warnings);
+    let inventory_prompt = build_inventory_prompt(mars_dir, &mut warnings)?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
@@ -101,14 +103,14 @@ pub fn compile_prompt_surface(
         REPORT_INSTRUCTION,
     );
 
-    PromptCompilation {
+    Ok(PromptCompilation {
         system_instruction,
         supplemental_documents,
         inventory_prompt,
         loaded_skills,
         missing_skills,
         warnings,
-    }
+    })
 }
 
 fn requested_skill_order(profile_skills: &[String], extra_skills: &[String]) -> Vec<String> {
@@ -257,10 +259,13 @@ fn compose_system_instruction(
     blocks.join("\n\n")
 }
 
-fn build_inventory_prompt(mars_dir: &Path, warnings: &mut Vec<String>) -> String {
+fn build_inventory_prompt(
+    mars_dir: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<String, MarsError> {
     let agents_dir = mars_dir.join("agents");
     if !agents_dir.is_dir() {
-        return String::new();
+        return Ok(String::new());
     }
 
     let read_dir = match std::fs::read_dir(&agents_dir) {
@@ -270,7 +275,7 @@ fn build_inventory_prompt(mars_dir: &Path, warnings: &mut Vec<String>) -> String
                 "failed to read agent inventory from {}: {err}",
                 agents_dir.display()
             ));
-            return String::new();
+            return Ok(String::new());
         }
     };
 
@@ -286,19 +291,23 @@ fn build_inventory_prompt(mars_dir: &Path, warnings: &mut Vec<String>) -> String
 
     for path in agent_paths {
         match parse_inventory_agent(&path) {
-            Ok(agent) => {
+            Ok((Some(agent), agent_warnings)) => {
+                warnings.extend(agent_warnings);
                 if agent.mode == AgentMode::Primary {
                     primary_agents.push(agent);
                 } else {
                     subagent_agents.push(agent);
                 }
             }
-            Err(err) => warnings.push(err),
+            Ok((None, agent_warnings)) => warnings.extend(agent_warnings),
+            Err(err) => {
+                return Err(MarsError::Config(ConfigError::Invalid { message: err }));
+            }
         }
     }
 
     if primary_agents.is_empty() && subagent_agents.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
 
     primary_agents.sort_by(|left, right| left.name.cmp(&right.name));
@@ -324,10 +333,12 @@ fn build_inventory_prompt(mars_dir: &Path, warnings: &mut Vec<String>) -> String
         }
     }
 
-    lines.join("\n").trim().to_string()
+    Ok(lines.join("\n").trim().to_string())
 }
 
-fn parse_inventory_agent(path: &Path) -> Result<ParsedAgentInventory, String> {
+fn parse_inventory_agent(
+    path: &Path,
+) -> Result<(Option<ParsedAgentInventory>, Vec<String>), String> {
     let content = std::fs::read_to_string(path).map_err(|err| {
         format!(
             "failed to read agent inventory file {}: {err}",
@@ -344,12 +355,23 @@ fn parse_inventory_agent(path: &Path) -> Result<ParsedAgentInventory, String> {
             )
         })?;
 
-    if let Some(diag) = parse_diags.first() {
-        return Err(format!(
+    let mut warnings = Vec::new();
+    for diag in parse_diags {
+        if diag.is_error() {
+            return Err(format!(
+                "agent inventory file {} has invalid frontmatter: {}",
+                path.display(),
+                diag.message()
+            ));
+        }
+        warnings.push(format!(
             "agent inventory parse warning in {}: {}",
             path.display(),
             diag.message()
         ));
+    }
+    if !profile.model_invocable {
+        return Ok((None, warnings));
     }
 
     let fallback_name = path
@@ -357,16 +379,51 @@ fn parse_inventory_agent(path: &Path) -> Result<ParsedAgentInventory, String> {
         .and_then(|stem| stem.to_str())
         .unwrap_or("unknown-agent")
         .to_string();
+    let fanout = fallback_model_policies_for_inventory(&profile);
     let name = profile.name.unwrap_or(fallback_name);
     let description = profile.description.unwrap_or_default();
-    let mode = profile.mode.unwrap_or(AgentMode::Subagent);
+    let mode = profile.mode.clone().unwrap_or(AgentMode::Subagent);
 
-    Ok(ParsedAgentInventory {
-        name,
-        description,
-        model: profile.model,
-        mode,
-    })
+    Ok((
+        Some(ParsedAgentInventory {
+            name,
+            description,
+            model: profile.model,
+            fanout,
+            mode,
+        }),
+        warnings,
+    ))
+}
+
+fn fallback_model_policies_for_inventory(
+    profile: &crate::compiler::agents::AgentProfile,
+) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Limitation: this deduplicates exact fallback labels only. Alias-to-model
+    // canonical dedupe requires alias catalog context not currently loaded here.
+    for policy in &profile.model_policies {
+        if policy.no_fallback {
+            continue;
+        }
+        if !matches!(
+            policy.match_type,
+            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model
+        ) {
+            continue;
+        }
+        let value = policy.match_value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if seen.insert(value.to_string()) {
+            entries.push(value.to_string());
+        }
+    }
+
+    entries
 }
 
 fn render_inventory_line(agent: &ParsedAgentInventory) -> String {
@@ -382,6 +439,11 @@ fn render_inventory_line(agent: &ParsedAgentInventory) -> String {
     {
         line.push_str(" | Model: ");
         line.push_str(model);
+    }
+
+    if !agent.fanout.is_empty() {
+        line.push_str(" | Fan-out: ");
+        line.push_str(&agent.fanout.join(", "));
     }
 
     line

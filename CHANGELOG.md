@@ -9,10 +9,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Git test helpers no longer let inherited `GIT_*` repository environment redirect temp-repo commands into the caller checkout. Git subprocesses strip repo-scoped Git env before using explicit temp repo cwd.
+- `mars build launch-bundle` harness routing now follows precedence correctly: `--harness` first; with `--model`, use model alias/provider/config/default (ignore profile harness); without `--model`, use profile/alias/provider/config/default. OpenAI aliases without explicit harness now route to `codex` instead of defaulting to `claude`, including auto-resolve aliases that miss model cache.
+- `mars build launch-bundle` now fails on invalid agent profile diagnostics (invalid field values, unknown harness names, non-overridable override fields) for both selected agent and inventory agents instead of shipping them as bundle warnings.
+- Launch inventory in `mars build launch-bundle` now excludes `model-invocable: false` agents so hidden/internal agents do not leak into model-facing prompt context.
 
 ### Changed
 - Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.
-- `mars build launch-bundle` prompt surface now follows Meridian static ordering: harness-aware skill variants, skill-type ordering/principle bookend, canonical report block, populated agent inventory, and model-override harness precedence (`--harness` > CLI model alias harness > profile).
+- `mars build launch-bundle` prompt surface now follows Meridian static ordering: harness-aware skill variants, skill-type ordering/principle bookend, canonical report block, populated agent inventory, and model-override harness precedence (`--harness` > CLI model alias harness > provider/config/default).
+- Launch inventory lines now include `Fan-out: ...` metadata from fallback `model-policies` (`match.alias` / `match.model`, `no-fallback: false`) with exact-label dedupe. Alias-to-canonical-model dedupe is not yet wired in this slice.
 
 ## [0.4.6] - 2026-05-16
 

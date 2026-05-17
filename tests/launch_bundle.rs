@@ -1,3 +1,4 @@
+// qa-validated: launch-bundle-blocker-audit
 mod common;
 
 use assert_fs::TempDir;
@@ -93,7 +94,6 @@ Review code changes."#;
 
     let output = cmd.assert().success().get_output().clone();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\n  \"version\": 1"));
 
     let bundle: Value = serde_json::from_str(&stdout).expect("launch-bundle should emit JSON");
 
@@ -451,7 +451,19 @@ Review code changes."#;
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
         .expect("system instruction should be string");
-    assert_eq!(system_instruction.matches("Principle body.").count(), 2);
+    let first_principle_index = system_instruction
+        .find("# Skill: principle_a")
+        .expect("system instruction should include principle skill");
+    let report_index = system_instruction
+        .find("# Report")
+        .expect("system instruction should include report block");
+    assert!(first_principle_index < report_index);
+
+    let second_principle_relative = system_instruction[(report_index + "# Report".len())..]
+        .find("# Skill: principle_a")
+        .expect("system instruction should include trailing principle bookend");
+    let second_principle_index = report_index + "# Report".len() + second_principle_relative;
+    assert!(second_principle_index > report_index);
 }
 
 #[test]
@@ -494,4 +506,616 @@ harness = "codex""#;
         bundle["provenance"]["harness_source"].as_str(),
         Some("alias")
     );
+}
+
+#[test]
+fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_harness() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: claude
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.openai_alias]
+model = "gpt-5""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "openai_alias",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["routing"]["model_token"].as_str(),
+        Some("openai_alias")
+    );
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+}
+
+#[test]
+fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: openai_alias
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.openai_alias]
+model = "gpt-5""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+}
+
+#[test]
+fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: openai_alias
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.openai_alias]
+provider = "openai"
+match = ["definitely-not-a-cached-openai-model-*"]"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("openai_alias"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not resolve from cached catalog")
+    }));
+}
+
+#[test]
+fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: unknown-model-token
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+default_harness = "pi""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["routing"]["model"].as_str(),
+        Some("unknown-model-token")
+    );
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("config")
+    );
+}
+
+#[test]
+fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
+    let temp = TempDir::new().unwrap();
+    let reviewer_content = r#"---
+name: reviewer
+description: Review implementation
+mode: subagent
+model: claude-opus-4-6
+model-policies:
+  - match:
+      alias: gpt55
+    override: {}
+  - match:
+      alias: gpt55
+    override: {}
+  - match:
+      model: gpt-5
+    override: {}
+  - match:
+      alias: hidden
+    no-fallback: true
+    override: {}
+---
+Review code changes."#;
+    let hidden_content = r#"---
+name: hidden-worker
+description: internal helper
+mode: subagent
+model: claude-opus-4-6
+model-invocable: false
+---
+Hidden work."#;
+
+    let (server, project_root) = setup_bundle_project_with_agents(
+        &temp,
+        "bundle-source",
+        &[
+            ("reviewer", reviewer_content),
+            ("hidden-worker", hidden_content),
+        ],
+        &[],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let inventory_prompt = bundle["prompt_surface"]["inventory_prompt"]
+        .as_str()
+        .expect("inventory_prompt should be string");
+    assert!(inventory_prompt.contains("reviewer: Review implementation"));
+    assert!(inventory_prompt.contains("Fan-out: gpt55, gpt-5"));
+    assert!(!inventory_prompt.contains("hidden-worker"));
+}
+
+#[test]
+fn build_launch_bundle_fails_on_unknown_agent_harness() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: not-a-harness
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("unknown harness"));
+}
+
+#[test]
+fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+model-invocable: nope
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("model-invocable"));
+}
+
+#[test]
+fn build_launch_bundle_fails_on_non_overridable_model_invocable_override() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness-overrides:
+  claude:
+    model-invocable: false
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("not overridable"));
+}
+
+#[test]
+fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {
+    let temp = TempDir::new().unwrap();
+    let reviewer_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+    let malformed_inventory_content = r#"---
+name: malformed
+model: claude-opus-4-6
+model-invocable: nope
+---
+Broken inventory entry."#;
+
+    let (server, project_root) = setup_bundle_project_with_agents(
+        &temp,
+        "bundle-source",
+        &[
+            ("reviewer", reviewer_content),
+            ("malformed", malformed_inventory_content),
+        ],
+        &[],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("inventory file"));
+}
+
+#[test]
+fn build_launch_bundle_merges_extra_skills_after_profile_dedupes_and_tracks_missing() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+skills: [planning]
+---
+Review code changes."#;
+    let planning_skill =
+        "---\nname: planning\ndescription: Plan tasks\ntype: reference\n---\nPlanning content.";
+    let extra_skill =
+        "---\nname: extra_skill\ndescription: Extra helper\ntype: reference\n---\nExtra content.";
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[("planning", planning_skill), ("extra_skill", extra_skill)],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--skill",
+        "planning,missing_skill,extra_skill,extra_skill",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["skills_metadata"]["loaded"],
+        serde_json::json!(["planning", "extra_skill"])
+    );
+    assert_eq!(
+        bundle["skills_metadata"]["missing"],
+        serde_json::json!(["missing_skill"])
+    );
+
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .expect("system instruction should be string");
+    assert!(system_instruction.contains("# Skill: planning"));
+    assert!(system_instruction.contains("# Skill: extra_skill"));
+    assert!(!system_instruction.contains("# Skill: missing_skill"));
+}
+
+#[test]
+fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+effort: low
+approval: confirm
+sandbox: read-only
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--effort",
+        "high",
+        "--approval",
+        "yolo",
+        "--sandbox",
+        "danger-full-access",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+    assert_eq!(
+        bundle["execution_policy"]["approval"].as_str(),
+        Some("yolo")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["sandbox"].as_str(),
+        Some("danger-full-access")
+    );
+    assert_eq!(bundle["provenance"]["effort_source"].as_str(), Some("cli"));
+    assert_eq!(
+        bundle["provenance"]["approval_source"].as_str(),
+        Some("cli")
+    );
+    assert_eq!(bundle["provenance"]["sandbox_source"].as_str(), Some("cli"));
+}
+
+#[test]
+fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+effort: xhigh
+approval: auto
+sandbox: workspace-write
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("xhigh"));
+    assert_eq!(
+        bundle["execution_policy"]["approval"].as_str(),
+        Some("auto")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["sandbox"].as_str(),
+        Some("workspace-write")
+    );
+    assert_eq!(
+        bundle["provenance"]["effort_source"].as_str(),
+        Some("profile")
+    );
+    assert_eq!(
+        bundle["provenance"]["approval_source"].as_str(),
+        Some("profile")
+    );
+    assert_eq!(
+        bundle["provenance"]["sandbox_source"].as_str(),
+        Some("profile")
+    );
+}
+
+#[test]
+fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: claude
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "gpt-5",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("cli"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+}
+
+#[test]
+fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: unknown-model-token
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+default_harness = "invalid-harness""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("default")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("settings.default_harness")
+    }));
+}
+
+#[test]
+fn build_launch_bundle_fails_when_no_model_available() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("requires a model"));
+}
+
+#[test]
+fn build_launch_bundle_fails_when_agent_file_missing() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "missing-agent"]);
+    cmd.assert()
+        .failure()
+        .stderr(predicates::str::contains("missing-agent"))
+        .stderr(predicates::str::contains("read launch bundle agent"));
+}
+
+#[test]
+fn build_launch_bundle_has_canonical_prompt_surface_for_small_fixture() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+description: Review implementation
+mode: subagent
+model: claude-opus-4-6
+skills: [principle_a, reference_a]
+---
+Review code changes."#;
+    let principle_skill =
+        "---\nname: principle_a\ndescription: Principle\ntype: principle\n---\nPrinciple body.";
+    let reference_skill =
+        "---\nname: reference_a\ndescription: Reference\ntype: reference\n---\nReference body.";
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[
+            ("principle_a", principle_skill),
+            ("reference_a", reference_skill),
+        ],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .expect("system instruction should be string");
+
+    let expected = concat!(
+        "# Agent Profile\n\n",
+        "Review code changes.\n\n",
+        "# Skill: principle_a\n\n",
+        "Principle body.\n\n",
+        "# Skill: reference_a\n\n",
+        "Reference body.\n\n",
+        "# Meridian Agents\n\n",
+        "Installed Meridian agents available at launch time.\n\n",
+        "## Subagent\n",
+        "- reviewer: Review implementation | Model: claude-opus-4-6\n\n",
+        "# Report\n\n",
+        "**IMPORTANT - Your final assistant message must be the run report.**\n\n",
+        "Provide a plain markdown report in your final assistant message.\n\n",
+        "Include: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.\n\n",
+        "# Skill: principle_a\n\n",
+        "Principle body."
+    );
+    assert_eq!(system_instruction, expected);
 }

@@ -65,6 +65,10 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub fn preferred_harness_for_provider(provider: &str) -> Option<String> {
+    harness_candidates_for_provider(provider).into_iter().next()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +125,14 @@ mod tests {
     fn candidates_for_unknown_provider() {
         let candidates = harness_candidates_for_provider("unknown");
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn preferred_harness_for_provider_uses_first_candidate() {
+        assert_eq!(
+            preferred_harness_for_provider("openai"),
+            Some("codex".to_string())
+        );
+        assert_eq!(preferred_harness_for_provider("unknown"), None);
     }
 }

@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use crate::build::bundle::{ExecutionPolicy, Routing};
 use crate::compiler::agents::{AgentProfile, ApprovalMode, EffortLevel, HarnessKind, SandboxMode};
 use crate::error::{ConfigError, MarsError};
-use crate::models::{self, ModelAlias, ModelSpec, ModelsCache};
+use crate::models::{self, ModelAlias, ModelsCache};
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
@@ -29,7 +29,8 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let mut warnings = Vec::new();
     let mut provenance = BTreeMap::new();
 
-    let aliases = load_merged_aliases(input.project_root)?;
+    let model_config = load_model_resolution_config(input.project_root)?;
+    let aliases = model_config.aliases;
     let cache = load_models_cache(input.project_root)?;
 
     let (model_token, model_source) = match input.model_override {
@@ -47,7 +48,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
 
     let alias = aliases.get(&model_token);
     let model = if let Some(alias) = alias {
-        match resolve_alias_model_id(alias, &cache) {
+        match models::resolve_model_id_for_alias(alias, &cache) {
             Some(model_id) => model_id,
             None => {
                 warnings.push(format!(
@@ -61,27 +62,58 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     };
     provenance.insert("model_source".to_string(), model_source);
 
+    let provider = alias
+        .and_then(|entry| models::resolve_provider_for_alias(entry, &cache))
+        .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string));
+
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
+    let provider_harness = provider
+        .as_deref()
+        .and_then(models::harness::preferred_harness_for_provider);
+    let config_default_harness = match model_config.default_harness.as_deref() {
+        Some(value) => match normalize_harness_name(value) {
+            Some(valid) => Some(valid.to_string()),
+            None => {
+                warnings.push(format!(
+                    "settings.default_harness `{value}` is invalid; expected one of: claude, codex, opencode, pi"
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+
     let model_from_cli = input.model_override.is_some();
     let (harness, harness_source) = if let Some(harness) = input.harness_override {
         (harness.to_string(), "cli")
     } else if model_from_cli {
         if let Some(harness) = alias_harness {
             (harness.to_string(), "alias")
-        } else if let Some(harness) = profile_harness {
-            (harness.to_string(), "profile")
+        } else if let Some(harness) = provider_harness {
+            (harness, "provider")
+        } else if let Some(harness) = config_default_harness {
+            (harness, "config")
         } else {
-            warnings
-                .push("harness not set by CLI/profile/alias; defaulting to `claude`".to_string());
+            warnings.push(
+                "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`"
+                    .to_string(),
+            );
             ("claude".to_string(), "default")
         }
     } else if let Some(harness) = profile_harness {
         (harness.to_string(), "profile")
     } else if let Some(harness) = alias_harness {
         (harness.to_string(), "alias")
+    } else if let Some(harness) = provider_harness {
+        (harness, "provider")
+    } else if let Some(harness) = config_default_harness {
+        (harness, "config")
     } else {
-        warnings.push("harness not set by CLI/profile/alias; defaulting to `claude`".to_string());
+        warnings.push(
+            "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`"
+                .to_string(),
+        );
         ("claude".to_string(), "default")
     };
     provenance.insert("harness_source".to_string(), harness_source.to_string());
@@ -125,21 +157,14 @@ fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
     models::read_cache(&mars_dir)
 }
 
-fn resolve_alias_model_id(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
-    match &alias.spec {
-        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
-            Some(model.clone())
-        }
-        ModelSpec::AutoResolve {
-            provider,
-            match_patterns,
-            exclude_patterns,
-        } => models::auto_resolve(provider, match_patterns, exclude_patterns, cache),
-    }
+struct ModelResolutionConfig {
+    aliases: IndexMap<String, ModelAlias>,
+    default_harness: Option<String>,
 }
 
-fn load_merged_aliases(project_root: &Path) -> Result<IndexMap<String, ModelAlias>, MarsError> {
+fn load_model_resolution_config(project_root: &Path) -> Result<ModelResolutionConfig, MarsError> {
     let mut merged = models::builtin_aliases();
+    let mut default_harness = None;
 
     let merged_path = project_root.join(".mars").join("models-merged.json");
     if let Ok(content) = std::fs::read_to_string(&merged_path)
@@ -150,13 +175,31 @@ fn load_merged_aliases(project_root: &Path) -> Result<IndexMap<String, ModelAlia
         }
     }
 
-    if let Ok(config) = crate::config::load(project_root) {
-        for (name, alias) in &config.models {
-            merged.insert(name.clone(), alias.clone());
+    match crate::config::load(project_root) {
+        Ok(config) => {
+            default_harness = config.settings.default_harness.clone();
+            for (name, alias) in &config.models {
+                merged.insert(name.clone(), alias.clone());
+            }
         }
+        Err(MarsError::Config(ConfigError::NotFound { .. })) => {}
+        Err(err) => return Err(err),
     }
 
-    Ok(merged)
+    Ok(ModelResolutionConfig {
+        aliases: merged,
+        default_harness,
+    })
+}
+
+fn normalize_harness_name(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        "opencode" => Some("opencode"),
+        "pi" => Some("pi"),
+        _ => None,
+    }
 }
 
 fn resolve_effort(input: &PolicyInput<'_>, alias: Option<&ModelAlias>) -> (Option<String>, String) {

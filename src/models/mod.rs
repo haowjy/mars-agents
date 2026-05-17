@@ -1319,6 +1319,25 @@ pub fn resolve_one(
     })
 }
 
+/// Resolve a concrete model id for one alias.
+///
+/// Used by build-time launch routing so model resolution logic stays shared
+/// with `mars models resolve`.
+pub fn resolve_model_id_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
+    resolve_model_and_provider(alias, cache).map(|(model_id, _provider)| model_id)
+}
+
+/// Resolve provider identity for one alias.
+///
+/// Returns `None` when provider cannot be inferred.
+pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
+    let provider = resolve_model_and_provider(alias, cache)
+        .map(|(_model_id, provider)| provider)
+        .or_else(|| provider_from_alias_spec(alias));
+
+    provider.filter(|value| !value.eq_ignore_ascii_case("unknown"))
+}
+
 /// Filter resolved aliases by visibility config.
 /// - `include` patterns: keep only aliases where at least one pattern matches
 /// - `exclude` patterns: remove aliases where any pattern matches
@@ -1396,6 +1415,18 @@ fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option
             let model_id = auto_resolve(provider, match_patterns, exclude_patterns, cache)?;
             Some((model_id, provider.clone()))
         }
+    }
+}
+
+fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { model, provider }
+        | ModelSpec::PinnedWithMatch {
+            model, provider, ..
+        } => provider
+            .clone()
+            .or_else(|| infer_provider_from_model_id(model).map(str::to_string)),
+        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
     }
 }
 

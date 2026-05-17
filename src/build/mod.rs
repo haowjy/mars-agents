@@ -45,6 +45,17 @@ pub fn build_launch_bundle(
             })
         })?;
 
+    if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "agent `{}` has invalid frontmatter in {}: {}",
+                request.agent,
+                agent_path.display(),
+                fatal.message()
+            ),
+        }));
+    }
+
     let mut warnings: Vec<String> = parse_diags
         .iter()
         .map(|diag| format!("agent `{}`: {}", request.agent, diag.message()))
@@ -71,7 +82,7 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
-    );
+    )?;
 
     warnings.extend(prompt.warnings);
 

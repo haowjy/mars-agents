@@ -253,6 +253,7 @@ pub struct AgentProfile {
 
     // --- Runtime policy fields ---
     pub mode: Option<AgentMode>,
+    pub model_invocable: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
@@ -294,7 +295,12 @@ pub enum AgentDiagnostic {
 
 impl AgentDiagnostic {
     pub fn is_error(&self) -> bool {
-        matches!(self, AgentDiagnostic::InvalidFieldValue { .. })
+        matches!(
+            self,
+            AgentDiagnostic::InvalidFieldValue { .. }
+                | AgentDiagnostic::UnknownHarness { .. }
+                | AgentDiagnostic::NonOverridableFieldInOverride { .. }
+        )
     }
 
     pub fn message(&self) -> String {
@@ -329,6 +335,7 @@ const NON_OVERRIDABLE: &[&str] = &[
     "model",
     "harness",
     "mode",
+    "model-invocable",
     "model-overrides",
     "harness-overrides",
 ];
@@ -698,6 +705,20 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         });
 
+    // model-invocable:
+    let model_invocable = match fm.get("model-invocable") {
+        None => true,
+        Some(Value::Bool(value)) => *value,
+        Some(value) => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "model-invocable".to_string(),
+                value: format!("{value:?}"),
+                allowed: "boolean",
+            });
+            true
+        }
+    };
+
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
         if let Some(a) = ApprovalMode::from_str(s) {
@@ -828,6 +849,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         harness,
         model,
         mode,
+        model_invocable,
         approval,
         sandbox,
         effort,
@@ -889,6 +911,30 @@ mod tests {
         let (p, diags) = parse("---\nmode: subagent\n---\n");
         assert!(diags.is_empty());
         assert_eq!(p.mode, Some(AgentMode::Subagent));
+    }
+
+    #[test]
+    fn model_invocable_defaults_true() {
+        let (p, diags) = parse("---\nmode: subagent\n---\n");
+        assert!(diags.is_empty());
+        assert!(p.model_invocable);
+    }
+
+    #[test]
+    fn parses_model_invocable_false() {
+        let (p, diags) = parse("---\nmodel-invocable: false\n---\n");
+        assert!(diags.is_empty());
+        assert!(!p.model_invocable);
+    }
+
+    #[test]
+    fn invalid_model_invocable_produces_diagnostic() {
+        let (p, diags) = parse("---\nmodel-invocable: nope\n---\n");
+        assert!(p.model_invocable);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-invocable")
+        );
     }
 
     #[test]

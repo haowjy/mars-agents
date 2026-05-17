@@ -912,6 +912,118 @@ version = "v1.0.0"
     );
 }
 
+#[test]
+fn upgrade_bump_mutates_only_direct_mars_toml_dependencies() {
+    let dir = TempDir::new().unwrap();
+
+    let shared = create_git_package(
+        &dir,
+        "shared",
+        &[("agents/shared.md", "# Shared v1.0.0\n")],
+        "v1.0.0",
+    );
+
+    let base_manifest_v1 = format!(
+        r#"[package]
+name = "base"
+version = "1.0.0"
+
+[dependencies.shared]
+url = "{shared_url}"
+version = "^1.0"
+"#,
+        shared_url = shared.url
+    );
+    let base = create_git_package(
+        &dir,
+        "base",
+        &[
+            ("mars.toml", base_manifest_v1.as_str()),
+            ("agents/base.md", "# Base v1.0.0\n"),
+        ],
+        "v1.0.0",
+    );
+
+    add_tagged_release(
+        &shared.repo_path,
+        "v1.1.0",
+        &[("agents/shared.md", "# Shared v1.1.0\n")],
+    );
+
+    let base_manifest_v1_1 = format!(
+        r#"[package]
+name = "base"
+version = "1.1.0"
+
+[dependencies.shared]
+url = "{shared_url}"
+version = "^1.0"
+"#,
+        shared_url = shared.url
+    );
+    add_tagged_release(
+        &base.repo_path,
+        "v1.1.0",
+        &[
+            ("mars.toml", base_manifest_v1_1.as_str()),
+            ("agents/base.md", "# Base v1.1.0\n"),
+        ],
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[dependencies.base]
+url = "{base_url}"
+version = "v1.0.0"
+"#,
+            base_url = base.url
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "upgrade",
+            "--bump",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mars_toml_raw = fs::read_to_string(project.path().join("mars.toml")).unwrap();
+    let mars_toml: toml::Value = toml::from_str(&mars_toml_raw).unwrap();
+    let dependencies = mars_toml
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .expect("mars.toml should contain dependencies table");
+
+    assert_eq!(
+        dependencies
+            .get("base")
+            .and_then(|entry| entry.get("version"))
+            .and_then(toml::Value::as_str),
+        Some("v1.1.0"),
+        "upgrade --bump should update direct dependency constraints to resolved tags"
+    );
+    assert!(
+        dependencies.get("shared").is_none(),
+        "upgrade --bump must not add transitive-only dependencies to mars.toml"
+    );
+    assert_eq!(
+        lock_dependency_version(project.path(), "shared"),
+        Some("v1.1.0".to_string()),
+        "shared remains transitive and locked without becoming a direct mars.toml dependency"
+    );
+}
+
 struct GitPackage {
     repo_path: PathBuf,
     url: String,

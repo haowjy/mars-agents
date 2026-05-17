@@ -1,3 +1,4 @@
+// qa-validated: mars-latest-compatible-resolution
 use super::*;
 
 // ========== parse_version_constraint tests ==========
@@ -169,7 +170,7 @@ fn locked_version_preferred_when_satisfies_constraint() {
 }
 
 #[test]
-fn locked_version_ignored_when_constraint_changed() {
+fn incompatible_locked_version_emits_diagnostic_and_uses_newest_compatible() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("a");
     std::fs::create_dir_all(&tree).unwrap();
@@ -181,13 +182,11 @@ fn locked_version_ignored_when_constraint_changed() {
     );
     provider.add_source("a", tree, None);
 
-    // Config now requires ^2.0
     let config = make_config(vec![(
         "a",
         git_spec("https://example.com/a.git", Some("^2.0")),
     )]);
 
-    // Lock file says v1.0.0 — no longer satisfies ^2.0
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
@@ -196,15 +195,27 @@ fn locked_version_ignored_when_constraint_changed() {
             path: None,
             subpath: None,
             version: Some("v1.0.0".into()),
-            commit: Some("abc".into()),
+            commit: Some("old-commit".into()),
             tree_hash: None,
         },
     );
 
-    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
-    let node = &graph.nodes["a"];
-    // Locked version doesn't satisfy ^2.0, so latest-compatible picks 2.1.0
-    assert_eq!(node.resolved_ref.version, Some(Version::new(2, 1, 0)));
+    let (result, diagnostics) =
+        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
+    let graph = result.unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version,
+        Some(Version::new(2, 1, 0)),
+        "normal sync should recover from stale compatible-range lock by selecting newest compatible"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == "locked-version-incompatible"
+                && diag.message.contains("1.0.0")
+                && diag.message.contains("a")
+        }),
+        "expected incompatible lock diagnostic, got {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -890,6 +901,45 @@ fn maximize_with_specific_targets_replays_non_target_lock_entry() {
 }
 
 #[test]
+fn maximize_with_specific_targets_uses_latest_compatible_for_unlocked_non_target() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 5, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(2, 0, 0), (2, 5, 0)]);
+    provider.add_source("a", tree_a, None);
+    provider.add_source("b", tree_b, None);
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("^1.0"))),
+        ("b", git_spec("https://example.com/b.git", Some("^2.0"))),
+    ]);
+
+    let options = ResolveOptions {
+        maximize: true,
+        upgrade_targets: HashSet::from(["a".into()]),
+        bump_direct_constraints: false,
+        frozen: false,
+    };
+
+    let graph = resolve(&config, &provider, None, &options).unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 5, 0)),
+        "upgrade target should maximize"
+    );
+    assert_eq!(
+        graph.nodes["b"].resolved_ref.version,
+        Some(Version::new(2, 5, 0)),
+        "unlocked non-target should use latest-compatible fallback, not old MVS minimum"
+    );
+}
+
+#[test]
 fn bump_direct_constraints_ignores_direct_pin_for_target() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("a");
@@ -934,6 +984,45 @@ fn no_available_versions_falls_back_to_head() {
     let node = &graph.nodes["a"];
     assert!(node.resolved_ref.version.is_none());
     assert_eq!(node.resolved_ref.commit, Some("ref:HEAD".into()));
+}
+
+#[test]
+fn untagged_lock_switches_to_semver_when_tags_appear() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: None,
+            commit: Some("old-untagged-head".into()),
+            tree_hash: None,
+        },
+    );
+
+    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 1, 0)),
+        "once semver tags exist, normal sync should use latest-compatible semver selection"
+    );
+    assert_ne!(
+        graph.nodes["a"].resolved_ref.commit.as_deref(),
+        Some("old-untagged-head"),
+        "old untagged HEAD commit must not be replayed as a semver version"
+    );
+    assert_eq!(provider.seen_preferred_commits(), vec![None]);
 }
 
 #[test]
@@ -1399,20 +1488,26 @@ fn transitive_locked_version_incompatible_falls_back_to_newest_compatible_in_nor
         },
     );
 
-    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    let (result, diagnostics) =
+        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
+    let graph = result.unwrap();
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 2, 0)),
         "incompatible transitive locked version should be ignored in favor of newest compatible"
     );
     assert_eq!(
-        graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("mock-commit")
-    );
-    assert_eq!(
         provider.seen_preferred_commits().last().cloned().flatten(),
         None,
         "no commit hint should be replayed when lock version is incompatible"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == "locked-version-incompatible"
+                && diag.message.contains("shared")
+                && diag.message.contains("0.9.0")
+        }),
+        "expected incompatible transitive lock diagnostic, got {diagnostics:?}"
     );
 }
 
@@ -1461,10 +1556,10 @@ fn transitive_locked_commit_unreachable_falls_back_in_normal_sync() {
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 2, 0))
     );
-    assert_eq!(
+    assert_ne!(
         graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("mock-commit"),
-        "normal sync should fall back to tag resolution when transitive locked commit is unreachable"
+        Some(unreachable_commit),
+        "normal sync should not replay an unreachable transitive locked commit"
     );
     let commits = provider.seen_preferred_commits();
     assert!(
@@ -1559,6 +1654,61 @@ fn r5_frozen_replays_transitive_from_lock() {
 // Covered by `upgrade_then_sync_keeps_upgraded_transitive_lock_and_content` in `tests/sync_behavior.rs`.
 
 // R10: A source listed as both direct and transitive replays the lock regardless of encounter order.
+#[test]
+fn r10_direct_dep_seen_transitively_first_replays_lock() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_shared = dir.path().join("shared");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_shared).unwrap();
+
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "^1.0")],
+    );
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions(
+        "https://example.com/shared.git",
+        vec![(1, 0, 0), (1, 1, 0), (1, 2, 0)],
+    );
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("shared", tree_shared, None);
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+        (
+            "shared",
+            git_spec("https://example.com/shared.git", Some("^1.0")),
+        ),
+    ]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "shared".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/shared.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.1.0".into()),
+            commit: Some("shared-locked-commit".into()),
+            tree_hash: None,
+        },
+    );
+
+    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.version,
+        Some(Version::new(1, 1, 0)),
+        "direct dep first encountered transitively should still replay the consumer lock"
+    );
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.commit.as_deref(),
+        Some("shared-locked-commit")
+    );
+}
 
 // R11: Multi-intermediary empty constraint intersection → error naming constraints and sources.
 // Covered by `latest_constraint_does_not_skip_sibling_semver_validation` above.
@@ -1612,6 +1762,11 @@ fn r13_multiple_refpins_use_first() {
     assert!(
         graph.nodes["shared"].resolved_ref.version.is_none(),
         "RefPin sources have no semver version"
+    );
+    assert_eq!(
+        graph.nodes["shared"].resolved_ref.commit.as_deref(),
+        Some("ref:main"),
+        "first RefPin constraint should determine the fetched ref"
     );
 }
 

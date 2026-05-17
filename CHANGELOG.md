@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.
+- `mars build launch-bundle` prompt surface now follows Meridian static ordering: harness-aware skill variants, skill-type ordering/principle bookend, canonical report block, populated agent inventory, and model-override harness precedence (`--harness` > CLI model alias harness > profile).
 
 ## [0.4.6] - 2026-05-16
 

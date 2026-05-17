@@ -68,6 +68,9 @@ pub fn build_launch_bundle(
         frontmatter.body(),
         &profile.skills,
         &request.extra_skills,
+        &policy.routing.harness,
+        &policy.routing.model_token,
+        &policy.routing.model,
     );
 
     warnings.extend(prompt.warnings);

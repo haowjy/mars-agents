@@ -63,8 +63,19 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
+    let model_from_cli = input.model_override.is_some();
     let (harness, harness_source) = if let Some(harness) = input.harness_override {
         (harness.to_string(), "cli")
+    } else if model_from_cli {
+        if let Some(harness) = alias_harness {
+            (harness.to_string(), "alias")
+        } else if let Some(harness) = profile_harness {
+            (harness.to_string(), "profile")
+        } else {
+            warnings
+                .push("harness not set by CLI/profile/alias; defaulting to `claude`".to_string());
+            ("claude".to_string(), "default")
+        }
     } else if let Some(harness) = profile_harness {
         (harness.to_string(), "profile")
     } else if let Some(harness) = alias_harness {

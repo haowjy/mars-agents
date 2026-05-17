@@ -219,6 +219,9 @@ pub struct Settings {
     /// New binary + old package without this set → succeeds with defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_mars_version: Option<String>,
+    /// Default harness for launch routing when profile/alias/provider cannot resolve one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_harness: Option<String>,
     /// Controls whether harness-bound agents are emitted to native harness dirs.
     ///
     /// `auto` (the default when unset) emits for standalone mars syncs and
@@ -244,6 +247,7 @@ impl Default for Settings {
             model_visibility: ModelVisibility::default(),
             models_cache_ttl_hours: default_models_cache_ttl_hours(),
             min_mars_version: None,
+            default_harness: None,
             agent_emission: None,
         }
     }
@@ -735,6 +739,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.model_visibility changed during roundtrip ({:?} -> {:?})",
                 original.settings.model_visibility, reparsed.settings.model_visibility
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.default_harness != original.settings.default_harness {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.default_harness changed during roundtrip ({:?} -> {:?})",
+                original.settings.default_harness, reparsed.settings.default_harness
             ),
         }
         .into());
@@ -1979,6 +1992,25 @@ models_cache_ttl_hours = 48
         )
         .unwrap();
         assert!(config.settings.agent_emission.is_none());
+    }
+
+    #[test]
+    fn settings_default_harness_parses_and_roundtrips() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+default_harness = "codex"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.settings.default_harness.as_deref(), Some("codex"));
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let roundtripped: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            roundtripped.settings.default_harness,
+            config.settings.default_harness
+        );
     }
 
     #[test]

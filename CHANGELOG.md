@@ -4,11 +4,33 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `mars build launch-bundle` command. Builds a versioned launch bundle JSON from `.mars/` static state (`agents`, `skills`, `models-merged`) with routing/policy fields, prompt surface, tool metadata, provenance, and `scaffold_slots.* = "###SLOT###"` placeholders for Meridian-owned per-spawn content.
+
 ### Fixed
 - Git test helpers no longer let inherited `GIT_*` repository environment redirect temp-repo commands into the caller checkout. Git subprocesses strip repo-scoped Git env before using explicit temp repo cwd.
+- `mars build launch-bundle` harness routing now follows precedence correctly: `--harness` first; with `--model`, use model alias/provider/config/default (ignore profile harness); without `--model`, use profile/alias/provider/config/default. OpenAI aliases without explicit harness now route to `codex` instead of defaulting to `claude`, including auto-resolve aliases that miss model cache.
+- `mars build launch-bundle` now fails on invalid agent profile diagnostics (invalid field values, unknown harness names, non-overridable override fields) for both selected agent and inventory agents instead of shipping them as bundle warnings.
+- Launch inventory in `mars build launch-bundle` now excludes `model-invocable: false` agents so hidden/internal agents do not leak into model-facing prompt context.
+- `mars build launch-bundle` now resolves execution policy with full harness-override precedence (`CLI > matched harness override > profile > alias/default`) for `effort`, `approval`, `sandbox`, `autocompact`, and `autocompact_pct` instead of ignoring portable fields in `harness-overrides.<target>`.
+- `mars build launch-bundle` prompt surface now uses the resolved harness-effective skill list (including `harness-overrides.<target>.skills` replacement semantics) instead of always using top-level `skills`.
+- Cursor lowering now applies `harness-overrides.cursor` (not `harness-overrides.opencode`), and native lowering now uses effective harness-resolved `mcp-tools` for emission/lossiness checks.
+- Cursor bundle warning/provenance now match contract text exactly and emit `provenance.harness_stability = "experimental"` only for Cursor targets.
+- Native lowering now reports matched `harness-overrides.<target>.native-config` as `meridian-only` lossiness metadata (runtime-owned, not emitted into harness-native agent artifacts).
 
 ### Changed
 - Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.
+- `mars build launch-bundle` prompt surface now follows Meridian static ordering: harness-aware skill variants, skill-type ordering/principle bookend, canonical report block, populated agent inventory, and model-override harness precedence (`--harness` > CLI model alias harness > provider/config/default).
+- Launch inventory lines now include `Fan-out: ...` metadata from fallback `model-policies` (`match.alias` / `match.model`, `no-fallback: false`) with exact-label dedupe. Alias-to-canonical-model dedupe is not yet wired in this slice.
+- `mars build launch-bundle` now accepts `cursor` as a harness target, marks `provenance.harness_stability = "experimental"`, and emits an explicit experimental warning.
+- Agent `harness-overrides.<harness>.native-config` now parses with shape-only validation and flows to launch bundle `execution_policy.native_config` (matching harness only, omitted when empty). Portable-key collisions warn but preserve values.
+- Portable tool policy now supports `tools` map syntax (`allow`/`deny`) with mixed allow+deny preservation, consistent tool-name normalization, and harness-override replacement semantics for `tools`, `disallowed-tools`, and `mcp-tools` in launch bundles.
+- Main-merge auto-release now defaults to RC for ambiguous `release:*` labels. Stable requires explicit `release:patch` or `release:stable`.
+- Auto-release now computes RC versions as `vX.Y.Z-rc.N` from next stable patch base and writes PyPI version as PEP 440 `X.Y.ZrcN`.
+- Publish workflow now marks RC GitHub releases as prerelease and publishes RC npm packages under dist-tag `rc` (stable stays `latest`).
+- Release provenance now validates stable + RC commit subject, Cargo semver tag match, PyPI RC mapping (`vX.Y.Z-rc.N` -> `X.Y.ZrcN`), and npm package metadata version alignment (`version` + `optionalDependencies`).
+- Release provenance now also verifies `CHANGELOG.md` has a semver release heading matching the tag version (`## [X.Y.Z] - ...` or `## [X.Y.Z-rc.N] - ...`).
+- Auto-release tag push now uses `${{ github.token }}` for the `v*` push (while keeping main-branch push behavior) to avoid duplicate `release.yml` runs when checkout used `RELEASE_TOKEN`.
 
 ## [0.4.6] - 2026-05-16
 

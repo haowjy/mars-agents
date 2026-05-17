@@ -10,7 +10,7 @@
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
-use crate::compiler::agents::{AgentProfile, HarnessKind, OverrideFields};
+use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind, OverrideFields};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -47,14 +47,22 @@ pub struct LoweredOutput {
 
 /// Effective field values after merging profile defaults + harness override.
 struct Effective<'a> {
+    harness: &'a HarnessKind,
     profile: &'a AgentProfile,
     over: Option<&'a OverrideFields>,
+    tools: EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: &HarnessKind) -> Self {
+    fn new(profile: &'a AgentProfile, harness: &'a HarnessKind) -> Self {
         let over = profile.harness_overrides.get(harness);
-        Self { profile, over }
+        let tools = profile.effective_tool_policy(harness);
+        Self {
+            harness,
+            profile,
+            over,
+            tools,
+        }
     }
 
     fn effort(&self) -> Option<&crate::compiler::agents::EffortLevel> {
@@ -76,30 +84,29 @@ impl<'a> Effective<'a> {
     }
 
     fn skills(&self) -> &[String] {
-        if let Some(ov) = self.over.and_then(|o| o.skills.as_ref()) {
-            return ov;
-        }
-        &self.profile.skills
+        self.profile.effective_skills(self.harness)
     }
 
     fn tools(&self) -> &[String] {
-        if let Some(ov) = self.over.and_then(|o| o.tools.as_ref()) {
-            return ov;
-        }
-        &self.profile.tools
+        &self.tools.allowed
     }
 
     fn disallowed_tools(&self) -> &[String] {
-        if let Some(ov) = self.over.and_then(|o| o.disallowed_tools.as_ref()) {
-            return ov;
-        }
-        &self.profile.disallowed_tools
+        &self.tools.disallowed
+    }
+
+    fn mcp_tools(&self) -> &[String] {
+        &self.tools.mcp
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
         self.over
             .and_then(|o| o.autocompact_pct)
             .or(self.profile.autocompact_pct)
+    }
+
+    fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.profile.effective_native_config(self.harness)
     }
 }
 
@@ -160,8 +167,8 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
         yaml.insert(yk("disallowed-tools"), seq);
     }
 
-    // mcp-tools — exact (pass through raw from source)
-    let mcp = &profile.mcp_tools;
+    // mcp-tools — exact
+    let mcp = eff.mcp_tools();
     if !mcp.is_empty() {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(mcp.iter().map(|s| yv(s)).collect());
@@ -220,6 +227,13 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
     if !profile.fanout.is_empty() {
         lossy.push(LossyField {
             field: "fanout".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.native_config().is_some() {
+        lossy.push(LossyField {
+            field: "native-config".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -312,7 +326,7 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::Dropped,
         });
     }
-    if !profile.mcp_tools.is_empty() {
+    if !eff.mcp_tools().is_empty() {
         lossy.push(LossyField {
             field: "mcp-tools".into(),
             target: target.into(),
@@ -352,6 +366,13 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     if !profile.fanout.is_empty() {
         lossy.push(LossyField {
             field: "fanout".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.native_config().is_some() {
+        lossy.push(LossyField {
+            field: "native-config".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -405,10 +426,14 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
 /// - Dropped: most policy fields (approval, sandbox, tools, disallowed-tools,
 ///   effort, mcp-tools, autocompact)
 /// - Meridian-only: model-policies, fanout
-pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
-    let eff = Effective::new(profile, &HarnessKind::OpenCode);
+fn lower_to_opencode_like(
+    profile: &AgentProfile,
+    body: &str,
+    harness: HarnessKind,
+    target: &str,
+) -> LoweredOutput {
+    let eff = Effective::new(profile, &harness);
     let mut lossy = Vec::new();
-    let target = "OpenCode";
 
     let mut yaml = serde_yaml::Mapping::new();
     let yk = |s: &str| serde_yaml::Value::String(s.to_string());
@@ -475,7 +500,7 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
             },
         });
     }
-    if !profile.mcp_tools.is_empty() {
+    if !eff.mcp_tools().is_empty() {
         lossy.push(LossyField {
             field: "mcp-tools".into(),
             target: target.into(),
@@ -512,6 +537,13 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::MeridianOnly,
         });
     }
+    if eff.native_config().is_some() {
+        lossy.push(LossyField {
+            field: "native-config".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
 
     // Serialize
     let yaml_str = if yaml.is_empty() {
@@ -534,6 +566,18 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
         bytes: out.into_bytes(),
         lossy_fields: lossy,
     }
+}
+
+pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
+    lower_to_opencode_like(profile, body, HarnessKind::OpenCode, "OpenCode")
+}
+
+/// Lower an agent profile to Cursor-native markdown format.
+///
+/// Cursor is currently experimental. For this slice we reuse OpenCode-style
+/// markdown+frontmatter lowering and relabel diagnostics to Cursor.
+pub fn lower_to_cursor(profile: &AgentProfile, body: &str) -> LoweredOutput {
+    lower_to_opencode_like(profile, body, HarnessKind::Cursor, "Cursor")
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +685,13 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
             classification: Lossiness::MeridianOnly,
         });
     }
+    if eff.native_config().is_some() {
+        lossy.push(LossyField {
+            field: "native-config".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
 
     let yaml_str = if yaml.is_empty() {
         String::new()
@@ -682,6 +733,7 @@ pub fn lower_for_harness(
         HarnessKind::Claude => lower_to_claude(profile, fm, body),
         HarnessKind::Codex => lower_to_codex(profile, body),
         HarnessKind::OpenCode => lower_to_opencode(profile, body),
+        HarnessKind::Cursor => lower_to_cursor(profile, body),
         HarnessKind::Pi => lower_to_pi(profile, body),
     }
 }
@@ -760,6 +812,20 @@ mod tests {
             !text.contains("base-skill"),
             "base skill not overridden: {text}"
         );
+    }
+
+    #[test]
+    fn claude_harness_override_replaces_mcp_tools() {
+        let content = "---\nname: r\nharness: claude\nmcp-tools: [plugin:base]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("mcp-tools"),
+            "mcp-tools should be emitted for claude: {text}"
+        );
+        assert!(text.contains("plugin:claude"), "override missing: {text}");
+        assert!(!text.contains("plugin:base"), "base leaked: {text}");
     }
 
     #[test]
@@ -855,6 +921,42 @@ mod tests {
     }
 
     #[test]
+    fn codex_mcp_lossiness_uses_effective_override() {
+        let content = "---\nname: r\nharness: codex\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        assert!(
+            !out.lossy_fields
+                .iter()
+                .any(|field| field.field == "mcp-tools"),
+            "empty codex override should suppress mcp lossiness: {:?}",
+            out.lossy_fields
+                .iter()
+                .map(|field| field.field.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn codex_native_config_lossiness_uses_matching_override() {
+        let content = "---\nname: r\nharness-overrides:\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body());
+        assert!(
+            out.lossy_fields.iter().any(|field| {
+                field.field == "native-config"
+                    && field.target == "Codex"
+                    && matches!(field.classification, Lossiness::MeridianOnly)
+            }),
+            "native-config should be reported as meridian-only in codex lowering: {:?}",
+            out.lossy_fields
+                .iter()
+                .map(|field| (&field.field, &field.target))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn codex_lowering_multiline_instructions_are_parseable() {
         let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
         let (profile, fm, _) = profile_from(content);
@@ -889,6 +991,52 @@ mod tests {
         assert!(text.contains("mode: primary"), "mode missing");
     }
 
+    #[test]
+    fn cursor_lowering_uses_cursor_override_not_opencode_override() {
+        let content = "---\nname: r\nharness: cursor\ntools: [Read]\nmcp-tools: [plugin:base]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+
+        let opencode = lower_to_opencode(&profile, fm.body());
+        assert!(
+            !opencode
+                .lossy_fields
+                .iter()
+                .any(|field| field.field == "tools"),
+            "opencode override should clear tools lossiness",
+        );
+        assert!(
+            !opencode
+                .lossy_fields
+                .iter()
+                .any(|field| field.field == "mcp-tools"),
+            "opencode override should clear mcp lossiness",
+        );
+
+        let cursor = lower_to_cursor(&profile, fm.body());
+        assert!(
+            cursor
+                .lossy_fields
+                .iter()
+                .any(|field| field.field == "tools"),
+            "cursor override should keep tools lossiness",
+        );
+        assert!(
+            cursor
+                .lossy_fields
+                .iter()
+                .any(|field| field.field == "mcp-tools"),
+            "cursor override should keep mcp lossiness",
+        );
+        assert!(
+            cursor.lossy_fields.iter().any(|field| {
+                field.field == "native-config"
+                    && field.target == "Cursor"
+                    && matches!(field.classification, Lossiness::MeridianOnly)
+            }),
+            "cursor native-config should be reported as meridian-only",
+        );
+    }
+
     // --- 3.3: Pi lowering ---
 
     #[test]
@@ -921,6 +1069,15 @@ mod tests {
         assert!(
             !text2.contains("[agent]"),
             "legacy nested agent table emitted"
+        );
+
+        let content3 = "---\nname: cursor-agent\nmodel: gpt55\nharness: cursor\n---\n# body";
+        let (profile3, fm3, _) = profile_from(content3);
+        let out3 = lower_for_harness(&HarnessKind::Cursor, &profile3, &fm3, fm3.body());
+        let text3 = String::from_utf8(out3.bytes).unwrap();
+        assert!(
+            text3.contains("name: cursor-agent"),
+            "cursor lowering missing name"
         );
     }
 }

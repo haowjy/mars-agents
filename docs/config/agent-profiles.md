@@ -123,10 +123,12 @@ model: claude-opus-4-6  # concrete ID
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `claude`, `codex`, `opencode`, `pi` |
+| Allowed values | `claude`, `codex`, `opencode`, `cursor` (experimental), `pi` |
 | Default | none (universal agent) |
 
 Execution target. When set, mars compiles a harness-native artifact in addition to the canonical `.mars/` artifact. Universal agents (no `harness:`) are installed to `.mars/agents/` only and launched by Meridian against any harness.
+
+`cursor` is experimental: supported, but contract details may change.
 
 ```yaml
 harness: claude
@@ -276,7 +278,7 @@ skills: [dev-principles, shared-workspace]
 
 | | |
 |---|---|
-| Type | string[] |
+| Type | string[] or mapping (`tool-name: allow|deny`) |
 | Required | no |
 | Default | empty (harness default tool set) |
 
@@ -285,6 +287,11 @@ Tool allowlist. Only these tools are available to the agent. Supports scoped pat
 ```yaml
 tools: [Bash, Write, Edit]
 tools: [Bash(git status), Write, Read]   # scoped pattern
+tools:
+  bash: allow
+  "bash(meridian spawn *)": allow
+  agent: deny
+  edit: deny
 ```
 
 ---
@@ -326,7 +333,7 @@ mcp-tools: [context7, memory-bank]
 
 Per-harness override table. Overrides top-level field values when a specific harness compiles the agent. Only the fields relevant to the target harness are applied; the rest are ignored.
 
-**Overridable fields:** `effort`, `autocompact`, `autocompact_pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`
+**Overridable fields:** `effort`, `autocompact`, `autocompact_pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`, `native-config`
 
 **Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `harness-overrides`
 
@@ -338,11 +345,15 @@ harness-overrides:
   codex:
     effort: high
     sandbox: workspace-write
+    native-config:
+      sandbox_workspace_write.network_access: true
 ```
 
 Override semantics are **replace**: if a field is set in the override block, it fully replaces the top-level value. If it's absent from the override block, the top-level value is used.
 
 At compile time, the matching override block is merged into the lowered artifact. At runtime, Meridian applies the full override table when launching the agent.
+
+`native-config` is shape-validated only (mapping with string keys and non-null serializable values). Mars preserves entries as target-harness native passthrough and does not interpret key semantics.
 
 ---
 

@@ -43,12 +43,19 @@ pub enum HarnessKind {
     Claude,
     Codex,
     OpenCode,
+    Cursor,
     Pi,
 }
 
 impl HarnessKind {
     pub fn all() -> &'static [Self] {
-        &[Self::Claude, Self::Codex, Self::OpenCode, Self::Pi]
+        &[
+            Self::Claude,
+            Self::Codex,
+            Self::OpenCode,
+            Self::Cursor,
+            Self::Pi,
+        ]
     }
 
     /// Parse from a frontmatter string value.
@@ -57,6 +64,7 @@ impl HarnessKind {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::OpenCode),
+            "cursor" => Some(Self::Cursor),
             "pi" => Some(Self::Pi),
             _ => None,
         }
@@ -68,6 +76,7 @@ impl HarnessKind {
             Self::Claude => ".claude",
             Self::Codex => ".codex",
             Self::OpenCode => ".opencode",
+            Self::Cursor => ".cursor",
             Self::Pi => ".pi",
         }
     }
@@ -177,8 +186,10 @@ pub struct OverrideFields {
     pub sandbox: Option<SandboxMode>,
     pub skills: Option<Vec<String>>,
     pub tools: Option<Vec<String>>,
+    pub tools_denied: Option<Vec<String>>,
     pub disallowed_tools: Option<Vec<String>>,
     pub mcp_tools: Option<Vec<String>>,
+    pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Per-harness override table (`harness-overrides:`).
@@ -187,6 +198,7 @@ pub struct HarnessOverrides {
     pub claude: Option<OverrideFields>,
     pub codex: Option<OverrideFields>,
     pub opencode: Option<OverrideFields>,
+    pub cursor: Option<OverrideFields>,
     pub pi: Option<OverrideFields>,
 }
 
@@ -196,6 +208,7 @@ impl HarnessOverrides {
             HarnessKind::Claude => self.claude.as_ref(),
             HarnessKind::Codex => self.codex.as_ref(),
             HarnessKind::OpenCode => self.opencode.as_ref(),
+            HarnessKind::Cursor => self.cursor.as_ref(),
             HarnessKind::Pi => self.pi.as_ref(),
         }
     }
@@ -253,6 +266,7 @@ pub struct AgentProfile {
 
     // --- Runtime policy fields ---
     pub mode: Option<AgentMode>,
+    pub model_invocable: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
@@ -262,6 +276,7 @@ pub struct AgentProfile {
     // --- Tool fields ---
     pub skills: Vec<String>,
     pub tools: Vec<String>,
+    pub tools_denied: Vec<String>,
     pub disallowed_tools: Vec<String>,
     pub mcp_tools: Vec<String>,
 
@@ -269,6 +284,60 @@ pub struct AgentProfile {
     pub harness_overrides: HarnessOverrides,
     pub model_policies: Vec<ModelPolicyEntry>,
     pub fanout: Vec<FanoutEntry>,
+}
+
+/// Portable tool policy after applying harness override replacement semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveToolPolicy {
+    pub allowed: Vec<String>,
+    pub disallowed: Vec<String>,
+    pub mcp: Vec<String>,
+}
+
+impl AgentProfile {
+    pub fn effective_skills(&self, harness: &HarnessKind) -> &[String] {
+        self.harness_overrides
+            .get(harness)
+            .and_then(|entry| entry.skills.as_ref())
+            .unwrap_or(&self.skills)
+    }
+
+    pub fn effective_native_config(
+        &self,
+        harness: &HarnessKind,
+    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.harness_overrides
+            .get(harness)
+            .and_then(|entry| entry.native_config.as_ref())
+            .filter(|map| !map.is_empty())
+    }
+
+    pub fn effective_tool_policy(&self, harness: &HarnessKind) -> EffectiveToolPolicy {
+        let overrides = self.harness_overrides.get(harness);
+        let allowed = overrides
+            .and_then(|entry| entry.tools.clone())
+            .unwrap_or_else(|| self.tools.clone());
+        let tools_denied = overrides
+            .and_then(|entry| entry.tools_denied.clone())
+            .unwrap_or_else(|| self.tools_denied.clone());
+        let explicit_disallowed = overrides
+            .and_then(|entry| entry.disallowed_tools.clone())
+            .unwrap_or_else(|| self.disallowed_tools.clone());
+        let mcp = overrides
+            .and_then(|entry| entry.mcp_tools.clone())
+            .unwrap_or_else(|| self.mcp_tools.clone());
+
+        EffectiveToolPolicy {
+            allowed: dedupe_ordered(allowed),
+            disallowed: dedupe_ordered(
+                tools_denied
+                    .into_iter()
+                    .chain(explicit_disallowed)
+                    .collect(),
+            ),
+            mcp: dedupe_ordered(mcp),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,11 +359,18 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Non-overridable field appears inside an override block.
     NonOverridableFieldInOverride { field: String, table: String },
+    /// `native-config` key collides with a known portable policy field name.
+    NativeConfigPortableKeyCollision { key: String, table: String },
 }
 
 impl AgentDiagnostic {
     pub fn is_error(&self) -> bool {
-        matches!(self, AgentDiagnostic::InvalidFieldValue { .. })
+        matches!(
+            self,
+            AgentDiagnostic::InvalidFieldValue { .. }
+                | AgentDiagnostic::UnknownHarness { .. }
+                | AgentDiagnostic::NonOverridableFieldInOverride { .. }
+        )
     }
 
     pub fn message(&self) -> String {
@@ -310,11 +386,14 @@ impl AgentDiagnostic {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
             }
             AgentDiagnostic::UnknownHarness { value } => {
-                format!("unknown harness `{value}`; known: claude, codex, opencode, pi")
+                format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi")
             }
             AgentDiagnostic::NonOverridableFieldInOverride { field, table } => {
                 format!("field `{field}` is not overridable; remove from `{table}`")
             }
+            AgentDiagnostic::NativeConfigPortableKeyCollision { key, table } => format!(
+                "native-config key `{key}` in `{table}` collides with a portable field name; preserving as native-config"
+            ),
         }
     }
 }
@@ -329,6 +408,7 @@ const NON_OVERRIDABLE: &[&str] = &[
     "model",
     "harness",
     "mode",
+    "model-invocable",
     "model-overrides",
     "harness-overrides",
 ];
@@ -347,6 +427,242 @@ fn yaml_str_list(val: &Value) -> Vec<String> {
         Value::String(s) => vec![s.clone()],
         _ => vec![],
     }
+}
+
+fn normalize_tool_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let (head, tail) = match trimmed.find('(') {
+        Some(index) => (&trimmed[..index], &trimmed[index..]),
+        None => (trimmed, ""),
+    };
+    let canonical = match head {
+        value if value.eq_ignore_ascii_case("bash") => "Bash",
+        value if value.eq_ignore_ascii_case("read") => "Read",
+        value if value.eq_ignore_ascii_case("write") => "Write",
+        value if value.eq_ignore_ascii_case("edit") => "Edit",
+        value if value.eq_ignore_ascii_case("agent") => "Agent",
+        _ => head,
+    };
+    format!("{canonical}{tail}")
+}
+
+fn dedupe_ordered(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_string();
+        if seen.insert(key.clone()) {
+            out.push(key);
+        }
+    }
+    out
+}
+
+fn yaml_tool_list(val: &Value) -> Vec<String> {
+    dedupe_ordered(
+        yaml_str_list(val)
+            .into_iter()
+            .map(|tool| normalize_tool_name(&tool))
+            .collect(),
+    )
+}
+
+#[derive(Default)]
+struct ParsedToolsField {
+    allowed: Vec<String>,
+    denied: Vec<String>,
+}
+
+fn parse_tools_field(
+    field: &str,
+    val: &Value,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> ParsedToolsField {
+    match val {
+        Value::Mapping(mapping) => {
+            let mut allowed = Vec::new();
+            let mut denied = Vec::new();
+            for (key, value) in mapping {
+                let Some(tool_name) = key.as_str() else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: field.to_string(),
+                        value: format!("{key:?}"),
+                        allowed: "string tool keys",
+                    });
+                    continue;
+                };
+
+                let Some(policy) = value.as_str() else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: format!("{field}.{tool_name}"),
+                        value: format!("{value:?}"),
+                        allowed: "allow or deny",
+                    });
+                    continue;
+                };
+
+                let normalized_tool = normalize_tool_name(tool_name);
+                if policy.eq_ignore_ascii_case("allow") {
+                    allowed.push(normalized_tool);
+                } else if policy.eq_ignore_ascii_case("deny") {
+                    denied.push(normalized_tool);
+                } else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: format!("{field}.{tool_name}"),
+                        value: policy.to_string(),
+                        allowed: "allow or deny",
+                    });
+                }
+            }
+            ParsedToolsField {
+                allowed: dedupe_ordered(allowed),
+                denied: dedupe_ordered(denied),
+            }
+        }
+        _ => ParsedToolsField {
+            allowed: yaml_tool_list(val),
+            denied: vec![],
+        },
+    }
+}
+
+fn parse_native_config_value(
+    field: &str,
+    value: &Value,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<serde_json::Value> {
+    match value {
+        Value::Null => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: "null".to_string(),
+                allowed: "non-null scalar, array, or map value",
+            });
+            None
+        }
+        Value::Bool(v) => Some(serde_json::Value::Bool(*v)),
+        Value::String(v) => Some(serde_json::Value::String(v.clone())),
+        Value::Number(v) => {
+            if let Some(number) = v.as_i64().map(serde_json::Number::from) {
+                Some(serde_json::Value::Number(number))
+            } else if let Some(number) = v.as_u64().map(serde_json::Number::from) {
+                Some(serde_json::Value::Number(number))
+            } else if let Some(float) = v.as_f64() {
+                match serde_json::Number::from_f64(float) {
+                    Some(number) => Some(serde_json::Value::Number(number)),
+                    None => {
+                        diags.push(AgentDiagnostic::InvalidFieldValue {
+                            field: field.to_string(),
+                            value: float.to_string(),
+                            allowed: "finite JSON number",
+                        });
+                        None
+                    }
+                }
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: format!("{value:?}"),
+                    allowed: "JSON number",
+                });
+                None
+            }
+        }
+        Value::Sequence(seq) => {
+            let mut out = Vec::with_capacity(seq.len());
+            for (index, entry) in seq.iter().enumerate() {
+                let child_field = format!("{field}[{index}]");
+                let parsed = parse_native_config_value(&child_field, entry, diags)?;
+                out.push(parsed);
+            }
+            Some(serde_json::Value::Array(out))
+        }
+        Value::Mapping(mapping) => {
+            let mut out = serde_json::Map::new();
+            for (key, entry) in mapping {
+                let Some(key_text) = key.as_str() else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: field.to_string(),
+                        value: format!("{key:?}"),
+                        allowed: "string keys",
+                    });
+                    return None;
+                };
+                let child_field = format!("{field}.{key_text}");
+                let parsed = parse_native_config_value(&child_field, entry, diags)?;
+                out.insert(key_text.to_string(), parsed);
+            }
+            Some(serde_json::Value::Object(out))
+        }
+        _ => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: format!("{value:?}"),
+                allowed: "YAML/TOML/JSON-serializable value",
+            });
+            None
+        }
+    }
+}
+
+fn parse_native_config_map(
+    field: &str,
+    val: &Value,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    const PORTABLE_FIELD_NAMES: &[&str] = &[
+        "sandbox",
+        "approval",
+        "effort",
+        "autocompact",
+        "autocompact_pct",
+        "skills",
+        "tools",
+        "disallowed-tools",
+        "mcp-tools",
+    ];
+
+    let Some(mapping) = val.as_mapping() else {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: format!("{val:?}"),
+            allowed: "mapping with string keys and non-null serializable values",
+        });
+        return None;
+    };
+
+    let mut out = serde_json::Map::new();
+    for (key, value) in mapping {
+        let Some(key_text) = key.as_str() else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: format!("{key:?}"),
+                allowed: "string keys",
+            });
+            return None;
+        };
+
+        if PORTABLE_FIELD_NAMES.contains(&key_text) {
+            diags.push(AgentDiagnostic::NativeConfigPortableKeyCollision {
+                key: key_text.to_string(),
+                table: field.to_string(),
+            });
+        }
+
+        let value_field = format!("{field}.{key_text}");
+        let parsed = parse_native_config_value(&value_field, value, diags)?;
+        out.insert(key_text.to_string(), parsed);
+    }
+
+    Some(out)
 }
 
 fn parse_override_fields(
@@ -451,13 +767,19 @@ fn parse_override_fields(
                 out.skills = Some(yaml_str_list(v));
             }
             "tools" => {
-                out.tools = Some(yaml_str_list(v));
+                let parsed = parse_tools_field(&format!("{table_name}.tools"), v, diags);
+                out.tools = Some(parsed.allowed);
+                out.tools_denied = Some(parsed.denied);
             }
             "disallowed-tools" => {
-                out.disallowed_tools = Some(yaml_str_list(v));
+                out.disallowed_tools = Some(yaml_tool_list(v));
             }
             "mcp-tools" => {
                 out.mcp_tools = Some(yaml_str_list(v));
+            }
+            "native-config" => {
+                out.native_config =
+                    parse_native_config_map(&format!("{table_name}.native-config"), v, diags);
             }
             _ => {
                 // Unknown override field — tolerate (forward compat).
@@ -489,6 +811,7 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
             "claude" => out.claude = Some(fields),
             "codex" => out.codex = Some(fields),
             "opencode" => out.opencode = Some(fields),
+            "cursor" => out.cursor = Some(fields),
             "pi" => out.pi = Some(fields),
             other => {
                 diags.push(AgentDiagnostic::UnknownHarness {
@@ -698,6 +1021,20 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         });
 
+    // model-invocable:
+    let model_invocable = match fm.get("model-invocable") {
+        None => true,
+        Some(Value::Bool(value)) => *value,
+        Some(value) => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "model-invocable".to_string(),
+                value: format!("{value:?}"),
+                allowed: "boolean",
+            });
+            true
+        }
+    };
+
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
         if let Some(a) = ApprovalMode::from_str(s) {
@@ -795,10 +1132,15 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // skills/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills();
-    let tools = fm.get("tools").map(yaml_str_list).unwrap_or_default();
+    let parsed_tools = fm
+        .get("tools")
+        .map(|value| parse_tools_field("tools", value, diags))
+        .unwrap_or_default();
+    let tools = parsed_tools.allowed;
+    let tools_denied = parsed_tools.denied;
     let disallowed_tools = fm
         .get("disallowed-tools")
-        .map(yaml_str_list)
+        .map(yaml_tool_list)
         .unwrap_or_default();
     let mcp_tools = fm.get("mcp-tools").map(yaml_str_list).unwrap_or_default();
 
@@ -828,6 +1170,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         harness,
         model,
         mode,
+        model_invocable,
         approval,
         sandbox,
         effort,
@@ -835,6 +1178,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         autocompact_pct,
         skills,
         tools,
+        tools_denied,
         disallowed_tools,
         mcp_tools,
         harness_overrides,
@@ -856,309 +1200,4 @@ pub fn parse_agent_content(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::frontmatter::Frontmatter;
-
-    fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
-        let fm = Frontmatter::parse(content).unwrap();
-        let mut diags = Vec::new();
-        let profile = parse_agent_profile(&fm, &mut diags);
-        (profile, diags)
-    }
-
-    // --- 3.1: Basic field parsing ---
-
-    #[test]
-    fn parses_name_and_description() {
-        let (p, diags) = parse("---\nname: coder\ndescription: Code agent\n---\n# Body");
-        assert!(diags.is_empty());
-        assert_eq!(p.name.as_deref(), Some("coder"));
-        assert_eq!(p.description.as_deref(), Some("Code agent"));
-    }
-
-    #[test]
-    fn parses_mode_primary() {
-        let (p, diags) = parse("---\nmode: primary\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.mode, Some(AgentMode::Primary));
-    }
-
-    #[test]
-    fn parses_mode_subagent() {
-        let (p, diags) = parse("---\nmode: subagent\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.mode, Some(AgentMode::Subagent));
-    }
-
-    #[test]
-    fn invalid_mode_produces_diagnostic() {
-        let (p, diags) = parse("---\nmode: invalid\n---\n");
-        assert_eq!(p.mode, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "mode")
-        );
-    }
-
-    #[test]
-    fn parses_harness_claude() {
-        let (p, diags) = parse("---\nharness: claude\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::Claude));
-    }
-
-    #[test]
-    fn parses_harness_codex() {
-        let (p, diags) = parse("---\nharness: codex\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::Codex));
-    }
-
-    #[test]
-    fn parses_harness_opencode() {
-        let (p, diags) = parse("---\nharness: opencode\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.harness, Some(HarnessKind::OpenCode));
-    }
-
-    #[test]
-    fn unknown_harness_produces_diagnostic() {
-        let (p, diags) = parse("---\nharness: unknown\n---\n");
-        assert_eq!(p.harness, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::UnknownHarness { value } if value == "unknown")
-        );
-    }
-
-    #[test]
-    fn parses_effort_all_values() {
-        for (s, expected) in [
-            ("low", EffortLevel::Low),
-            ("medium", EffortLevel::Medium),
-            ("high", EffortLevel::High),
-            ("xhigh", EffortLevel::XHigh),
-        ] {
-            let content = format!("---\neffort: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(
-                diags.is_empty(),
-                "unexpected diags for effort={s}: {diags:?}"
-            );
-            assert_eq!(p.effort, Some(expected));
-        }
-    }
-
-    #[test]
-    fn parses_approval_all_values() {
-        for s in ["default", "auto", "confirm", "yolo"] {
-            let content = format!("---\napproval: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(diags.is_empty(), "unexpected diags for approval={s}");
-            assert!(p.approval.is_some());
-        }
-    }
-
-    #[test]
-    fn parses_sandbox_all_values() {
-        for s in [
-            "default",
-            "read-only",
-            "workspace-write",
-            "danger-full-access",
-        ] {
-            let content = format!("---\nsandbox: {s}\n---\n");
-            let (p, diags) = parse(&content);
-            assert!(diags.is_empty(), "unexpected diags for sandbox={s}");
-            assert!(p.sandbox.is_some());
-        }
-    }
-
-    #[test]
-    fn parses_autocompact() {
-        let (p, diags) = parse("---\nautocompact: 50\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.autocompact, Some(50));
-    }
-
-    #[test]
-    fn parses_autocompact_pct() {
-        let (p, diags) = parse("---\nautocompact_pct: 80\n---\n");
-        assert!(diags.is_empty());
-        assert_eq!(p.autocompact_pct, Some(80));
-    }
-
-    #[test]
-    fn autocompact_pct_out_of_range() {
-        let (p, diags) = parse("---\nautocompact_pct: 101\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_zero_out_of_range() {
-        let (p, diags) = parse("---\nautocompact_pct: 0\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_in_override() {
-        let content = "---\nharness-overrides:\n  claude:\n    autocompact_pct: 75\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        let claude = p.harness_overrides.claude.as_ref().unwrap();
-        assert_eq!(claude.autocompact_pct, Some(75));
-    }
-
-    #[test]
-    fn autocompact_string_produces_diagnostic() {
-        let (p, diags) = parse("---\nautocompact: \"50\"\n---\n");
-        assert_eq!(p.autocompact, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact")
-        );
-    }
-
-    #[test]
-    fn autocompact_pct_string_produces_diagnostic() {
-        let (p, diags) = parse("---\nautocompact_pct: \"80\"\n---\n");
-        assert_eq!(p.autocompact_pct, None);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-        );
-    }
-
-    #[test]
-    fn parses_skills_tools_disallowed_mcp() {
-        let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write]\ndisallowed-tools: [Agent]\nmcp-tools: [server]\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.skills, vec!["review", "dev-principles"]);
-        assert_eq!(p.tools, vec!["Bash", "Write"]);
-        assert_eq!(p.disallowed_tools, vec!["Agent"]);
-        assert_eq!(p.mcp_tools, vec!["server"]);
-    }
-
-    // --- 3.1: model-policies ---
-
-    #[test]
-    fn model_policies_are_parsed_as_raw_entries() {
-        let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n    override:\n      harness: codex\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.model_policies.len(), 1);
-        assert_eq!(p.model_policies[0].match_type, ModelPolicyMatchType::Model);
-        assert_eq!(p.model_policies[0].match_value, "gpt-5.5");
-        assert!(p.model_policies[0].overrides.contains_key("harness"));
-    }
-
-    #[test]
-    fn model_policy_empty_override_is_valid_for_fallback_candidate() {
-        let content =
-            "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    override: {}\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.model_policies.len(), 1);
-        assert!(p.model_policies[0].overrides.is_empty());
-    }
-
-    #[test]
-    fn model_policy_empty_override_is_valid_for_no_fallback_rule() {
-        let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    no-fallback: true\n    override: {}\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.model_policies.len(), 1);
-        assert!(p.model_policies[0].no_fallback);
-        assert!(p.model_policies[0].overrides.is_empty());
-    }
-
-    #[test]
-    fn model_policy_missing_override_is_valid() {
-        let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.model_policies.len(), 1);
-        assert!(p.model_policies[0].overrides.is_empty());
-    }
-
-    #[test]
-    fn malformed_model_policy_produces_diagnostic() {
-        let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n      alias: gpt55\n    override:\n      harness: codex\n---\n";
-        let (p, diags) = parse(content);
-        assert!(p.model_policies.is_empty());
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-policies[1].match")
-        );
-    }
-
-    // --- 3.1: fanout ---
-
-    #[test]
-    fn fanout_entries_are_parsed_as_raw() {
-        let content = "---\nfanout:\n  - alias: opus\n  - model: gpt-5.5\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        assert_eq!(p.fanout.len(), 2);
-    }
-
-    // --- 3.1: harness-overrides ---
-
-    #[test]
-    fn harness_overrides_parsed_for_claude_and_codex() {
-        let content = "---\nharness-overrides:\n  claude:\n    approval: auto\n  codex:\n    sandbox: workspace-write\n    effort: high\n---\n";
-        let (p, diags) = parse(content);
-        assert!(diags.is_empty());
-        let claude = p.harness_overrides.claude.as_ref().unwrap();
-        assert_eq!(claude.approval, Some(ApprovalMode::Auto));
-        let codex = p.harness_overrides.codex.as_ref().unwrap();
-        assert_eq!(codex.sandbox, Some(SandboxMode::WorkspaceWrite));
-        assert_eq!(codex.effort, Some(EffortLevel::High));
-    }
-
-    #[test]
-    fn harness_override_with_non_overridable_field_produces_diagnostic() {
-        let content = "---\nharness-overrides:\n  claude:\n    name: bad\n---\n";
-        let (_p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(
-            matches!(&diags[0], AgentDiagnostic::NonOverridableFieldInOverride { field, .. } if field == "name")
-        );
-    }
-
-    // --- 3.1: legacy models field ---
-
-    #[test]
-    fn legacy_models_field_produces_deprecation_warning() {
-        let content = "---\nmodels:\n  opus:\n    effort: high\n---\n";
-        let (_p, diags) = parse(content);
-        assert_eq!(diags.len(), 1);
-        assert!(matches!(&diags[0], AgentDiagnostic::LegacyModelsField));
-    }
-
-    // --- Empty agent ---
-
-    #[test]
-    fn empty_agent_has_no_diagnostics() {
-        let (p, diags) = parse("# Minimal agent\nno frontmatter");
-        assert!(diags.is_empty());
-        assert!(p.name.is_none());
-        assert!(p.harness.is_none());
-    }
-
-    #[test]
-    fn agent_without_harness_is_universal() {
-        let (p, _) = parse("---\nname: planner\nmodel: gpt55\n---\n# Planner");
-        assert!(p.harness.is_none());
-    }
-}
+mod tests;

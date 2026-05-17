@@ -59,7 +59,19 @@ fn npm_launcher_routes_windows_to_exe_package() {
 }
 
 #[test]
-fn release_workflow_builds_and_publishes_windows_artifacts() {
+fn ci_workflow_runs_windows_build_test_clippy_and_fmt() {
+    let workflow = read(".github/workflows/ci.yml");
+
+    assert!(workflow.contains("check-windows:"));
+    assert!(workflow.contains("runs-on: windows-latest"));
+    assert!(workflow.contains("cargo build"));
+    assert!(workflow.contains("cargo test"));
+    assert!(workflow.contains("cargo clippy -- -D warnings"));
+    assert!(workflow.contains("cargo fmt --check"));
+}
+
+#[test]
+fn release_workflow_windows_artifact_contract() {
     let workflow = read(".github/workflows/release.yml");
 
     assert!(workflow.contains("x86_64-pc-windows-msvc"));
@@ -75,13 +87,55 @@ fn release_workflow_builds_and_publishes_windows_artifacts() {
 }
 
 #[test]
-fn ci_workflow_runs_windows_build_test_clippy_and_fmt() {
-    let workflow = read(".github/workflows/ci.yml");
+fn release_on_main_has_rc_default_label_contract() {
+    let workflow = read(".github/workflows/release-on-main.yml");
 
-    assert!(workflow.contains("check-windows:"));
-    assert!(workflow.contains("runs-on: windows-latest"));
-    assert!(workflow.contains("cargo build"));
-    assert!(workflow.contains("cargo test"));
-    assert!(workflow.contains("cargo clippy -- -D warnings"));
-    assert!(workflow.contains("cargo fmt --check"));
+    assert!(workflow.contains("release:skip"));
+    assert!(workflow.contains("release:(skip|patch|stable|rc)"));
+    assert!(workflow.contains("release_kind=\"rc\""));
+    assert!(workflow.contains("release_kind=\"stable\""));
+    assert!(workflow.contains("echo \"release_kind=${release_kind}\" >> \"$GITHUB_OUTPUT\""));
+}
+
+#[test]
+fn release_on_main_computes_stable_and_rc_versions() {
+    let workflow = read(".github/workflows/release-on-main.yml");
+
+    assert!(workflow.contains("if [[ \"${RELEASE_KIND}\" == \"stable\" ]]; then"));
+    assert!(workflow.contains("next_version=\"${next_patch}-rc.${next_rc}\""));
+    assert!(workflow.contains("python_version=\"${next_patch}rc${next_rc}\""));
+    assert!(workflow.contains("done < <(git tag --list \"v${next_patch}-rc.*\")"));
+    assert!(workflow.contains("git tag --list 'v*' --sort=-version:refname"));
+}
+
+#[test]
+fn release_workflow_accepts_stable_and_rc_provenance() {
+    let workflow = read(".github/workflows/release.yml");
+
+    assert!(workflow.contains("X.Y.Z or RC X.Y.Z-rc.N"));
+    assert!(workflow.contains("PYPI_VERSION=\"${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}\""));
+    assert!(workflow.contains("PYPI_VERSION=\"$TAG_VERSION\""));
+    assert!(workflow.contains("Expected pyproject.toml version $PYPI_VERSION"));
+    assert!(workflow.contains("CHANGELOG.md missing release section for ${TAG_VERSION}"));
+    assert!(workflow.contains("if [[ \"$COMMIT_MSG\" != \"release: v$TAG_VERSION\" ]]; then"));
+}
+
+#[test]
+fn release_workflow_marks_rc_prerelease_and_uses_npm_dist_tags() {
+    let workflow = read(".github/workflows/release.yml");
+
+    assert!(workflow.contains("prerelease: ${{ steps.release_meta.outputs.prerelease }}"));
+    assert!(workflow.contains("echo \"prerelease=true\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("echo \"npm_dist_tag=rc\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("echo \"npm_dist_tag=latest\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("npm publish --provenance --access public --tag \"$NPM_DIST_TAG\""));
+}
+
+#[test]
+fn release_workflow_pypi_publish_uses_trusted_publisher_with_required_inputs() {
+    let workflow = read(".github/workflows/release.yml");
+
+    assert!(workflow.contains("needs: [pypi-wheels, pypi-sdist, verify-provenance]"));
+    assert!(workflow.contains("uses: pypa/gh-action-pypi-publish@release/v1"));
+    assert!(workflow.contains("packages-dir: dist"));
 }

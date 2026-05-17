@@ -267,12 +267,65 @@ jobs:
           TAG_PUSH_TOKEN: ${{ github.token }}
         run: |
           git fetch --tags --force
+          release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
 
           push_tag_with_retry() {
             local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            resolve_remote_tag_commit() {
+              local resolve_tag_ref="$1"
+              local resolve_remote_url="$2"
+              local remote_refs
+              local peeled_commit
+              local ref_commit
+
+              if ! remote_refs="$(git ls-remote --tags "${resolve_remote_url}" "refs/tags/${resolve_tag_ref}" "refs/tags/${resolve_tag_ref}^{}")"; then
+                echo "::warning::Failed to query remote tag ${resolve_tag_ref}; will retry push."
+                return 2
+              fi
+
+              peeled_commit="$(awk '$2 ~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${peeled_commit}" ]]; then
+                echo "${peeled_commit}"
+                return 0
+              fi
+
+              ref_commit="$(awk '$2 !~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${ref_commit}" ]]; then
+                echo "${ref_commit}"
+                return 0
+              fi
+
+              return 1
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
             for attempt in 1 2 3; do
               if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
                 return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
               fi
 
               if [[ "${attempt}" -eq 3 ]]; then
@@ -282,6 +335,23 @@ jobs:
 
               echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
               git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              local remote_tag_commit=""
+              local remote_status=0
+              remote_tag_commit="$(resolve_remote_tag_commit "${tag_ref}" "${release_remote_url}")" && remote_status=0 || remote_status=$?
+              if [[ "${remote_status}" -eq 0 ]]; then
+                if [[ "${remote_tag_commit}" == "${expected_commit}" ]]; then
+                  echo "::notice::Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                  return 0
+                fi
+                echo "::error::Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+                return 1
+              fi
+              if [[ "${remote_status}" -eq 1 ]]; then
+                echo "::notice::Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+              fi
               sleep $((attempt * 2))
             done
           }
@@ -297,7 +367,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "${MISSING_TAG}" "${MISSING_TAG_COMMIT}" -m "Release ${MISSING_TAG#v}"
-            push_tag_with_retry "${MISSING_TAG}"
+            push_tag_with_retry "${MISSING_TAG}" "${MISSING_TAG_COMMIT}"
             echo "::notice::Created missing tag ${MISSING_TAG} for existing release commit ${MISSING_TAG_COMMIT}."
           fi
 
@@ -449,12 +519,65 @@ jobs:
           TAG_PUSH_TOKEN: ${{ github.token }}
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
+          release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
 
           push_tag_with_retry() {
             local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            resolve_remote_tag_commit() {
+              local resolve_tag_ref="$1"
+              local resolve_remote_url="$2"
+              local remote_refs
+              local peeled_commit
+              local ref_commit
+
+              if ! remote_refs="$(git ls-remote --tags "${resolve_remote_url}" "refs/tags/${resolve_tag_ref}" "refs/tags/${resolve_tag_ref}^{}")"; then
+                echo "::warning::Failed to query remote tag ${resolve_tag_ref}; will retry push."
+                return 2
+              fi
+
+              peeled_commit="$(awk '$2 ~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${peeled_commit}" ]]; then
+                echo "${peeled_commit}"
+                return 0
+              fi
+
+              ref_commit="$(awk '$2 !~ /\^\{\}$/ { print $1; exit }' <<<"${remote_refs}")"
+              if [[ -n "${ref_commit}" ]]; then
+                echo "${ref_commit}"
+                return 0
+              fi
+
+              return 1
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
             for attempt in 1 2 3; do
               if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
                 return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
               fi
 
               if [[ "${attempt}" -eq 3 ]]; then
@@ -464,6 +587,23 @@ jobs:
 
               echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
               git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              local remote_tag_commit=""
+              local remote_status=0
+              remote_tag_commit="$(resolve_remote_tag_commit "${tag_ref}" "${release_remote_url}")" && remote_status=0 || remote_status=$?
+              if [[ "${remote_status}" -eq 0 ]]; then
+                if [[ "${remote_tag_commit}" == "${expected_commit}" ]]; then
+                  echo "::notice::Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                  return 0
+                fi
+                echo "::error::Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+                return 1
+              fi
+              if [[ "${remote_status}" -eq 1 ]]; then
+                echo "::notice::Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+              fi
               sleep $((attempt * 2))
             done
           }
@@ -499,7 +639,7 @@ jobs:
             git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi
 
-          push_tag_with_retry "v${NEXT_VERSION}"
+          push_tag_with_retry "v${NEXT_VERSION}" "${release_commit_sha}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
 
   publish:

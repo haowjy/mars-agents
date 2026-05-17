@@ -158,12 +158,56 @@ fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
     assert!(workflow.contains("echo \"missing_tag=${selected_tag}\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'"));
     assert!(workflow.contains("id: push_missing_tag"));
+    assert_eq!(
+        workflow.matches("local expected_commit=\"$2\"").count(),
+        2,
+        "both tag push helpers should accept expected commit"
+    );
     assert!(workflow.contains(
         "git tag -a \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\" -m \"Release ${MISSING_TAG#v}\""
     ));
+    assert!(workflow.contains("push_tag_with_retry \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\""));
+    assert!(
+        workflow.contains("push_tag_with_retry \"v${NEXT_VERSION}\" \"${release_commit_sha}\"")
+    );
     assert!(workflow.contains(
         "Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
     ));
+    assert!(workflow.contains(
+        "Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+    ));
+    assert_eq!(
+        workflow
+            .matches("git ls-remote --tags \"${resolve_remote_url}\" \"refs/tags/${resolve_tag_ref}\" \"refs/tags/${resolve_tag_ref}^{}\"")
+            .count(),
+        2,
+        "both tag push helpers must verify remote tag refs including peeled annotated tag"
+    );
+    assert!(workflow.contains(
+        "Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+    ));
+    assert!(workflow.contains(
+        "Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
+    ));
+    assert!(workflow.contains(
+        "Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
+    ));
+    assert!(
+        !workflow
+            .contains("remote_status=$?\n              if [[ \"${remote_status}\" -eq 1 ]]; then")
+    );
+    assert_eq!(
+        workflow
+            .matches("remote_tag_commit=\"$(resolve_remote_tag_commit \"${tag_ref}\" \"${release_remote_url}\")\" && remote_status=0 || remote_status=$?")
+            .count(),
+        2,
+        "both tag push helpers should capture resolver exit status explicitly"
+    );
+    assert!(!workflow.contains(
+        "Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+    ));
+    assert!(workflow.contains("if [[ \"${remote_status}\" -eq 1 ]]; then"));
+    assert!(workflow.contains("after refetch on failed attempt ${attempt}"));
     assert!(workflow.contains("echo \"tag=${MISSING_TAG}\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag"));
 }

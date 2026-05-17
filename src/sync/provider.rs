@@ -72,6 +72,16 @@ impl SourceFetcher for RealSourceProvider<'_> {
         )
     }
 
+    fn fetch_git_commit(
+        &self,
+        url: &crate::types::SourceUrl,
+        commit: &str,
+        source_name: &str,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<ResolvedRef, MarsError> {
+        source::git::fetch_commit(url.as_ref(), commit, source_name, self.cache, diag)
+    }
+
     fn fetch_path(
         &self,
         path: &Path,

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use semver::Version;
@@ -22,10 +22,6 @@ pub struct ResolverContext {
     stack: Vec<PendingItem>,
     visited: VisitedSet,
     package_versions: PackageVersions,
-    /// Pre-computed set of source names that are direct dependencies in mars.toml.
-    /// Used by `resolve_single_source` to determine whether to replay the consumer
-    /// lock — a source-level fact, not per-request, so ordering cannot affect it.
-    direct_source_names: HashSet<SourceName>,
     /// Version overrides carried from a prior restart pass.
     ///
     /// When a restart is triggered because package X would resolve to a different
@@ -57,22 +53,9 @@ impl ResolverContext {
             stack: Vec::new(),
             visited: VisitedSet::new(),
             package_versions: PackageVersions::new(),
-            direct_source_names: HashSet::new(),
             version_overrides: HashMap::new(),
             pending_restart: None,
         }
-    }
-
-    /// Populate the set of direct dependency source names before resolution begins.
-    /// Must be called once in `resolve()` before any `resolve_package_bottom_up` call.
-    pub(super) fn set_direct_sources(&mut self, names: HashSet<SourceName>) {
-        self.direct_source_names = names;
-    }
-
-    /// Returns true if `name` is a direct dependency in mars.toml.
-    /// Used by `resolve_single_source` to decide whether to replay the consumer lock.
-    pub(super) fn is_direct_source(&self, name: &SourceName) -> bool {
-        self.direct_source_names.contains(name)
     }
 
     /// Set version overrides from a prior restart pass.

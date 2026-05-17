@@ -5,6 +5,7 @@ use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use common::*;
 
@@ -809,4 +810,291 @@ fn sync_preserves_selected_variant_raw_bytes_when_variant_frontmatter_is_malform
             .contains("selected variant frontmatter is malformed; raw fallback used"),
         "expected sync stderr to report the malformed selected variant fallback"
     );
+}
+
+#[test]
+fn upgrade_then_sync_keeps_upgraded_transitive_lock_and_content() {
+    let dir = TempDir::new().unwrap();
+
+    let shared = create_git_package(
+        &dir,
+        "shared",
+        &[("agents/shared.md", "# Shared v1.0.0\n")],
+        "v1.0.0",
+    );
+
+    let base_manifest = format!(
+        r#"[package]
+name = "base"
+version = "1.0.0"
+
+[dependencies.shared]
+url = "{shared_url}"
+version = "^1.0"
+"#,
+        shared_url = shared.url
+    );
+    let base = create_git_package(
+        &dir,
+        "base",
+        &[
+            ("mars.toml", base_manifest.as_str()),
+            ("agents/base.md", "# Base\n"),
+        ],
+        "v1.0.0",
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[dependencies.base]
+url = "{base_url}"
+version = "v1.0.0"
+"#,
+            base_url = base.url
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    assert_eq!(
+        lock_dependency_version(project.path(), "shared"),
+        Some("v1.0.0".to_string())
+    );
+
+    add_tagged_release(
+        &shared.repo_path,
+        "v1.1.0",
+        &[("agents/shared.md", "# Shared v1.1.0\n")],
+    );
+    mars()
+        .args(["upgrade", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    assert_eq!(
+        lock_dependency_version(project.path(), "shared"),
+        Some("v1.1.0".to_string()),
+        "upgrade should advance transitive lock entry"
+    );
+    assert_eq!(
+        fs::read_to_string(project.path().join(".mars/agents/shared.md"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "# Shared v1.1.0\n"
+    );
+
+    // Introduce a newer tag; plain sync should replay the upgraded lock instead of re-resolving.
+    add_tagged_release(
+        &shared.repo_path,
+        "v1.2.0",
+        &[("agents/shared.md", "# Shared v1.2.0\n")],
+    );
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(
+        lock_dependency_version(project.path(), "shared"),
+        Some("v1.1.0".to_string()),
+        "plain sync should retain transitive version selected by upgrade"
+    );
+    assert_eq!(
+        fs::read_to_string(project.path().join(".mars/agents/shared.md"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "# Shared v1.1.0\n",
+        "plain sync should keep installed content from the locked upgraded transitive version"
+    );
+}
+
+#[test]
+fn upgrade_bump_mutates_only_direct_mars_toml_dependencies() {
+    let dir = TempDir::new().unwrap();
+
+    let shared = create_git_package(
+        &dir,
+        "shared",
+        &[("agents/shared.md", "# Shared v1.0.0\n")],
+        "v1.0.0",
+    );
+
+    let base_manifest_v1 = format!(
+        r#"[package]
+name = "base"
+version = "1.0.0"
+
+[dependencies.shared]
+url = "{shared_url}"
+version = "^1.0"
+"#,
+        shared_url = shared.url
+    );
+    let base = create_git_package(
+        &dir,
+        "base",
+        &[
+            ("mars.toml", base_manifest_v1.as_str()),
+            ("agents/base.md", "# Base v1.0.0\n"),
+        ],
+        "v1.0.0",
+    );
+
+    add_tagged_release(
+        &shared.repo_path,
+        "v1.1.0",
+        &[("agents/shared.md", "# Shared v1.1.0\n")],
+    );
+
+    let base_manifest_v1_1 = format!(
+        r#"[package]
+name = "base"
+version = "1.1.0"
+
+[dependencies.shared]
+url = "{shared_url}"
+version = "^1.0"
+"#,
+        shared_url = shared.url
+    );
+    add_tagged_release(
+        &base.repo_path,
+        "v1.1.0",
+        &[
+            ("mars.toml", base_manifest_v1_1.as_str()),
+            ("agents/base.md", "# Base v1.1.0\n"),
+        ],
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[dependencies.base]
+url = "{base_url}"
+version = "v1.0.0"
+"#,
+            base_url = base.url
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "upgrade",
+            "--bump",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mars_toml_raw = fs::read_to_string(project.path().join("mars.toml")).unwrap();
+    let mars_toml: toml::Value = toml::from_str(&mars_toml_raw).unwrap();
+    let dependencies = mars_toml
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .expect("mars.toml should contain dependencies table");
+
+    assert_eq!(
+        dependencies
+            .get("base")
+            .and_then(|entry| entry.get("version"))
+            .and_then(toml::Value::as_str),
+        Some("v1.1.0"),
+        "upgrade --bump should update direct dependency constraints to resolved tags"
+    );
+    assert!(
+        dependencies.get("shared").is_none(),
+        "upgrade --bump must not add transitive-only dependencies to mars.toml"
+    );
+    assert_eq!(
+        lock_dependency_version(project.path(), "shared"),
+        Some("v1.1.0".to_string()),
+        "shared remains transitive and locked without becoming a direct mars.toml dependency"
+    );
+}
+
+struct GitPackage {
+    repo_path: PathBuf,
+    url: String,
+}
+
+fn create_git_package(
+    dir: &TempDir,
+    name: &str,
+    files: &[(&str, &str)],
+    initial_tag: &str,
+) -> GitPackage {
+    let repo_path = dir.path().join(name);
+    fs::create_dir_all(&repo_path).unwrap();
+    run_git(&repo_path, &["init", "."]);
+    run_git(&repo_path, &["config", "user.name", "Mars Test"]);
+    run_git(&repo_path, &["config", "user.email", "mars@example.com"]);
+
+    for (relative_path, content) in files {
+        let file_path = repo_path.join(relative_path);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(file_path, content).unwrap();
+    }
+
+    run_git(&repo_path, &["add", "."]);
+    run_git(&repo_path, &["commit", "-m", "initial"]);
+    run_git(&repo_path, &["tag", initial_tag]);
+
+    GitPackage {
+        url: file_git_url(&repo_path),
+        repo_path,
+    }
+}
+
+fn add_tagged_release(repo_path: &Path, tag: &str, files: &[(&str, &str)]) {
+    for (relative_path, content) in files {
+        let file_path = repo_path.join(relative_path);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(file_path, content).unwrap();
+    }
+
+    run_git(repo_path, &["add", "."]);
+    run_git(repo_path, &["commit", "-m", tag]);
+    run_git(repo_path, &["tag", tag]);
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    if let Err(err) = mars_agents::platform::process::run_git(args, cwd, "sync-behavior git helper")
+    {
+        panic!("git command failed: git {}\nerror: {err}", args.join(" "));
+    }
+}
+
+fn file_git_url(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized.starts_with('/') {
+        format!("file://{normalized}")
+    } else {
+        format!("file:///{normalized}")
+    }
+}
+
+fn lock_dependency_version(project_root: &Path, source_name: &str) -> Option<String> {
+    let lock_raw = fs::read_to_string(project_root.join("mars.lock")).unwrap();
+    let lock: toml::Value = toml::from_str(&lock_raw).unwrap();
+    lock.get("dependencies")
+        .and_then(|deps| deps.get(source_name))
+        .and_then(|dep| dep.get("version"))
+        .and_then(toml::Value::as_str)
+        .map(ToOwned::to_owned)
 }

@@ -845,17 +845,15 @@ fn validate_targets(
 }
 
 fn to_resolve_options(mode: &ResolutionMode, frozen: bool) -> ResolveOptions {
+    if frozen {
+        return ResolveOptions::frozen();
+    }
+
     match mode {
-        ResolutionMode::Normal => ResolveOptions {
-            frozen,
-            ..ResolveOptions::default()
-        },
-        ResolutionMode::Maximize { targets, bump } => ResolveOptions {
-            maximize: true,
-            upgrade_targets: targets.clone(),
-            bump_direct_constraints: *bump,
-            frozen,
-        },
+        ResolutionMode::Normal => ResolveOptions::sync(),
+        ResolutionMode::Maximize { targets, bump } => {
+            ResolveOptions::upgrade(targets.clone(), *bump)
+        }
     }
 }
 

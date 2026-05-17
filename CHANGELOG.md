@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Resolver semver selection now uses latest-compatible semantics by default: normal `mars sync` replays compatible locked versions for both direct and transitive deps, and falls back to newest compatible (not minimum) when no usable lock entry exists.
+- Scoped `mars upgrade <name>` now maximizes only targeted sources while non-targeted deps keep lock-preferred latest-compatible behavior, preventing post-upgrade transitive downgrades on the next plain sync.
+
+### Fixed
+- `mars sync --frozen` now enforces lock-exact semver replay across the full graph: missing/incompatible/malformed locked versions and missing transitive lock entries now fail fast instead of silently re-resolving.
+- Semver lock replay no longer depends on live tags: frozen mode now validates lock shape before any remote version listing and replays locked commits directly, so deleted tags do not break reproducible sync when the locked commit is still reachable.
+- `release-on-main` tag push retries now verify expected tag commit before/after retries, confirm remote tag commit via `git ls-remote` (including annotated tag peel refs), fail fast on wrong-commit collisions, and only treat confirmed remote tags as success.
+
 ## [0.4.7-rc.1] - 2026-05-17
 
 ### Added

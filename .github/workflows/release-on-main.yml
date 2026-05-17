@@ -65,16 +65,52 @@ jobs:
         run: |
           prs_json="$(gh api \
             -H "Accept: application/vnd.github+json" \
-            "/repos/${REPOSITORY}/commits/${TRIGGER_SHA}/pulls" 2>/dev/null || printf '[]')"
-          pr_count="$(jq 'length' <<<"${prs_json}")"
+            "/repos/${REPOSITORY}/commits/${TRIGGER_SHA}/pulls")"
 
-          if [[ "${pr_count}" -eq 0 ]]; then
+          exact_candidates="$(jq --arg trigger_sha "${TRIGGER_SHA}" '
+            [ .[]
+              | select(
+                  .merged_at != null
+                  and .base.ref == "main"
+                  and .merge_commit_sha == $trigger_sha
+                )
+            ]
+          ' <<<"${prs_json}")"
+          candidate_count="$(jq 'length' <<<"${exact_candidates}")"
+          selected_candidates="${exact_candidates}"
+          selection_reason="exact merge_commit_sha match"
+
+          if [[ "${candidate_count}" -eq 0 ]]; then
+            fallback_candidates="$(jq '
+              [ .[]
+                | select(
+                    .merged_at != null
+                    and .base.ref == "main"
+                  )
+              ]
+            ' <<<"${prs_json}")"
+            candidate_count="$(jq 'length' <<<"${fallback_candidates}")"
+            selected_candidates="${fallback_candidates}"
+            selection_reason="merged PR targeting main fallback"
+          fi
+
+          if [[ "${candidate_count}" -eq 0 ]]; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::No associated PR found; skipping auto-release. Push a v* tag manually for backfill release."
             exit 0
           fi
 
-          labels="$(jq -r '.[].labels[].name' <<<"${prs_json}" | sort -u)"
+          if [[ "${candidate_count}" -gt 1 ]]; then
+            echo "::error::Ambiguous merged PR selection for trigger ${TRIGGER_SHA}. Found ${candidate_count} candidates after ${selection_reason}."
+            jq -r '.[] | "- #\(.number) \(.html_url) (merge_commit_sha=\(.merge_commit_sha // "null"))"' <<<"${selected_candidates}"
+            exit 1
+          fi
+
+          selected_pr="$(jq '.[0]' <<<"${selected_candidates}")"
+          selected_pr_number="$(jq -r '.number' <<<"${selected_pr}")"
+          echo "::notice::Selected PR #${selected_pr_number} via ${selection_reason}."
+
+          labels="$(jq -r '.labels[]?.name' <<<"${selected_pr}" | sort -u)"
           if grep -qx 'release:skip' <<<"${labels}"; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::release:skip label present; skipping release."

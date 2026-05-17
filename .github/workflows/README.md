@@ -22,7 +22,10 @@ that has a `release:*` label.
 - Missing `release:*` label skips release.
 - Direct pushes to `main` skip release because there is no PR label to inspect.
 - `release:skip` in the pushed head commit message also skips release.
-- Labels are aggregated across all PRs associated with the trigger commit (deduped), not just the first PR.
+- The workflow queries associated PRs via GitHub API and fails immediately if that API call fails.
+- PR selection is deterministic: prefer merged PRs targeting `main` whose `merge_commit_sha` equals the trigger SHA; if none, fall back to merged PRs targeting `main`.
+- If PR selection remains ambiguous (more than one merged candidate), the workflow fails instead of guessing labels.
+- Labels are read only from the selected merged PR.
 - Duplicate guard is release-kind aware: RC skips when this trigger already has RC or stable tag; stable skips only when a stable tag exists (so RC can still be promoted to stable).
 - Release commits include `Release-Trigger: <trigger-sha>` in the commit body for exact trigger tracking.
 

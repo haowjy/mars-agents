@@ -429,4 +429,19 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish || true
+        run: |
+          publish_stderr="$(mktemp)"
+          trap 'rm -f "${publish_stderr}"' EXIT
+
+          if cargo publish 2> >(tee "${publish_stderr}" >&2); then
+            exit 0
+          fi
+
+          if grep -Eiq 'already (uploaded|published)|already exists' "${publish_stderr}"; then
+            echo "::notice::Crate version already published on crates.io; continuing."
+            exit 0
+          fi
+
+          echo "::error::cargo publish failed with an unexpected error."
+          cat "${publish_stderr}" >&2
+          exit 1

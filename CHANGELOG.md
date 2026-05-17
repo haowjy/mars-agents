@@ -20,6 +20,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor bundle warning/provenance now match contract text exactly and emit `provenance.harness_stability = "experimental"` only for Cursor targets.
 - Native lowering now reports matched `harness-overrides.<target>.native-config` as `meridian-only` lossiness metadata (runtime-owned, not emitted into harness-native agent artifacts).
 - `release-on-main` reruns now match prior releases by exact `Release-Trigger: <sha>` marker (not ancestry), can recreate a missing tag for an existing release commit, and still hand off the resolved tag to publish.
+- `release-on-main` now fails if PR lookup API fails, selects one merged `main` PR deterministically (prefer exact `merge_commit_sha` match), and fails on ambiguous merged-PR candidates instead of unioning labels across all associated PRs.
+- `release.yml` crate publish now ignores only already-published/already-uploaded `cargo publish` failures; all other publish errors fail the job with captured stderr.
 
 ### Changed
 - Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.

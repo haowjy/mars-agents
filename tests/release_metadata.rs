@@ -106,11 +106,20 @@ fn release_workflow_windows_artifact_contract() {
 fn release_on_main_has_rc_default_label_contract() {
     let workflow = read(".github/workflows/release-on-main.yml");
 
-    assert!(workflow.contains("if [[ \"${pr_count}\" -eq 0 ]]; then"));
-    assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
+    assert!(!workflow.contains("2>/dev/null || printf '[]'"));
+    assert!(workflow.contains("exact merge_commit_sha match"));
+    assert!(workflow.contains(".merge_commit_sha == $trigger_sha"));
+    assert!(workflow.contains("selection_reason=\"merged PR targeting main fallback\""));
+    assert!(workflow.contains("if [[ \"${candidate_count}\" -gt 1 ]]; then"));
+    assert!(workflow.contains("Ambiguous merged PR selection for trigger ${TRIGGER_SHA}."));
     assert!(
-        workflow.contains("labels=\"$(jq -r '.[].labels[].name' <<<\"${prs_json}\" | sort -u)\"")
+        workflow.contains("labels=\"$(jq -r '.labels[]?.name' <<<\"${selected_pr}\" | sort -u)\"")
     );
+    assert!(
+        !workflow.contains("labels=\"$(jq -r '.[].labels[].name' <<<\"${prs_json}\" | sort -u)\"")
+    );
+    assert!(workflow.contains("if [[ \"${candidate_count}\" -eq 0 ]]; then"));
+    assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("release:skip"));
     assert!(workflow.contains("release:(skip|patch|stable|rc)"));
     assert!(workflow.contains("release_kind=\"rc\""));
@@ -231,4 +240,16 @@ fn release_workflow_pypi_publish_uses_trusted_publisher_with_required_inputs() {
     assert!(workflow.contains("needs: [pypi-wheels, pypi-sdist, verify-provenance]"));
     assert!(workflow.contains("uses: pypa/gh-action-pypi-publish@release/v1"));
     assert!(workflow.contains("packages-dir: dist"));
+}
+
+#[test]
+fn release_workflow_cargo_publish_only_ignores_already_uploaded_errors() {
+    let workflow = read(".github/workflows/release.yml");
+
+    assert!(workflow.contains("publish_stderr=\"$(mktemp)\""));
+    assert!(workflow.contains("if cargo publish 2> >(tee \"${publish_stderr}\" >&2); then"));
+    assert!(workflow.contains("grep -Eiq 'already (uploaded|published)|already exists'"));
+    assert!(workflow.contains("Crate version already published on crates.io; continuing."));
+    assert!(workflow.contains("cargo publish failed with an unexpected error."));
+    assert!(!workflow.contains("cargo publish || true"));
 }

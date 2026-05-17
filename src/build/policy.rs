@@ -4,7 +4,9 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::build::bundle::{ExecutionPolicy, Routing};
-use crate::compiler::agents::{AgentProfile, ApprovalMode, EffortLevel, HarnessKind, SandboxMode};
+use crate::compiler::agents::{
+    AgentProfile, ApprovalMode, EffortLevel, HarnessKind, OverrideFields, SandboxMode,
+};
 use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias, ModelsCache};
 
@@ -76,7 +78,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             Some(valid) => Some(valid.to_string()),
             None => {
                 warnings.push(format!(
-                    "settings.default_harness `{value}` is invalid; expected one of: claude, codex, opencode, pi"
+                    "settings.default_harness `{value}` is invalid; expected one of: claude, codex, opencode, cursor, pi"
                 ));
                 None
             }
@@ -117,20 +119,45 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         ("claude".to_string(), "default")
     };
     provenance.insert("harness_source".to_string(), harness_source.to_string());
+    if harness == "cursor" {
+        warnings.push(
+            "Cursor is an experimental launch-bundle target. The contract may change without notice.".to_string(),
+        );
+        provenance.insert("harness_stability".to_string(), "experimental".to_string());
+    }
+    let resolved_harness = HarnessKind::from_str(&harness).ok_or_else(|| {
+        MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "resolved harness `{harness}` is invalid; expected one of: claude, codex, opencode, cursor, pi"
+            ),
+        })
+    })?;
+    let matched_harness_override = input.profile.harness_overrides.get(&resolved_harness);
+    let native_config = matched_harness_override
+        .and_then(|fields| fields.native_config.clone())
+        .filter(|map| !map.is_empty());
+    if native_config.is_some() {
+        provenance.insert(
+            "native_config_source".to_string(),
+            "profile-harness-override".to_string(),
+        );
+    }
 
-    let (effort, effort_source) = resolve_effort(&input, alias);
+    let (effort, effort_source) = resolve_effort(&input, alias, matched_harness_override);
     provenance.insert("effort_source".to_string(), effort_source);
 
-    let (approval, approval_source) = resolve_approval(&input);
+    let (approval, approval_source) = resolve_approval(&input, matched_harness_override);
     provenance.insert("approval_source".to_string(), approval_source);
 
-    let (sandbox, sandbox_source) = resolve_sandbox(&input);
+    let (sandbox, sandbox_source) = resolve_sandbox(&input, matched_harness_override);
     provenance.insert("sandbox_source".to_string(), sandbox_source);
 
-    let (autocompact, autocompact_source) = resolve_autocompact(&input, alias);
+    let (autocompact, autocompact_source) =
+        resolve_autocompact(&input, alias, matched_harness_override);
     provenance.insert("autocompact_source".to_string(), autocompact_source);
 
-    let (autocompact_pct, autocompact_pct_source) = resolve_autocompact_pct(&input, alias);
+    let (autocompact_pct, autocompact_pct_source) =
+        resolve_autocompact_pct(&input, alias, matched_harness_override);
     provenance.insert("autocompact_pct_source".to_string(), autocompact_pct_source);
 
     Ok(ResolvedPolicy {
@@ -146,6 +173,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             autocompact,
             autocompact_pct,
             timeout: None,
+            native_config,
         },
         provenance,
         warnings,
@@ -197,14 +225,25 @@ fn normalize_harness_name(value: &str) -> Option<&'static str> {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
         "opencode" => Some("opencode"),
+        "cursor" => Some("cursor"),
         "pi" => Some("pi"),
         _ => None,
     }
 }
 
-fn resolve_effort(input: &PolicyInput<'_>, alias: Option<&ModelAlias>) -> (Option<String>, String) {
+fn resolve_effort(
+    input: &PolicyInput<'_>,
+    alias: Option<&ModelAlias>,
+    matched_harness_override: Option<&OverrideFields>,
+) -> (Option<String>, String) {
     if let Some(effort) = input.effort_override {
         return (Some(effort.to_string()), "cli".to_string());
+    }
+    if let Some(effort) = matched_harness_override.and_then(|entry| entry.effort.as_ref()) {
+        return (
+            Some(effort_level_to_str(effort).to_string()),
+            "profile-harness-override".to_string(),
+        );
     }
     if let Some(effort) = input.profile.effort.as_ref() {
         return (
@@ -218,9 +257,18 @@ fn resolve_effort(input: &PolicyInput<'_>, alias: Option<&ModelAlias>) -> (Optio
     (None, "unset".to_string())
 }
 
-fn resolve_approval(input: &PolicyInput<'_>) -> (Option<String>, String) {
+fn resolve_approval(
+    input: &PolicyInput<'_>,
+    matched_harness_override: Option<&OverrideFields>,
+) -> (Option<String>, String) {
     if let Some(approval) = input.approval_override {
         return (Some(approval.to_string()), "cli".to_string());
+    }
+    if let Some(approval) = matched_harness_override.and_then(|entry| entry.approval.as_ref()) {
+        return (
+            Some(approval_mode_to_str(approval).to_string()),
+            "profile-harness-override".to_string(),
+        );
     }
     if let Some(approval) = input.profile.approval.as_ref() {
         return (
@@ -231,9 +279,18 @@ fn resolve_approval(input: &PolicyInput<'_>) -> (Option<String>, String) {
     (None, "unset".to_string())
 }
 
-fn resolve_sandbox(input: &PolicyInput<'_>) -> (Option<String>, String) {
+fn resolve_sandbox(
+    input: &PolicyInput<'_>,
+    matched_harness_override: Option<&OverrideFields>,
+) -> (Option<String>, String) {
     if let Some(sandbox) = input.sandbox_override {
         return (Some(sandbox.to_string()), "cli".to_string());
+    }
+    if let Some(sandbox) = matched_harness_override.and_then(|entry| entry.sandbox.as_ref()) {
+        return (
+            Some(sandbox_mode_to_str(sandbox).to_string()),
+            "profile-harness-override".to_string(),
+        );
     }
     if let Some(sandbox) = input.profile.sandbox.as_ref() {
         return (
@@ -247,7 +304,11 @@ fn resolve_sandbox(input: &PolicyInput<'_>) -> (Option<String>, String) {
 fn resolve_autocompact(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
+    matched_harness_override: Option<&OverrideFields>,
 ) -> (Option<u32>, String) {
+    if let Some(autocompact) = matched_harness_override.and_then(|entry| entry.autocompact) {
+        return (Some(autocompact), "profile-harness-override".to_string());
+    }
     if let Some(autocompact) = input.profile.autocompact {
         return (Some(autocompact), "profile".to_string());
     }
@@ -260,7 +321,15 @@ fn resolve_autocompact(
 fn resolve_autocompact_pct(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
+    matched_harness_override: Option<&OverrideFields>,
 ) -> (Option<u8>, String) {
+    if let Some(autocompact_pct) = matched_harness_override.and_then(|entry| entry.autocompact_pct)
+    {
+        return (
+            Some(autocompact_pct),
+            "profile-harness-override".to_string(),
+        );
+    }
     if let Some(autocompact_pct) = input.profile.autocompact_pct {
         return (Some(autocompact_pct), "profile".to_string());
     }
@@ -275,6 +344,7 @@ fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
         HarnessKind::Claude => "claude",
         HarnessKind::Codex => "codex",
         HarnessKind::OpenCode => "opencode",
+        HarnessKind::Cursor => "cursor",
         HarnessKind::Pi => "pi",
     }
 }

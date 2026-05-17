@@ -23,6 +23,7 @@ enum HarnessArg {
     Claude,
     Codex,
     Opencode,
+    Cursor,
     Pi,
 }
 
@@ -32,6 +33,7 @@ impl HarnessArg {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
+            Self::Cursor => "cursor",
             Self::Pi => "pi",
         }
     }

@@ -59,6 +59,44 @@ fn setup_bundle_project_with_agents(
     (server, project.to_path_buf())
 }
 
+fn assert_prompt_surface_excludes(bundle: &Value, needles: &[&str]) {
+    let prompt_surface = &bundle["prompt_surface"];
+    let mut surfaces = vec![
+        (
+            "system_instruction",
+            prompt_surface["system_instruction"]
+                .as_str()
+                .unwrap_or_default(),
+        ),
+        (
+            "inventory_prompt",
+            prompt_surface["inventory_prompt"]
+                .as_str()
+                .unwrap_or_default(),
+        ),
+    ];
+
+    let empty_docs = Vec::new();
+    let docs = prompt_surface["supplemental_documents"]
+        .as_array()
+        .unwrap_or(&empty_docs);
+    for doc in docs {
+        surfaces.push((
+            "supplemental_documents.content",
+            doc["content"].as_str().unwrap_or_default(),
+        ));
+    }
+
+    for needle in needles {
+        for (surface_name, content) in &surfaces {
+            assert!(
+                !content.contains(needle),
+                "`{needle}` leaked into prompt surface `{surface_name}`: {content}"
+            );
+        }
+    }
+}
+
 #[test]
 fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
     let temp = TempDir::new().unwrap();
@@ -109,6 +147,7 @@ Review code changes."#;
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])
     );
+    assert!(bundle["provenance"]["harness_stability"].is_null());
 
     for slot in [
         "completion_contract",
@@ -296,6 +335,262 @@ Review code changes."#;
             .as_str()
             .unwrap()
             .contains("Codex variant content.")
+    );
+}
+
+#[test]
+fn build_launch_bundle_uses_harness_override_skills_for_prompt_surface() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+skills: [planning]
+harness-overrides:
+  codex:
+    skills: [codex_skill]
+---
+Review code changes."#;
+    let planning_skill =
+        "---\nname: planning\ndescription: Plan tasks\n---\nPlanning base content.";
+    let codex_skill =
+        "---\nname: codex_skill\ndescription: Codex helper\n---\nCodex-specific content.";
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[("planning", planning_skill), ("codex_skill", codex_skill)],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let docs = bundle["prompt_surface"]["supplemental_documents"]
+        .as_array()
+        .expect("supplemental_documents should be an array");
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0]["name"].as_str(), Some("codex_skill"));
+    assert!(
+        docs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Codex-specific content.")
+    );
+
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .expect("system instruction should be string");
+    assert!(system_instruction.contains("# Skill: codex_skill"));
+    assert!(!system_instruction.contains("# Skill: planning"));
+
+    assert_eq!(
+        bundle["skills_metadata"]["loaded"],
+        serde_json::json!(["codex_skill"])
+    );
+    assert_eq!(bundle["skills_metadata"]["missing"], serde_json::json!([]));
+}
+
+#[test]
+fn build_launch_bundle_accepts_cursor_harness_flag_and_marks_experimental() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "cursor",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["provenance"]["harness_stability"].as_str(),
+        Some("experimental")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default()
+            == "Cursor is an experimental launch-bundle target. The contract may change without notice."
+    }));
+}
+
+#[test]
+fn build_launch_bundle_accepts_profile_cursor_harness() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: cursor
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("profile")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_stability"].as_str(),
+        Some("experimental")
+    );
+}
+
+#[test]
+fn build_launch_bundle_cursor_alias_uses_cursor_overrides_for_model_facing_policy() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: codex
+skills: [root_skill]
+tools:
+  read: allow
+  edit: deny
+mcp-tools: [plugin:root]
+harness-overrides:
+  opencode:
+    skills: [opencode_skill]
+    tools:
+      write: allow
+    mcp-tools: [plugin:opencode]
+    native-config:
+      opencode.only: true
+  cursor:
+    skills: [cursor_skill]
+    tools:
+      bash: allow
+      agent: deny
+    disallowed-tools: [edit]
+    mcp-tools: [plugin:cursor]
+    native-config:
+      cursor.only: true
+      cursor.array: [alpha, beta]
+---
+Review code changes."#;
+    let root_skill = "---\nname: root_skill\ndescription: Root\n---\nRoot skill content.";
+    let opencode_skill =
+        "---\nname: opencode_skill\ndescription: OpenCode\n---\nOpenCode skill content.";
+    let cursor_skill = "---\nname: cursor_skill\ndescription: Cursor\n---\nCursor skill content.";
+
+    let extra_toml = r#"[models.cursoralias]
+model = "claude-opus-4-6"
+harness = "cursor""#;
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[
+            ("root_skill", root_skill),
+            ("opencode_skill", opencode_skill),
+            ("cursor_skill", cursor_skill),
+        ],
+        extra_toml,
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "cursoralias",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["routing"]["model_token"].as_str(),
+        Some("cursoralias")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("alias")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_stability"].as_str(),
+        Some("experimental")
+    );
+    assert_eq!(
+        bundle["skills_metadata"]["loaded"],
+        serde_json::json!(["cursor_skill"])
+    );
+    assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
+    assert_eq!(
+        bundle["tools"]["disallowed"],
+        serde_json::json!(["Agent", "Edit"])
+    );
+    assert_eq!(bundle["tools"]["mcp"], serde_json::json!(["plugin:cursor"]));
+    assert_eq!(
+        bundle["execution_policy"]["native_config"],
+        serde_json::json!({
+            "cursor.only": true,
+            "cursor.array": ["alpha", "beta"]
+        })
+    );
+    assert_eq!(
+        bundle["provenance"]["native_config_source"].as_str(),
+        Some("profile-harness-override")
+    );
+
+    let docs = bundle["prompt_surface"]["supplemental_documents"]
+        .as_array()
+        .expect("supplemental_documents should be an array");
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0]["name"].as_str(), Some("cursor_skill"));
+    assert!(
+        docs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Cursor skill content.")
+    );
+    assert_prompt_surface_excludes(
+        &bundle,
+        &[
+            "Root skill content.",
+            "OpenCode skill content.",
+            "opencode.only",
+            "cursor.only",
+            "cursor.array",
+        ],
     );
 }
 
@@ -905,6 +1200,249 @@ Review code changes."#;
         Some("cli")
     );
     assert_eq!(bundle["provenance"]["sandbox_source"].as_str(), Some("cli"));
+}
+
+#[test]
+fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt_clean() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness-overrides:
+  codex:
+    native-config:
+      sandbox_workspace_write.network_access: true
+      approval: "still native"
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["execution_policy"]["native_config"],
+        serde_json::json!({
+            "sandbox_workspace_write.network_access": true,
+            "approval": "still native"
+        })
+    );
+    assert_eq!(
+        bundle["provenance"]["native_config_source"].as_str(),
+        Some("profile-harness-override")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("collides with a portable field name")
+    }));
+
+    assert_prompt_surface_excludes(
+        &bundle,
+        &["sandbox_workspace_write.network_access", "still native"],
+    );
+}
+
+#[test]
+fn build_launch_bundle_harness_override_execution_policy_applies_before_profile_and_alias() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: modelalias
+effort: low
+approval: confirm
+sandbox: read-only
+autocompact: 1200
+autocompact_pct: 40
+harness-overrides:
+  codex:
+    effort: high
+    approval: auto
+    sandbox: workspace-write
+    autocompact: 2400
+    autocompact_pct: 70
+    native-config:
+      sandbox_workspace_write.network_access: true
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.modelalias]
+model = "openai/gpt-5"
+harness = "codex"
+default_effort = "medium"
+autocompact = 9000
+autocompact_pct = 55"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--approval",
+        "yolo",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+    assert_eq!(
+        bundle["execution_policy"]["approval"].as_str(),
+        Some("yolo"),
+        "CLI approval must beat harness override",
+    );
+    assert_eq!(
+        bundle["execution_policy"]["sandbox"].as_str(),
+        Some("workspace-write")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["autocompact"].as_u64(),
+        Some(2400)
+    );
+    assert_eq!(
+        bundle["execution_policy"]["autocompact_pct"].as_u64(),
+        Some(70)
+    );
+    assert_eq!(
+        bundle["provenance"]["effort_source"].as_str(),
+        Some("profile-harness-override")
+    );
+    assert_eq!(
+        bundle["provenance"]["approval_source"].as_str(),
+        Some("cli")
+    );
+    assert_eq!(
+        bundle["provenance"]["sandbox_source"].as_str(),
+        Some("profile-harness-override")
+    );
+    assert_eq!(
+        bundle["provenance"]["autocompact_source"].as_str(),
+        Some("profile-harness-override")
+    );
+    assert_eq!(
+        bundle["provenance"]["autocompact_pct_source"].as_str(),
+        Some("profile-harness-override")
+    );
+    assert_eq!(
+        bundle["provenance"]["native_config_source"].as_str(),
+        Some("profile-harness-override")
+    );
+}
+
+#[test]
+fn build_launch_bundle_invalid_native_config_shape_fails_with_diagnostic() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness-overrides:
+  codex:
+    native-config: [1, 2]
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("native-config"));
+}
+
+#[test]
+fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  bash: allow
+  agent: deny
+  edit: deny
+disallowed-tools: [write]
+mcp-tools: [plugin:root]
+harness-overrides:
+  codex:
+    tools:
+      "bash(meridian spawn *)": allow
+      agent: deny
+    disallowed-tools: [edit]
+    mcp-tools: [plugin:override]
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut root_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    root_cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    let root_output = root_cmd.assert().success().get_output().clone();
+    let root_bundle: Value = serde_json::from_slice(&root_output.stdout).unwrap();
+    assert_eq!(root_bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
+    assert_eq!(
+        root_bundle["tools"]["disallowed"],
+        serde_json::json!(["Agent", "Edit", "Write"])
+    );
+    assert_eq!(
+        root_bundle["tools"]["mcp"],
+        serde_json::json!(["plugin:root"])
+    );
+
+    let mut override_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    override_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+    let override_output = override_cmd.assert().success().get_output().clone();
+    let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
+    assert_eq!(
+        override_bundle["tools"]["allowed"],
+        serde_json::json!(["Bash(meridian spawn *)"])
+    );
+    assert_eq!(
+        override_bundle["tools"]["disallowed"],
+        serde_json::json!(["Agent", "Edit"])
+    );
+    assert_eq!(
+        override_bundle["tools"]["mcp"],
+        serde_json::json!(["plugin:override"])
+    );
 }
 
 #[test]

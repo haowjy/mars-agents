@@ -1,3 +1,4 @@
+// qa-validated: launch-bundle-followup-audit
 mod common;
 
 use assert_fs::TempDir;
@@ -682,6 +683,74 @@ path = "{}"
     assert!(
         !opencode_native.contains("tools:"),
         "native opencode artifact should not include canonical tool lists"
+    );
+}
+
+#[test]
+fn sync_cursor_native_agent_target_emits_cursor_markdown_and_lossiness_warning() {
+    let dir = TempDir::new().unwrap();
+    let cursor_agent = r#"---
+name: cursor-worker
+description: Cursor worker
+harness: cursor
+model: gpt55
+harness-overrides:
+  opencode:
+    mcp-tools: []
+  cursor:
+    mcp-tools: [plugin:cursor]
+    native-config:
+      cursor.only: true
+---
+# Cursor body
+Use Cursor-native markdown.
+"#;
+    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("mcp-tools"))
+        .stderr(predicate::str::contains("Cursor"));
+
+    assert!(project.child(".mars/agents/cursor-worker.md").exists());
+    assert!(project.child(".cursor/agents/cursor-worker.md").exists());
+    assert!(!project.child(".opencode/agents/cursor-worker.md").exists());
+    assert!(!project.child(".codex/agents/cursor-worker.toml").exists());
+
+    let cursor_native =
+        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
+    assert!(cursor_native.contains("name: cursor-worker"));
+    assert!(cursor_native.contains("model: gpt55"));
+    assert!(cursor_native.contains("# Cursor body"));
+    assert!(
+        !cursor_native.contains("mcp-tools"),
+        "Cursor native agent artifacts should not claim native MCP tool support: {cursor_native}"
+    );
+    assert!(
+        !cursor_native.contains("native-config"),
+        "native-config is Meridian runtime-only in this slice: {cursor_native}"
+    );
+    assert!(
+        !cursor_native.contains("cursor.only"),
+        "native-config keys must not leak into native Cursor markdown: {cursor_native}"
     );
 }
 

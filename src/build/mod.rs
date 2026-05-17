@@ -9,7 +9,7 @@ use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
 use crate::cli::MarsContext;
-use crate::compiler::agents::parse_agent_content;
+use crate::compiler::agents::{HarnessKind, parse_agent_content};
 use crate::error::{ConfigError, MarsError};
 
 pub struct LaunchBundleRequest {
@@ -74,10 +74,12 @@ pub fn build_launch_bundle(
     warnings.extend(policy.warnings);
 
     let mars_dir = ctx.project_root.join(".mars");
+    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)?;
+
     let prompt = compile_prompt_surface(
         &mars_dir,
         frontmatter.body(),
-        &profile.skills,
+        &effective_skills,
         &request.extra_skills,
         &policy.routing.harness,
         &policy.routing.model_token,
@@ -85,6 +87,7 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(prompt.warnings);
+    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
 
     Ok(LaunchBundle {
         version: 1,
@@ -97,11 +100,7 @@ pub fn build_launch_bundle(
             inventory_prompt: prompt.inventory_prompt,
         },
         scaffold_slots: ScaffoldSlots::placeholders(),
-        tools: ToolsSpec {
-            allowed: profile.tools,
-            disallowed: profile.disallowed_tools,
-            mcp: profile.mcp_tools,
-        },
+        tools: resolved_tools,
         skills_metadata: SkillsMetadata {
             loaded: prompt.loaded_skills,
             missing: prompt.missing_skills,
@@ -116,4 +115,37 @@ fn agent_file_path(project_root: &std::path::Path, agent: &str) -> PathBuf {
         .join(".mars")
         .join("agents")
         .join(format!("{agent}.md"))
+}
+
+fn resolve_bundle_tools(
+    profile: &crate::compiler::agents::AgentProfile,
+    harness: &str,
+) -> Result<ToolsSpec, MarsError> {
+    let harness_kind = parse_harness_kind(harness)?;
+
+    let effective_tools = profile.effective_tool_policy(&harness_kind);
+
+    Ok(ToolsSpec {
+        allowed: effective_tools.allowed,
+        disallowed: effective_tools.disallowed,
+        mcp: effective_tools.mcp,
+    })
+}
+
+fn resolve_effective_skills(
+    profile: &crate::compiler::agents::AgentProfile,
+    harness: &str,
+) -> Result<Vec<String>, MarsError> {
+    let harness_kind = parse_harness_kind(harness)?;
+    Ok(profile.effective_skills(&harness_kind).to_vec())
+}
+
+fn parse_harness_kind(harness: &str) -> Result<HarnessKind, MarsError> {
+    HarnessKind::from_str(harness).ok_or_else(|| {
+        MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "invalid harness `{harness}` for launch bundle resolution; expected one of: claude, codex, opencode, cursor, pi"
+            ),
+        })
+    })
 }

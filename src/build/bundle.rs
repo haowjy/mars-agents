@@ -33,6 +33,8 @@ pub struct ExecutionPolicy {
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
     pub timeout: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

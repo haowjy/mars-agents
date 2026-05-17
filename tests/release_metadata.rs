@@ -158,12 +158,28 @@ fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
     assert!(workflow.contains("echo \"missing_tag=${selected_tag}\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'"));
     assert!(workflow.contains("id: push_missing_tag"));
+    assert_eq!(
+        workflow.matches("local expected_commit=\"$2\"").count(),
+        2,
+        "both tag push helpers should accept expected commit"
+    );
     assert!(workflow.contains(
         "git tag -a \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\" -m \"Release ${MISSING_TAG#v}\""
     ));
+    assert!(workflow.contains("push_tag_with_retry \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\""));
+    assert!(
+        workflow.contains("push_tag_with_retry \"v${NEXT_VERSION}\" \"${release_commit_sha}\"")
+    );
     assert!(workflow.contains(
         "Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
     ));
+    assert!(workflow.contains(
+        "Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+    ));
+    assert!(workflow.contains(
+        "Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+    ));
+    assert!(workflow.contains("after refetch on failed attempt ${attempt}"));
     assert!(workflow.contains("echo \"tag=${MISSING_TAG}\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag"));
 }

@@ -270,9 +270,34 @@ jobs:
 
           push_tag_with_retry() {
             local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
             for attempt in 1 2 3; do
               if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
                 return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
               fi
 
               if [[ "${attempt}" -eq 3 ]]; then
@@ -282,6 +307,13 @@ jobs:
 
               echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
               git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              if git rev-parse -q --verify "refs/tags/${tag_ref}" >/dev/null; then
+                echo "::notice::Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                return 0
+              fi
               sleep $((attempt * 2))
             done
           }
@@ -297,7 +329,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "${MISSING_TAG}" "${MISSING_TAG_COMMIT}" -m "Release ${MISSING_TAG#v}"
-            push_tag_with_retry "${MISSING_TAG}"
+            push_tag_with_retry "${MISSING_TAG}" "${MISSING_TAG_COMMIT}"
             echo "::notice::Created missing tag ${MISSING_TAG} for existing release commit ${MISSING_TAG_COMMIT}."
           fi
 
@@ -452,9 +484,34 @@ jobs:
 
           push_tag_with_retry() {
             local tag_ref="$1"
+            local expected_commit="$2"
+
+            validate_local_tag_commit() {
+              local validate_tag_ref="$1"
+              local validate_expected_commit="$2"
+              local validate_context="$3"
+
+              if git rev-parse -q --verify "refs/tags/${validate_tag_ref}" >/dev/null; then
+                local observed_commit
+                observed_commit="$(git rev-parse "${validate_tag_ref}^{commit}")"
+                if [[ "${observed_commit}" != "${validate_expected_commit}" ]]; then
+                  echo "::error::Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
+                  return 1
+                fi
+              fi
+            }
+
+            if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "before push"; then
+              return 1
+            fi
+
             for attempt in 1 2 3; do
               if git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${tag_ref}"; then
                 return 0
+              fi
+
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after failed push attempt ${attempt}"; then
+                return 1
               fi
 
               if [[ "${attempt}" -eq 3 ]]; then
@@ -464,6 +521,13 @@ jobs:
 
               echo "::warning::Push for tag ${tag_ref} failed on attempt ${attempt}; refetching tags and retrying."
               git fetch --tags --force
+              if ! validate_local_tag_commit "${tag_ref}" "${expected_commit}" "after refetch on failed attempt ${attempt}"; then
+                return 1
+              fi
+              if git rev-parse -q --verify "refs/tags/${tag_ref}" >/dev/null; then
+                echo "::notice::Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
+                return 0
+              fi
               sleep $((attempt * 2))
             done
           }
@@ -499,7 +563,7 @@ jobs:
             git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi
 
-          push_tag_with_retry "v${NEXT_VERSION}"
+          push_tag_with_retry "v${NEXT_VERSION}" "${release_commit_sha}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
 
   publish:

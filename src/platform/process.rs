@@ -7,13 +7,43 @@ use std::process::Command;
 
 use crate::error::MarsError;
 
+const GIT_LOCAL_ENV_VARS: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
+/// Remove repository-scoped Git environment inherited from hooks or parent git commands.
+///
+/// Git honors variables like `GIT_DIR` over `current_dir`. Leaving them set can make a
+/// command intended for a temp repo mutate the caller's checkout instead.
+pub(crate) fn remove_git_local_env(command: &mut Command) {
+    for var in GIT_LOCAL_ENV_VARS {
+        command.env_remove(var);
+    }
+}
+
 /// Run a git command and return stdout on success.
 ///
 /// Arguments are passed as an explicit argv array, never through a shell.
 /// Errors include context, arguments, exit code, and stderr.
 pub fn run_git(args: &[&str], cwd: &Path, context: &str) -> Result<String, MarsError> {
     let command_display = display_command(args);
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    remove_git_local_env(&mut command);
+    let output = command
         .current_dir(cwd)
         .args(args)
         .output()
@@ -80,7 +110,9 @@ pub fn run_git_raw(
     context: &str,
 ) -> Result<std::process::Output, MarsError> {
     let command_display = display_command(args);
-    Command::new("git")
+    let mut command = Command::new("git");
+    remove_git_local_env(&mut command);
+    command
         .current_dir(cwd)
         .args(args)
         .output()
@@ -100,6 +132,16 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn test_git_command() -> Command {
+        let mut command = Command::new("git");
+        remove_git_local_env(&mut command);
+        command.env("GIT_AUTHOR_NAME", "Mars Test");
+        command.env("GIT_AUTHOR_EMAIL", "mars@example.com");
+        command.env("GIT_COMMITTER_NAME", "Mars Test");
+        command.env("GIT_COMMITTER_EMAIL", "mars@example.com");
+        command
+    }
 
     #[test]
     fn run_git_version_succeeds() {
@@ -149,28 +191,18 @@ mod tests {
     #[test]
     fn run_git_with_ref_passes_ref_without_shell_interpretation() {
         let tmp = TempDir::new().unwrap();
-        Command::new("git")
+        test_git_command()
             .current_dir(tmp.path())
             .args(["init", "."])
             .output()
             .expect("git init");
-        Command::new("git")
-            .current_dir(tmp.path())
-            .args(["config", "user.name", "Mars Test"])
-            .output()
-            .expect("git config user.name");
-        Command::new("git")
-            .current_dir(tmp.path())
-            .args(["config", "user.email", "mars@example.com"])
-            .output()
-            .expect("git config user.email");
         std::fs::write(tmp.path().join("README.md"), "hello").unwrap();
-        Command::new("git")
+        test_git_command()
             .current_dir(tmp.path())
             .args(["add", "README.md"])
             .output()
             .expect("git add");
-        Command::new("git")
+        test_git_command()
             .current_dir(tmp.path())
             .args(["commit", "-m", "init"])
             .output()

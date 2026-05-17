@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Git test helpers no longer persist `Mars Test <mars@example.com>` into repo config. Git subprocesses strip inherited `GIT_*` repository environment before using explicit temp repo cwd, and test commits use process-scoped author/committer env instead of `git config`.
+
 ## [0.4.6] - 2026-05-16
 
 ### Changed

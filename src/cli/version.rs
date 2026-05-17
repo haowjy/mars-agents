@@ -381,11 +381,13 @@ mod tests {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let output = Command::new("git")
-            .current_dir(cwd)
-            .args(args)
-            .output()
-            .unwrap();
+        let mut command = Command::new("git");
+        crate::platform::process::remove_git_local_env(&mut command);
+        command.env("GIT_AUTHOR_NAME", "Mars Test");
+        command.env("GIT_AUTHOR_EMAIL", "mars@example.com");
+        command.env("GIT_COMMITTER_NAME", "Mars Test");
+        command.env("GIT_COMMITTER_EMAIL", "mars@example.com");
+        let output = command.current_dir(cwd).args(args).output().unwrap();
         if !output.status.success() {
             panic!(
                 "git command failed: {}\nstdout:\n{}\nstderr:\n{}",
@@ -400,8 +402,6 @@ mod tests {
     fn init_repo_with_mars_toml(mars_toml: &str) -> (TempDir, super::super::MarsContext) {
         let repo = TempDir::new().unwrap();
         run_git_test(repo.path(), ["init", "."]);
-        run_git_test(repo.path(), ["config", "user.name", "Mars Test"]);
-        run_git_test(repo.path(), ["config", "user.email", "mars@example.com"]);
 
         std::fs::create_dir_all(repo.path().join(".agents")).unwrap();
         std::fs::create_dir_all(repo.path().join("agents")).unwrap();

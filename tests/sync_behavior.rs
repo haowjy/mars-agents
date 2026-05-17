@@ -881,7 +881,9 @@ version = "v1.0.0"
         "upgrade should advance transitive lock entry"
     );
     assert_eq!(
-        fs::read_to_string(project.path().join(".mars/agents/shared.md")).unwrap(),
+        fs::read_to_string(project.path().join(".mars/agents/shared.md"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "# Shared v1.1.0\n"
     );
 
@@ -902,7 +904,9 @@ version = "v1.0.0"
         "plain sync should retain transitive version selected by upgrade"
     );
     assert_eq!(
-        fs::read_to_string(project.path().join(".mars/agents/shared.md")).unwrap(),
+        fs::read_to_string(project.path().join(".mars/agents/shared.md"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "# Shared v1.1.0\n",
         "plain sync should keep installed content from the locked upgraded transitive version"
     );

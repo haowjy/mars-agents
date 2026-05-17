@@ -1,3 +1,4 @@
+// qa-validated: mars-release-workflow-audit
 use std::path::Path;
 
 fn repo_root() -> &'static Path {
@@ -6,6 +7,21 @@ fn repo_root() -> &'static Path {
 
 fn read(path: &str) -> String {
     std::fs::read_to_string(repo_root().join(path)).expect(path)
+}
+
+fn assert_before(haystack: &str, first: &str, second: &str) {
+    let first_idx = haystack
+        .find(first)
+        .unwrap_or_else(|| panic!("missing marker: {}", first));
+    let second_idx = haystack
+        .find(second)
+        .unwrap_or_else(|| panic!("missing marker: {}", second));
+    assert!(
+        first_idx < second_idx,
+        "expected marker order: `{}` before `{}`",
+        first,
+        second
+    );
 }
 
 #[test]
@@ -90,18 +106,54 @@ fn release_workflow_windows_artifact_contract() {
 fn release_on_main_has_rc_default_label_contract() {
     let workflow = read(".github/workflows/release-on-main.yml");
 
+    assert!(workflow.contains("if [[ \"${pr_count}\" -eq 0 ]]; then"));
+    assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("release:skip"));
     assert!(workflow.contains("release:(skip|patch|stable|rc)"));
     assert!(workflow.contains("release_kind=\"rc\""));
+    assert!(workflow.contains("if [[ -n \"${unknown_release_labels}\" ]]; then"));
+    assert!(workflow.contains("elif [[ \"${has_rc_label}\" == \"true\" ]]; then"));
+    assert!(workflow.contains("elif [[ \"${has_stable_label}\" == \"true\" ]]; then"));
     assert!(workflow.contains("release_kind=\"stable\""));
     assert!(workflow.contains("echo \"release_kind=${release_kind}\" >> \"$GITHUB_OUTPUT\""));
+
+    assert_before(
+        &workflow,
+        "if grep -qx 'release:skip' <<<\"${labels}\"; then",
+        "release_labels=\"$(grep '^release:' <<<\"${labels}\" || true)\"",
+    );
+    assert_before(
+        &workflow,
+        "if [[ -n \"${unknown_release_labels}\" ]]; then",
+        "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
+    );
+    assert_before(
+        &workflow,
+        "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
+        "elif [[ \"${has_stable_label}\" == \"true\" ]]; then",
+    );
 }
 
 #[test]
 fn release_on_main_computes_stable_and_rc_versions() {
     let workflow = read(".github/workflows/release-on-main.yml");
 
+    assert!(
+        workflow
+            .contains("if grep -Eq '^v[0-9]+\\.[0-9]+\\.[0-9]+$' <<<\"${candidate_tag}\"; then"),
+        "stable base version lookup must ignore prerelease tags"
+    );
     assert!(workflow.contains("if [[ \"${RELEASE_KIND}\" == \"stable\" ]]; then"));
+    assert!(
+        workflow.contains(
+            "while git rev-parse -q --verify \"refs/tags/v${next_version}\" >/dev/null; do"
+        ),
+        "stable releases must advance past stable tag collisions"
+    );
+    assert!(workflow.contains("python_version=\"${next_version}\""));
+    assert!(workflow.contains("max_rc=0"));
+    assert!(workflow.contains("if (( rc_number > max_rc )); then"));
+    assert!(workflow.contains("next_rc=$((max_rc + 1))"));
     assert!(workflow.contains("next_version=\"${next_patch}-rc.${next_rc}\""));
     assert!(workflow.contains("python_version=\"${next_patch}rc${next_rc}\""));
     assert!(workflow.contains("done < <(git tag --list \"v${next_patch}-rc.*\")"));
@@ -115,8 +167,16 @@ fn release_workflow_accepts_stable_and_rc_provenance() {
     assert!(workflow.contains("X.Y.Z or RC X.Y.Z-rc.N"));
     assert!(workflow.contains("PYPI_VERSION=\"${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}\""));
     assert!(workflow.contains("PYPI_VERSION=\"$TAG_VERSION\""));
+    assert!(workflow.contains("Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"));
     assert!(workflow.contains("Expected pyproject.toml version $PYPI_VERSION"));
+    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/mars-agents*/package.json)"));
+    assert!(workflow.contains("jq -r '.version // empty'"));
+    assert!(workflow.contains("optionalDependencies // {} | to_entries[]"));
     assert!(workflow.contains("CHANGELOG.md missing release section for ${TAG_VERSION}"));
+    assert!(
+        workflow
+            .contains("git merge-base --is-ancestor \"$RELEASE_SHA\" \"origin/$DEFAULT_BRANCH\"")
+    );
     assert!(workflow.contains("if [[ \"$COMMIT_MSG\" != \"release: v$TAG_VERSION\" ]]; then"));
 }
 
@@ -126,9 +186,17 @@ fn release_workflow_marks_rc_prerelease_and_uses_npm_dist_tags() {
 
     assert!(workflow.contains("prerelease: ${{ steps.release_meta.outputs.prerelease }}"));
     assert!(workflow.contains("echo \"prerelease=true\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("echo \"prerelease=false\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("echo \"npm_dist_tag=rc\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("echo \"npm_dist_tag=latest\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("npm publish --provenance --access public --tag \"$NPM_DIST_TAG\""));
+    assert_eq!(
+        workflow
+            .matches("npm publish --provenance --access public --tag \"$NPM_DIST_TAG\"")
+            .count(),
+        2,
+        "expected dist-tagged publish in platform and stub npm publish steps"
+    );
 }
 
 #[test]

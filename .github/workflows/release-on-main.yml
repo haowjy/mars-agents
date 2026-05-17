@@ -16,7 +16,7 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
-      tag: ${{ steps.push_release.outputs.tag }}
+      tag: ${{ steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag }}
     concurrency:
       group: release-on-main
       cancel-in-progress: false
@@ -74,7 +74,7 @@ jobs:
             exit 0
           fi
 
-          labels="$(jq -r '.[0].labels[].name' <<<"${prs_json}")"
+          labels="$(jq -r '.[].labels[].name' <<<"${prs_json}" | sort -u)"
           if grep -qx 'release:skip' <<<"${labels}"; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::release:skip label present; skipping release."
@@ -132,46 +132,122 @@ jobs:
 
           git fetch --tags --force
 
-          existing_release_tag=""
-          existing_release_commit=""
           release_kind="${RELEASE_KIND:-rc}"
+          best_rank=99
+          selected_mode=""
+          selected_tag=""
+          selected_commit=""
+
           while IFS=$'\t' read -r commit_hash commit_subject; do
-            [[ "${commit_subject}" == release:\ v* ]] || continue
-            parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
-            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" "${parent_commit}"; then
+            if ! git show -s --format=%B "${commit_hash}" | grep -Fxq "Release-Trigger: ${TRIGGER_SHA}"; then
               continue
             fi
 
+            if [[ ! "${commit_subject}" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]]; then
+              continue
+            fi
+            subject_tag="${BASH_REMATCH[1]}"
+
+            subject_is_stable=false
+            subject_is_rc=false
+            if is_stable_tag "${subject_tag}"; then
+              subject_is_stable=true
+            elif is_rc_tag "${subject_tag}"; then
+              subject_is_rc=true
+            fi
+
+            commit_stable_tag=""
+            commit_rc_tag=""
             while IFS= read -r commit_tag; do
               [[ -n "${commit_tag}" ]] || continue
-              if is_stable_tag "${commit_tag}"; then
-                existing_release_tag="${commit_tag}"
-                existing_release_commit="${commit_hash}"
-                break 2
-              fi
-
-              if is_rc_tag "${commit_tag}"; then
-                if [[ "${release_kind}" == "stable" ]]; then
-                  echo "::notice::Ignoring RC tag ${commit_tag} for stable release intent; stable rerun may promote this trigger."
-                  continue
-                fi
-                existing_release_tag="${commit_tag}"
-                existing_release_commit="${commit_hash}"
-                break 2
-              fi
-
-              if grep -Eq '^v' <<<"${commit_tag}"; then
+              if is_stable_tag "${commit_tag}" && [[ -z "${commit_stable_tag}" ]]; then
+                commit_stable_tag="${commit_tag}"
+              elif is_rc_tag "${commit_tag}" && [[ -z "${commit_rc_tag}" ]]; then
+                commit_rc_tag="${commit_tag}"
+              elif grep -Eq '^v' <<<"${commit_tag}"; then
                 echo "::notice::Ignoring non-release tag ${commit_tag} on release commit ${commit_hash}."
               fi
-            done < <(git tag --points-at "${commit_hash}" --list 'v*')
+            done < <(git tag --points-at "${commit_hash}" --list 'v*' --sort=-version:refname)
+
+            candidate_rank=99
+            candidate_mode=""
+            candidate_tag=""
+            if [[ -n "${commit_stable_tag}" ]]; then
+              candidate_rank=1
+              candidate_mode="existing"
+              candidate_tag="${commit_stable_tag}"
+            elif [[ "${release_kind}" == "rc" && -n "${commit_rc_tag}" ]]; then
+              candidate_rank=2
+              candidate_mode="existing"
+              candidate_tag="${commit_rc_tag}"
+            elif [[ "${subject_is_stable}" == "true" ]]; then
+              if [[ "${release_kind}" == "stable" ]]; then
+                candidate_rank=2
+              else
+                candidate_rank=3
+              fi
+              candidate_mode="missing"
+              candidate_tag="${subject_tag}"
+            elif [[ "${release_kind}" == "rc" && "${subject_is_rc}" == "true" ]]; then
+              candidate_rank=4
+              candidate_mode="missing"
+              candidate_tag="${subject_tag}"
+            fi
+
+            if (( candidate_rank < best_rank )); then
+              best_rank="${candidate_rank}"
+              selected_mode="${candidate_mode}"
+              selected_tag="${candidate_tag}"
+              selected_commit="${commit_hash}"
+            fi
           done < <(git log --format=$'%H\t%s' main)
 
-          if [[ -n "${existing_release_tag}" ]]; then
+          if (( best_rank < 99 )); then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Trigger ${TRIGGER_SHA} already released by ${existing_release_tag} on commit ${existing_release_commit}."
+            if [[ "${selected_mode}" == "existing" ]]; then
+              echo "tag_missing=false" >> "$GITHUB_OUTPUT"
+              echo "existing_release_tag=${selected_tag}" >> "$GITHUB_OUTPUT"
+              echo "existing_release_commit=${selected_commit}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Trigger ${TRIGGER_SHA} already released by ${selected_tag} on commit ${selected_commit}."
+            else
+              echo "tag_missing=true" >> "$GITHUB_OUTPUT"
+              echo "missing_tag=${selected_tag}" >> "$GITHUB_OUTPUT"
+              echo "missing_tag_commit=${selected_commit}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Found existing release commit ${selected_commit} for trigger ${TRIGGER_SHA} but missing tag ${selected_tag}; recreating tag."
+            fi
           else
             echo "already_released=false" >> "$GITHUB_OUTPUT"
+            echo "tag_missing=false" >> "$GITHUB_OUTPUT"
+            echo "existing_release_tag=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Push missing release tag
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'
+        id: push_missing_tag
+        env:
+          MISSING_TAG: ${{ steps.release_guard.outputs.missing_tag }}
+          MISSING_TAG_COMMIT: ${{ steps.release_guard.outputs.missing_tag_commit }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+
+          if git rev-parse -q --verify "refs/tags/${MISSING_TAG}" >/dev/null; then
+            tag_commit="$(git rev-parse "${MISSING_TAG}^{commit}")"
+            if [[ "${tag_commit}" != "${MISSING_TAG_COMMIT}" ]]; then
+              echo "::error::Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
+              exit 1
+            fi
+            echo "::notice::Tag ${MISSING_TAG} already exists on expected release commit ${MISSING_TAG_COMMIT}."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${MISSING_TAG}" "${MISSING_TAG_COMMIT}" -m "Release ${MISSING_TAG#v}"
+            git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/${MISSING_TAG}"
+            echo "::notice::Created missing tag ${MISSING_TAG} for existing release commit ${MISSING_TAG_COMMIT}."
+          fi
+
+          echo "tag=${MISSING_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Configure release identity
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
@@ -302,9 +378,10 @@ jobs:
         id: commit_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
           git add Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/mars-agents*/package.json
-          git commit -m "release: v${NEXT_VERSION}"
+          git commit -m "release: v${NEXT_VERSION}" -m "Release-Trigger: ${TRIGGER_SHA}"
           echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Push release commit and tag

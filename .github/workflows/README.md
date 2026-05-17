@@ -22,7 +22,9 @@ that has a `release:*` label.
 - Missing `release:*` label skips release.
 - Direct pushes to `main` skip release because there is no PR label to inspect.
 - `release:skip` in the pushed head commit message also skips release.
+- Labels are aggregated across all PRs associated with the trigger commit (deduped), not just the first PR.
 - Duplicate guard is release-kind aware: RC skips when this trigger already has RC or stable tag; stable skips only when a stable tag exists (so RC can still be promoted to stable).
+- Release commits include `Release-Trigger: <trigger-sha>` in the commit body for exact trigger tracking.
 
 When release is enabled, the workflow:
 
@@ -37,6 +39,10 @@ The direct workflow call is the auto-release publish path. To avoid duplicate
 publish runs when checkout uses `RELEASE_TOKEN`, the tag push is forced through
 `${{ github.token }}` / `GITHUB_TOKEN`, so the CI-created tag does not trigger
 a second `release.yml` run from `push.tags`.
+
+Reruns are idempotent by trigger marker:
+- If the release tag already exists for the trigger, rerun reuses that tag and re-calls `release.yml`.
+- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag first, then calls `release.yml`.
 
 ## Manual Backfill
 

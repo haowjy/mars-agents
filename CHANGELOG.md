@@ -19,6 +19,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor lowering now applies `harness-overrides.cursor` (not `harness-overrides.opencode`), and native lowering now uses effective harness-resolved `mcp-tools` for emission/lossiness checks.
 - Cursor bundle warning/provenance now match contract text exactly and emit `provenance.harness_stability = "experimental"` only for Cursor targets.
 - Native lowering now reports matched `harness-overrides.<target>.native-config` as `meridian-only` lossiness metadata (runtime-owned, not emitted into harness-native agent artifacts).
+- `release-on-main` reruns now match prior releases by exact `Release-Trigger: <sha>` marker (not ancestry), can recreate a missing tag for an existing release commit, and still hand off the resolved tag to publish.
 
 ### Changed
 - Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.
@@ -28,6 +29,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent `harness-overrides.<harness>.native-config` now parses with shape-only validation and flows to launch bundle `execution_policy.native_config` (matching harness only, omitted when empty). Portable-key collisions warn but preserve values.
 - Portable tool policy now supports `tools` map syntax (`allow`/`deny`) with mixed allow+deny preservation, consistent tool-name normalization, and harness-override replacement semantics for `tools`, `disallowed-tools`, and `mcp-tools` in launch bundles.
 - Main-merge auto-release now defaults to RC for ambiguous `release:*` labels. Stable requires explicit `release:patch` or `release:stable`.
+- Main-merge auto-release now resolves `release:*` intent from the deduped union of labels across all PRs associated with the trigger commit.
 - Auto-release now computes RC versions as `vX.Y.Z-rc.N` from next stable patch base and writes PyPI version as PEP 440 `X.Y.ZrcN`.
 - Publish workflow now marks RC GitHub releases as prerelease and publishes RC npm packages under dist-tag `rc` (stable stays `latest`).
 - Release provenance now validates stable + RC commit subject, Cargo semver tag match, PyPI RC mapping (`vX.Y.Z-rc.N` -> `X.Y.ZrcN`), and npm package metadata version alignment (`version` + `optionalDependencies`).

@@ -108,6 +108,9 @@ fn release_on_main_has_rc_default_label_contract() {
 
     assert!(workflow.contains("if [[ \"${pr_count}\" -eq 0 ]]; then"));
     assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
+    assert!(
+        workflow.contains("labels=\"$(jq -r '.[].labels[].name' <<<\"${prs_json}\" | sort -u)\"")
+    );
     assert!(workflow.contains("release:skip"));
     assert!(workflow.contains("release:(skip|patch|stable|rc)"));
     assert!(workflow.contains("release_kind=\"rc\""));
@@ -132,6 +135,28 @@ fn release_on_main_has_rc_default_label_contract() {
         "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
         "elif [[ \"${has_stable_label}\" == \"true\" ]]; then",
     );
+}
+
+#[test]
+fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
+    let workflow = read(".github/workflows/release-on-main.yml");
+
+    assert!(workflow.contains(
+        "git commit -m \"release: v${NEXT_VERSION}\" -m \"Release-Trigger: ${TRIGGER_SHA}\""
+    ));
+    assert!(workflow.contains("grep -Fxq \"Release-Trigger: ${TRIGGER_SHA}\""));
+    assert!(workflow.contains("echo \"tag_missing=true\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("echo \"missing_tag=${selected_tag}\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'"));
+    assert!(workflow.contains("id: push_missing_tag"));
+    assert!(workflow.contains(
+        "git tag -a \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\" -m \"Release ${MISSING_TAG#v}\""
+    ));
+    assert!(workflow.contains(
+        "Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
+    ));
+    assert!(workflow.contains("echo \"tag=${MISSING_TAG}\" >> \"$GITHUB_OUTPUT\""));
+    assert!(workflow.contains("steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag"));
 }
 
 #[test]

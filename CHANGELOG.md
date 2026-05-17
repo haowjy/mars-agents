@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Git test helpers no longer let inherited `GIT_*` repository environment redirect temp-repo commands into the caller checkout. Git subprocesses strip repo-scoped Git env before using explicit temp repo cwd.
 
+### Changed
+- Local full preflight skips git-mutating `mars version` release-flow tests. CI still runs the complete test suite.
+
 ## [0.4.6] - 2026-05-16
 
 ### Changed

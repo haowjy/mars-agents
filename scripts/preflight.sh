@@ -18,7 +18,11 @@ case "$MODE" in
     cd "$ROOT_DIR"
     run_step cargo fmt --check
     run_step cargo clippy --all-targets -- -D warnings
-    run_step cargo test
+    if [[ "${CI:-}" == "true" ]]; then
+      run_step cargo test
+    else
+      run_step cargo test -- --skip cli::version::tests::run
+    fi
     run_step cargo build --release
     ;;
   *)

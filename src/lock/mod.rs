@@ -1170,6 +1170,51 @@ dest_path = "agents/coder.md"
     }
 
     #[test]
+    fn build_persists_ref_selector_in_locked_source_version() {
+        let source_name: SourceName = "base".into();
+        let mut nodes = IndexMap::new();
+        nodes.insert(
+            source_name.clone(),
+            ResolvedNode {
+                source_name: source_name.clone(),
+                source_id: SourceId::git("https://example.com/base.git".into()),
+                rooted_ref: crate::resolve::RootedSourceRef {
+                    checkout_root: PathBuf::from("/tmp/cache/base"),
+                    package_root: PathBuf::from("/tmp/cache/base"),
+                },
+                resolved_ref: ResolvedRef {
+                    source_name: source_name.clone(),
+                    version: None,
+                    version_tag: Some("main".into()),
+                    commit: Some("abc123".into()),
+                    tree_path: PathBuf::from("/tmp/cache/base"),
+                },
+                latest_version: None,
+                manifest: None,
+                deps: vec![],
+            },
+        );
+
+        let graph = ResolvedGraph {
+            nodes,
+            order: vec![source_name.clone()],
+            filters: HashMap::new(),
+        };
+        let applied = ApplyResult { outcomes: vec![] };
+        let new_lock = build(
+            &graph,
+            &applied,
+            &LockFile::empty(),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+
+        let source = &new_lock.dependencies["base"];
+        assert_eq!(source.version.as_deref(), Some("main"));
+        assert_eq!(source.commit.as_deref(), Some("abc123"));
+    }
+
+    #[test]
     fn build_keeps_self_items_from_old_lock_on_skipped_action() {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),

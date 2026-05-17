@@ -571,6 +571,7 @@ fn branch_ref_resolves_without_semver() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let node = &graph.nodes["a"];
     assert!(node.resolved_ref.version.is_none());
+    assert_eq!(node.resolved_ref.version_tag.as_deref(), Some("main"));
     assert!(node.latest_version.is_none());
     assert_eq!(node.resolved_ref.commit, Some("ref:main".into()));
 }
@@ -597,7 +598,7 @@ fn ref_pin_prefers_locked_commit_in_normal_sync() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: None,
+            version: Some("main".into()),
             commit: Some(locked_commit.into()),
             tree_hash: None,
         },
@@ -607,6 +608,10 @@ fn ref_pin_prefers_locked_commit_in_normal_sync() {
     assert_eq!(
         graph.nodes["a"].resolved_ref.commit.as_deref(),
         Some(locked_commit)
+    );
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+        Some("main")
     );
     assert_eq!(
         provider.seen_preferred_commits(),
@@ -638,7 +643,7 @@ fn ref_pin_falls_back_when_locked_commit_unreachable_in_normal_sync() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: None,
+            version: Some("main".into()),
             commit: Some(unreachable_commit.into()),
             tree_hash: None,
         },
@@ -648,6 +653,10 @@ fn ref_pin_falls_back_when_locked_commit_unreachable_in_normal_sync() {
     assert_eq!(
         graph.nodes["a"].resolved_ref.commit.as_deref(),
         Some("ref:main")
+    );
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+        Some("main")
     );
     assert_eq!(
         provider.seen_preferred_commits(),
@@ -677,7 +686,7 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: None,
+            version: Some("main".into()),
             commit: Some(locked_commit.into()),
             tree_hash: None,
         },
@@ -691,6 +700,10 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
     assert_eq!(
         graph.nodes["a"].resolved_ref.commit.as_deref(),
         Some(locked_commit)
+    );
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+        Some("main")
     );
     assert_eq!(
         provider.seen_preferred_commits(),
@@ -741,7 +754,7 @@ fn frozen_ref_pin_errors_when_locked_commit_missing() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: None,
+            version: Some("main".into()),
             commit: None,
             tree_hash: None,
         },
@@ -779,7 +792,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: None,
+            version: Some("main".into()),
             commit: Some(unreachable_commit.into()),
             tree_hash: None,
         },
@@ -798,6 +811,169 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
         provider.seen_preferred_commits(),
         vec![Some(unreachable_commit.to_string())]
     );
+}
+
+#[test]
+fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_source("a", tree, None);
+
+    // Config changed from main -> release, but lock still records main.
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("release")),
+    )]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("main".into()),
+            commit: Some("stale-main-sha".into()),
+            tree_hash: None,
+        },
+    );
+
+    let (result, diagnostics) =
+        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
+    let graph = result.unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.commit.as_deref(),
+        Some("ref:release"),
+        "selector mismatch must skip lock replay and fetch requested ref live"
+    );
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+        Some("release")
+    );
+    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    assert!(diagnostics.iter().any(|diag| {
+        diag.code == "locked-ref-selector-mismatch" && diag.message.contains("release")
+    }));
+}
+
+#[test]
+fn ref_pin_selector_missing_ignores_locked_commit_in_normal_sync() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("main")),
+    )]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: None,
+            commit: Some("stale-main-sha".into()),
+            tree_hash: None,
+        },
+    );
+
+    let (result, diagnostics) =
+        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
+    let graph = result.unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.commit.as_deref(),
+        Some("ref:main")
+    );
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+        Some("main")
+    );
+    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == "locked-ref-selector-mismatch"
+                && diag.message.contains("<missing>"))
+    );
+}
+
+#[test]
+fn frozen_ref_pin_errors_when_selector_mismatches_requested_ref() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("release")),
+    )]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("main".into()),
+            commit: Some("stale-main-sha".into()),
+            tree_hash: None,
+        },
+    );
+
+    let options = ResolveOptions {
+        frozen: true,
+        ..default_options()
+    };
+    let result = resolve(&config, &provider, Some(&lock), &options);
+    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
+}
+
+#[test]
+fn frozen_ref_pin_errors_when_selector_missing() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("main")),
+    )]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: None,
+            commit: Some("stale-main-sha".into()),
+            tree_hash: None,
+        },
+    );
+
+    let options = ResolveOptions {
+        frozen: true,
+        ..default_options()
+    };
+    let result = resolve(&config, &provider, Some(&lock), &options);
+    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
 
 #[test]
@@ -1086,6 +1262,54 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
     assert_eq!(
         provider.seen_preferred_commits(),
         vec![Some(unreachable_commit.to_string())]
+    );
+}
+
+#[test]
+fn frozen_mode_replays_unversioned_locked_commit_even_when_tags_now_exist() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    let url = "https://example.com/a.git";
+    provider.add_versions(url, vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![("a", git_spec(url, None))]);
+
+    let locked_commit = "frozen-untagged-sha";
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some(url.into()),
+            path: None,
+            subpath: None,
+            version: None,
+            commit: Some(locked_commit.into()),
+            tree_hash: None,
+        },
+    );
+
+    let options = ResolveOptions {
+        frozen: true,
+        ..default_options()
+    };
+    let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.commit.as_deref(),
+        Some(locked_commit)
+    );
+    assert!(graph.nodes["a"].resolved_ref.version.is_none());
+    assert_eq!(
+        provider.seen_preferred_commits(),
+        vec![Some(locked_commit.to_string())]
+    );
+    assert_eq!(
+        provider.list_versions_count(url),
+        0,
+        "frozen replay should not list tags when lock already gives exact commit"
     );
 }
 

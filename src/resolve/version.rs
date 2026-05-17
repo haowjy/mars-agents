@@ -417,10 +417,8 @@ pub(crate) fn resolve_git_source(
             }
         }
 
-        match provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag) {
-            Ok(resolved) => return Ok((resolved, latest)),
-            Err(err) => return Err(err),
-        }
+        let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)?;
+        return Ok((resolved, latest));
     }
 
     // Select version

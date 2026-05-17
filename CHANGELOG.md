@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-05-17
+
 ### Changed
 - Resolver semver selection now uses latest-compatible semantics by default: normal `mars sync` replays compatible locked versions for both direct and transitive deps, and falls back to newest compatible (not minimum) when no usable lock entry exists.
 - Scoped `mars upgrade <name>` now maximizes only targeted sources while non-targeted deps keep lock-preferred latest-compatible behavior, preventing post-upgrade transitive downgrades on the next plain sync.

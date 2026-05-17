@@ -202,6 +202,153 @@ fn annotate_refpin_resolution(mut resolved: ResolvedRef, ref_name: &str) -> Reso
     resolved
 }
 
+fn resolve_ref_pin_source(
+    name: &SourceName,
+    url: &SourceUrl,
+    ref_name: &str,
+    provider: &dyn SourceProvider,
+    locked_source: Option<&LockedSource>,
+    selection_policy: VersionSelectionPolicy,
+    diag: &mut DiagnosticCollector,
+) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+    let locked_commit = locked_source.and_then(|source| source.commit.as_deref());
+    let locked_selector = locked_source.and_then(|source| source.version.as_deref());
+    let selector_matches_lock = locked_selector.is_some_and(|selector| selector == ref_name);
+    let preferred_commit = match selection_policy {
+        VersionSelectionPolicy::LatestOnly => None,
+        VersionSelectionPolicy::PreferLockThenLatest => {
+            if locked_commit.is_some() && !selector_matches_lock {
+                let lock_selector_desc = locked_selector.unwrap_or("<missing>");
+                diag.warn(
+                    "locked-ref-selector-mismatch",
+                    format!(
+                        "ignoring locked commit for ref-pinned source `{name}` ({url}): lock selector `{lock_selector_desc}` does not match requested selector `{ref_name}`"
+                    ),
+                );
+                None
+            } else {
+                locked_commit
+            }
+        }
+        VersionSelectionPolicy::LockOnly => {
+            let source = locked_source.ok_or_else(|| MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen requires lock entry for ref-pinned source `{name}` ({url})"
+                ),
+            })?;
+            let selector = source.version.as_deref().ok_or_else(|| MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen requires locked ref selector for ref-pinned source `{name}` ({url})"
+                ),
+            })?;
+            if selector != ref_name {
+                return Err(MarsError::FrozenViolation {
+                    message: format!(
+                        "--frozen lock selector `{selector}` for ref-pinned source `{name}` ({url}) does not match requested selector `{ref_name}`"
+                    ),
+                });
+            }
+            let commit = source
+                .commit
+                .as_deref()
+                .ok_or_else(|| MarsError::FrozenViolation {
+                    message: format!(
+                        "--frozen requires locked commit for ref-pinned source `{name}` ({url})"
+                    ),
+                })?;
+            Some(commit)
+        }
+    };
+
+    if let Some(commit) = preferred_commit {
+        return match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
+            Ok(resolved_ref) => Ok((annotate_refpin_resolution(resolved_ref, ref_name), None)),
+            Err(err @ MarsError::LockedCommitUnreachable { .. })
+                if selection_policy == VersionSelectionPolicy::LockOnly =>
+            {
+                Err(err)
+            }
+            Err(MarsError::LockedCommitUnreachable {
+                commit,
+                url: source_url,
+            }) => {
+                diag.warn(
+                    "locked-commit-unreachable",
+                    format!(
+                        "locked commit {commit} for {source_url} is unreachable; re-resolving ref `{ref_name}`"
+                    ),
+                );
+                provider
+                    .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
+                    .map(|resolved_ref| (annotate_refpin_resolution(resolved_ref, ref_name), None))
+            }
+            Err(err) => Err(err),
+        };
+    }
+
+    provider
+        .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
+        .map(|resolved_ref| (annotate_refpin_resolution(resolved_ref, ref_name), None))
+}
+
+fn resolve_untagged_source(
+    name: &SourceName,
+    url: &SourceUrl,
+    provider: &dyn SourceProvider,
+    locked_commit: Option<&str>,
+    locked_commit_unreachable: bool,
+    selection_policy: VersionSelectionPolicy,
+    diag: &mut DiagnosticCollector,
+) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+    // No semver tags → treat as "latest commit", with locked-commit replay.
+    let preferred_commit = match selection_policy {
+        VersionSelectionPolicy::LatestOnly => None,
+        VersionSelectionPolicy::PreferLockThenLatest => {
+            if locked_commit_unreachable {
+                None
+            } else {
+                locked_commit
+            }
+        }
+        VersionSelectionPolicy::LockOnly => {
+            let commit = locked_commit.ok_or_else(|| MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen requires locked commit for untagged source `{name}` ({url})"
+                ),
+            })?;
+            Some(commit)
+        }
+    };
+    if let Some(commit) = preferred_commit {
+        match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
+            Ok(resolved) => return Ok((resolved, None)),
+            Err(err @ MarsError::LockedCommitUnreachable { .. })
+                if selection_policy == VersionSelectionPolicy::LockOnly =>
+            {
+                return Err(err);
+            }
+            Err(MarsError::LockedCommitUnreachable {
+                commit,
+                url: source_url,
+            }) => {
+                diag.warn(
+                    "locked-commit-unreachable",
+                    format!(
+                        "locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
+                    ),
+                );
+                return provider
+                    .fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)
+                    .map(|resolved_ref| (resolved_ref, None));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)?;
+    Ok((resolved, None))
+}
+
 /// Resolve a git source: list versions, intersect constraints, select version.
 pub(crate) fn resolve_git_source(
     name: &SourceName,
@@ -225,87 +372,15 @@ pub(crate) fn resolve_git_source(
             _ => None,
         })
     {
-        let locked_commit = locked_source.and_then(|source| source.commit.as_deref());
-        let locked_selector = locked_source.and_then(|source| source.version.as_deref());
-        let selector_matches_lock = locked_selector.is_some_and(|selector| selector == ref_name);
-        let preferred_commit = match selection_policy {
-            VersionSelectionPolicy::LatestOnly => None,
-            VersionSelectionPolicy::PreferLockThenLatest => {
-                if locked_commit.is_some() && !selector_matches_lock {
-                    let lock_selector_desc = locked_selector.unwrap_or("<missing>");
-                    diag.warn(
-                        "locked-ref-selector-mismatch",
-                        format!(
-                            "ignoring locked commit for ref-pinned source `{name}` ({url}): lock selector `{lock_selector_desc}` does not match requested selector `{ref_name}`"
-                        ),
-                    );
-                    None
-                } else {
-                    locked_commit
-                }
-            }
-            VersionSelectionPolicy::LockOnly => {
-                let source = locked_source.ok_or_else(|| MarsError::FrozenViolation {
-                    message: format!(
-                        "--frozen requires lock entry for ref-pinned source `{name}` ({url})"
-                    ),
-                })?;
-                let selector = source.version.as_deref().ok_or_else(|| {
-                    MarsError::FrozenViolation {
-                        message: format!(
-                            "--frozen requires locked ref selector for ref-pinned source `{name}` ({url})"
-                        ),
-                    }
-                })?;
-                if selector != ref_name {
-                    return Err(MarsError::FrozenViolation {
-                        message: format!(
-                            "--frozen lock selector `{selector}` for ref-pinned source `{name}` ({url}) does not match requested selector `{ref_name}`"
-                        ),
-                    });
-                }
-                let commit = source.commit.as_deref().ok_or_else(|| {
-                    MarsError::FrozenViolation {
-                        message: format!(
-                            "--frozen requires locked commit for ref-pinned source `{name}` ({url})"
-                        ),
-                    }
-                })?;
-                Some(commit)
-            }
-        };
-
-        if let Some(commit) = preferred_commit {
-            return match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
-                Ok(resolved_ref) => Ok((annotate_refpin_resolution(resolved_ref, ref_name), None)),
-                Err(err @ MarsError::LockedCommitUnreachable { .. })
-                    if selection_policy == VersionSelectionPolicy::LockOnly =>
-                {
-                    Err(err)
-                }
-                Err(MarsError::LockedCommitUnreachable {
-                    commit,
-                    url: source_url,
-                }) => {
-                    diag.warn(
-                        "locked-commit-unreachable",
-                        format!(
-                            "locked commit {commit} for {source_url} is unreachable; re-resolving ref `{ref_name}`"
-                        ),
-                    );
-                    provider
-                        .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
-                        .map(|resolved_ref| {
-                            (annotate_refpin_resolution(resolved_ref, ref_name), None)
-                        })
-                }
-                Err(err) => Err(err),
-            };
-        }
-
-        return provider
-            .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
-            .map(|resolved_ref| (annotate_refpin_resolution(resolved_ref, ref_name), None));
+        return resolve_ref_pin_source(
+            name,
+            url,
+            ref_name,
+            provider,
+            locked_source,
+            selection_policy,
+            diag,
+        );
     }
 
     let locked_commit = locked_source.and_then(|ls| ls.commit.as_deref());
@@ -426,53 +501,15 @@ pub(crate) fn resolve_git_source(
         .map(|v| v.version.clone());
 
     if available.is_empty() {
-        // No semver tags → treat as "latest commit", with locked-commit replay.
-        let preferred_commit = match selection_policy {
-            VersionSelectionPolicy::LatestOnly => None,
-            VersionSelectionPolicy::PreferLockThenLatest => {
-                if locked_commit_unreachable {
-                    None
-                } else {
-                    locked_commit
-                }
-            }
-            VersionSelectionPolicy::LockOnly => {
-                let commit = locked_commit.ok_or_else(|| MarsError::FrozenViolation {
-                    message: format!(
-                        "--frozen requires locked commit for untagged source `{name}` ({url})"
-                    ),
-                })?;
-                Some(commit)
-            }
-        };
-        if let Some(commit) = preferred_commit {
-            match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
-                Ok(resolved) => return Ok((resolved, latest)),
-                Err(err @ MarsError::LockedCommitUnreachable { .. })
-                    if selection_policy == VersionSelectionPolicy::LockOnly =>
-                {
-                    return Err(err);
-                }
-                Err(MarsError::LockedCommitUnreachable {
-                    commit,
-                    url: source_url,
-                }) => {
-                    diag.warn(
-                        "locked-commit-unreachable",
-                        format!(
-                            "locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
-                        ),
-                    );
-                    return provider
-                        .fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)
-                        .map(|resolved_ref| (resolved_ref, latest));
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
-        let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)?;
-        return Ok((resolved, latest));
+        return resolve_untagged_source(
+            name,
+            url,
+            provider,
+            locked_commit,
+            locked_commit_unreachable,
+            selection_policy,
+            diag,
+        );
     }
 
     // Select version

@@ -207,16 +207,9 @@ pub fn resolve(
     let direct_requests: Vec<PendingSource> = {
         let mut reqs = Vec::new();
         for (name, source) in &config.dependencies {
-            let is_upgrade_target = options.maximize
-                && (options.upgrade_targets.is_empty() || options.upgrade_targets.contains(name));
             let constraint = match &source.spec {
-                SourceSpec::Git(git) => {
-                    if options.bump_direct_constraints && is_upgrade_target {
-                        VersionConstraint::Latest
-                    } else {
-                        parse_version_constraint(git.version.as_deref())
-                    }
-                }
+                SourceSpec::Git(git) => options
+                    .direct_constraint_for(name, parse_version_constraint(git.version.as_deref())),
                 SourceSpec::Path(_) => VersionConstraint::Latest,
             };
             reqs.push(PendingSource {

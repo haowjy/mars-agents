@@ -766,10 +766,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(
         result,

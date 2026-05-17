@@ -278,19 +278,34 @@ fn resolved_ref_matches(existing: &ResolvedRef, incoming: &ResolvedRef) -> bool 
         )
 }
 
+/// High-level resolver mode shared by sync and upgrade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveMode {
+    /// Normal sync: replay compatible lock entries, otherwise pick newest compatible.
+    Sync,
+    /// Frozen sync: require the lock to replay exactly.
+    Frozen,
+    /// Upgrade: bypass lock replay for targets, leave non-targets lock-preferred.
+    Upgrade {
+        /// Empty means every source is an upgrade target.
+        targets: HashSet<SourceName>,
+        /// Treat direct target constraints as unconstrained so the manifest can be bumped.
+        bump_direct_constraints: bool,
+    },
+}
+
 /// Options controlling resolution behavior.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveOptions {
-    /// If true, enable upgrade-mode selection for targeted sources.
-    /// Upgrade targets bypass lock preference and select newest compatible versions.
-    pub maximize: bool,
-    /// Source names that run in upgrade mode (empty = all sources when maximize=true).
-    pub upgrade_targets: HashSet<SourceName>,
-    /// If true, treat direct dependency constraints for upgrade targets as
-    /// unconstrained during resolution (used by `mars upgrade --bump`).
-    pub bump_direct_constraints: bool,
-    /// If true, locked commit replay failures become hard errors.
-    pub frozen: bool,
+    pub mode: ResolveMode,
+}
+
+impl Default for ResolveOptions {
+    fn default() -> Self {
+        Self {
+            mode: ResolveMode::Sync,
+        }
+    }
 }
 
 /// Version-selection behavior for a single source in the current resolve mode.
@@ -305,21 +320,67 @@ pub(crate) enum VersionSelectionPolicy {
 }
 
 impl ResolveOptions {
+    pub fn sync() -> Self {
+        Self {
+            mode: ResolveMode::Sync,
+        }
+    }
+
+    pub fn frozen() -> Self {
+        Self {
+            mode: ResolveMode::Frozen,
+        }
+    }
+
+    pub fn upgrade(targets: HashSet<SourceName>, bump_direct_constraints: bool) -> Self {
+        Self {
+            mode: ResolveMode::Upgrade {
+                targets,
+                bump_direct_constraints,
+            },
+        }
+    }
+
+    pub(crate) fn direct_constraint_for(
+        &self,
+        source_name: &SourceName,
+        declared: VersionConstraint,
+    ) -> VersionConstraint {
+        if matches!(
+            &self.mode,
+            ResolveMode::Upgrade {
+                bump_direct_constraints: true,
+                ..
+            }
+        ) && self.is_upgrade_target(source_name)
+        {
+            VersionConstraint::Latest
+        } else {
+            declared
+        }
+    }
+
     pub(crate) fn is_upgrade_target(&self, source_name: &SourceName) -> bool {
-        self.maximize
-            && (self.upgrade_targets.is_empty() || self.upgrade_targets.contains(source_name))
+        match &self.mode {
+            ResolveMode::Upgrade { targets, .. } => {
+                targets.is_empty() || targets.contains(source_name)
+            }
+            ResolveMode::Sync | ResolveMode::Frozen => false,
+        }
     }
 
     pub(crate) fn version_selection_policy(
         &self,
         source_name: &SourceName,
     ) -> VersionSelectionPolicy {
-        if self.frozen {
-            VersionSelectionPolicy::LockOnly
-        } else if self.is_upgrade_target(source_name) {
-            VersionSelectionPolicy::LatestOnly
-        } else {
-            VersionSelectionPolicy::PreferLockThenLatest
+        match &self.mode {
+            ResolveMode::Frozen => VersionSelectionPolicy::LockOnly,
+            ResolveMode::Upgrade { .. } if self.is_upgrade_target(source_name) => {
+                VersionSelectionPolicy::LatestOnly
+            }
+            ResolveMode::Sync | ResolveMode::Upgrade { .. } => {
+                VersionSelectionPolicy::PreferLockThenLatest
+            }
         }
     }
 }

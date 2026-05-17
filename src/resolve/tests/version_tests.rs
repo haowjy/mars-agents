@@ -270,10 +270,7 @@ fn frozen_mode_errors_when_lock_entry_identity_url_mismatches_source() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -352,12 +349,7 @@ fn maximize_mode_ignores_locked_commit() {
         },
     );
 
-    let options = ResolveOptions {
-        maximize: true,
-        upgrade_targets: HashSet::new(),
-        bump_direct_constraints: false,
-        frozen: false,
-    };
+    let options = ResolveOptions::upgrade(HashSet::new(), false);
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     assert_eq!(
         graph.nodes["a"].resolved_ref.version,
@@ -692,10 +684,7 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     assert_eq!(
         graph.nodes["a"].resolved_ref.commit.as_deref(),
@@ -725,10 +714,7 @@ fn frozen_ref_pin_errors_when_lock_entry_missing() {
         git_spec("https://example.com/a.git", Some("main")),
     )]);
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&LockFile::empty()), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -760,10 +746,7 @@ fn frozen_ref_pin_errors_when_locked_commit_missing() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -798,10 +781,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(
         result,
@@ -933,10 +913,7 @@ fn frozen_ref_pin_errors_when_selector_mismatches_requested_ref() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -968,10 +945,7 @@ fn frozen_ref_pin_errors_when_selector_missing() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -994,12 +968,7 @@ fn maximize_mode_picks_newest() {
         git_spec("https://example.com/a.git", Some("^1.0")),
     )]);
 
-    let options = ResolveOptions {
-        maximize: true,
-        upgrade_targets: HashSet::new(),
-        bump_direct_constraints: false,
-        frozen: false,
-    };
+    let options = ResolveOptions::upgrade(HashSet::new(), false);
 
     let graph = resolve(&config, &provider, None, &options).unwrap();
     let node = &graph.nodes["a"];
@@ -1038,12 +1007,7 @@ fn maximize_with_specific_targets_replays_non_target_lock_entry() {
         },
     );
 
-    let options = ResolveOptions {
-        maximize: true,
-        upgrade_targets: HashSet::from(["a".into()]),
-        bump_direct_constraints: false,
-        frozen: false,
-    };
+    let options = ResolveOptions::upgrade(HashSet::from(["a".into()]), false);
 
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     assert_eq!(
@@ -1082,12 +1046,7 @@ fn maximize_with_specific_targets_uses_latest_compatible_for_unlocked_non_target
         ("b", git_spec("https://example.com/b.git", Some("^2.0"))),
     ]);
 
-    let options = ResolveOptions {
-        maximize: true,
-        upgrade_targets: HashSet::from(["a".into()]),
-        bump_direct_constraints: false,
-        frozen: false,
-    };
+    let options = ResolveOptions::upgrade(HashSet::from(["a".into()]), false);
 
     let graph = resolve(&config, &provider, None, &options).unwrap();
     assert_eq!(
@@ -1117,12 +1076,7 @@ fn bump_direct_constraints_ignores_direct_pin_for_target() {
         git_spec("https://example.com/a.git", Some("v1.0.0")),
     )]);
 
-    let options = ResolveOptions {
-        maximize: true,
-        upgrade_targets: HashSet::from([SourceName::from("a")]),
-        bump_direct_constraints: true,
-        frozen: false,
-    };
+    let options = ResolveOptions::upgrade(HashSet::from([SourceName::from("a")]), true);
 
     let graph = resolve(&config, &provider, None, &options).unwrap();
     assert_eq!(
@@ -1250,10 +1204,7 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(
         result,
@@ -1292,10 +1243,7 @@ fn frozen_mode_replays_unversioned_locked_commit_even_when_tags_now_exist() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     assert_eq!(
         graph.nodes["a"].resolved_ref.commit.as_deref(),
@@ -1344,10 +1292,7 @@ fn frozen_mode_errors_when_locked_semver_is_incompatible() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -1377,10 +1322,7 @@ fn frozen_semver_malformed_lock_fails_before_listing_versions() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
     assert_eq!(provider.list_versions_count(url), 0);
@@ -1413,10 +1355,7 @@ fn frozen_semver_replays_locked_commit_even_when_tag_missing_from_remote() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     assert_eq!(
         graph.nodes["a"].resolved_ref.version,
@@ -1471,10 +1410,7 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
@@ -1536,10 +1472,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     // With frozen, transitive deps also consult the lock → unreachable commit → error.
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(
@@ -1785,10 +1718,7 @@ fn r5_frozen_replays_transitive_from_lock() {
         },
     );
 
-    let options = ResolveOptions {
-        frozen: true,
-        ..default_options()
-    };
+    let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
     // With frozen, transitive lock is respected → shared@v1.1.0 with locked commit.
     assert_eq!(

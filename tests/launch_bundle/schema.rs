@@ -43,11 +43,14 @@ Review code changes."#;
     assert_eq!(bundle["version"].as_u64(), Some(1));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert!(bundle["routing"]["harness_model"].is_string());
+    assert!(bundle["routing"]["harness_model_source"].is_string());
+    assert!(bundle["routing"]["harness_model_confidence"].is_string());
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["Bash", "Write"])
+        serde_json::json!(["shell", "file_write"])
     );
-    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["Agent"]));
+    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["agent"]));
     assert_eq!(
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])

@@ -106,6 +106,31 @@ fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_
 }
 
 #[test]
+fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
+    routing::build_launch_bundle_resolves_harness_model_from_cached_opencode_probe();
+}
+
+#[test]
+fn build_launch_bundle_ignores_stale_opencode_probe_and_synthesizes_runnable_path() {
+    routing::build_launch_bundle_ignores_stale_opencode_probe_and_synthesizes_runnable_path();
+}
+
+#[test]
+fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
+    routing::build_launch_bundle_synthesizes_opencode_model_when_cache_missing();
+}
+
+#[test]
+fn build_launch_bundle_synthesizes_openrouter_path_when_probe_has_openrouter_only() {
+    routing::build_launch_bundle_synthesizes_openrouter_path_when_probe_has_openrouter_only();
+}
+
+#[test]
+fn build_launch_bundle_unknown_harness_model_path_warns_and_passes_through() {
+    routing::build_launch_bundle_unknown_harness_model_path_warns_and_passes_through();
+}
+
+#[test]
 fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     routing::build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache();
 }
@@ -143,6 +168,32 @@ fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
 #[test]
 fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement() {
     tool_policy::build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement();
+}
+
+#[test]
+fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload() {
+    tool_policy::build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload();
+}
+
+#[test]
+fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
+    tool_policy::build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp();
+}
+
+#[test]
+fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
+    tool_policy::build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown(
+    );
+}
+
+#[test]
+fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
+    tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently();
+}
+
+#[test]
+fn build_launch_bundle_dedupes_after_target_harness_tool_normalization() {
+    tool_policy::build_launch_bundle_dedupes_after_target_harness_tool_normalization();
 }
 
 #[test]

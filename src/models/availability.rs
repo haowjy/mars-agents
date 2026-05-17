@@ -42,6 +42,49 @@ pub struct ModelAvailability {
     pub runnable_paths: Vec<RunnablePath>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnablePathSource {
+    CachedProbe,
+    ProviderMatch,
+    Synthesized,
+    Passthrough,
+}
+
+impl RunnablePathSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CachedProbe => "cached-probe",
+            Self::ProviderMatch => "provider-match",
+            Self::Synthesized => "synthesized",
+            Self::Passthrough => "passthrough",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnableConfidence {
+    Confirmed,
+    Likely,
+    Unknown,
+}
+
+impl RunnableConfidence {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Likely => "likely",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRunnablePath {
+    pub harness_model_id: String,
+    pub source: RunnablePathSource,
+    pub confidence: RunnableConfidence,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposedSlug {
     pub oc_provider: String,
@@ -87,6 +130,67 @@ pub fn model_id_matches(mars_id: &str, oc_model: &str) -> bool {
 
 pub fn provider_matches(mars_provider: &str, oc_segment: &str) -> bool {
     mars_provider.eq_ignore_ascii_case(oc_segment)
+}
+
+pub fn resolve_runnable_path(
+    model_id: &str,
+    provider: &str,
+    target_harness: &str,
+    probe_result: Option<&OpenCodeProbeResult>,
+) -> ResolvedRunnablePath {
+    if let Some(cached_path) =
+        resolve_cached_probe_path(model_id, provider, target_harness, probe_result)
+    {
+        return cached_path;
+    }
+
+    if is_provider_native_harness(provider, target_harness) {
+        return ResolvedRunnablePath {
+            harness_model_id: model_id.to_string(),
+            source: RunnablePathSource::ProviderMatch,
+            confidence: RunnableConfidence::Likely,
+        };
+    }
+
+    if target_harness.eq_ignore_ascii_case("opencode") && !provider.trim().is_empty() {
+        return ResolvedRunnablePath {
+            harness_model_id: synthesize_opencode_slug(model_id, provider, probe_result),
+            source: RunnablePathSource::Synthesized,
+            confidence: RunnableConfidence::Likely,
+        };
+    }
+
+    ResolvedRunnablePath {
+        harness_model_id: model_id.to_string(),
+        source: RunnablePathSource::Passthrough,
+        confidence: RunnableConfidence::Unknown,
+    }
+}
+
+fn resolve_cached_probe_path(
+    model_id: &str,
+    provider: &str,
+    target_harness: &str,
+    probe_result: Option<&OpenCodeProbeResult>,
+) -> Option<ResolvedRunnablePath> {
+    if !target_harness.eq_ignore_ascii_case("opencode") {
+        return None;
+    }
+    if provider.trim().is_empty() {
+        return None;
+    }
+
+    let probe = probe_result?;
+    if !probe.model_probe_success {
+        return None;
+    }
+
+    let matched_slug = find_matching_slug(model_id, provider, &probe.model_slugs)?;
+    Some(ResolvedRunnablePath {
+        harness_model_id: matched_slug,
+        source: RunnablePathSource::CachedProbe,
+        confidence: RunnableConfidence::Confirmed,
+    })
 }
 
 /// Classify availability for a model through a specific harness.
@@ -154,16 +258,9 @@ fn classify_opencode(
         ));
     }
 
-    let provider_lower = provider.to_lowercase();
-    let has_provider = probe
-        .providers
-        .get(&provider_lower)
-        .copied()
-        .unwrap_or(false);
-    let has_openrouter = probe.providers.get("openrouter").copied().unwrap_or(false);
-    let has_via_openrouter = has_openrouter && openrouter_supports_provider(&provider_lower);
+    let provider_capability = classify_opencode_provider(provider, probe);
 
-    if !has_provider && !has_via_openrouter {
+    if !provider_capability.provider_available && !provider_capability.openrouter_only {
         return Some((
             AvailabilityStatus::Unavailable,
             AvailabilitySource::OpenCodeProbeNegative,
@@ -176,13 +273,7 @@ fn classify_opencode(
     } else {
         None
     }
-    .unwrap_or_else(|| {
-        if has_via_openrouter && !has_provider {
-            format!("openrouter/{provider_lower}/{model_id}")
-        } else {
-            format!("{provider_lower}/{model_id}")
-        }
-    });
+    .unwrap_or_else(|| synthesize_opencode_slug(model_id, provider, Some(probe)));
 
     Some((
         AvailabilityStatus::Runnable,
@@ -193,6 +284,61 @@ fn classify_opencode(
             harness_model_id,
         }),
     ))
+}
+
+fn classify_opencode_provider(
+    provider: &str,
+    probe: &OpenCodeProbeResult,
+) -> OpencodeProviderCapability {
+    let provider_lower = provider.trim().to_ascii_lowercase();
+    let provider_available = probe
+        .providers
+        .get(&provider_lower)
+        .copied()
+        .unwrap_or(false);
+    let has_openrouter = probe.providers.get("openrouter").copied().unwrap_or(false);
+    let openrouter_only =
+        !provider_available && has_openrouter && openrouter_supports_provider(&provider_lower);
+
+    OpencodeProviderCapability {
+        provider_lower,
+        provider_available,
+        openrouter_only,
+    }
+}
+
+fn synthesize_opencode_slug(
+    model_id: &str,
+    provider: &str,
+    probe_result: Option<&OpenCodeProbeResult>,
+) -> String {
+    let provider_lower = provider.trim().to_ascii_lowercase();
+    if let Some(probe) = probe_result
+        && probe.provider_probe_success
+    {
+        let capability = classify_opencode_provider(provider, probe);
+        if capability.openrouter_only {
+            return format!("openrouter/{}/{model_id}", capability.provider_lower);
+        }
+    }
+    format!("{provider_lower}/{model_id}")
+}
+
+#[derive(Debug, Clone)]
+struct OpencodeProviderCapability {
+    provider_lower: String,
+    provider_available: bool,
+    openrouter_only: bool,
+}
+
+fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
+    let provider = provider.trim().to_ascii_lowercase();
+    let harness = target_harness.trim().to_ascii_lowercase();
+
+    matches!(
+        (provider.as_str(), harness.as_str()),
+        ("anthropic", "claude") | ("openai", "codex")
+    )
 }
 
 fn openrouter_supports_provider(provider: &str) -> bool {
@@ -619,6 +765,42 @@ mod tests {
             result.runnable_paths[0].harness_model_id,
             "anthropic/claude-opus-4-7"
         );
+    }
+
+    #[test]
+    fn test_resolve_runnable_path_prefers_cached_probe_slug() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("openai".to_string(), true)]),
+            model_slugs: vec!["openai/gpt-5.4".to_string()],
+            provider_probe_success: true,
+            model_probe_success: true,
+            error: None,
+        };
+
+        let resolved = resolve_runnable_path("gpt-5.4", "OpenAI", "opencode", Some(&probe));
+        assert_eq!(resolved.harness_model_id, "openai/gpt-5.4");
+        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
+        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
+    }
+
+    #[test]
+    fn test_resolve_runnable_path_synthesizes_openrouter_when_probe_has_openrouter_only() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("openrouter".to_string(), true)]),
+            model_slugs: vec!["openrouter/anthropic/claude-sonnet-4-7".to_string()],
+            provider_probe_success: true,
+            model_probe_success: true,
+            error: None,
+        };
+
+        let resolved =
+            resolve_runnable_path("claude-opus-4-7", "Anthropic", "opencode", Some(&probe));
+        assert_eq!(
+            resolved.harness_model_id,
+            "openrouter/anthropic/claude-opus-4-7"
+        );
+        assert_eq!(resolved.source, RunnablePathSource::Synthesized);
+        assert_eq!(resolved.confidence, RunnableConfidence::Likely);
     }
 
     #[test]

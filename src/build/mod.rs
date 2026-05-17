@@ -1,12 +1,14 @@
 pub mod bundle;
 pub mod policy;
 pub mod prompt;
+pub mod tool_normalize;
 
 use std::path::PathBuf;
 
 use bundle::{LaunchBundle, ScaffoldSlots, SkillsMetadata, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
+use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_tool_for_harness};
 
 use crate::cli::MarsContext;
 use crate::compiler::agents::{HarnessKind, parse_agent_content};
@@ -87,7 +89,8 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(prompt.warnings);
-    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
+    let (resolved_tools, tool_warnings) = resolve_bundle_tools(&profile, &policy.routing.harness)?;
+    warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {
         version: 1,
@@ -120,16 +123,52 @@ fn agent_file_path(project_root: &std::path::Path, agent: &str) -> PathBuf {
 fn resolve_bundle_tools(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
-) -> Result<ToolsSpec, MarsError> {
+) -> Result<(ToolsSpec, Vec<String>), MarsError> {
     let harness_kind = parse_harness_kind(harness)?;
 
     let effective_tools = profile.effective_tool_policy(&harness_kind);
+    let mut warnings = Vec::new();
 
-    Ok(ToolsSpec {
-        allowed: effective_tools.allowed,
-        disallowed: effective_tools.disallowed,
-        mcp: effective_tools.mcp,
-    })
+    let allowed = normalize_and_dedupe_tools(&effective_tools.allowed, harness, &mut warnings);
+    let disallowed =
+        normalize_and_dedupe_tools(&effective_tools.disallowed, harness, &mut warnings);
+
+    Ok((
+        ToolsSpec {
+            allowed,
+            disallowed,
+            mcp: effective_tools.mcp,
+        },
+        warnings,
+    ))
+}
+
+fn normalize_and_dedupe_tools(
+    tools: &[String],
+    harness: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut projected = Vec::new();
+
+    for tool in tools {
+        let normalized = normalize_tool_for_harness(tool, harness);
+        if normalized.status == ToolProjectionStatus::Unknown && is_first_class_harness(harness) {
+            warnings.push(format!(
+                "tool '{tool}' is not a known {harness} tool; passing through verbatim"
+            ));
+        }
+
+        let trimmed = normalized.name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            projected.push(trimmed.to_string());
+        }
+    }
+
+    projected
 }
 
 fn resolve_effective_skills(

@@ -8,6 +8,8 @@ use crate::compiler::agents::{
     AgentProfile, ApprovalMode, EffortLevel, HarnessKind, OverrideFields, SandboxMode,
 };
 use crate::error::{ConfigError, MarsError};
+use crate::models::availability::{RunnableConfidence, RunnablePathSource, resolve_runnable_path};
+use crate::models::probes::opencode_cache;
 use crate::models::{self, ModelAlias, ModelsCache};
 
 pub struct PolicyInput<'a> {
@@ -49,10 +51,12 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     };
 
     let alias = aliases.get(&model_token);
+    let mut alias_resolution_failed = false;
     let model = if let Some(alias) = alias {
         match models::resolve_model_id_for_alias(alias, &cache) {
             Some(model_id) => model_id,
             None => {
+                alias_resolution_failed = true;
                 warnings.push(format!(
                     "model alias `{model_token}` did not resolve from cached catalog; using token as model id"
                 ));
@@ -160,11 +164,62 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         resolve_autocompact_pct(&input, alias, matched_harness_override);
     provenance.insert("autocompact_pct_source".to_string(), autocompact_pct_source);
 
+    let provider_for_runnable = if alias_resolution_failed {
+        ""
+    } else {
+        provider.as_deref().unwrap_or("")
+    };
+    let cached_probe = if harness.eq_ignore_ascii_case("opencode") {
+        opencode_cache::read_cached_probe_result()
+    } else {
+        None
+    };
+    let runnable = resolve_runnable_path(
+        &model,
+        provider_for_runnable,
+        &harness,
+        cached_probe.as_ref(),
+    );
+
+    if matches!(
+        runnable.source,
+        RunnablePathSource::Synthesized | RunnablePathSource::Passthrough
+    ) {
+        warnings.push(format!(
+            "model '{}' does not have a confirmed runnable path for harness '{}'; using {} path '{}'",
+            model,
+            harness,
+            runnable.source.label(),
+            runnable.harness_model_id
+        ));
+    }
+    if runnable.confidence == RunnableConfidence::Unknown {
+        warnings.push(format!(
+            "harness-model for '{}' targeting '{}' is unconfirmed ({})",
+            model,
+            harness,
+            runnable.source.label()
+        ));
+    }
+    if alias.is_none()
+        && model_token == model
+        && !model_exists_in_cache(&cache, &model)
+        && matches!(runnable.source, RunnablePathSource::Passthrough)
+    {
+        warnings.push(format!(
+            "model '{}' not found in models cache; passing through as harness model ID",
+            model_token
+        ));
+    }
+
     Ok(ResolvedPolicy {
         routing: Routing {
             model,
             model_token,
             harness,
+            harness_model: runnable.harness_model_id,
+            harness_model_source: runnable.source.label().to_string(),
+            harness_model_confidence: runnable.confidence.label().to_string(),
         },
         execution_policy: ExecutionPolicy {
             effort,
@@ -178,6 +233,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         provenance,
         warnings,
     })
+}
+
+fn model_exists_in_cache(cache: &ModelsCache, model_id: &str) -> bool {
+    cache
+        .models
+        .iter()
+        .any(|model| model.id.eq_ignore_ascii_case(model_id))
 }
 
 fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {

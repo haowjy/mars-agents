@@ -25,6 +25,10 @@ use tempfile::TempDir;
 pub(crate) struct MockProvider {
     /// url → sorted available versions
     versions: HashMap<String, Vec<AvailableVersion>>,
+    /// Number of version list calls keyed by URL.
+    list_versions_counts: RefCell<HashMap<String, usize>>,
+    /// URLs where listing versions should fail.
+    list_versions_failures: HashSet<String>,
     /// source tree paths keyed by source name (pre-created temp dirs)
     trees: HashMap<String, PathBuf>,
     /// Optional source tree overrides keyed by (source name, version tag).
@@ -40,6 +44,8 @@ pub(crate) struct MockProvider {
     unreachable_preferred_commits: HashSet<String>,
     /// Captures preferred-commit hints passed by the resolver.
     seen_preferred_commits: RefCell<Vec<Option<String>>>,
+    /// When true, fetch_git_ref fails to prove commit-replay paths do not depend on refs.
+    fail_fetch_git_ref: bool,
     /// Number of fetches keyed by source name.
     fetch_counts: RefCell<HashMap<String, usize>>,
 }
@@ -48,6 +54,8 @@ impl MockProvider {
     fn new() -> Self {
         MockProvider {
             versions: HashMap::new(),
+            list_versions_counts: RefCell::new(HashMap::new()),
+            list_versions_failures: HashSet::new(),
             trees: HashMap::new(),
             versioned_trees: HashMap::new(),
             manifests: HashMap::new(),
@@ -55,6 +63,7 @@ impl MockProvider {
             commit_sequence_indices: RefCell::new(HashMap::new()),
             unreachable_preferred_commits: HashSet::new(),
             seen_preferred_commits: RefCell::new(Vec::new()),
+            fail_fetch_git_ref: false,
             fetch_counts: RefCell::new(HashMap::new()),
         }
     }
@@ -122,6 +131,14 @@ impl MockProvider {
             .unwrap_or(0)
     }
 
+    fn list_versions_count(&self, url: &str) -> usize {
+        self.list_versions_counts
+            .borrow()
+            .get(url)
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn bump_fetch_count(&self, source_name: &str) {
         let mut counts = self.fetch_counts.borrow_mut();
         let entry = counts.entry(source_name.to_string()).or_insert(0);
@@ -131,6 +148,15 @@ impl MockProvider {
 
 impl VersionLister for MockProvider {
     fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError> {
+        let mut counts = self.list_versions_counts.borrow_mut();
+        let entry = counts.entry(url.to_string()).or_insert(0);
+        *entry += 1;
+        if self.list_versions_failures.contains(url.as_ref()) {
+            return Err(MarsError::Source {
+                source_name: url.to_string(),
+                message: "mock list_versions failure".to_string(),
+            });
+        }
         Ok(self.versions.get(url.as_ref()).cloned().unwrap_or_default())
     }
 }
@@ -201,6 +227,13 @@ impl SourceFetcher for MockProvider {
             .borrow_mut()
             .push(preferred_commit.map(str::to_string));
 
+        if self.fail_fetch_git_ref {
+            return Err(MarsError::Source {
+                source_name: source_name.to_string(),
+                message: "mock fetch_git_ref failure".to_string(),
+            });
+        }
+
         if let Some(commit) = preferred_commit
             && self.unreachable_preferred_commits.contains(commit)
         {
@@ -220,6 +253,35 @@ impl SourceFetcher for MockProvider {
                     .map(|c| c.into())
                     .unwrap_or_else(|| format!("ref:{ref_name}").into()),
             ),
+            tree_path,
+        })
+    }
+
+    fn fetch_git_commit(
+        &self,
+        url: &SourceUrl,
+        commit: &str,
+        source_name: &str,
+        _diag: &mut DiagnosticCollector,
+    ) -> Result<ResolvedRef, MarsError> {
+        self.bump_fetch_count(source_name);
+        self.seen_preferred_commits
+            .borrow_mut()
+            .push(Some(commit.to_string()));
+
+        if self.unreachable_preferred_commits.contains(commit) {
+            return Err(MarsError::LockedCommitUnreachable {
+                commit: commit.to_string(),
+                url: url.to_string(),
+            });
+        }
+
+        let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
+        Ok(ResolvedRef {
+            source_name: source_name.into(),
+            version: None,
+            version_tag: None,
+            commit: Some(commit.into()),
             tree_path,
         })
     }

@@ -93,7 +93,11 @@ pub(crate) fn fetch_git_clone(
     let was_cached = cache_path.exists();
 
     if !was_cached {
-        let mut args = vec!["clone", "--depth", "1"];
+        let mut args = vec!["clone"];
+        if sha.is_none() {
+            args.push("--depth");
+            args.push("1");
+        }
         if let Some(tag_name) = tag {
             args.push("--branch");
             args.push(tag_name);
@@ -111,6 +115,30 @@ pub(crate) fn fetch_git_clone(
     }
 
     if was_cached {
+        if let Some(sha) = sha {
+            match run_git(
+                &["fetch", "--depth", "1", "origin", sha],
+                &cache_path,
+                "fetch cached git commit",
+            ) {
+                Ok(_) => {}
+                Err(_) => {
+                    run_git(
+                        &["fetch", "--unshallow", "origin"],
+                        &cache_path,
+                        "unshallow cached git source for locked commit",
+                    )
+                    .or_else(|_| {
+                        run_git(
+                            &["fetch", "origin"],
+                            &cache_path,
+                            "fetch cached git source for locked commit",
+                        )
+                    })?;
+                }
+            }
+        }
+
         if let Some(tag_name) = tag {
             run_git(
                 &["checkout", tag_name],

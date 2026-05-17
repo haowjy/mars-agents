@@ -179,6 +179,47 @@ pub fn fetch(
     })
 }
 
+/// Fetch a git source at an exact locked commit without resolving a live ref first.
+pub fn fetch_commit(
+    url: &str,
+    commit: &str,
+    source_name: &str,
+    cache: &GlobalCache,
+    _diag: &mut DiagnosticCollector,
+) -> Result<ResolvedRef, MarsError> {
+    let tree_path = if should_use_github_archive(url) {
+        match archive::fetch_archive(url, commit, cache) {
+            Ok(path) => path,
+            Err(MarsError::Http { status: 404, .. }) => {
+                return Err(MarsError::LockedCommitUnreachable {
+                    commit: commit.to_string(),
+                    url: url.to_string(),
+                });
+            }
+            Err(err) => return Err(err),
+        }
+    } else {
+        match git_cli::fetch_git_clone(url, None, Some(commit), cache) {
+            Ok(path) => path,
+            Err(MarsError::GitCli { .. }) => {
+                return Err(MarsError::LockedCommitUnreachable {
+                    commit: commit.to_string(),
+                    url: url.to_string(),
+                });
+            }
+            Err(err) => return Err(err),
+        }
+    };
+
+    Ok(ResolvedRef {
+        source_name: source_name.into(),
+        version: None,
+        version_tag: None,
+        commit: Some(CommitHash::from(commit)),
+        tree_path,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +402,75 @@ mod tests {
 
         let checked_out = run_git(&resolved.tree_path, ["rev-parse", "HEAD"]);
         assert_eq!(checked_out, v020_commit);
+    }
+
+    #[test]
+    fn fetch_commit_checks_out_exact_commit_without_resolving_head() {
+        let remote = init_repo();
+        let locked_commit = commit_file(remote.path(), "README.md", "locked\n", "locked commit");
+        let head_commit = commit_file(remote.path(), "README.md", "head\n", "head commit");
+        assert_ne!(locked_commit, head_commit);
+
+        let cache_root = TempDir::new().unwrap();
+        let cache = GlobalCache {
+            root: cache_root.path().join("cache"),
+        };
+        fs::create_dir_all(cache.archives_dir()).unwrap();
+        fs::create_dir_all(cache.git_dir()).unwrap();
+
+        let url = format!("file://{}", remote.path().display());
+        let mut diag = DiagnosticCollector::new();
+        let resolved =
+            fetch_commit(&url, &locked_commit, "local-source", &cache, &mut diag).unwrap();
+
+        assert_eq!(resolved.source_name.as_ref(), "local-source");
+        assert_eq!(resolved.version, None);
+        assert_eq!(resolved.version_tag, None);
+        assert_eq!(resolved.commit.as_deref(), Some(locked_commit.as_str()));
+        let checked_out = run_git(&resolved.tree_path, ["rev-parse", "HEAD"]);
+        assert_eq!(checked_out, locked_commit);
+    }
+
+    #[test]
+    fn fetch_commit_on_cached_repo_fetches_missing_sha_before_checkout() {
+        let remote = init_repo();
+        run_git(remote.path(), ["tag", "v1.0.0"]);
+
+        let cache_root = TempDir::new().unwrap();
+        let cache = GlobalCache {
+            root: cache_root.path().join("cache"),
+        };
+        fs::create_dir_all(cache.archives_dir()).unwrap();
+        fs::create_dir_all(cache.git_dir()).unwrap();
+
+        let url = format!("file://{}", remote.path().display());
+
+        // Seed cache as a shallow tag checkout that does not include future commits.
+        let mut first_diag = DiagnosticCollector::new();
+        let first = fetch(
+            &url,
+            Some("v1.0.0"),
+            "local-source",
+            &cache,
+            &FetchOptions::default(),
+            &mut first_diag,
+        )
+        .unwrap();
+        assert_eq!(first.version_tag.as_deref(), Some("v1.0.0"));
+
+        let locked_commit = commit_file(
+            remote.path(),
+            "README.md",
+            "post-tag\n",
+            "commit only reachable by SHA",
+        );
+
+        let mut diag = DiagnosticCollector::new();
+        let resolved =
+            fetch_commit(&url, &locked_commit, "local-source", &cache, &mut diag).unwrap();
+        assert_eq!(resolved.commit.as_deref(), Some(locked_commit.as_str()));
+        let checked_out = run_git(&resolved.tree_path, ["rev-parse", "HEAD"]);
+        assert_eq!(checked_out, locked_commit);
     }
 
     #[test]

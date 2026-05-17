@@ -131,9 +131,8 @@ pub(crate) fn resolve_package_bottom_up(
         // Fast paths that skip the check:
         //   Path sources — no version selection, never change.
         //   RefPin constraints — fixed refs, semver re-selection doesn't apply.
-        //   Semver(req) where existing version already satisfies req — MVS minimum is
-        //     already at least as high as the new lower bound, and maximization status
-        //     hasn't changed, so the selection is stable.
+        //   Semver(req) where existing version already satisfies req — adding that
+        //     requirement cannot invalidate the currently selected version.
         let needs_check = matches!(pending_src.spec, SourceSpec::Git(_))
             && !matches!(pending_src.constraint, VersionConstraint::RefPin(_));
 
@@ -152,10 +151,8 @@ pub(crate) fn resolve_package_bottom_up(
             };
 
             if !skip {
-                let is_direct = ctx.is_direct_source(&pending_src.name);
                 let (new_ref, latest_version) = resolve_single_source(
                     pending_src,
-                    is_direct,
                     provider,
                     locked,
                     options,
@@ -235,7 +232,6 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let is_direct = ctx.is_direct_source(&pending_src.name);
     let (resolved_ref, latest_version, rooted_ref) =
         if let Some((override_ref, override_rooted, override_latest_version)) =
             ctx.version_override(&pending_src.name).cloned()
@@ -245,7 +241,6 @@ pub(crate) fn resolve_package_bottom_up(
         } else {
             let (ref_, latest) = resolve_single_source(
                 pending_src,
-                is_direct,
                 provider,
                 locked,
                 options,

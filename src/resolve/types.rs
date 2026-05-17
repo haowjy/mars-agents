@@ -281,13 +281,45 @@ fn resolved_ref_matches(existing: &ResolvedRef, incoming: &ResolvedRef) -> bool 
 /// Options controlling resolution behavior.
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
-    /// If true, prefer newest version instead of minimum (for `mars upgrade`).
+    /// If true, enable upgrade-mode selection for targeted sources.
+    /// Upgrade targets bypass lock preference and select newest compatible versions.
     pub maximize: bool,
-    /// Source names to upgrade (empty = all, when maximize=true).
+    /// Source names that run in upgrade mode (empty = all sources when maximize=true).
     pub upgrade_targets: HashSet<SourceName>,
     /// If true, treat direct dependency constraints for upgrade targets as
     /// unconstrained during resolution (used by `mars upgrade --bump`).
     pub bump_direct_constraints: bool,
     /// If true, locked commit replay failures become hard errors.
     pub frozen: bool,
+}
+
+/// Version-selection behavior for a single source in the current resolve mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VersionSelectionPolicy {
+    /// Use compatible locked version when available; otherwise newest compatible.
+    PreferLockThenLatest,
+    /// Upgrade mode: choose newest compatible version and bypass lock preference.
+    LatestOnly,
+    /// Lock must be honored exactly; fail when lock cannot be used.
+    LockOnly,
+}
+
+impl ResolveOptions {
+    pub(crate) fn is_upgrade_target(&self, source_name: &SourceName) -> bool {
+        self.maximize
+            && (self.upgrade_targets.is_empty() || self.upgrade_targets.contains(source_name))
+    }
+
+    pub(crate) fn version_selection_policy(
+        &self,
+        source_name: &SourceName,
+    ) -> VersionSelectionPolicy {
+        if self.frozen {
+            VersionSelectionPolicy::LockOnly
+        } else if self.is_upgrade_target(source_name) {
+            VersionSelectionPolicy::LatestOnly
+        } else {
+            VersionSelectionPolicy::PreferLockThenLatest
+        }
+    }
 }

@@ -86,9 +86,9 @@ fn single_source_no_deps() {
     assert_eq!(graph.order.len(), 1);
     assert_eq!(graph.order[0], "a");
 
-    // MVS: should pick 1.0.0 (minimum)
+    // Latest-compatible: should pick 1.1.0 (newest satisfying)
     let node = &graph.nodes["a"];
-    assert_eq!(node.resolved_ref.version, Some(Version::new(1, 0, 0)));
+    assert_eq!(node.resolved_ref.version, Some(Version::new(1, 1, 0)));
 }
 
 #[test]
@@ -154,9 +154,9 @@ fn source_with_transitive_dep() {
     assert!(graph.nodes.contains_key("a"));
     assert!(graph.nodes.contains_key("dep"));
 
-    // Dep should be resolved to minimum satisfying >=0.5.0 → 0.5.0
+    // Dep should be resolved to newest satisfying >=0.5.0 → 1.0.0
     let dep_node = &graph.nodes["dep"];
-    assert_eq!(dep_node.resolved_ref.version, Some(Version::new(0, 5, 0)));
+    assert_eq!(dep_node.resolved_ref.version, Some(Version::new(1, 0, 0)));
 
     // Resolver output order is deterministic alphabetical.
     assert_eq!(graph.order, vec!["a", "dep"]);
@@ -398,16 +398,16 @@ fn compatible_constraints_from_two_dependents() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     assert_eq!(graph.nodes.len(), 3);
-    // MVS with >=1.0.0 from both → picks 1.0.0 (minimum satisfying all)
+    // Latest-compatible with >=1.0.0 from both → picks 2.0.0 (newest satisfying all)
     let shared_node = &graph.nodes["shared"];
     assert_eq!(
         shared_node.resolved_ref.version,
-        Some(Version::new(1, 0, 0))
+        Some(Version::new(2, 0, 0))
     );
 }
 
 #[test]
-fn narrower_second_constraint_upgrades_mvs_selection() {
+fn narrower_second_constraint_upgrades_latest_compatible_selection() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -417,8 +417,7 @@ fn narrower_second_constraint_upgrades_mvs_selection() {
     std::fs::create_dir_all(&tree_shared).unwrap();
 
     // a requires shared >=1.0.0, b requires shared >=1.5.0.
-    // a is processed first: MVS picks 1.0.0.  Then b's >=1.5.0 arrives — 1.0.0 does
-    // not satisfy it, so re-resolution selects min(>=1.0.0 ∩ >=1.5.0) = 1.5.0.
+    // Combined constraints select the newest satisfying version: 2.0.0.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -447,11 +446,11 @@ fn narrower_second_constraint_upgrades_mvs_selection() {
     ]);
 
     let graph = resolve(&config, &provider, None, &default_options())
-        .expect("both constraints are satisfiable; should resolve to 1.5.0");
+        .expect("both constraints are satisfiable; should resolve to 2.0.0");
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(1, 5, 0)),
-        "re-resolution must upgrade shared to the minimum satisfying both >=1.0.0 and >=1.5.0"
+        Some(Version::new(2, 0, 0)),
+        "re-resolution must upgrade shared to the newest version satisfying both >=1.0.0 and >=1.5.0"
     );
 }
 
@@ -592,9 +591,8 @@ fn different_second_constraint_re_resolves_to_satisfying_version() {
     write_minimal_package_marker(&tree_shared);
     write_skill(&tree_shared, "common");
 
-    // a requires shared >=1.0.0 → MVS picks 1.0.0.
-    // b requires shared >=2.0.0 — 1.0.0 doesn't satisfy it, so re-resolution runs.
-    // Combined constraints: >=1.0.0 ∩ >=2.0.0 → MVS selects 2.0.0.  No conflict.
+    // a requires shared >=1.0.0.
+    // b requires shared >=2.0.0 — latest-compatible with combined constraints is 2.0.0.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -624,7 +622,7 @@ fn different_second_constraint_re_resolves_to_satisfying_version() {
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(2, 0, 0)),
-        "re-resolution must upgrade shared to 2.0.0 (min satisfying >=1.0.0 ∩ >=2.0.0)"
+        "re-resolution must select shared 2.0.0 (latest satisfying >=1.0.0 ∩ >=2.0.0)"
     );
 }
 
@@ -1466,10 +1464,8 @@ fn different_host_or_path_does_not_produce_false_convergence() {
 // re-resolved against the full accumulated constraints so the final version is
 // order-independent.
 
-/// Primary regression: `a` is processed first, resolves `shared` to 1.0.0 (MVS
-/// under `>=1.0.0, <2.0.0`).  Then `b` is processed and adds a `Latest` constraint
-/// on `shared`.  The `Resolved` branch must detect the version shift and upgrade the
-/// registry entry to 1.2.0.
+/// Primary regression: `a` is processed first, then `b` adds a late `Latest`
+/// constraint on `shared`. The final version must remain order-independent.
 #[test]
 fn transitive_latest_constraint_upgrades_already_resolved_version() {
     let dir = TempDir::new().unwrap();
@@ -1480,7 +1476,7 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // `a` depends on `shared` with a semver bound: MVS would pick 1.0.0.
+    // `a` depends on `shared` with a semver bound.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -1505,9 +1501,8 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
 
-    // `a` appears first in config — will be processed first, resolving `shared` to
-    // 1.0.0 under MVS.  `b`'s `Latest` constraint must then trigger re-resolution
-    // to 1.2.0.
+    // `a` appears first in config; `b` contributes a late Latest constraint.
+    // The result must still be 1.2.0.
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
@@ -1697,7 +1692,7 @@ fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
 }
 
 #[test]
-fn restart_replaces_locked_commit_when_latest_revisit_changes_ref_without_version_change() {
+fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
     let dir = TempDir::new().unwrap();
     let tree_shared = dir.path().join("shared");
     let tree_b = dir.path().join("b");
@@ -1746,7 +1741,7 @@ fn restart_replaces_locked_commit_when_latest_revisit_changes_ref_without_versio
     assert_eq!(
         graph.nodes["shared"].resolved_ref.commit.as_deref(),
         Some("mock-commit"),
-        "restart should replace locked replay commit when Latest changes selected ref"
+        "`latest` must force current resolution instead of replaying the locked commit"
     );
 }
 

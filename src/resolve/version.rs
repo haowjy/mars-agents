@@ -289,19 +289,6 @@ pub(crate) fn resolve_git_source(
             Version::parse(v).ok()
         });
 
-    if selection_policy == VersionSelectionPolicy::PreferLockThenLatest
-        && !has_latest_constraint
-        && let Some(locked_version) = locked_version.as_ref()
-        && !semver_constraints_satisfied(locked_version, &semver_reqs)
-    {
-        diag.warn(
-            "locked-version-incompatible",
-            format!(
-                "ignoring locked version {locked_version} for `{name}` because it does not satisfy current constraints"
-            ),
-        );
-    }
-
     if selection_policy == VersionSelectionPolicy::LockOnly
         && (locked_version_raw.is_some() || !semver_reqs.is_empty())
     {

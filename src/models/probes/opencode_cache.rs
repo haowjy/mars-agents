@@ -45,6 +45,17 @@ impl CachedProbeOutcome {
     }
 }
 
+/// Return the cached OpenCode probe result, if one exists, is usable, and is fresh.
+///
+/// This helper is read-only and never triggers a probe refresh.
+pub fn read_cached_probe_result() -> Option<OpenCodeProbeResult> {
+    let entry = read_cache_tolerant()?;
+    if !is_fresh(&entry) || !is_usable(&entry) {
+        return None;
+    }
+    entry.result
+}
+
 fn cache_dir() -> Result<PathBuf, MarsError> {
     let root = crate::platform::cache::global_cache_root()?;
     Ok(root.join("availability"))

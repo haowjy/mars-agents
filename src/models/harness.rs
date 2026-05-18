@@ -1,11 +1,17 @@
+// qa-validated: harness-order-settings-audit
+
 use std::collections::HashSet;
 
 const HARNESS_BINARIES: &[(&str, &str)] = &[
     ("claude", "claude"),
     ("codex", "codex"),
     ("opencode", "opencode"),
+    ("cursor", "cursor"),
+    ("pi", "pi"),
     ("gemini", "gemini"),
 ];
+
+const ORDERABLE_HARNESSES: &[&str] = &["claude", "codex", "opencode", "cursor", "pi"];
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
     HARNESS_BINARIES
@@ -43,6 +49,10 @@ const PROVIDER_HARNESS_PREFERENCES: &[(&str, &[&str])] = &[
     ("cohere", &["opencode"]),
 ];
 
+fn is_launch_bundle_harness(harness: &str) -> bool {
+    ORDERABLE_HARNESSES.contains(&harness)
+}
+
 pub fn resolve_harness_for_provider(provider: &str, installed: &HashSet<String>) -> Option<String> {
     let provider_lower = provider.to_lowercase();
     PROVIDER_HARNESS_PREFERENCES
@@ -67,6 +77,97 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
 
 pub fn preferred_harness_for_provider(provider: &str) -> Option<String> {
     harness_candidates_for_provider(provider).into_iter().next()
+}
+
+pub struct HarnessCandidateResolution {
+    pub harness: Option<String>,
+    pub source: Option<&'static str>,
+    pub harness_order_position: Option<usize>,
+    pub warnings: Vec<String>,
+    pub harness_order_failure: Option<HarnessOrderFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HarnessOrderFailure {
+    Empty,
+    NoneInstalled { valid_candidates: Vec<String> },
+}
+
+pub fn resolve_harness_from_candidates(
+    provider: Option<&str>,
+    settings_harness_order: Option<&[String]>,
+    installed: &HashSet<String>,
+) -> HarnessCandidateResolution {
+    let mut warnings = Vec::new();
+
+    if let Some(order) = settings_harness_order {
+        if order.is_empty() {
+            return HarnessCandidateResolution {
+                harness: None,
+                source: None,
+                harness_order_position: None,
+                warnings,
+                harness_order_failure: Some(HarnessOrderFailure::Empty),
+            };
+        }
+
+        let mut valid_candidates = Vec::new();
+        for candidate in order {
+            let normalized = candidate.trim().to_lowercase();
+            if !ORDERABLE_HARNESSES.contains(&normalized.as_str()) {
+                warnings.push(format!(
+                    "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
+                    ORDERABLE_HARNESSES.join(", ")
+                ));
+                continue;
+            }
+
+            valid_candidates.push(normalized.clone());
+            if installed.contains(&normalized) {
+                return HarnessCandidateResolution {
+                    harness: Some(normalized),
+                    source: Some("config-order"),
+                    harness_order_position: Some(valid_candidates.len() - 1),
+                    warnings,
+                    harness_order_failure: None,
+                };
+            }
+        }
+        return HarnessCandidateResolution {
+            harness: None,
+            source: None,
+            harness_order_position: None,
+            warnings,
+            harness_order_failure: (!valid_candidates.is_empty())
+                .then_some(HarnessOrderFailure::NoneInstalled { valid_candidates }),
+        };
+    }
+
+    let harness =
+        provider.and_then(|value| resolve_launch_bundle_harness_for_provider(value, installed));
+    HarnessCandidateResolution {
+        source: harness.as_ref().map(|_| "provider"),
+        harness,
+        harness_order_position: None,
+        warnings,
+        harness_order_failure: None,
+    }
+}
+
+fn resolve_launch_bundle_harness_for_provider(
+    provider: &str,
+    installed: &HashSet<String>,
+) -> Option<String> {
+    let provider_lower = provider.to_lowercase();
+    PROVIDER_HARNESS_PREFERENCES
+        .iter()
+        .find(|(p, _)| *p == provider_lower)
+        .and_then(|(_, prefs)| {
+            prefs
+                .iter()
+                .find(|h| is_launch_bundle_harness(h) && installed.contains(**h))
+                .map(|h| h.to_string())
+        })
 }
 
 #[cfg(test)]
@@ -122,6 +223,12 @@ mod tests {
     }
 
     #[test]
+    fn candidates_for_anthropic_include_gemini() {
+        let candidates = harness_candidates_for_provider("anthropic");
+        assert_eq!(candidates, vec!["claude", "opencode", "gemini"]);
+    }
+
+    #[test]
     fn candidates_for_unknown_provider() {
         let candidates = harness_candidates_for_provider("unknown");
         assert!(candidates.is_empty());
@@ -134,5 +241,98 @@ mod tests {
             Some("codex".to_string())
         );
         assert_eq!(preferred_harness_for_provider("unknown"), None);
+    }
+
+    #[test]
+    fn resolve_harness_from_order_selects_first_installed_and_sets_source() {
+        let installed: HashSet<String> = ["opencode"].iter().map(|s| s.to_string()).collect();
+        let order = vec![
+            "pi".to_string(),
+            "opencode".to_string(),
+            "codex".to_string(),
+        ];
+        let resolved = resolve_harness_from_candidates(None, Some(&order), &installed);
+        assert_eq!(resolved.harness, Some("opencode".to_string()));
+        assert_eq!(resolved.source, Some("config-order"));
+        assert_eq!(resolved.harness_order_position, Some(1));
+        assert!(resolved.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_harness_from_order_warns_for_unrecognized_entries() {
+        let installed: HashSet<String> = ["codex"].iter().map(|s| s.to_string()).collect();
+        let order = vec!["unknown-harness".to_string(), "codex".to_string()];
+        let resolved = resolve_harness_from_candidates(None, Some(&order), &installed);
+        assert_eq!(resolved.harness, Some("codex".to_string()));
+        assert_eq!(resolved.source, Some("config-order"));
+        assert_eq!(resolved.harness_order_position, Some(0));
+        assert!(resolved.warnings.iter().any(|warning| {
+            warning.contains("settings.harness_order contains unrecognized harness")
+        }));
+    }
+
+    #[test]
+    fn resolve_harness_from_order_all_invalid() {
+        let installed: HashSet<String> = ["codex"].iter().map(|s| s.to_string()).collect();
+        let order = vec!["bogus".to_string(), "also-bogus".to_string()];
+        let resolved = resolve_harness_from_candidates(None, Some(&order), &installed);
+        assert_eq!(resolved.harness, None);
+        assert_eq!(resolved.source, None);
+        assert_eq!(resolved.harness_order_position, None);
+        assert_eq!(resolved.harness_order_failure, None);
+        assert_eq!(resolved.warnings.len(), 2);
+        assert!(resolved.warnings.iter().all(|warning| {
+            warning.contains("settings.harness_order contains unrecognized harness")
+        }));
+    }
+
+    #[test]
+    fn resolve_harness_from_order_warns_for_empty_order() {
+        let installed: HashSet<String> = ["codex"].iter().map(|s| s.to_string()).collect();
+        let order: Vec<String> = Vec::new();
+        let resolved = resolve_harness_from_candidates(None, Some(&order), &installed);
+        assert_eq!(resolved.harness, None);
+        assert_eq!(resolved.source, None);
+        assert_eq!(
+            resolved.harness_order_failure,
+            Some(HarnessOrderFailure::Empty)
+        );
+        assert!(resolved.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_harness_from_order_warns_when_none_installed() {
+        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
+        let order = vec!["pi".to_string(), "opencode".to_string()];
+        let resolved = resolve_harness_from_candidates(None, Some(&order), &installed);
+        assert_eq!(resolved.harness, None);
+        assert_eq!(resolved.source, None);
+        assert_eq!(
+            resolved.harness_order_failure,
+            Some(HarnessOrderFailure::NoneInstalled {
+                valid_candidates: vec!["pi".to_string(), "opencode".to_string()],
+            })
+        );
+        assert!(resolved.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_harness_from_candidates_uses_provider_when_order_unset() {
+        let installed: HashSet<String> = ["opencode"].iter().map(|s| s.to_string()).collect();
+        let resolved = resolve_harness_from_candidates(Some("openai"), None, &installed);
+        assert_eq!(resolved.harness, Some("opencode".to_string()));
+        assert_eq!(resolved.source, Some("provider"));
+        assert!(resolved.warnings.is_empty());
+        assert_eq!(resolved.harness_order_failure, None);
+    }
+
+    #[test]
+    fn resolve_harness_from_candidates_provider_skips_non_launch_bundle_harnesses() {
+        let installed: HashSet<String> = ["gemini"].iter().map(|s| s.to_string()).collect();
+        let resolved = resolve_harness_from_candidates(Some("anthropic"), None, &installed);
+        assert_eq!(resolved.harness, None);
+        assert_eq!(resolved.source, None);
+        assert!(resolved.warnings.is_empty());
+        assert_eq!(resolved.harness_order_failure, None);
     }
 }

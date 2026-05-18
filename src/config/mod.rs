@@ -1,3 +1,5 @@
+// qa-validated: harness-order-settings-audit
+
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -222,6 +224,12 @@ pub struct Settings {
     /// Default harness for launch routing when profile/alias/provider cannot resolve one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_harness: Option<String>,
+    /// Ordered harness preference for launch-bundle candidate selection.
+    ///
+    /// When set, replaces built-in provider preference ordering for candidate
+    /// selection. First installed candidate wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_order: Option<Vec<String>>,
     /// Controls whether harness-bound agents are emitted to native harness dirs.
     ///
     /// `auto` (the default when unset) emits for standalone mars syncs and
@@ -248,6 +256,7 @@ impl Default for Settings {
             models_cache_ttl_hours: default_models_cache_ttl_hours(),
             min_mars_version: None,
             default_harness: None,
+            harness_order: None,
             agent_emission: None,
         }
     }
@@ -752,6 +761,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
         }
         .into());
     }
+    if reparsed.settings.harness_order != original.settings.harness_order {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.harness_order changed during roundtrip ({:?} -> {:?})",
+                original.settings.harness_order, reparsed.settings.harness_order
+            ),
+        }
+        .into());
+    }
     if reparsed.settings.agent_emission != original.settings.agent_emission {
         return Err(ConfigError::Invalid {
             message: format!(
@@ -999,6 +1017,7 @@ exclude = ["experimental"]
 [settings]
 managed_root = ".custom-agents"
 targets = [".claude", ".cursor"]
+harness_order = ["pi", "opencode", "codex"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
@@ -1026,6 +1045,14 @@ targets = [".claude", ".cursor"]
         assert_eq!(
             reloaded.settings.targets,
             Some(vec![".claude".to_string(), ".cursor".to_string()])
+        );
+        assert_eq!(
+            reloaded.settings.harness_order,
+            Some(vec![
+                "pi".to_string(),
+                "opencode".to_string(),
+                "codex".to_string()
+            ])
         );
     }
 
@@ -1613,6 +1640,24 @@ only_agents = true
     }
 
     #[test]
+    fn save_roundtrip_guard_rejects_harness_order_loss() {
+        let original = Config {
+            settings: Settings {
+                harness_order: Some(vec!["pi".into(), "codex".into()]),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+        let reparsed = Config::default();
+        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("settings.harness_order changed"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn parse_only_skills_filter() {
         let toml_str = r#"
 [dependencies.base]
@@ -2010,6 +2055,33 @@ default_harness = "codex"
         assert_eq!(
             roundtripped.settings.default_harness,
             config.settings.default_harness
+        );
+    }
+
+    #[test]
+    fn settings_harness_order_parses_and_roundtrips() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+harness_order = ["pi", "opencode", "codex", "claude"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.settings.harness_order,
+            Some(vec![
+                "pi".to_string(),
+                "opencode".to_string(),
+                "codex".to_string(),
+                "claude".to_string()
+            ])
+        );
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let roundtripped: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            roundtripped.settings.harness_order,
+            config.settings.harness_order
         );
     }
 

@@ -23,6 +23,9 @@ pub struct Routing {
     pub model: String,
     pub model_token: String,
     pub harness: String,
+    pub harness_model: String,
+    pub harness_model_source: String,
+    pub harness_model_confidence: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

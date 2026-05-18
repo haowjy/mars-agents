@@ -1,4 +1,5 @@
 // qa-validated: launch-bundle-blocker-audit
+// qa-validated: harness-order-settings-audit
 #[path = "common/mod.rs"]
 mod test_common;
 
@@ -106,6 +107,21 @@ fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_
 }
 
 #[test]
+fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
+    routing::build_launch_bundle_resolves_harness_model_from_cached_opencode_probe();
+}
+
+#[test]
+fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
+    routing::build_launch_bundle_synthesizes_opencode_model_when_cache_missing();
+}
+
+#[test]
+fn build_launch_bundle_unknown_harness_model_path_warns_and_passes_through() {
+    routing::build_launch_bundle_unknown_harness_model_path_warns_and_passes_through();
+}
+
+#[test]
 fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     routing::build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache();
 }
@@ -126,6 +142,46 @@ fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_
 }
 
 #[test]
+fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
+    routing::build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses();
+}
+
+#[test]
+fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
+    routing::build_launch_bundle_uses_settings_harness_order_before_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
+    routing::build_launch_bundle_cli_harness_override_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
+    routing::build_launch_bundle_profile_harness_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
+    routing::build_launch_bundle_alias_harness_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness() {
+    routing::build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness();
+}
+
+#[test]
+fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness() {
+    routing::build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
+    routing::build_launch_bundle_harness_order_none_installed_uses_default_harness();
+}
+
+#[test]
 fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
     execution_policy::build_launch_bundle_cli_overrides_profile_execution_policy_fields();
 }
@@ -143,6 +199,27 @@ fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
 #[test]
 fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement() {
     tool_policy::build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement();
+}
+
+#[test]
+fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload() {
+    tool_policy::build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload();
+}
+
+#[test]
+fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
+    tool_policy::build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp();
+}
+
+#[test]
+fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
+    tool_policy::build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown(
+    );
+}
+
+#[test]
+fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
+    tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently();
 }
 
 #[test]

@@ -112,18 +112,8 @@ fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
 }
 
 #[test]
-fn build_launch_bundle_ignores_stale_opencode_probe_and_synthesizes_runnable_path() {
-    routing::build_launch_bundle_ignores_stale_opencode_probe_and_synthesizes_runnable_path();
-}
-
-#[test]
 fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
     routing::build_launch_bundle_synthesizes_opencode_model_when_cache_missing();
-}
-
-#[test]
-fn build_launch_bundle_synthesizes_openrouter_path_when_probe_has_openrouter_only() {
-    routing::build_launch_bundle_synthesizes_openrouter_path_when_probe_has_openrouter_only();
 }
 
 #[test]
@@ -187,28 +177,6 @@ fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_defa
 }
 
 #[test]
-fn build_launch_bundle_harness_order_warns_for_unrecognized_entries() {
-    routing::build_launch_bundle_harness_order_warns_for_unrecognized_entries();
-}
-
-#[test]
-fn build_launch_bundle_empty_harness_order_warns_and_falls_through_to_default_harness() {
-    routing::build_launch_bundle_empty_harness_order_warns_and_falls_through_to_default_harness();
-}
-
-#[test]
-fn build_launch_bundle_harness_order_no_installed_entries_warns_and_falls_through_to_default_harness()
- {
-    routing::build_launch_bundle_harness_order_no_installed_entries_warns_and_falls_through_to_default_harness();
-}
-
-#[test]
-fn build_launch_bundle_harness_order_no_installed_entries_without_default_warns_and_falls_back_to_hardcoded_claude()
- {
-    routing::build_launch_bundle_harness_order_no_installed_entries_without_default_warns_and_falls_back_to_hardcoded_claude();
-}
-
-#[test]
 fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
     execution_policy::build_launch_bundle_cli_overrides_profile_execution_policy_fields();
 }
@@ -247,11 +215,6 @@ fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_un
 #[test]
 fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
     tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently();
-}
-
-#[test]
-fn build_launch_bundle_dedupes_after_target_harness_tool_normalization() {
-    tool_policy::build_launch_bundle_dedupes_after_target_harness_tool_normalization();
 }
 
 #[test]

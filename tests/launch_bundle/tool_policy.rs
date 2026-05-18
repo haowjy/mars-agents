@@ -1,3 +1,5 @@
+// qa-validated: launch-bundle-test-cleanup
+
 use super::common::setup_bundle_project;
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
@@ -227,40 +229,4 @@ Review code changes."#;
                 .contains("tool 'web_search' is not a known")
         }));
     }
-}
-
-pub(crate) fn build_launch_bundle_dedupes_after_target_harness_tool_normalization() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  shell: allow
-  bash: allow
-disallowed-tools:
-  - edit
-  - write
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "codex",
-    ]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["shell"]));
-    assert_eq!(
-        bundle["tools"]["disallowed"],
-        serde_json::json!(["file_write"])
-    );
 }

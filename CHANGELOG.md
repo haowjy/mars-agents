@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.2] - 2026-05-18
+
 ## [0.4.8-rc.1] - 2026-05-18
 
 ## [0.4.7] - 2026-05-17

@@ -31,7 +31,14 @@ Review code changes."#;
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
     let mut root_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    root_cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    root_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
     let root_output = root_cmd.assert().success().get_output().clone();
     let root_bundle: Value = serde_json::from_slice(&root_output.stdout).unwrap();
     assert_eq!(root_bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
@@ -83,7 +90,14 @@ Review code changes."#;
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -110,7 +124,14 @@ Review code changes."#;
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -124,7 +145,6 @@ Review code changes."#;
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])
     );
-
     let warnings = bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");

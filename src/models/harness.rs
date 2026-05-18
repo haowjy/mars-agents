@@ -53,8 +53,14 @@ const PROVIDER_HARNESS_PREFERENCES: &[(&str, &[&str])] = &[
 const DEFAULT_FALLBACK_ORDER: &[&str] = &["pi", "opencode", "cursor"];
 
 pub fn is_valid_harness(name: &str) -> bool {
+    normalize_harness_name(name).is_some()
+}
+
+pub fn normalize_harness_name(name: &str) -> Option<String> {
     let normalized = name.trim().to_ascii_lowercase();
-    VALID_HARNESSES.contains(&normalized.as_str())
+    VALID_HARNESSES
+        .contains(&normalized.as_str())
+        .then_some(normalized)
 }
 
 fn harness_preferences(provider: &str) -> &'static [&'static str] {
@@ -102,6 +108,48 @@ pub enum HarnessOrderFailure {
     NoneInstalled { valid_candidates: Vec<String> },
 }
 
+pub struct ParsedHarnessOrder {
+    pub valid_candidates: Vec<String>,
+    pub warnings: Vec<String>,
+    pub failure: Option<HarnessOrderFailure>,
+}
+
+pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
+    if order.is_empty() {
+        return ParsedHarnessOrder {
+            valid_candidates: Vec::new(),
+            warnings: Vec::new(),
+            failure: Some(HarnessOrderFailure::Empty),
+        };
+    }
+
+    let mut valid_candidates = Vec::new();
+    let mut warnings = Vec::new();
+    for candidate in order {
+        let Some(normalized) = normalize_harness_name(candidate) else {
+            warnings.push(format!(
+                "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
+                ORDERABLE_HARNESSES.join(", ")
+            ));
+            continue;
+        };
+        if !ORDERABLE_HARNESSES.contains(&normalized.as_str()) {
+            warnings.push(format!(
+                "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
+                ORDERABLE_HARNESSES.join(", ")
+            ));
+            continue;
+        }
+        valid_candidates.push(normalized);
+    }
+
+    ParsedHarnessOrder {
+        valid_candidates,
+        warnings,
+        failure: None,
+    }
+}
+
 pub fn resolve_harness_from_candidates(
     provider: Option<&str>,
     settings_harness_order: Option<&[String]>,
@@ -110,7 +158,9 @@ pub fn resolve_harness_from_candidates(
     let mut warnings = Vec::new();
 
     if let Some(order) = settings_harness_order {
-        if order.is_empty() {
+        let parsed = parse_settings_harness_order(order);
+        warnings.extend(parsed.warnings);
+        if parsed.failure == Some(HarnessOrderFailure::Empty) {
             return HarnessCandidateResolution {
                 harness: None,
                 source: None,
@@ -120,23 +170,12 @@ pub fn resolve_harness_from_candidates(
             };
         }
 
-        let mut valid_candidates = Vec::new();
-        for candidate in order {
-            let normalized = candidate.trim().to_lowercase();
-            if !ORDERABLE_HARNESSES.contains(&normalized.as_str()) {
-                warnings.push(format!(
-                    "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                    ORDERABLE_HARNESSES.join(", ")
-                ));
-                continue;
-            }
-
-            valid_candidates.push(normalized.clone());
-            if installed.contains(&normalized) {
+        for (index, normalized) in parsed.valid_candidates.iter().enumerate() {
+            if installed.contains(normalized) {
                 return HarnessCandidateResolution {
-                    harness: Some(normalized),
+                    harness: Some(normalized.clone()),
                     source: Some("config-order"),
-                    harness_order_position: Some(valid_candidates.len() - 1),
+                    harness_order_position: Some(index),
                     warnings,
                     harness_order_failure: None,
                 };
@@ -147,8 +186,11 @@ pub fn resolve_harness_from_candidates(
             source: None,
             harness_order_position: None,
             warnings,
-            harness_order_failure: (!valid_candidates.is_empty())
-                .then_some(HarnessOrderFailure::NoneInstalled { valid_candidates }),
+            harness_order_failure: (!parsed.valid_candidates.is_empty()).then_some(
+                HarnessOrderFailure::NoneInstalled {
+                    valid_candidates: parsed.valid_candidates,
+                },
+            ),
         };
     }
 

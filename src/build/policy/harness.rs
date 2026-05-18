@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use crate::build::policy::PolicyInput;
 use crate::compiler::agents::HarnessKind;
@@ -8,6 +10,7 @@ use crate::models::ModelAlias;
 use crate::models::availability::AvailabilityStatus;
 use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::opencode_cache;
+use wait_timeout::ChildExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RouteConfidence {
@@ -156,11 +159,12 @@ fn normalize_config_default_harness(
     warnings: &mut Vec<String>,
 ) -> Option<String> {
     match config_default_harness {
-        Some(value) => match normalize_harness_name(value) {
-            Some(valid) => Some(valid.to_string()),
+        Some(value) => match models::harness::normalize_harness_name(value) {
+            Some(valid) => Some(valid),
             None => {
                 warnings.push(format!(
-                    "settings.default_harness `{value}` is invalid; expected one of: claude, codex, opencode, cursor, pi"
+                    "settings.default_harness `{value}` is invalid; expected one of: {}",
+                    models::harness::VALID_HARNESSES.join(", ")
                 ));
                 None
             }
@@ -176,57 +180,67 @@ fn resolve_harness_candidate_or_fallback(
     installed_harnesses: &HashSet<String>,
     config_default_harness: Option<String>,
 ) -> CandidateHarnessResolution {
+    let mut warnings = Vec::new();
     let mut candidates_tried = Vec::new();
-    if settings_harness_order.is_none() {
-        let provider_resolution =
-            resolve_provider_candidates(provider, model_id, installed_harnesses);
-        if let Some(resolved) = provider_resolution.selected {
+    let mut harness_order_failure = None;
+
+    let candidates = if let Some(order) = settings_harness_order {
+        let parsed_order = models::harness::parse_settings_harness_order(order);
+        warnings.extend(parsed_order.warnings);
+        harness_order_failure = parsed_order.failure;
+        if harness_order_failure.is_none()
+            && !parsed_order.valid_candidates.is_empty()
+            && parsed_order
+                .valid_candidates
+                .iter()
+                .all(|candidate| !installed_harnesses.contains(candidate))
+        {
+            harness_order_failure = Some(HarnessOrderFailure::NoneInstalled {
+                valid_candidates: parsed_order.valid_candidates.clone(),
+            });
+        }
+        parsed_order
+            .valid_candidates
+            .into_iter()
+            .enumerate()
+            .map(|(index, harness)| (harness, Some(index)))
+            .collect::<Vec<_>>()
+    } else {
+        let provider_for_order = provider.unwrap_or("unknown");
+        models::harness::harness_candidates_for_provider(provider_for_order)
+            .into_iter()
+            .map(|harness| (harness, None))
+            .collect::<Vec<_>>()
+    };
+
+    for (harness, harness_order_position) in candidates {
+        candidates_tried.push(harness.clone());
+        if let Some(route_confidence) =
+            candidate_route_confidence(&harness, provider, model_id, installed_harnesses)
+        {
+            let source = if settings_harness_order.is_some() {
+                "config-order"
+            } else {
+                "provider"
+            };
             return CandidateHarnessResolution {
-                harness: resolved.harness,
-                source: "provider",
-                harness_order_position: None,
-                route_confidence: resolved.route_confidence,
-                candidates_tried: provider_resolution.candidates_tried,
-                warnings: Vec::new(),
+                harness,
+                source,
+                harness_order_position,
+                route_confidence,
+                candidates_tried,
+                warnings,
             };
         }
-        candidates_tried = provider_resolution.candidates_tried;
-    }
-
-    let mut candidate = models::harness::resolve_harness_from_candidates(
-        provider,
-        settings_harness_order,
-        installed_harnesses,
-    );
-    if let Some(harness) = candidate.harness {
-        let route_confidence = route_confidence_for_selected_harness(
-            &harness,
-            provider,
-            model_id,
-            installed_harnesses,
-        );
-        let candidates_tried = if settings_harness_order.is_some() {
-            vec![harness.clone()]
-        } else {
-            candidates_tried
-        };
-        return CandidateHarnessResolution {
-            harness,
-            source: candidate.source.unwrap_or("provider"),
-            harness_order_position: candidate.harness_order_position,
-            route_confidence,
-            candidates_tried,
-            warnings: candidate.warnings,
-        };
     }
 
     if settings_harness_order.is_some()
         && let Some(warning) = format_harness_order_fallback_warning(
-            candidate.harness_order_failure.as_ref(),
+            harness_order_failure.as_ref(),
             config_default_harness.is_some(),
         )
     {
-        candidate.warnings.push(warning);
+        warnings.push(warning);
     }
 
     if let Some(harness) = config_default_harness {
@@ -236,11 +250,10 @@ fn resolve_harness_candidate_or_fallback(
             harness_order_position: None,
             route_confidence: RouteConfidence::Passthrough,
             candidates_tried,
-            warnings: candidate.warnings,
+            warnings,
         };
     }
 
-    let mut warnings = candidate.warnings;
     warnings.push(
         "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`".to_string(),
     );
@@ -254,56 +267,6 @@ fn resolve_harness_candidate_or_fallback(
     }
 }
 
-struct ProviderCandidateResult {
-    selected: Option<SelectedProviderCandidate>,
-    candidates_tried: Vec<String>,
-}
-
-struct SelectedProviderCandidate {
-    harness: String,
-    route_confidence: RouteConfidence,
-}
-
-fn resolve_provider_candidates(
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-) -> ProviderCandidateResult {
-    let provider_for_order = provider.unwrap_or("unknown");
-    let candidates = models::harness::harness_candidates_for_provider(provider_for_order);
-    let mut candidates_tried = Vec::new();
-
-    for harness in candidates {
-        candidates_tried.push(harness.clone());
-        if let Some(route_confidence) =
-            candidate_route_confidence(&harness, provider, model_id, installed_harnesses)
-        {
-            return ProviderCandidateResult {
-                selected: Some(SelectedProviderCandidate {
-                    harness,
-                    route_confidence,
-                }),
-                candidates_tried,
-            };
-        }
-    }
-
-    ProviderCandidateResult {
-        selected: None,
-        candidates_tried,
-    }
-}
-
-fn route_confidence_for_selected_harness(
-    harness: &str,
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-) -> RouteConfidence {
-    candidate_route_confidence(harness, provider, model_id, installed_harnesses)
-        .unwrap_or(RouteConfidence::Passthrough)
-}
-
 fn candidate_route_confidence(
     harness: &str,
     provider: Option<&str>,
@@ -314,7 +277,7 @@ fn candidate_route_confidence(
         return None;
     }
 
-    if is_native_match(provider, harness) {
+    if is_native_match(provider, harness) && native_harness_authenticated(harness) {
         return Some(RouteConfidence::Confirmed);
     }
 
@@ -336,6 +299,45 @@ fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
         (provider.map(str::to_ascii_lowercase).as_deref(), harness),
         (Some("anthropic"), "claude") | (Some("openai"), "codex")
     )
+}
+
+fn native_harness_authenticated(harness: &str) -> bool {
+    match harness {
+        "codex" => run_auth_status_command("codex", &["login", "status"]),
+        "claude" => run_auth_status_command("claude", &["auth", "status"]),
+        _ => false,
+    }
+}
+
+fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
+    let mut child = match Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+
+    match child.wait_timeout(auth_probe_timeout()) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+fn auth_probe_timeout() -> Duration {
+    std::env::var("MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(2))
 }
 
 fn opencode_supports_provider_and_model(
@@ -381,17 +383,6 @@ fn format_harness_order_fallback_warning(
     }
 
     Some(warning)
-}
-
-fn normalize_harness_name(value: &str) -> Option<&'static str> {
-    match value.trim() {
-        "claude" => Some("claude"),
-        "codex" => Some("codex"),
-        "opencode" => Some("opencode"),
-        "cursor" => Some("cursor"),
-        "pi" => Some("pi"),
-        _ => None,
-    }
 }
 
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {

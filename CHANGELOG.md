@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model-alias `harness` values now validate against real launch harnesses.
 - Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; `pi` and `cursor` availability classify as `Unknown` / `UniversalHarness`.
 - Launch-bundle routing now emits `routing.route_confidence` plus provenance `route_confidence` / `candidates_tried`; execution policy schema now reserves optional `codex_rules` artifacts.
+- Final routing gates now use provider/settings gate checks (not installed-only fallback), require auth evidence for native Codex/Claude provider matches, and fall through on stale/negative OpenCode cache evidence.
 
 ## [0.4.8-rc.2] - 2026-05-18
 

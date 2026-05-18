@@ -4,6 +4,7 @@ use httpmock::prelude::*;
 use serde_json::{Value, json};
 use serial_test::serial;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use common::*;
 
@@ -234,24 +235,16 @@ fn resolve_prefix_no_match_exits_zero_with_passthrough() {
 fn resolve_passthrough_pattern_guesses_harness() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "claude-brand-new"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
-
-    let expected_harness = ["claude", "pi", "opencode", "cursor"]
-        .iter()
-        .find(|bin| which::which(bin).is_ok())
-        .map(|bin| (*bin).to_string());
-    let expected_source = if expected_harness.is_some() {
-        "pattern_guess"
-    } else {
-        "unavailable"
-    };
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["provider"].as_str(), Some("anthropic"));
@@ -259,8 +252,8 @@ fn resolve_passthrough_pattern_guesses_harness() {
         stdout["harness_candidates"],
         json!(["claude", "pi", "opencode", "cursor"])
     );
-    assert_eq!(stdout["harness_source"].as_str(), Some(expected_source));
-    assert_eq!(stdout["harness"].as_str(), expected_harness.as_deref());
+    assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
+    assert_eq!(stdout["harness"].as_str(), Some("pi"));
 }
 
 #[test]
@@ -299,4 +292,35 @@ fn resolve_unknown_with_no_refresh_without_cache_is_non_zero() {
         stderr.contains("--no-refresh-models"),
         "expected no-refresh cache error, stderr:\n{stderr}"
     );
+}
+
+fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
+    let bin_dir = temp_root.join("harness-bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    for harness in harnesses {
+        #[cfg(windows)]
+        {
+            fs::write(
+                bin_dir.join(format!("{harness}.bat")),
+                "@echo off\r\nexit /b 0\r\n",
+            )
+            .unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = bin_dir.join(harness);
+            fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            let mut perms = fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(path, perms).unwrap();
+        }
+    }
+
+    bin_dir
+}
+
+fn replace_path_with(bin_dir: &Path) -> String {
+    bin_dir.to_string_lossy().into_owned()
 }

@@ -142,6 +142,11 @@ fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_stale() {
 }
 
 #[test]
+fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
+    routing::build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed();
+}
+
+#[test]
 fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
     routing::build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness();
 }

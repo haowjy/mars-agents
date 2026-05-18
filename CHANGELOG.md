@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; `pi` and `cursor` availability classify as `Unknown` / `UniversalHarness`.
 - Launch-bundle routing now emits `routing.route_confidence` plus provenance `route_confidence` / `candidates_tried`; execution policy schema now reserves optional `codex_rules` artifacts.
 - Final routing gates now use provider/settings gate checks (not installed-only fallback), require auth evidence for native Codex/Claude provider matches, and fall through on stale/negative OpenCode cache evidence.
+- Final resolver alignment: `mars models list`/`resolve` now share one evidence-aware harness resolver; invalid alias-harness writes fail fast; mixed-case harness names normalize; unknown/third-party models now fall back `opencode` before `cursor` when `pi` is absent.
 
 ## [0.4.8-rc.2] - 2026-05-18
 

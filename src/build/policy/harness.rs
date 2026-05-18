@@ -281,10 +281,13 @@ fn candidate_route_confidence(
         return Some(RouteConfidence::Confirmed);
     }
 
-    if harness == "opencode"
-        && opencode_supports_provider_and_model(provider, model_id, installed_harnesses)
-    {
-        return Some(RouteConfidence::Likely);
+    if harness == "opencode" {
+        if provider.is_none() || provider.is_some_and(|value| !is_known_provider(value)) {
+            return Some(RouteConfidence::Passthrough);
+        }
+        if opencode_supports_provider_and_model(provider, model_id, installed_harnesses) {
+            return Some(RouteConfidence::Likely);
+        }
     }
 
     if matches!(harness, "pi" | "cursor") {
@@ -292,6 +295,13 @@ fn candidate_route_confidence(
     }
 
     None
+}
+
+fn is_known_provider(provider: &str) -> bool {
+    matches!(
+        provider.trim().to_ascii_lowercase().as_str(),
+        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
+    )
 }
 
 fn is_native_match(provider: Option<&str>, harness: &str) -> bool {

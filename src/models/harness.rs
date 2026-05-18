@@ -1,6 +1,12 @@
 // qa-validated: harness-order-settings-audit
 
 use std::collections::HashSet;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use crate::models::availability::AvailabilityStatus;
+use crate::models::probes::OpenCodeProbeResult;
+use wait_timeout::ChildExt;
 
 const HARNESS_BINARIES: &[(&str, &str)] = &[
     ("claude", "claude"),
@@ -83,6 +89,46 @@ pub fn resolve_harness_for_provider(provider: &str, installed: &HashSet<String>)
         .map(|h| h.to_string())
 }
 
+pub fn resolve_harness_for_model_with_evidence(
+    provider: &str,
+    model_id: &str,
+    installed: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+) -> Option<String> {
+    for harness in harness_preferences(provider) {
+        if !installed.contains(*harness) {
+            continue;
+        }
+
+        match *harness {
+            "claude" | "codex" => {
+                if is_native_harness_match(provider, harness)
+                    && native_harness_authenticated(harness)
+                {
+                    return Some((*harness).to_string());
+                }
+            }
+            "opencode" => {
+                if !is_known_provider(provider)
+                    || opencode_supports_provider_and_model(
+                        provider,
+                        model_id,
+                        installed,
+                        opencode_probe_result,
+                    )
+                {
+                    return Some((*harness).to_string());
+                }
+            }
+            "pi" | "cursor" => {
+                return Some((*harness).to_string());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
     harness_preferences(provider)
         .iter()
@@ -92,6 +138,77 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
 
 pub fn preferred_harness_for_provider(provider: &str) -> Option<String> {
     harness_candidates_for_provider(provider).into_iter().next()
+}
+
+fn is_native_harness_match(provider: &str, harness: &str) -> bool {
+    matches!(
+        (provider.to_ascii_lowercase().as_str(), harness),
+        ("anthropic", "claude") | ("openai", "codex")
+    )
+}
+
+fn is_known_provider(provider: &str) -> bool {
+    matches!(
+        provider.trim().to_ascii_lowercase().as_str(),
+        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
+    )
+}
+
+fn native_harness_authenticated(harness: &str) -> bool {
+    match harness {
+        "codex" => run_auth_status_command("codex", &["login", "status"]),
+        "claude" => run_auth_status_command("claude", &["auth", "status"]),
+        _ => false,
+    }
+}
+
+fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
+    let mut child = match Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+
+    match child.wait_timeout(auth_probe_timeout()) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+fn auth_probe_timeout() -> Duration {
+    std::env::var("MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(2))
+}
+
+fn opencode_supports_provider_and_model(
+    provider: &str,
+    model_id: &str,
+    installed: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+) -> bool {
+    matches!(
+        crate::models::availability::classify_for_harness(
+            "opencode",
+            provider,
+            model_id,
+            installed,
+            opencode_probe_result,
+        ),
+        Some((AvailabilityStatus::Runnable, _, _))
+    )
 }
 
 pub struct HarnessCandidateResolution {
@@ -270,6 +387,20 @@ mod tests {
         assert_eq!(
             resolve_harness_for_provider("Anthropic", &installed),
             Some("claude".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_harness_with_evidence_unknown_provider_prefers_opencode_fallback() {
+        let installed: HashSet<String> = ["opencode"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            resolve_harness_for_model_with_evidence(
+                "unknown-provider",
+                "third-party-model",
+                &installed,
+                None
+            ),
+            Some("opencode".to_string())
         );
     }
 

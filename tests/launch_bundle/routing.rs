@@ -1090,6 +1090,40 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: third-party-model-123
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("pi,opencode")
+    );
+}
+
 pub(crate) fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "pi"]);

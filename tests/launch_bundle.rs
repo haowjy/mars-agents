@@ -1,4 +1,5 @@
 // qa-validated: launch-bundle-blocker-audit
+// qa-validated: harness-order-settings-audit
 #[path = "common/mod.rs"]
 mod test_common;
 
@@ -148,6 +149,63 @@ fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile
 #[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     routing::build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default();
+}
+
+#[test]
+fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
+    routing::build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses();
+}
+
+#[test]
+fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
+    routing::build_launch_bundle_uses_settings_harness_order_before_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
+    routing::build_launch_bundle_cli_harness_override_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
+    routing::build_launch_bundle_profile_harness_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
+    routing::build_launch_bundle_alias_harness_beats_settings_harness_order();
+}
+
+#[test]
+fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness() {
+    routing::build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness();
+}
+
+#[test]
+fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness() {
+    routing::build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_harness_order_warns_for_unrecognized_entries() {
+    routing::build_launch_bundle_harness_order_warns_for_unrecognized_entries();
+}
+
+#[test]
+fn build_launch_bundle_empty_harness_order_warns_and_falls_through_to_default_harness() {
+    routing::build_launch_bundle_empty_harness_order_warns_and_falls_through_to_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_harness_order_no_installed_entries_warns_and_falls_through_to_default_harness()
+ {
+    routing::build_launch_bundle_harness_order_no_installed_entries_warns_and_falls_through_to_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_harness_order_no_installed_entries_without_default_warns_and_falls_back_to_hardcoded_claude()
+ {
+    routing::build_launch_bundle_harness_order_no_installed_entries_without_default_warns_and_falls_back_to_hardcoded_claude();
 }
 
 #[test]

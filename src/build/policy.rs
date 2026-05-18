@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -9,6 +9,7 @@ use crate::compiler::agents::{
 };
 use crate::error::{ConfigError, MarsError};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource, resolve_runnable_path};
+use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::opencode_cache;
 use crate::models::{self, ModelAlias, ModelsCache};
 
@@ -27,6 +28,13 @@ pub struct ResolvedPolicy {
     pub execution_policy: ExecutionPolicy,
     pub provenance: BTreeMap<String, String>,
     pub warnings: Vec<String>,
+}
+
+struct CandidateHarnessResolution {
+    harness: String,
+    source: &'static str,
+    harness_order_position: Option<usize>,
+    warnings: Vec<String>,
 }
 
 pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsError> {
@@ -74,9 +82,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
-    let provider_harness = provider
-        .as_deref()
-        .and_then(models::harness::preferred_harness_for_provider);
+    let installed_harnesses = models::harness::detect_installed_harnesses();
     let config_default_harness = match model_config.default_harness.as_deref() {
         Some(value) => match normalize_harness_name(value) {
             Some(valid) => Some(valid.to_string()),
@@ -91,38 +97,44 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     };
 
     let model_from_cli = input.model_override.is_some();
+    let mut selected_harness_order_position = None;
     let (harness, harness_source) = if let Some(harness) = input.harness_override {
         (harness.to_string(), "cli")
     } else if model_from_cli {
         if let Some(harness) = alias_harness {
             (harness.to_string(), "alias")
-        } else if let Some(harness) = provider_harness {
-            (harness, "provider")
-        } else if let Some(harness) = config_default_harness {
-            (harness, "config")
         } else {
-            warnings.push(
-                "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`"
-                    .to_string(),
+            let resolved = resolve_harness_candidate_or_fallback(
+                provider.as_deref(),
+                model_config.harness_order.as_deref(),
+                &installed_harnesses,
+                config_default_harness.clone(),
             );
-            ("claude".to_string(), "default")
+            selected_harness_order_position = resolved.harness_order_position;
+            warnings.extend(resolved.warnings);
+            (resolved.harness, resolved.source)
         }
     } else if let Some(harness) = profile_harness {
         (harness.to_string(), "profile")
     } else if let Some(harness) = alias_harness {
         (harness.to_string(), "alias")
-    } else if let Some(harness) = provider_harness {
-        (harness, "provider")
-    } else if let Some(harness) = config_default_harness {
-        (harness, "config")
     } else {
-        warnings.push(
-            "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`"
-                .to_string(),
+        let resolved = resolve_harness_candidate_or_fallback(
+            provider.as_deref(),
+            model_config.harness_order.as_deref(),
+            &installed_harnesses,
+            config_default_harness,
         );
-        ("claude".to_string(), "default")
+        selected_harness_order_position = resolved.harness_order_position;
+        warnings.extend(resolved.warnings);
+        (resolved.harness, resolved.source)
     };
     provenance.insert("harness_source".to_string(), harness_source.to_string());
+    if harness_source == "config-order"
+        && let Some(position) = selected_harness_order_position
+    {
+        provenance.insert("harness_order_position".to_string(), position.to_string());
+    }
     if harness == "cursor" {
         warnings.push(
             "Cursor is an experimental launch-bundle target. The contract may change without notice.".to_string(),
@@ -242,6 +254,79 @@ fn model_exists_in_cache(cache: &ModelsCache, model_id: &str) -> bool {
         .any(|model| model.id.eq_ignore_ascii_case(model_id))
 }
 
+fn resolve_harness_candidate_or_fallback(
+    provider: Option<&str>,
+    settings_harness_order: Option<&[String]>,
+    installed_harnesses: &HashSet<String>,
+    config_default_harness: Option<String>,
+) -> CandidateHarnessResolution {
+    let mut candidate = models::harness::resolve_harness_from_candidates(
+        provider,
+        settings_harness_order,
+        installed_harnesses,
+    );
+    if let Some(harness) = candidate.harness {
+        return CandidateHarnessResolution {
+            harness,
+            source: candidate.source.unwrap_or("provider"),
+            harness_order_position: candidate.harness_order_position,
+            warnings: candidate.warnings,
+        };
+    }
+
+    if settings_harness_order.is_some()
+        && let Some(warning) = format_harness_order_fallback_warning(
+            candidate.harness_order_failure.as_ref(),
+            config_default_harness.is_some(),
+        )
+    {
+        candidate.warnings.push(warning);
+    }
+
+    if let Some(harness) = config_default_harness {
+        return CandidateHarnessResolution {
+            harness,
+            source: "config",
+            harness_order_position: None,
+            warnings: candidate.warnings,
+        };
+    }
+
+    let mut warnings = candidate.warnings;
+    warnings.push(
+        "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`".to_string(),
+    );
+    CandidateHarnessResolution {
+        harness: "claude".to_string(),
+        source: "default",
+        harness_order_position: None,
+        warnings,
+    }
+}
+
+fn format_harness_order_fallback_warning(
+    harness_order_failure: Option<&HarnessOrderFailure>,
+    has_config_default_harness: bool,
+) -> Option<String> {
+    let mut warning = match harness_order_failure {
+        Some(HarnessOrderFailure::Empty) => "settings.harness_order is empty".to_string(),
+        Some(HarnessOrderFailure::NoneInstalled { valid_candidates }) => format!(
+            "settings.harness_order is set but none of [{}] are installed",
+            valid_candidates.join(", ")
+        ),
+        None => return None,
+    };
+
+    if has_config_default_harness {
+        warning.push_str("; falling through to settings.default_harness");
+    } else {
+        warning
+            .push_str("; settings.default_harness is unset, falling through to hardcoded `claude`");
+    }
+
+    Some(warning)
+}
+
 fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
     let mars_dir = project_root.join(".mars");
     models::read_cache(&mars_dir)
@@ -250,11 +335,13 @@ fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
 struct ModelResolutionConfig {
     aliases: IndexMap<String, ModelAlias>,
     default_harness: Option<String>,
+    harness_order: Option<Vec<String>>,
 }
 
 fn load_model_resolution_config(project_root: &Path) -> Result<ModelResolutionConfig, MarsError> {
     let mut merged = models::builtin_aliases();
     let mut default_harness = None;
+    let mut harness_order = None;
 
     let merged_path = project_root.join(".mars").join("models-merged.json");
     if let Ok(content) = std::fs::read_to_string(&merged_path)
@@ -268,6 +355,7 @@ fn load_model_resolution_config(project_root: &Path) -> Result<ModelResolutionCo
     match crate::config::load(project_root) {
         Ok(config) => {
             default_harness = config.settings.default_harness.clone();
+            harness_order = config.settings.harness_order.clone();
             for (name, alias) in &config.models {
                 merged.insert(name.clone(), alias.clone());
             }
@@ -279,6 +367,7 @@ fn load_model_resolution_config(project_root: &Path) -> Result<ModelResolutionCo
     Ok(ModelResolutionConfig {
         aliases: merged,
         default_harness,
+        harness_order,
     })
 }
 

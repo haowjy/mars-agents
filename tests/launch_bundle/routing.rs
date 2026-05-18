@@ -565,6 +565,53 @@ default_harness = "pi""#;
     );
 }
 
+pub(crate) fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+harness_order = ["pi", "opencode"]
+default_harness = "claude""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("config")
+    );
+    assert!(bundle["provenance"]["harness_order_position"].is_null());
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("settings.harness_order is set but none of [pi, opencode] are installed")
+    }));
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("falling through to settings.default_harness")
+    }));
+}
+
 pub(crate) fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---

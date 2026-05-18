@@ -177,6 +177,11 @@ fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_defa
 }
 
 #[test]
+fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
+    routing::build_launch_bundle_harness_order_none_installed_uses_default_harness();
+}
+
+#[test]
 fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
     execution_policy::build_launch_bundle_cli_overrides_profile_execution_policy_fields();
 }

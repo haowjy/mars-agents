@@ -157,11 +157,10 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
     let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
     let probe_result = cache_outcome.result().cloned();
-    let harness_probe_result = opencode_cache::read_cached_probe_result();
     if args.all {
         let availability_ctx = AvailabilityContext {
             installed: &installed,
-            harness_probe_result: harness_probe_result.as_ref(),
+            harness_probe_result: probe_result.as_ref(),
             probe_result: probe_result.as_ref(),
             is_offline,
         };
@@ -171,7 +170,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let cache_warning = cache_warning(&outcome);
     let mut diag = DiagnosticCollector::new();
 
-    let mut resolved = models::resolve_all(&merged, &cache, &mut diag);
+    let mut resolved =
+        models::resolve_all_with_probe(&merged, &cache, &mut diag, probe_result.as_ref());
     annotate_resolved_availability(&mut resolved, &installed, probe_result.as_ref(), is_offline);
     if !args.unavailable {
         prune_unavailable(&mut resolved);
@@ -279,11 +279,11 @@ struct AvailabilityContext<'a> {
     is_offline: bool,
 }
 
-#[derive(Clone, Copy)]
 struct ResolveRuntime<'a> {
     cache: &'a models::ModelsCache,
     outcome: &'a models::RefreshOutcome,
     installed: &'a HashSet<String>,
+    probe_outcome: CachedProbeOutcome,
 }
 
 fn run_list_all(
@@ -378,12 +378,11 @@ fn run_list_catalog(
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
     let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
     let probe_result = cache_outcome.result().cloned();
-    let harness_probe_result = opencode_cache::read_cached_probe_result();
     let visibility = effective_visibility(ctx, args);
     let models = collect_catalog_model_entries(
         cache,
         &installed,
-        harness_probe_result.as_ref(),
+        probe_result.as_ref(),
         probe_result.as_ref(),
         is_offline,
     );
@@ -914,21 +913,29 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     let installed = models::harness::detect_installed_harnesses();
 
     if let Some((cache, outcome)) = &cache_result {
+        let is_offline = models::is_mars_offline() || args.no_refresh_models;
+        let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
+        let probe_result = cache_outcome.result().cloned();
+
         // Step 1: exact alias lookup
         if let Some(alias) = merged.get(&args.name) {
             let runtime = ResolveRuntime {
                 cache,
                 outcome,
                 installed: &installed,
+                probe_outcome: cache_outcome.clone(),
             };
             return run_resolve_exact_alias(args, alias, &merged, ctx, runtime, json);
         }
 
         // Step 2: alias-prefix resolution
-        if let Some(mut resolved) = models::resolve_with_alias_prefix(&args.name, &merged, cache) {
-            let is_offline = models::is_mars_offline() || args.no_refresh_models;
-            let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
-            annotate_one_availability(&mut resolved, args, &installed, cache_outcome.result());
+        if let Some(mut resolved) = models::resolve_with_alias_prefix_with_probe(
+            &args.name,
+            &merged,
+            cache,
+            probe_result.as_ref(),
+        ) {
+            annotate_one_availability(&mut resolved, args, &installed, probe_result.as_ref());
             return run_output_resolved(
                 &args.name,
                 &resolved,
@@ -1045,11 +1052,15 @@ fn run_resolve_exact_alias(
     let name = &args.name;
     let source = determine_source(name, ctx)?;
     let mut diag = DiagnosticCollector::new();
-    let mut resolved_entry = models::resolve_one(name, merged, runtime.cache, &mut diag);
-    let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let cache_outcome = opencode_cache::probe_cached(runtime.installed, is_offline);
+    let mut resolved_entry = models::resolve_one_with_probe(
+        name,
+        merged,
+        runtime.cache,
+        &mut diag,
+        runtime.probe_outcome.result(),
+    );
     if let Some(r) = resolved_entry.as_mut() {
-        annotate_one_availability(r, args, runtime.installed, cache_outcome.result());
+        annotate_one_availability(r, args, runtime.installed, runtime.probe_outcome.result());
     }
     let diagnostics = diag.drain();
 
@@ -1067,7 +1078,7 @@ fn run_resolve_exact_alias(
                 "spec": format_spec(&alias.spec),
                 "description": r.description,
             });
-            out["probe_cache"] = serde_json::json!(cache_outcome.cache_status());
+            out["probe_cache"] = serde_json::json!(runtime.probe_outcome.cache_status());
             if let Some(error) = unavailable_harness_error(r) {
                 out["error"] = serde_json::json!(error);
             }
@@ -1102,7 +1113,7 @@ fn run_resolve_exact_alias(
             return Ok(1);
         }
     } else {
-        if matches!(cache_outcome, CachedProbeOutcome::Stale(_)) {
+        if matches!(runtime.probe_outcome, CachedProbeOutcome::Stale(_)) {
             eprintln!("note: using cached opencode probe (stale, background refresh triggered)");
         }
         let Some(r) = resolved_entry.as_ref() else {
@@ -1264,29 +1275,25 @@ fn run_output_passthrough(
     }
 
     let guessed_provider = models::infer_provider_from_model_id(name).map(str::to_string);
-    let harness_probe_result = opencode_cache::read_cached_probe_result();
-    let harness = guessed_provider.as_deref().and_then(|provider| {
-        models::harness::resolve_harness_for_model_with_evidence(
-            provider,
-            name,
-            installed,
-            harness_probe_result.as_ref(),
-        )
-    });
+    let provider_for_resolution = guessed_provider.as_deref().unwrap_or("unknown");
+    let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
+    let probe_result = cache_outcome.result().cloned();
+    let harness = models::harness::resolve_harness_for_model_with_evidence(
+        provider_for_resolution,
+        name,
+        installed,
+        probe_result.as_ref(),
+    );
     let harness_source = if harness.is_some() {
         "pattern_guess"
     } else {
         "unavailable"
     };
-    let harness_candidates = guessed_provider
-        .as_deref()
-        .map(models::harness::harness_candidates_for_provider)
-        .unwrap_or_default();
-    let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
-    let probe_result = cache_outcome.result().cloned();
+    let harness_candidates =
+        models::harness::harness_candidates_for_provider(provider_for_resolution);
     let availability = models::availability::classify_model(
         name,
-        guessed_provider.as_deref().unwrap_or("unknown"),
+        provider_for_resolution,
         installed,
         probe_result.as_ref(),
         is_offline,

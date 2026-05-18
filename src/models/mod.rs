@@ -852,6 +852,16 @@ pub fn resolve_with_alias_prefix(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Option<ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_with_alias_prefix_with_probe(input, aliases, cache, opencode_probe.as_ref())
+}
+
+pub fn resolve_with_alias_prefix_with_probe(
+    input: &str,
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> Option<ResolvedAlias> {
     let pattern = if input.contains('*') {
         input.to_string()
     } else {
@@ -953,12 +963,11 @@ pub fn resolve_with_alias_prefix(
         _ => (None, None, None),
     };
     let installed = harness::detect_installed_harnesses();
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result();
     let harness = harness::resolve_harness_for_model_with_evidence(
         &provider,
         &winner.id,
         &installed,
-        opencode_probe.as_ref(),
+        opencode_probe,
     );
     let harness_source = if harness.is_some() {
         HarnessSource::AutoDetected
@@ -1276,9 +1285,18 @@ pub fn resolve_all(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
 ) -> IndexMap<String, ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_all_with_probe(aliases, cache, diag, opencode_probe.as_ref())
+}
+
+pub fn resolve_all_with_probe(
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    diag: &mut DiagnosticCollector,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> IndexMap<String, ResolvedAlias> {
     let _ = diag;
     let installed = harness::detect_installed_harnesses();
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result();
     let mut resolved = IndexMap::new();
 
     for (name, alias) in aliases {
@@ -1287,13 +1305,7 @@ pub fn resolve_all(
         };
 
         let candidates = harness::harness_candidates_for_provider(&provider);
-        let (h, source) = resolve_harness(
-            alias,
-            &provider,
-            &model_id,
-            &installed,
-            opencode_probe.as_ref(),
-        );
+        let (h, source) = resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
 
         resolved.insert(
             name.clone(),
@@ -1323,18 +1335,23 @@ pub fn resolve_one(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
 ) -> Option<ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_one_with_probe(name, aliases, cache, diag, opencode_probe.as_ref())
+}
+
+pub fn resolve_one_with_probe(
+    name: &str,
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    diag: &mut DiagnosticCollector,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> Option<ResolvedAlias> {
     let alias = aliases.get(name)?;
     let installed = harness::detect_installed_harnesses();
     let (model_id, provider) = resolve_model_and_provider(alias, cache)?;
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result();
     let candidates = harness::harness_candidates_for_provider(&provider);
-    let (harness, harness_source) = resolve_harness(
-        alias,
-        &provider,
-        &model_id,
-        &installed,
-        opencode_probe.as_ref(),
-    );
+    let (harness, harness_source) =
+        resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
     let _ = diag;
     Some(ResolvedAlias {
         name: name.to_string(),

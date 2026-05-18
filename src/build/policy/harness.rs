@@ -9,7 +9,7 @@ use crate::models;
 use crate::models::ModelAlias;
 use crate::models::availability::AvailabilityStatus;
 use crate::models::harness::HarnessOrderFailure;
-use crate::models::probes::opencode_cache;
+use crate::models::probes::OpenCodeProbeResult;
 use wait_timeout::ChildExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,12 +58,13 @@ pub(super) fn resolve_harness(
     provider: Option<&str>,
     config_default_harness: Option<&str>,
     harness_order: Option<&[String]>,
+    installed_harnesses: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
-    let installed_harnesses = models::harness::detect_installed_harnesses();
     let normalized_config_default_harness =
         normalize_config_default_harness(config_default_harness, &mut warnings);
 
@@ -90,8 +91,9 @@ pub(super) fn resolve_harness(
                     model_id,
                     provider,
                     harness_order,
-                    &installed_harnesses,
+                    installed_harnesses,
                     normalized_config_default_harness.clone(),
+                    opencode_probe_result,
                 );
                 selected_harness_order_position = resolved.harness_order_position;
                 warnings.extend(resolved.warnings);
@@ -121,8 +123,9 @@ pub(super) fn resolve_harness(
                 model_id,
                 provider,
                 harness_order,
-                &installed_harnesses,
+                installed_harnesses,
                 normalized_config_default_harness,
+                opencode_probe_result,
             );
             selected_harness_order_position = resolved.harness_order_position;
             warnings.extend(resolved.warnings);
@@ -179,6 +182,7 @@ fn resolve_harness_candidate_or_fallback(
     settings_harness_order: Option<&[String]>,
     installed_harnesses: &HashSet<String>,
     config_default_harness: Option<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
 ) -> CandidateHarnessResolution {
     let mut warnings = Vec::new();
     let mut candidates_tried = Vec::new();
@@ -215,9 +219,13 @@ fn resolve_harness_candidate_or_fallback(
 
     for (harness, harness_order_position) in candidates {
         candidates_tried.push(harness.clone());
-        if let Some(route_confidence) =
-            candidate_route_confidence(&harness, provider, model_id, installed_harnesses)
-        {
+        if let Some(route_confidence) = candidate_route_confidence(
+            &harness,
+            provider,
+            model_id,
+            installed_harnesses,
+            opencode_probe_result,
+        ) {
             let source = if settings_harness_order.is_some() {
                 "config-order"
             } else {
@@ -272,6 +280,7 @@ fn candidate_route_confidence(
     provider: Option<&str>,
     model_id: &str,
     installed_harnesses: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
 ) -> Option<RouteConfidence> {
     if !installed_harnesses.contains(harness) {
         return None;
@@ -285,7 +294,12 @@ fn candidate_route_confidence(
         if provider.is_none() || provider.is_some_and(|value| !is_known_provider(value)) {
             return Some(RouteConfidence::Passthrough);
         }
-        if opencode_supports_provider_and_model(provider, model_id, installed_harnesses) {
+        if opencode_supports_provider_and_model(
+            provider,
+            model_id,
+            installed_harnesses,
+            opencode_probe_result,
+        ) {
             return Some(RouteConfidence::Likely);
         }
     }
@@ -354,19 +368,19 @@ fn opencode_supports_provider_and_model(
     provider: Option<&str>,
     model_id: &str,
     installed_harnesses: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
 ) -> bool {
     let Some(provider) = provider else {
         return false;
     };
 
-    let cached_probe = opencode_cache::read_cached_probe_result();
     matches!(
         crate::models::availability::classify_for_harness(
             "opencode",
             provider,
             model_id,
             installed_harnesses,
-            cached_probe.as_ref(),
+            opencode_probe_result,
         ),
         Some((AvailabilityStatus::Runnable, _, _))
     )

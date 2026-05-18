@@ -137,8 +137,8 @@ fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
 }
 
 #[test]
-fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_stale() {
-    routing::build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_stale();
+fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
+    routing::build_launch_bundle_selects_opencode_when_opencode_cache_is_stale();
 }
 
 #[test]

@@ -42,6 +42,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         resolved_model.model_source.clone(),
     );
 
+    let installed_harnesses = crate::models::harness::detect_installed_harnesses();
+    let opencode_probe_outcome = crate::models::probes::opencode_cache::probe_cached(
+        &installed_harnesses,
+        crate::models::is_mars_offline(),
+    );
+    let opencode_probe_result = opencode_probe_outcome.result();
+
     let harness_resolution = harness::resolve_harness(
         &input,
         resolved_model.alias,
@@ -49,6 +56,8 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         resolved_model.provider.as_deref(),
         resolution_config.default_harness.as_deref(),
         resolution_config.harness_order.as_deref(),
+        &installed_harnesses,
+        opencode_probe_result,
     )?;
 
     warnings.extend(harness_resolution.warnings);
@@ -116,6 +125,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         harness: harness_resolution.harness,
         route_confidence: harness_resolution.route_confidence.label().to_string(),
         provider: resolved_model.provider.as_deref(),
+        opencode_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         alias_exists: resolved_model.alias.is_some(),
         cache: &cache,

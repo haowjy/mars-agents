@@ -142,10 +142,12 @@ fn resolve_alias_prefix_exits_zero() {
 fn resolve_unknown_exits_zero_with_passthrough() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &[]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "unknown-xyz"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
@@ -157,7 +159,10 @@ fn resolve_unknown_exits_zero_with_passthrough() {
     assert_eq!(stdout["provider"], Value::Null);
     assert_eq!(stdout["harness"], Value::Null);
     assert_eq!(stdout["harness_source"].as_str(), Some("unavailable"));
-    assert_eq!(stdout["harness_candidates"], json!([]));
+    assert_eq!(
+        stdout["harness_candidates"],
+        json!(["pi", "opencode", "cursor"])
+    );
     assert!(stdout["availability"].is_string());
     assert!(stdout["availability_source"].is_string());
     assert!(
@@ -261,10 +266,12 @@ fn resolve_passthrough_pattern_guesses_harness() {
 fn resolve_passthrough_unrecognized_pattern_harness_null() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &[]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
@@ -274,7 +281,36 @@ fn resolve_passthrough_unrecognized_pattern_harness_null() {
     assert_eq!(stdout["provider"], Value::Null);
     assert_eq!(stdout["harness"], Value::Null);
     assert_eq!(stdout["harness_source"].as_str(), Some("unavailable"));
-    assert_eq!(stdout["harness_candidates"], json!([]));
+    assert_eq!(
+        stdout["harness_candidates"],
+        json!(["pi", "opencode", "cursor"])
+    );
+}
+
+#[test]
+#[serial]
+fn resolve_passthrough_unrecognized_pattern_uses_unknown_provider_fallback_harnesses() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
+    assert_eq!(stdout["provider"], Value::Null);
+    assert_eq!(stdout["harness"].as_str(), Some("pi"));
+    assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
+    assert_eq!(
+        stdout["harness_candidates"],
+        json!(["pi", "opencode", "cursor"])
+    );
 }
 
 #[test]

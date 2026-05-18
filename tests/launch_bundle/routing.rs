@@ -1049,7 +1049,7 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_stale() {
+pub(crate) fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -1083,10 +1083,14 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("likely")
+    );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode,cursor")
+        Some("codex,pi,opencode")
     );
 }
 

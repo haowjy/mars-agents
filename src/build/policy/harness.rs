@@ -51,22 +51,26 @@ struct CandidateHarnessResolution {
     warnings: Vec<String>,
 }
 
+pub(super) struct HarnessEvidence<'a> {
+    pub(super) model_id: &'a str,
+    pub(super) provider: Option<&'a str>,
+    pub(super) config_default_harness: Option<&'a str>,
+    pub(super) harness_order: Option<&'a [String]>,
+    pub(super) installed_harnesses: &'a HashSet<String>,
+    pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
+}
+
 pub(super) fn resolve_harness(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
-    model_id: &str,
-    provider: Option<&str>,
-    config_default_harness: Option<&str>,
-    harness_order: Option<&[String]>,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    evidence: HarnessEvidence<'_>,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
     let normalized_config_default_harness =
-        normalize_config_default_harness(config_default_harness, &mut warnings);
+        normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
 
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
@@ -88,12 +92,12 @@ pub(super) fn resolve_harness(
                 )
             } else {
                 let resolved = resolve_harness_candidate_or_fallback(
-                    model_id,
-                    provider,
-                    harness_order,
-                    installed_harnesses,
+                    evidence.model_id,
+                    evidence.provider,
+                    evidence.harness_order,
+                    evidence.installed_harnesses,
                     normalized_config_default_harness.clone(),
-                    opencode_probe_result,
+                    evidence.opencode_probe_result,
                 );
                 selected_harness_order_position = resolved.harness_order_position;
                 warnings.extend(resolved.warnings);
@@ -120,12 +124,12 @@ pub(super) fn resolve_harness(
             )
         } else {
             let resolved = resolve_harness_candidate_or_fallback(
-                model_id,
-                provider,
-                harness_order,
-                installed_harnesses,
+                evidence.model_id,
+                evidence.provider,
+                evidence.harness_order,
+                evidence.installed_harnesses,
                 normalized_config_default_harness,
-                opencode_probe_result,
+                evidence.opencode_probe_result,
             );
             selected_harness_order_position = resolved.harness_order_position;
             warnings.extend(resolved.warnings);

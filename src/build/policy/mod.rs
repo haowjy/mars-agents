@@ -52,12 +52,14 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let harness_resolution = harness::resolve_harness(
         &input,
         resolved_model.alias,
-        &resolved_model.model,
-        resolved_model.provider.as_deref(),
-        resolution_config.default_harness.as_deref(),
-        resolution_config.harness_order.as_deref(),
-        &installed_harnesses,
-        opencode_probe_result,
+        harness::HarnessEvidence {
+            model_id: &resolved_model.model,
+            provider: resolved_model.provider.as_deref(),
+            config_default_harness: resolution_config.default_harness.as_deref(),
+            harness_order: resolution_config.harness_order.as_deref(),
+            installed_harnesses: &installed_harnesses,
+            opencode_probe_result,
+        },
     )?;
 
     warnings.extend(harness_resolution.warnings);

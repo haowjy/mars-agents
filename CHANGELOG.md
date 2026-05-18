@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Removed `gemini` as a launch harness surface. Builtin `gemini` model alias stays valid.
+- Model-alias `harness` values now validate against real launch harnesses.
+- Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; `pi` and `cursor` availability classify as `Unknown` / `UniversalHarness`.
+
 ## [0.4.8-rc.2] - 2026-05-18
 
 ## [0.4.8-rc.1] - 2026-05-18

@@ -243,7 +243,7 @@ fn resolve_passthrough_pattern_guesses_harness() {
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
-    let expected_harness = ["claude", "opencode", "gemini"]
+    let expected_harness = ["claude", "pi", "opencode", "cursor"]
         .iter()
         .find(|bin| which::which(bin).is_ok())
         .map(|bin| (*bin).to_string());
@@ -257,7 +257,7 @@ fn resolve_passthrough_pattern_guesses_harness() {
     assert_eq!(stdout["provider"].as_str(), Some("anthropic"));
     assert_eq!(
         stdout["harness_candidates"],
-        json!(["claude", "opencode", "gemini"])
+        json!(["claude", "pi", "opencode", "cursor"])
     );
     assert_eq!(stdout["harness_source"].as_str(), Some(expected_source));
     assert_eq!(stdout["harness"].as_str(), expected_harness.as_deref());

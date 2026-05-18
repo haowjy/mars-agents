@@ -8,10 +8,11 @@ const HARNESS_BINARIES: &[(&str, &str)] = &[
     ("opencode", "opencode"),
     ("cursor", "cursor"),
     ("pi", "pi"),
-    ("gemini", "gemini"),
 ];
 
 const ORDERABLE_HARNESSES: &[&str] = &["claude", "codex", "opencode", "cursor", "pi"];
+
+pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "opencode", "cursor"];
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
     HARNESS_BINARIES
@@ -40,39 +41,47 @@ fn harness_binary_exists(binary: &str) -> bool {
 }
 
 const PROVIDER_HARNESS_PREFERENCES: &[(&str, &[&str])] = &[
-    ("anthropic", &["claude", "opencode", "gemini"]),
-    ("openai", &["codex", "opencode"]),
-    ("google", &["gemini", "opencode"]),
-    ("meta", &["opencode"]),
-    ("mistral", &["opencode"]),
-    ("deepseek", &["opencode"]),
-    ("cohere", &["opencode"]),
+    ("anthropic", &["claude", "pi", "opencode", "cursor"]),
+    ("openai", &["codex", "pi", "opencode", "cursor"]),
+    ("google", &["pi", "opencode", "cursor"]),
+    ("meta", &["pi", "opencode", "cursor"]),
+    ("mistral", &["pi", "opencode", "cursor"]),
+    ("deepseek", &["pi", "opencode", "cursor"]),
+    ("cohere", &["pi", "opencode", "cursor"]),
 ];
+
+const DEFAULT_FALLBACK_ORDER: &[&str] = &["pi", "opencode", "cursor"];
+
+pub fn is_valid_harness(name: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase();
+    VALID_HARNESSES.contains(&normalized.as_str())
+}
+
+fn harness_preferences(provider: &str) -> &'static [&'static str] {
+    let provider_lower = provider.to_ascii_lowercase();
+    PROVIDER_HARNESS_PREFERENCES
+        .iter()
+        .find(|(p, _)| *p == provider_lower)
+        .map(|(_, prefs)| *prefs)
+        .unwrap_or(DEFAULT_FALLBACK_ORDER)
+}
 
 fn is_launch_bundle_harness(harness: &str) -> bool {
     ORDERABLE_HARNESSES.contains(&harness)
 }
 
 pub fn resolve_harness_for_provider(provider: &str, installed: &HashSet<String>) -> Option<String> {
-    let provider_lower = provider.to_lowercase();
-    PROVIDER_HARNESS_PREFERENCES
+    harness_preferences(provider)
         .iter()
-        .find(|(p, _)| *p == provider_lower)
-        .and_then(|(_, prefs)| {
-            prefs
-                .iter()
-                .find(|h| installed.contains(**h))
-                .map(|h| h.to_string())
-        })
+        .find(|h| installed.contains(**h))
+        .map(|h| h.to_string())
 }
 
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
-    let provider_lower = provider.to_lowercase();
-    PROVIDER_HARNESS_PREFERENCES
+    harness_preferences(provider)
         .iter()
-        .find(|(p, _)| *p == provider_lower)
-        .map(|(_, prefs)| prefs.iter().map(|h| h.to_string()).collect())
-        .unwrap_or_default()
+        .map(|h| h.to_string())
+        .collect()
 }
 
 pub fn preferred_harness_for_provider(provider: &str) -> Option<String> {
@@ -158,16 +167,10 @@ fn resolve_launch_bundle_harness_for_provider(
     provider: &str,
     installed: &HashSet<String>,
 ) -> Option<String> {
-    let provider_lower = provider.to_lowercase();
-    PROVIDER_HARNESS_PREFERENCES
+    harness_preferences(provider)
         .iter()
-        .find(|(p, _)| *p == provider_lower)
-        .and_then(|(_, prefs)| {
-            prefs
-                .iter()
-                .find(|h| is_launch_bundle_harness(h) && installed.contains(**h))
-                .map(|h| h.to_string())
-        })
+        .find(|h| is_launch_bundle_harness(h) && installed.contains(**h))
+        .map(|h| h.to_string())
 }
 
 #[cfg(test)]
@@ -185,10 +188,10 @@ mod tests {
 
     #[test]
     fn resolve_harness_anthropic_falls_back_to_opencode() {
-        let installed: HashSet<String> = ["opencode"].iter().map(|s| s.to_string()).collect();
+        let installed: HashSet<String> = ["pi", "opencode"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
             resolve_harness_for_provider("anthropic", &installed),
-            Some("opencode".to_string())
+            Some("pi".to_string())
         );
     }
 
@@ -208,6 +211,18 @@ mod tests {
     }
 
     #[test]
+    fn resolve_harness_unknown_provider_uses_default_fallback_order() {
+        let installed: HashSet<String> = ["opencode", "cursor"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            resolve_harness_for_provider("unknown-provider", &installed),
+            Some("opencode".to_string())
+        );
+    }
+
+    #[test]
     fn resolve_harness_case_insensitive_provider() {
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
@@ -219,19 +234,19 @@ mod tests {
     #[test]
     fn candidates_for_known_provider() {
         let candidates = harness_candidates_for_provider("openai");
-        assert_eq!(candidates, vec!["codex", "opencode"]);
+        assert_eq!(candidates, vec!["codex", "pi", "opencode", "cursor"]);
     }
 
     #[test]
-    fn candidates_for_anthropic_include_gemini() {
+    fn candidates_for_anthropic_use_pi_first_fallback_chain() {
         let candidates = harness_candidates_for_provider("anthropic");
-        assert_eq!(candidates, vec!["claude", "opencode", "gemini"]);
+        assert_eq!(candidates, vec!["claude", "pi", "opencode", "cursor"]);
     }
 
     #[test]
     fn candidates_for_unknown_provider() {
         let candidates = harness_candidates_for_provider("unknown");
-        assert!(candidates.is_empty());
+        assert_eq!(candidates, vec!["pi", "opencode", "cursor"]);
     }
 
     #[test]
@@ -240,7 +255,18 @@ mod tests {
             preferred_harness_for_provider("openai"),
             Some("codex".to_string())
         );
-        assert_eq!(preferred_harness_for_provider("unknown"), None);
+        assert_eq!(
+            preferred_harness_for_provider("unknown"),
+            Some("pi".to_string())
+        );
+    }
+
+    #[test]
+    fn valid_harness_validation_rejects_gemini() {
+        assert!(is_valid_harness("claude"));
+        assert!(is_valid_harness("OpenCode"));
+        assert!(!is_valid_harness("gemini"));
+        assert!(!is_valid_harness("unknown"));
     }
 
     #[test]

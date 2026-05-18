@@ -201,6 +201,14 @@ struct RawModelAlias {
 impl<'de> Deserialize<'de> for ModelAlias {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawModelAlias::deserialize(deserializer)?;
+        if let Some(ref harness_name) = raw.harness
+            && !harness::is_valid_harness(harness_name)
+        {
+            return Err(serde::de::Error::custom(format!(
+                "invalid harness '{harness_name}'; valid harnesses: {}",
+                harness::VALID_HARNESSES.join(", ")
+            )));
+        }
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
             const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
@@ -1861,7 +1869,7 @@ mod tests {
         assert_eq!(resolved.provider, "anthropic");
         assert_eq!(
             resolved.harness_candidates,
-            vec!["claude", "opencode", "gemini"]
+            vec!["claude", "pi", "opencode", "cursor"]
         );
 
         let installed = harness::detect_installed_harnesses();
@@ -3213,6 +3221,26 @@ default_effort = "maximum"
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("invalid default_effort"));
         assert!(err.contains("accepted values"));
+    }
+
+    #[test]
+    fn model_alias_invalid_harness_errors() {
+        let toml_str = r#"
+[models.opus]
+harness = "gemini"
+provider = "Anthropic"
+match = ["claude-opus-*"]
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("invalid harness 'gemini'"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
     }
 
     #[test]

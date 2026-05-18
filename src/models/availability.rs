@@ -268,6 +268,14 @@ fn classify_opencode(
         ));
     }
 
+    if is_unknown_provider(provider) {
+        return Some((
+            AvailabilityStatus::Unknown,
+            AvailabilitySource::OpenCodeProbeUnknown,
+            None,
+        ));
+    }
+
     let provider_capability = classify_opencode_provider(provider, probe);
 
     if !provider_capability.provider_available && !provider_capability.openrouter_only {
@@ -294,6 +302,11 @@ fn classify_opencode(
             harness_model_id,
         }),
     ))
+}
+
+fn is_unknown_provider(provider: &str) -> bool {
+    let provider = provider.trim();
+    provider.is_empty() || provider.eq_ignore_ascii_case("unknown")
 }
 
 fn classify_opencode_provider(
@@ -842,6 +855,28 @@ mod tests {
         let result = classify_model(
             "gpt-5.4",
             "OpenAI",
+            &installed(&["opencode"]),
+            Some(&probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unknown);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeUnknown);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_opencode_unknown_provider_stays_unknown() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("openai".to_string(), true)]),
+            provider_probe_success: true,
+            model_probe_success: true,
+            ..OpenCodeProbeResult::default()
+        };
+
+        let result = classify_model(
+            "mystery-model",
+            "unknown",
             &installed(&["opencode"]),
             Some(&probe),
             false,

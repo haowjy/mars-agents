@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use serial_test::serial;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
 
@@ -315,6 +316,38 @@ fn resolve_passthrough_unrecognized_pattern_uses_unknown_provider_fallback_harne
 
 #[test]
 #[serial]
+fn resolve_passthrough_unrecognized_pattern_opencode_only_is_unknown_availability() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+    write_opencode_probe_cache(temp.path(), json!({"openai": true}), vec!["openai/gpt-5"]);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
+    assert_eq!(stdout["provider"], Value::Null);
+    assert_eq!(stdout["harness"].as_str(), Some("opencode"));
+    assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
+    assert_eq!(
+        stdout["harness_candidates"],
+        json!(["pi", "opencode", "cursor"])
+    );
+    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
+    assert_eq!(
+        stdout["availability_source"].as_str(),
+        Some("opencode_probe_unknown")
+    );
+}
+
+#[test]
+#[serial]
 fn resolve_unknown_with_no_refresh_without_cache_is_non_zero() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -359,4 +392,35 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
 
 fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
+}
+
+fn write_opencode_probe_cache(temp_root: &Path, providers: Value, model_slugs: Vec<&str>) {
+    let cache_dir = temp_root
+        .join("xdg-cache")
+        .join("mars")
+        .join("cache")
+        .join("availability");
+    fs::create_dir_all(&cache_dir).expect("failed to create probe cache dir");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_secs();
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": now,
+        "last_attempt_at": now,
+        "last_error": Value::Null,
+        "result": {
+            "providers": providers,
+            "model_slugs": model_slugs,
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": Value::Null
+        }
+    });
+    fs::write(
+        cache_dir.join("opencode-probe.json"),
+        serde_json::to_vec_pretty(&payload).expect("failed to serialize probe cache payload"),
+    )
+    .expect("failed to write opencode probe cache");
 }

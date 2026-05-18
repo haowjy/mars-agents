@@ -575,8 +575,9 @@ Review code changes."#;
     let extra_toml = r#"[models.gpt55]
 model = "gpt-5.5""#;
 
+    let cache_root = temp.path().join("mars-cache");
     write_opencode_probe_cache(
-        &temp,
+        &cache_root,
         now_unix_secs(),
         json!({
             "providers": { "openai": true },
@@ -601,6 +602,7 @@ model = "gpt-5.5""#;
         "--harness",
         "opencode",
     ]);
+    cmd.env("MARS_CACHE_DIR", &cache_root);
     cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
 
     let output = cmd.assert().success().get_output().clone();
@@ -756,14 +758,8 @@ fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
 }
 
-fn write_opencode_probe_cache(temp: &TempDir, fetched_at: u64, result: Value) {
-    let cache_path = temp
-        .path()
-        .join("xdg-cache")
-        .join("mars")
-        .join("cache")
-        .join("availability")
-        .join("opencode-probe.json");
+fn write_opencode_probe_cache(cache_root: &Path, fetched_at: u64, result: Value) {
+    let cache_path = cache_root.join("availability").join("opencode-probe.json");
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent).unwrap();
     }

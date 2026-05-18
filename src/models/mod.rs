@@ -2402,7 +2402,10 @@ mod tests {
         let entry = resolved.get("fast").unwrap();
         assert_eq!(entry.model_id, "gpt-5.3-codex");
         assert_eq!(entry.provider, "openai");
-        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+        assert_eq!(
+            entry.harness_candidates,
+            vec!["codex", "pi", "opencode", "cursor"]
+        );
     }
 
     #[test]
@@ -2471,7 +2474,10 @@ mod tests {
         let entry = resolved.get("gpt").unwrap();
         assert_eq!(entry.model_id, "gpt-5");
         assert_eq!(entry.provider, "openai");
-        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+        assert_eq!(
+            entry.harness_candidates,
+            vec!["codex", "pi", "opencode", "cursor"]
+        );
         match entry.harness_source {
             HarnessSource::AutoDetected => assert!(entry.harness.is_some()),
             HarnessSource::Unavailable => assert!(entry.harness.is_none()),

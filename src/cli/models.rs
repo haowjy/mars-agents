@@ -1759,7 +1759,7 @@ description = "Old alias"
     }
 
     #[test]
-    fn list_all_includes_unavailable_harness_entries() {
+    fn list_all_includes_unavailable_harness_entries_with_fallback_candidates() {
         let mut merged = IndexMap::new();
         merged.insert("x".to_string(), auto_alias("Unknown", &["x-*"], &[]));
         let models_cache = cache(vec![cached_model("x-1", "Unknown", Some("2026-01-01"))]);
@@ -1769,7 +1769,7 @@ description = "Old alias"
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].harness, None);
         assert_eq!(rows[0].harness_source, HarnessSource::Unavailable);
-        assert!(rows[0].harness_candidates.is_empty());
+        assert_eq!(rows[0].harness_candidates, vec!["pi", "opencode", "cursor"]);
     }
 
     #[test]

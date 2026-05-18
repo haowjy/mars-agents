@@ -102,6 +102,21 @@ fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_h
 }
 
 #[test]
+fn build_launch_bundle_openai_falls_back_to_pi_when_codex_missing() {
+    routing::build_launch_bundle_openai_falls_back_to_pi_when_codex_missing();
+}
+
+#[test]
+fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
+    routing::build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness();
+}
+
+#[test]
+fn build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence() {
+    routing::build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence();
+}
+
+#[test]
 fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
     routing::build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness();
 }

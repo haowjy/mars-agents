@@ -1,3 +1,5 @@
+// qa-validated: capability-cache-resolver-invalid-harness-packages
+
 mod common;
 
 use httpmock::prelude::*;
@@ -343,6 +345,89 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_is_unknown_availabilit
     assert_eq!(
         stdout["availability_source"].as_str(),
         Some("opencode_probe_unknown")
+    );
+}
+
+#[test]
+#[serial]
+fn resolve_builtin_gemini_alias_uses_google_candidates_without_gemini_harness() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "gemini"]);
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gemini-2.5-pro",
+            "provider": "Google",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "gemini"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert_eq!(stdout["name"].as_str(), Some("gemini"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gemini-2.5-pro"));
+    assert_eq!(stdout["provider"].as_str(), Some("google"));
+    assert_eq!(stdout["harness"].as_str(), Some("pi"));
+    assert_ne!(stdout["harness"].as_str(), Some("gemini"));
+    assert_eq!(
+        stdout["harness_candidates"],
+        json!(["pi", "opencode", "cursor"])
+    );
+}
+
+#[test]
+#[serial]
+fn sync_rejects_dependency_model_alias_with_invalid_harness() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let source_root = temp.path().join("invalid-harness-source");
+    fs::create_dir_all(source_root.join("agents")).expect("failed to create source agents dir");
+    fs::write(
+        source_root.join("agents").join("fixture.md"),
+        "# Fixture agent for invalid harness package test\n",
+    )
+    .expect("failed to write source agent");
+    fs::write(
+        source_root.join("mars.toml"),
+        r#"[package]
+name = "invalid-harness-source"
+version = "0.1.0"
+
+[models.bad]
+harness = "gemini"
+model = "gemini-2.5-pro"
+"#,
+    )
+    .expect("failed to write source manifest");
+    fs::write(
+        project_root.join("mars.toml"),
+        format!(
+            "[dependencies]\ninvalid_harness_source = {{ path = \"{}\" }}\n",
+            source_root.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("failed to write project manifest");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.arg("sync");
+
+    let output = cmd.assert().failure().get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("invalid harness 'gemini'"),
+        "expected invalid harness diagnostic, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("valid harnesses: claude, codex, pi, opencode, cursor"),
+        "expected valid harness list, stderr:\n{stderr}"
     );
 }
 

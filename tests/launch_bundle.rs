@@ -1,5 +1,6 @@
 // qa-validated: launch-bundle-blocker-audit
 // qa-validated: harness-order-settings-audit
+// qa-validated: capability-cache-resolver-routing-gaps
 #[path = "common/mod.rs"]
 mod test_common;
 
@@ -112,8 +113,24 @@ fn build_launch_bundle_openai_falls_back_to_pi_when_codex_auth_fails() {
 }
 
 #[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing() {
+    routing::build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing();
+}
+
+#[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails() {
+    routing::build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails();
+}
+
+#[test]
 fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
     routing::build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness();
+}
+
+#[test]
+fn build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness() {
+    routing::build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness(
+    );
 }
 
 #[test]
@@ -134,6 +151,11 @@ fn build_launch_bundle_prefers_opencode_before_cursor_when_both_installed() {
 #[test]
 fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
     routing::build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative();
+}
+
+#[test]
+fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
+    routing::build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed();
 }
 
 #[test]

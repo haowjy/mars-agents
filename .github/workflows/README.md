@@ -36,16 +36,16 @@ When release is enabled, the workflow:
 3. Promotes `CHANGELOG.md` `[Unreleased]`.
 4. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
 5. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
-6. Calls `release.yml` directly with that tag.
+6. Lets the tag push trigger `release.yml`.
 
-The direct workflow call is the auto-release publish path. To avoid duplicate
-publish runs when checkout uses `RELEASE_TOKEN`, the tag push is forced through
-`${{ github.token }}` / `GITHUB_TOKEN`, so the CI-created tag does not trigger
-a second `release.yml` run from `push.tags`.
+`release-on-main.yml` only creates release commits/tags. `release.yml` is the
+only publish workflow identity, for both auto-release tags and manual backfill
+tags. npm trusted publishing allows one trusted workflow per package, so all
+publish paths converge on `.github/workflows/release.yml`.
 
 Reruns are idempotent by trigger marker:
-- If the release tag already exists for the trigger, rerun reuses that tag and re-calls `release.yml`.
-- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag first, then calls `release.yml`.
+- If the release tag already exists for the trigger, rerun does not recreate it.
+- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag so `release.yml` can publish it.
 
 ## Manual Backfill
 

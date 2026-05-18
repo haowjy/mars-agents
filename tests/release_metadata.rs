@@ -213,6 +213,33 @@ fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
 }
 
 #[test]
+fn release_publish_uses_single_tag_workflow_identity() {
+    let release_on_main = read(".github/workflows/release-on-main.yml");
+    let release = read(".github/workflows/release.yml");
+
+    assert!(
+        !release_on_main.contains("uses: ./.github/workflows/release.yml"),
+        "auto-release should create the release tag only; publishing must be triggered by release.yml on tag push"
+    );
+    assert!(
+        release.contains("tags: [\"v*\"]"),
+        "release.yml must remain the single tag-triggered publish workflow"
+    );
+    assert!(
+        !release.contains("workflow_call:"),
+        "release.yml should not also be reusable; npm trusted publishing allows one workflow identity per package"
+    );
+    assert!(
+        !release.contains("inputs.tag"),
+        "release.yml should derive release identity only from the pushed tag"
+    );
+    assert!(
+        release_on_main.contains("TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}"),
+        "auto-release tag push should prefer RELEASE_TOKEN so the tag workflow can run"
+    );
+}
+
+#[test]
 fn release_on_main_computes_stable_and_rc_versions() {
     let workflow = read(".github/workflows/release-on-main.yml");
 

@@ -264,7 +264,7 @@ jobs:
           MISSING_TAG: ${{ steps.release_guard.outputs.missing_tag }}
           MISSING_TAG_COMMIT: ${{ steps.release_guard.outputs.missing_tag_commit }}
           REPOSITORY: ${{ github.repository }}
-          TAG_PUSH_TOKEN: ${{ github.token }}
+          TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           git fetch --tags --force
           release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
@@ -516,7 +516,7 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
           REPOSITORY: ${{ github.repository }}
-          TAG_PUSH_TOKEN: ${{ github.token }}
+          TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
           release_remote_url="https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
@@ -641,14 +641,3 @@ jobs:
 
           push_tag_with_retry "v${NEXT_VERSION}" "${release_commit_sha}"
           echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
-
-  publish:
-    needs: release
-    if: needs.release.outputs.tag != ''
-    uses: ./.github/workflows/release.yml
-    with:
-      tag: ${{ needs.release.outputs.tag }}
-    secrets: inherit
-    permissions:
-      contents: write
-      id-token: write

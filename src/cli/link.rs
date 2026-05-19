@@ -24,7 +24,7 @@ pub struct LinkArgs {
 /// Run `mars link`.
 pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let parsed_target = super::target::normalize_target_name(&args.target)?;
-    let target_name = crate::config::link_migration::normalize_link(&parsed_target).target;
+    let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
     link_target(ctx, &target_name, json)
 }
 

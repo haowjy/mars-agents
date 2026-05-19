@@ -12,7 +12,7 @@ use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
 
-pub mod link_migration;
+pub mod migrations;
 
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -278,17 +278,17 @@ impl Settings {
     ///   the canonical compiled store.
     pub fn managed_targets(&self) -> Vec<String> {
         if let Some(targets) = &self.targets {
-            return link_migration::normalized_targets(targets.iter().map(String::as_str));
+            return migrations::link::normalized_targets(targets.iter().map(String::as_str));
         }
-        link_migration::normalized_targets(self.managed_root.iter().map(String::as_str))
+        migrations::link::normalized_targets(self.managed_root.iter().map(String::as_str))
     }
 
     /// Returns known harness intents from configured links. Generic targets are ignored.
     pub fn linked_harnesses(&self) -> Vec<String> {
         if let Some(targets) = &self.targets {
-            return link_migration::linked_harnesses(targets.iter().map(String::as_str));
+            return migrations::link::linked_harnesses(targets.iter().map(String::as_str));
         }
-        link_migration::linked_harnesses(self.managed_root.iter().map(String::as_str))
+        migrations::link::linked_harnesses(self.managed_root.iter().map(String::as_str))
     }
 }
 

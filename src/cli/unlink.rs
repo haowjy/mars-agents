@@ -14,7 +14,7 @@ pub struct UnlinkArgs {
 /// Run `mars unlink`.
 pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let parsed_target = super::target::normalize_target_name(&args.target)?;
-    let target_name = crate::config::link_migration::normalize_link(&parsed_target).target;
+    let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
 
     let mars_dir = ctx.project_root.join(".mars");
     std::fs::create_dir_all(&mars_dir)?;
@@ -29,7 +29,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         .settings
         .managed_root
         .as_deref()
-        .map(crate::config::link_migration::normalize_link)
+        .map(crate::config::migrations::link::normalize_link)
         .is_some_and(|link| link.target == target_name)
     {
         config.settings.managed_root = None;
@@ -39,7 +39,8 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 
     if let Some(targets) = config.settings.targets.as_mut() {
         let old_len = targets.len();
-        targets.retain(|t| crate::config::link_migration::normalize_link(t).target != target_name);
+        targets
+            .retain(|t| crate::config::migrations::link::normalize_link(t).target != target_name);
         if targets.len() != old_len {
             settings_updated = true;
             target_was_managed = true;

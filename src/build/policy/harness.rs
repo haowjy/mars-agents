@@ -423,20 +423,9 @@ mod tests {
         false
     }
 
-    // --- candidate_route_confidence_with_auth tests ---
-
-    #[test]
-    fn route_confidence_not_installed_returns_none() {
-        let result = candidate_route_confidence_with_auth(
-            "claude",
-            Some("anthropic"),
-            "claude-opus-4-7",
-            &installed(&["codex"]), // claude NOT installed
-            None,
-            always_authed,
-        );
-        assert_eq!(result, None);
-    }
+    // --- candidate_route_confidence_with_auth: key boundary tests ---
+    // These test the auth-injection seam which cannot be exercised through
+    // integration tests without forking real harness binaries.
 
     #[test]
     fn route_confidence_native_match_authed_returns_confirmed() {
@@ -453,39 +442,13 @@ mod tests {
 
     #[test]
     fn route_confidence_native_match_not_authed_falls_through() {
-        // claude installed, anthropic provider, but auth fails — should NOT return Confirmed
+        // Auth gate: native match without auth must NOT return Confirmed.
+        // claude is not pi/cursor/opencode so falls to None entirely.
         let result = candidate_route_confidence_with_auth(
             "claude",
             Some("anthropic"),
             "claude-opus-4-7",
             &installed(&["claude"]),
-            None,
-            never_authed,
-        );
-        // claude is not pi/cursor/opencode so falls to None
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn route_confidence_codex_native_match_authed_returns_confirmed() {
-        let result = candidate_route_confidence_with_auth(
-            "codex",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["codex"]),
-            None,
-            always_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Confirmed));
-    }
-
-    #[test]
-    fn route_confidence_codex_not_authed_falls_through() {
-        let result = candidate_route_confidence_with_auth(
-            "codex",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["codex"]),
             None,
             never_authed,
         );
@@ -506,46 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn route_confidence_cursor_installed_returns_passthrough() {
-        let result = candidate_route_confidence_with_auth(
-            "cursor",
-            Some("anthropic"),
-            "claude-opus-4-7",
-            &installed(&["cursor"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Passthrough));
-    }
-
-    #[test]
-    fn route_confidence_opencode_unknown_provider_returns_passthrough() {
-        let result = candidate_route_confidence_with_auth(
-            "opencode",
-            Some("unknown-provider"),
-            "custom-model",
-            &installed(&["opencode"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Passthrough));
-    }
-
-    #[test]
-    fn route_confidence_opencode_no_provider_returns_passthrough() {
-        let result = candidate_route_confidence_with_auth(
-            "opencode",
-            None,
-            "custom-model",
-            &installed(&["opencode"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Passthrough));
-    }
-
-    #[test]
-    fn route_confidence_opencode_known_provider_with_positive_probe_returns_likely() {
+    fn route_confidence_opencode_positive_probe_returns_likely() {
         let probe = OpenCodeProbeResult {
             providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5".to_string()],
@@ -565,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn route_confidence_opencode_known_provider_with_negative_probe_returns_none() {
+    fn route_confidence_opencode_negative_probe_returns_none() {
         let probe = OpenCodeProbeResult {
             providers: HashMap::from([("google".to_string(), true)]),
             model_slugs: vec![],
@@ -583,145 +507,5 @@ mod tests {
             never_authed,
         );
         assert_eq!(result, None);
-    }
-
-    #[test]
-    fn route_confidence_opencode_known_provider_no_probe_returns_none() {
-        // Known provider (openai) but no probe result — opencode can't confirm
-        let result = candidate_route_confidence_with_auth(
-            "opencode",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["opencode"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn route_confidence_non_native_non_special_harness_returns_none() {
-        // claude installed but provider is google — not native, not pi/cursor/opencode
-        let result = candidate_route_confidence_with_auth(
-            "claude",
-            Some("google"),
-            "gemini-2.5-pro",
-            &installed(&["claude"]),
-            None,
-            always_authed,
-        );
-        assert_eq!(result, None);
-    }
-
-    // --- is_native_match tests ---
-
-    #[test]
-    fn native_match_anthropic_claude() {
-        assert!(is_native_match(Some("anthropic"), "claude"));
-        assert!(is_native_match(Some("Anthropic"), "claude"));
-    }
-
-    #[test]
-    fn native_match_openai_codex() {
-        assert!(is_native_match(Some("openai"), "codex"));
-        assert!(is_native_match(Some("OpenAI"), "codex"));
-    }
-
-    #[test]
-    fn native_match_wrong_pairs() {
-        assert!(!is_native_match(Some("anthropic"), "codex"));
-        assert!(!is_native_match(Some("openai"), "claude"));
-        assert!(!is_native_match(Some("google"), "claude"));
-        assert!(!is_native_match(None, "claude"));
-    }
-
-    // --- is_known_provider tests ---
-
-    #[test]
-    fn known_providers_recognized() {
-        for provider in &[
-            "anthropic",
-            "openai",
-            "google",
-            "meta",
-            "mistral",
-            "deepseek",
-            "cohere",
-        ] {
-            assert!(is_known_provider(provider), "{provider} should be known");
-        }
-    }
-
-    #[test]
-    fn unknown_providers_not_recognized() {
-        assert!(!is_known_provider("unknown"));
-        assert!(!is_known_provider("random-provider"));
-        assert!(!is_known_provider(""));
-    }
-
-    // --- normalize_config_default_harness tests ---
-
-    #[test]
-    fn normalize_valid_default_harness() {
-        let mut warnings = Vec::new();
-        let result = normalize_config_default_harness(Some("Pi"), &mut warnings);
-        assert_eq!(result, Some("pi".to_string()));
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn normalize_invalid_default_harness_warns() {
-        let mut warnings = Vec::new();
-        let result = normalize_config_default_harness(Some("gemini"), &mut warnings);
-        assert_eq!(result, None);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("settings.default_harness"));
-        assert!(warnings[0].contains("gemini"));
-    }
-
-    #[test]
-    fn normalize_none_default_harness() {
-        let mut warnings = Vec::new();
-        let result = normalize_config_default_harness(None, &mut warnings);
-        assert_eq!(result, None);
-        assert!(warnings.is_empty());
-    }
-
-    // --- format_harness_order_fallback_warning tests ---
-
-    #[test]
-    fn fallback_warning_empty_order_with_config_default() {
-        let warning =
-            format_harness_order_fallback_warning(Some(&HarnessOrderFailure::Empty), true);
-        let msg = warning.unwrap();
-        assert!(msg.contains("is empty"));
-        assert!(msg.contains("falling through to settings.default_harness"));
-    }
-
-    #[test]
-    fn fallback_warning_empty_order_without_config_default() {
-        let warning =
-            format_harness_order_fallback_warning(Some(&HarnessOrderFailure::Empty), false);
-        let msg = warning.unwrap();
-        assert!(msg.contains("is empty"));
-        assert!(msg.contains("falling through to hardcoded `claude`"));
-    }
-
-    #[test]
-    fn fallback_warning_none_installed() {
-        let warning = format_harness_order_fallback_warning(
-            Some(&HarnessOrderFailure::NoneInstalled {
-                valid_candidates: vec!["pi".to_string(), "opencode".to_string()],
-            }),
-            true,
-        );
-        let msg = warning.unwrap();
-        assert!(msg.contains("none of [pi, opencode] are installed"));
-    }
-
-    #[test]
-    fn fallback_warning_no_failure_returns_none() {
-        let warning = format_harness_order_fallback_warning(None, true);
-        assert!(warning.is_none());
     }
 }

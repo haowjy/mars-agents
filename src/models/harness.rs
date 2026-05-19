@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::models::availability::AvailabilityStatus;
-use crate::models::probes::OpenCodeProbeResult;
 use wait_timeout::ChildExt;
 
 const HARNESS_BINARIES: &[(&str, &str)] = &[
@@ -79,63 +77,11 @@ fn harness_preferences(provider: &str) -> &'static [&'static str] {
         .unwrap_or(DEFAULT_FALLBACK_ORDER)
 }
 
-pub fn resolve_harness_for_model_with_evidence(
-    provider: &str,
-    model_id: &str,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> Option<String> {
-    for harness in harness_preferences(provider) {
-        if !installed.contains(*harness) {
-            continue;
-        }
-
-        match *harness {
-            "claude" | "codex"
-                if is_native_harness_match(provider, harness)
-                    && native_harness_authenticated(harness) =>
-            {
-                return Some((*harness).to_string());
-            }
-            "opencode"
-                if !is_known_provider(provider)
-                    || opencode_supports_provider_and_model(
-                        provider,
-                        model_id,
-                        installed,
-                        opencode_probe_result,
-                    ) =>
-            {
-                return Some((*harness).to_string());
-            }
-            "pi" | "cursor" => {
-                return Some((*harness).to_string());
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
     harness_preferences(provider)
         .iter()
         .map(|h| h.to_string())
         .collect()
-}
-
-fn is_native_harness_match(provider: &str, harness: &str) -> bool {
-    matches!(
-        (provider.to_ascii_lowercase().as_str(), harness),
-        ("anthropic", "claude") | ("openai", "codex")
-    )
-}
-
-fn is_known_provider(provider: &str) -> bool {
-    matches!(
-        provider.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
-    )
 }
 
 pub fn native_harness_authenticated(harness: &str) -> bool {
@@ -194,24 +140,6 @@ pub fn resolve_command(command: &str) -> PathBuf {
     PathBuf::from(command)
 }
 
-fn opencode_supports_provider_and_model(
-    provider: &str,
-    model_id: &str,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> bool {
-    matches!(
-        crate::models::availability::classify_for_harness(
-            "opencode",
-            provider,
-            model_id,
-            installed,
-            opencode_probe_result,
-        ),
-        Some((AvailabilityStatus::Runnable, _, _))
-    )
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HarnessOrderFailure {
     Empty,
@@ -263,20 +191,6 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolve_harness_with_evidence_unknown_provider_prefers_opencode_fallback() {
-        let installed: HashSet<String> = ["opencode"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(
-            resolve_harness_for_model_with_evidence(
-                "unknown-provider",
-                "third-party-model",
-                &installed,
-                None
-            ),
-            Some("opencode".to_string())
-        );
-    }
 
     #[test]
     fn candidates_for_known_provider() {

@@ -4,6 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Removed `gemini` as a launch harness surface. Builtin `gemini` model alias stays valid.
+- Model-alias `harness` values now validate against real launch harnesses.
+- Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; `pi` and `cursor` availability classify as `Unknown` / `UniversalHarness`.
+- Launch-bundle routing now emits `routing.route_confidence` plus provenance `route_confidence` / `candidates_tried`; execution policy schema now reserves optional `codex_rules` artifacts.
+- Final routing gates now use provider/settings gate checks (not installed-only fallback), require auth evidence for native Codex/Claude provider matches, and fall through on stale/negative OpenCode cache evidence.
+- Final resolver alignment: `mars models list`/`resolve` now share one evidence-aware harness resolver; invalid alias-harness writes fail fast; mixed-case harness names normalize; unknown/third-party models now fall back `opencode` before `cursor` when `pi` is absent.
+- Shared routing engine (`src/routing/mod.rs`) now owns candidate evaluation, link filtering, auth gating, and the fallback ladder. Both `mars models` and `mars build launch-bundle` consume the same evaluator. ~470 lines of duplicate routing logic deleted.
+- Launch-bundle routing + runnable resolution now consume one shared OpenCode probe snapshot (stale usable counts, stale negative does not), and `mars models resolve` passthrough now uses unknown-provider fallback candidates (`pi, opencode, cursor`) while keeping JSON provider `null`.
+
 ## [0.4.8-rc.2] - 2026-05-18
 
 ## [0.4.8-rc.1] - 2026-05-18

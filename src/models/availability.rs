@@ -16,6 +16,7 @@ pub enum AvailabilityStatus {
 #[serde(rename_all = "snake_case")]
 pub enum AvailabilitySource {
     HarnessInstalled,
+    UniversalHarness,
     #[serde(rename = "opencode_probe")]
     OpenCodeProbe,
     #[serde(rename = "opencode_probe_negative")]
@@ -213,8 +214,8 @@ pub fn classify_for_harness(
     let direct_match = match harness.as_str() {
         "claude" => provider_matches(provider, "anthropic"),
         "codex" => provider_matches(provider, "openai"),
-        "gemini" => provider_matches(provider, "google"),
         "opencode" => return classify_opencode(provider, model_id, probe_result),
+        "pi" | "cursor" => return classify_universal_harness(),
         _ => false,
     };
 
@@ -237,6 +238,15 @@ pub fn classify_for_harness(
     }
 }
 
+fn classify_universal_harness()
+-> Option<(AvailabilityStatus, AvailabilitySource, Option<RunnablePath>)> {
+    Some((
+        AvailabilityStatus::Unknown,
+        AvailabilitySource::UniversalHarness,
+        None,
+    ))
+}
+
 fn classify_opencode(
     provider: &str,
     model_id: &str,
@@ -251,6 +261,14 @@ fn classify_opencode(
     };
 
     if !probe.provider_probe_success {
+        return Some((
+            AvailabilityStatus::Unknown,
+            AvailabilitySource::OpenCodeProbeUnknown,
+            None,
+        ));
+    }
+
+    if is_unknown_provider(provider) {
         return Some((
             AvailabilityStatus::Unknown,
             AvailabilitySource::OpenCodeProbeUnknown,
@@ -284,6 +302,11 @@ fn classify_opencode(
             harness_model_id,
         }),
     ))
+}
+
+fn is_unknown_provider(provider: &str) -> bool {
+    let provider = provider.trim();
+    provider.is_empty() || provider.eq_ignore_ascii_case("unknown")
 }
 
 fn classify_opencode_provider(
@@ -382,7 +405,7 @@ pub fn classify_model(
     let mut statuses = Vec::new();
     let mut runnable_paths = Vec::new();
 
-    for harness in ["claude", "codex", "gemini"] {
+    for harness in ["claude", "codex", "pi", "cursor"] {
         let Some((status, source, path)) =
             classify_for_harness(harness, provider, model_id, installed, None)
         else {
@@ -553,17 +576,28 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_gemini_google() {
+    fn test_classify_pi_is_universal_unknown_when_installed() {
+        let result =
+            classify_for_harness("pi", "OpenAI", "gpt-5.4-mini", &installed(&["pi"]), None)
+                .unwrap();
+        assert_eq!(result.0, AvailabilityStatus::Unknown);
+        assert_eq!(result.1, AvailabilitySource::UniversalHarness);
+        assert!(result.2.is_none());
+    }
+
+    #[test]
+    fn test_classify_cursor_is_universal_unknown_when_installed() {
         let result = classify_for_harness(
-            "gemini",
-            "Google",
-            "gemini-2.5-pro",
-            &installed(&["gemini"]),
+            "cursor",
+            "Anthropic",
+            "claude-opus-4-7",
+            &installed(&["cursor"]),
             None,
         )
         .unwrap();
-        assert_eq!(result.0, AvailabilityStatus::Runnable);
-        assert_eq!(result.1, AvailabilitySource::HarnessInstalled);
+        assert_eq!(result.0, AvailabilityStatus::Unknown);
+        assert_eq!(result.1, AvailabilitySource::UniversalHarness);
+        assert!(result.2.is_none());
     }
 
     #[test]
@@ -601,6 +635,14 @@ mod tests {
         let result = classify_model("custom-model", "Unknown", &installed(&[]), None, false);
         assert_eq!(result.status, AvailabilityStatus::Unavailable);
         assert_eq!(result.source, AvailabilitySource::NoHarness);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_google_model_with_only_pi_installed_is_unknown_universal() {
+        let result = classify_model("gemini-2.5-pro", "Google", &installed(&["pi"]), None, false);
+        assert_eq!(result.status, AvailabilityStatus::Unknown);
+        assert_eq!(result.source, AvailabilitySource::UniversalHarness);
         assert!(result.runnable_paths.is_empty());
     }
 
@@ -813,6 +855,28 @@ mod tests {
         let result = classify_model(
             "gpt-5.4",
             "OpenAI",
+            &installed(&["opencode"]),
+            Some(&probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unknown);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeUnknown);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_opencode_unknown_provider_stays_unknown() {
+        let probe = OpenCodeProbeResult {
+            providers: HashMap::from([("openai".to_string(), true)]),
+            provider_probe_success: true,
+            model_probe_success: true,
+            ..OpenCodeProbeResult::default()
+        };
+
+        let result = classify_model(
+            "mystery-model",
+            "unknown",
             &installed(&["opencode"]),
             Some(&probe),
             false,

@@ -43,9 +43,13 @@ Review code changes."#;
     assert_eq!(bundle["version"].as_u64(), Some(1));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert!(bundle["routing"]["route_confidence"].is_string());
     assert!(bundle["routing"]["harness_model"].is_string());
     assert!(bundle["routing"]["harness_model_source"].is_string());
     assert!(bundle["routing"]["harness_model_confidence"].is_string());
+    assert!(bundle["provenance"]["route_confidence"].is_string());
+    assert!(bundle["provenance"]["candidates_tried"].is_string());
+    assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
         serde_json::json!(["shell", "file_write"])

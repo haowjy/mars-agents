@@ -9,6 +9,7 @@ pub(super) struct PolicyResolutionConfig {
     pub(super) aliases: IndexMap<String, ModelAlias>,
     pub(super) default_harness: Option<String>,
     pub(super) harness_order: Option<Vec<String>>,
+    pub(super) linked_harnesses: Vec<String>,
 }
 
 pub(super) fn load_policy_resolution_config(
@@ -17,6 +18,7 @@ pub(super) fn load_policy_resolution_config(
     let mut merged = models::builtin_aliases();
     let mut default_harness = None;
     let mut harness_order = None;
+    let mut linked_harnesses = Vec::new();
 
     let merged_path = project_root.join(".mars").join("models-merged.json");
     if let Ok(content) = std::fs::read_to_string(&merged_path)
@@ -31,6 +33,7 @@ pub(super) fn load_policy_resolution_config(
         Ok(config) => {
             default_harness = config.settings.default_harness.clone();
             harness_order = config.settings.harness_order.clone();
+            linked_harnesses = config.settings.linked_harnesses();
             for (name, alias) in &config.models {
                 merged.insert(name.clone(), alias.clone());
             }
@@ -43,5 +46,6 @@ pub(super) fn load_policy_resolution_config(
         aliases: merged,
         default_harness,
         harness_order,
+        linked_harnesses,
     })
 }

@@ -1,5 +1,6 @@
 // qa-validated: launch-bundle-blocker-audit
 // qa-validated: harness-order-settings-audit
+// qa-validated: capability-cache-resolver-routing-gaps
 #[path = "common/mod.rs"]
 mod test_common;
 
@@ -102,6 +103,72 @@ fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_h
 }
 
 #[test]
+fn build_launch_bundle_openai_falls_back_to_pi_when_codex_missing() {
+    routing::build_launch_bundle_openai_falls_back_to_pi_when_codex_missing();
+}
+
+#[test]
+fn build_launch_bundle_openai_falls_back_to_pi_when_codex_auth_fails() {
+    routing::build_launch_bundle_openai_falls_back_to_pi_when_codex_auth_fails();
+}
+
+#[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing() {
+    routing::build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing();
+}
+
+#[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails() {
+    routing::build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails();
+}
+
+#[test]
+fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
+    routing::build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness();
+}
+
+#[test]
+fn build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness() {
+    routing::build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness(
+    );
+}
+
+#[test]
+fn build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence() {
+    routing::build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence();
+}
+
+#[test]
+fn build_launch_bundle_prefers_pi_over_opencode_even_with_positive_opencode_cache() {
+    routing::build_launch_bundle_prefers_pi_over_opencode_even_with_positive_opencode_cache();
+}
+
+#[test]
+fn build_launch_bundle_prefers_opencode_before_cursor_when_both_installed() {
+    routing::build_launch_bundle_prefers_opencode_before_cursor_when_both_installed();
+}
+
+#[test]
+fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
+    routing::build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative();
+}
+
+#[test]
+fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
+    routing::build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed();
+}
+
+#[test]
+fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
+    routing::build_launch_bundle_selects_opencode_when_opencode_cache_is_stale();
+}
+
+#[test]
+fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
+    routing::build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed();
+}
+
+#[test]
 fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
     routing::build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness();
 }
@@ -152,6 +219,16 @@ fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
 }
 
 #[test]
+fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
+    routing::build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection();
+}
+
+#[test]
+fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
+    routing::build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates();
+}
+
+#[test]
 fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     routing::build_launch_bundle_cli_harness_override_beats_settings_harness_order();
 }
@@ -179,6 +256,11 @@ fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_defa
 #[test]
 fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
     routing::build_launch_bundle_harness_order_none_installed_uses_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
+    routing::build_launch_bundle_settings_default_harness_accepts_case_insensitive_name();
 }
 
 #[test]

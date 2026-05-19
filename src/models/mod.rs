@@ -201,6 +201,18 @@ struct RawModelAlias {
 impl<'de> Deserialize<'de> for ModelAlias {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawModelAlias::deserialize(deserializer)?;
+        let normalized_harness = if let Some(ref harness_name) = raw.harness {
+            Some(
+                harness::normalize_harness_name(harness_name).ok_or_else(|| {
+                    serde::de::Error::custom(format!(
+                        "invalid harness '{harness_name}'; valid harnesses: {}",
+                        harness::VALID_HARNESSES.join(", ")
+                    ))
+                })?,
+            )
+        } else {
+            None
+        };
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
             const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
@@ -281,7 +293,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
         };
 
         Ok(ModelAlias {
-            harness: raw.harness,
+            harness: normalized_harness,
             description: raw.description,
             default_effort,
             autocompact,
@@ -840,6 +852,16 @@ pub fn resolve_with_alias_prefix(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Option<ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_with_alias_prefix_with_probe(input, aliases, cache, opencode_probe.as_ref())
+}
+
+pub fn resolve_with_alias_prefix_with_probe(
+    input: &str,
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> Option<ResolvedAlias> {
     let pattern = if input.contains('*') {
         input.to_string()
     } else {
@@ -941,11 +963,19 @@ pub fn resolve_with_alias_prefix(
         _ => (None, None, None),
     };
     let installed = harness::detect_installed_harnesses();
-    let harness = harness::resolve_harness_for_provider(&provider, &installed);
-    let harness_source = if harness.is_some() {
-        HarnessSource::AutoDetected
+    let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+        model_id: &winner.id,
+        provider: Some(&provider),
+        settings_harness_order: None,
+        config_default_harness: None,
+        installed_harnesses: &installed,
+        linked_harnesses: None,
+        opencode_probe_result: opencode_probe,
+    });
+    let (harness, harness_source) = if installed.contains(&trace.harness) {
+        (Some(trace.harness), HarnessSource::AutoDetected)
     } else {
-        HarnessSource::Unavailable
+        (None, HarnessSource::Unavailable)
     };
 
     Some(ResolvedAlias {
@@ -1258,6 +1288,16 @@ pub fn resolve_all(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
 ) -> IndexMap<String, ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_all_with_probe(aliases, cache, diag, opencode_probe.as_ref())
+}
+
+pub fn resolve_all_with_probe(
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    diag: &mut DiagnosticCollector,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> IndexMap<String, ResolvedAlias> {
     let _ = diag;
     let installed = harness::detect_installed_harnesses();
     let mut resolved = IndexMap::new();
@@ -1268,7 +1308,7 @@ pub fn resolve_all(
         };
 
         let candidates = harness::harness_candidates_for_provider(&provider);
-        let (h, source) = resolve_harness(alias, &provider, &installed);
+        let (h, source) = resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
 
         resolved.insert(
             name.clone(),
@@ -1298,11 +1338,23 @@ pub fn resolve_one(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
 ) -> Option<ResolvedAlias> {
+    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
+    resolve_one_with_probe(name, aliases, cache, diag, opencode_probe.as_ref())
+}
+
+pub fn resolve_one_with_probe(
+    name: &str,
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+    diag: &mut DiagnosticCollector,
+    opencode_probe: Option<&probes::OpenCodeProbeResult>,
+) -> Option<ResolvedAlias> {
     let alias = aliases.get(name)?;
     let installed = harness::detect_installed_harnesses();
     let (model_id, provider) = resolve_model_and_provider(alias, cache)?;
     let candidates = harness::harness_candidates_for_provider(&provider);
-    let (harness, harness_source) = resolve_harness(alias, &provider, &installed);
+    let (harness, harness_source) =
+        resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
     let _ = diag;
     Some(ResolvedAlias {
         name: name.to_string(),
@@ -1461,7 +1513,9 @@ fn format_alias_resolution_for_diag(
 fn resolve_harness(
     alias: &ModelAlias,
     provider: &str,
+    model_id: &str,
     installed: &HashSet<String>,
+    opencode_probe_result: Option<&probes::OpenCodeProbeResult>,
 ) -> (Option<String>, HarnessSource) {
     if let Some(h) = &alias.harness {
         if installed.contains(h) {
@@ -1470,9 +1524,19 @@ fn resolve_harness(
             (Some(h.clone()), HarnessSource::Unavailable)
         }
     } else {
-        match harness::resolve_harness_for_provider(provider, installed) {
-            Some(h) => (Some(h), HarnessSource::AutoDetected),
-            None => (None, HarnessSource::Unavailable),
+        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+            model_id,
+            provider: Some(provider),
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: installed,
+            linked_harnesses: None,
+            opencode_probe_result,
+        });
+        if installed.contains(&trace.harness) {
+            (Some(trace.harness), HarnessSource::AutoDetected)
+        } else {
+            (None, HarnessSource::Unavailable)
         }
     }
 }
@@ -1861,15 +1925,23 @@ mod tests {
         assert_eq!(resolved.provider, "anthropic");
         assert_eq!(
             resolved.harness_candidates,
-            vec!["claude", "opencode", "gemini"]
+            vec!["claude", "pi", "opencode", "cursor"]
         );
 
         let installed = harness::detect_installed_harnesses();
-        let expected_harness = harness::resolve_harness_for_provider("anthropic", &installed);
-        let expected_source = if expected_harness.is_some() {
-            HarnessSource::AutoDetected
+        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+            model_id: "claude-opus-4-6",
+            provider: Some("anthropic"),
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+        });
+        let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
+            (Some(trace.harness), HarnessSource::AutoDetected)
         } else {
-            HarnessSource::Unavailable
+            (None, HarnessSource::Unavailable)
         };
         assert_eq!(resolved.harness, expected_harness);
         assert_eq!(resolved.harness_source, expected_source);
@@ -2394,7 +2466,10 @@ mod tests {
         let entry = resolved.get("fast").unwrap();
         assert_eq!(entry.model_id, "gpt-5.3-codex");
         assert_eq!(entry.provider, "openai");
-        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+        assert_eq!(
+            entry.harness_candidates,
+            vec!["codex", "pi", "opencode", "cursor"]
+        );
     }
 
     #[test]
@@ -2427,11 +2502,19 @@ mod tests {
         assert_eq!(entry.provider, "anthropic");
 
         let installed = harness::detect_installed_harnesses();
-        let expected_harness = harness::resolve_harness_for_provider("anthropic", &installed);
-        let expected_source = if expected_harness.is_some() {
-            HarnessSource::AutoDetected
+        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+            model_id: "claude-opus-4-6",
+            provider: Some("anthropic"),
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+        });
+        let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
+            (Some(trace.harness), HarnessSource::AutoDetected)
         } else {
-            HarnessSource::Unavailable
+            (None, HarnessSource::Unavailable)
         };
 
         assert_eq!(entry.harness, expected_harness);
@@ -2463,7 +2546,10 @@ mod tests {
         let entry = resolved.get("gpt").unwrap();
         assert_eq!(entry.model_id, "gpt-5");
         assert_eq!(entry.provider, "openai");
-        assert_eq!(entry.harness_candidates, vec!["codex", "opencode"]);
+        assert_eq!(
+            entry.harness_candidates,
+            vec!["codex", "pi", "opencode", "cursor"]
+        );
         match entry.harness_source {
             HarnessSource::AutoDetected => assert!(entry.harness.is_some()),
             HarnessSource::Unavailable => assert!(entry.harness.is_none()),
@@ -2832,7 +2918,7 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
         assert_eq!(
             resolved,
             (Some("claude".to_string()), HarnessSource::Explicit)
@@ -2854,7 +2940,7 @@ mod tests {
         };
         let installed = HashSet::new();
 
-        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
         assert_eq!(
             resolved,
             (Some("claude".to_string()), HarnessSource::Unavailable)
@@ -2862,7 +2948,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_harness_auto_detected() {
+    fn resolve_harness_native_installed_result_depends_on_auth_probe() {
         let alias = ModelAlias {
             harness: None,
             description: None,
@@ -2876,10 +2962,13 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "anthropic", &installed);
-        assert_eq!(
-            resolved,
-            (Some("claude".to_string()), HarnessSource::AutoDetected)
+        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
+        assert!(
+            matches!(
+                resolved,
+                (Some(_), HarnessSource::AutoDetected) | (None, HarnessSource::Unavailable)
+            ),
+            "native harness routing must be gated by the host auth probe; got {resolved:?}"
         );
     }
 
@@ -2898,12 +2987,12 @@ mod tests {
         };
         let installed = HashSet::new();
 
-        let resolved = resolve_harness(&alias, "anthropic", &installed);
+        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
         assert_eq!(resolved, (None, HarnessSource::Unavailable));
     }
 
     #[test]
-    fn resolve_harness_unavailable_no_provider_match() {
+    fn resolve_harness_unknown_provider_falls_back_to_default_claude_when_installed() {
         let alias = ModelAlias {
             harness: None,
             description: None,
@@ -2917,8 +3006,11 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "unknown", &installed);
-        assert_eq!(resolved, (None, HarnessSource::Unavailable));
+        let resolved = resolve_harness(&alias, "unknown", "my-custom-model", &installed, None);
+        assert_eq!(
+            resolved,
+            (Some("claude".to_string()), HarnessSource::AutoDetected)
+        );
     }
 
     // -- serde roundtrip tests --
@@ -3213,6 +3305,44 @@ default_effort = "maximum"
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("invalid default_effort"));
         assert!(err.contains("accepted values"));
+    }
+
+    #[test]
+    fn model_alias_invalid_harness_errors() {
+        let toml_str = r#"
+[models.opus]
+harness = "gemini"
+provider = "Anthropic"
+match = ["claude-opus-*"]
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("invalid harness 'gemini'"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
+    }
+
+    #[test]
+    fn model_alias_harness_normalizes_mixed_case() {
+        let toml_str = r#"
+[models.opus]
+harness = "OpenCode"
+model = "gpt-5"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("opus").unwrap();
+        assert_eq!(alias.harness.as_deref(), Some("opencode"));
     }
 
     #[test]

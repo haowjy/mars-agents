@@ -759,6 +759,7 @@ default_harness = "claude""#;
 
 pub(crate) fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -796,6 +797,7 @@ model = "gpt-5.5""#;
     ]);
     cmd.env("MARS_CACHE_DIR", &cache_root);
     cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

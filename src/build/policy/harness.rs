@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -338,7 +339,7 @@ fn native_harness_authenticated(harness: &str) -> bool {
 }
 
 fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
-    let mut child = match Command::new(command)
+    let mut child = match Command::new(resolve_command(command))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -366,6 +367,23 @@ fn auth_probe_timeout() -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_secs)
         .unwrap_or(Duration::from_secs(2))
+}
+
+fn resolve_command(command: &str) -> PathBuf {
+    if let Ok(path) = which::which(command) {
+        return path;
+    }
+
+    #[cfg(windows)]
+    {
+        for ext in ["exe", "cmd", "bat"] {
+            if let Ok(path) = which::which(format!("{command}.{ext}")) {
+                return path;
+            }
+        }
+    }
+
+    PathBuf::from(command)
 }
 
 fn opencode_supports_provider_and_model(

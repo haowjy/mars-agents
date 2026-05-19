@@ -5,30 +5,9 @@ use std::collections::HashSet;
 use crate::build::policy::PolicyInput;
 use crate::compiler::agents::HarnessKind;
 use crate::error::{ConfigError, MarsError};
-use crate::models;
 use crate::models::ModelAlias;
-use crate::models::availability::AvailabilityStatus;
-use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::OpenCodeProbeResult;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RouteConfidence {
-    Explicit,
-    Confirmed,
-    Likely,
-    Passthrough,
-}
-
-impl RouteConfidence {
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Explicit => "explicit",
-            Self::Confirmed => "confirmed",
-            Self::Likely => "likely",
-            Self::Passthrough => "passthrough",
-        }
-    }
-}
+use crate::routing::{self, RouteConfidence, RoutingInput};
 
 pub(super) struct HarnessResolution {
     pub(super) harness: String,
@@ -39,15 +18,6 @@ pub(super) struct HarnessResolution {
     pub(super) is_experimental: bool,
     pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
-}
-
-struct CandidateHarnessResolution {
-    harness: String,
-    source: &'static str,
-    harness_order_position: Option<usize>,
-    route_confidence: RouteConfidence,
-    candidates_tried: Vec<String>,
-    warnings: Vec<String>,
 }
 
 pub(super) struct HarnessEvidence<'a> {
@@ -70,7 +40,7 @@ pub(super) fn resolve_harness(
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
     let normalized_config_default_harness =
-        normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
+        routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
 
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
@@ -91,22 +61,22 @@ pub(super) fn resolve_harness(
                     Vec::new(),
                 )
             } else {
-                let resolved = resolve_harness_candidate_or_fallback(
-                    evidence.model_id,
-                    evidence.provider,
-                    evidence.harness_order,
-                    evidence.installed_harnesses,
-                    evidence.linked_harnesses,
-                    normalized_config_default_harness.clone(),
-                    evidence.opencode_probe_result,
-                );
-                selected_harness_order_position = resolved.harness_order_position;
-                warnings.extend(resolved.warnings);
+                let trace = routing::evaluate_candidates(&RoutingInput {
+                    model_id: evidence.model_id,
+                    provider: evidence.provider,
+                    settings_harness_order: evidence.harness_order,
+                    config_default_harness: normalized_config_default_harness.as_deref(),
+                    installed_harnesses: evidence.installed_harnesses,
+                    linked_harnesses: evidence.linked_harnesses,
+                    opencode_probe_result: evidence.opencode_probe_result,
+                });
+                selected_harness_order_position = trace.harness_order_position;
+                warnings.extend(trace.diagnostics);
                 (
-                    resolved.harness,
-                    resolved.source,
-                    resolved.route_confidence,
-                    resolved.candidates_tried,
+                    trace.harness,
+                    trace.source.label(),
+                    trace.confidence,
+                    trace.candidates_tried,
                 )
             }
         } else if let Some(harness) = profile_harness {
@@ -124,22 +94,22 @@ pub(super) fn resolve_harness(
                 Vec::new(),
             )
         } else {
-            let resolved = resolve_harness_candidate_or_fallback(
-                evidence.model_id,
-                evidence.provider,
-                evidence.harness_order,
-                evidence.installed_harnesses,
-                evidence.linked_harnesses,
-                normalized_config_default_harness,
-                evidence.opencode_probe_result,
-            );
-            selected_harness_order_position = resolved.harness_order_position;
-            warnings.extend(resolved.warnings);
+            let trace = routing::evaluate_candidates(&RoutingInput {
+                model_id: evidence.model_id,
+                provider: evidence.provider,
+                settings_harness_order: evidence.harness_order,
+                config_default_harness: normalized_config_default_harness.as_deref(),
+                installed_harnesses: evidence.installed_harnesses,
+                linked_harnesses: evidence.linked_harnesses,
+                opencode_probe_result: evidence.opencode_probe_result,
+            });
+            selected_harness_order_position = trace.harness_order_position;
+            warnings.extend(trace.diagnostics);
             (
-                resolved.harness,
-                resolved.source,
-                resolved.route_confidence,
-                resolved.candidates_tried,
+                trace.harness,
+                trace.source.label(),
+                trace.confidence,
+                trace.candidates_tried,
             )
         };
 
@@ -163,275 +133,6 @@ pub(super) fn resolve_harness(
     })
 }
 
-fn normalize_config_default_harness(
-    config_default_harness: Option<&str>,
-    warnings: &mut Vec<String>,
-) -> Option<String> {
-    match config_default_harness {
-        Some(value) => match models::harness::normalize_harness_name(value) {
-            Some(valid) => Some(valid),
-            None => {
-                warnings.push(format!(
-                    "settings.default_harness `{value}` is invalid; expected one of: {}",
-                    models::harness::VALID_HARNESSES.join(", ")
-                ));
-                None
-            }
-        },
-        None => None,
-    }
-}
-
-fn resolve_harness_candidate_or_fallback(
-    model_id: &str,
-    provider: Option<&str>,
-    settings_harness_order: Option<&[String]>,
-    installed_harnesses: &HashSet<String>,
-    linked_harnesses: Option<&[String]>,
-    config_default_harness: Option<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> CandidateHarnessResolution {
-    let mut warnings = Vec::new();
-    let mut candidates_tried = Vec::new();
-    let mut harness_order_failure = None;
-
-    let linked_harnesses = linked_harnesses
-        .map(|harnesses| harnesses.iter().map(String::as_str).collect::<HashSet<_>>());
-
-    let candidates = if let Some(order) = settings_harness_order {
-        let parsed_order = models::harness::parse_settings_harness_order(order);
-        warnings.extend(parsed_order.warnings);
-        harness_order_failure = parsed_order.failure;
-        let mut candidate_pairs = parsed_order
-            .valid_candidates
-            .into_iter()
-            .enumerate()
-            .map(|(index, harness)| (harness, Some(index)))
-            .collect::<Vec<_>>();
-        filter_candidate_pairs_by_links(&mut candidate_pairs, linked_harnesses.as_ref());
-        let valid_candidates = candidate_pairs
-            .iter()
-            .map(|(harness, _)| harness.clone())
-            .collect::<Vec<_>>();
-        if harness_order_failure.is_none()
-            && !valid_candidates.is_empty()
-            && valid_candidates
-                .iter()
-                .all(|candidate| !installed_harnesses.contains(candidate))
-        {
-            harness_order_failure = Some(HarnessOrderFailure::NoneInstalled {
-                valid_candidates: valid_candidates.clone(),
-            });
-        }
-        candidate_pairs
-    } else {
-        let provider_for_order = provider.unwrap_or("unknown");
-        let candidates = models::harness::harness_candidates_for_provider(provider_for_order);
-        filter_candidates_by_links(candidates, linked_harnesses.as_ref())
-            .into_iter()
-            .map(|harness| (harness, None))
-            .collect::<Vec<_>>()
-    };
-
-    for (harness, harness_order_position) in candidates {
-        candidates_tried.push(harness.clone());
-        if let Some(route_confidence) = candidate_route_confidence(
-            &harness,
-            provider,
-            model_id,
-            installed_harnesses,
-            opencode_probe_result,
-        ) {
-            let source = if settings_harness_order.is_some() {
-                "config-order"
-            } else {
-                "provider"
-            };
-            return CandidateHarnessResolution {
-                harness,
-                source,
-                harness_order_position,
-                route_confidence,
-                candidates_tried,
-                warnings,
-            };
-        }
-    }
-
-    if settings_harness_order.is_some()
-        && let Some(warning) = format_harness_order_fallback_warning(
-            harness_order_failure.as_ref(),
-            config_default_harness.is_some(),
-        )
-    {
-        warnings.push(warning);
-    }
-
-    if let Some(harness) = config_default_harness {
-        return CandidateHarnessResolution {
-            harness,
-            source: "config",
-            harness_order_position: None,
-            route_confidence: RouteConfidence::Passthrough,
-            candidates_tried,
-            warnings,
-        };
-    }
-
-    warnings.push(
-        "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`".to_string(),
-    );
-    CandidateHarnessResolution {
-        harness: "claude".to_string(),
-        source: "default",
-        harness_order_position: None,
-        route_confidence: RouteConfidence::Passthrough,
-        candidates_tried,
-        warnings,
-    }
-}
-
-fn filter_candidate_pairs_by_links(
-    candidates: &mut Vec<(String, Option<usize>)>,
-    linked_harnesses: Option<&HashSet<&str>>,
-) {
-    if let Some(linked_harnesses) = linked_harnesses {
-        candidates.retain(|(harness, _)| linked_harnesses.contains(harness.as_str()));
-    }
-}
-
-fn filter_candidates_by_links(
-    candidates: Vec<String>,
-    linked_harnesses: Option<&HashSet<&str>>,
-) -> Vec<String> {
-    let Some(linked_harnesses) = linked_harnesses else {
-        return candidates;
-    };
-
-    candidates
-        .into_iter()
-        .filter(|harness| linked_harnesses.contains(harness.as_str()))
-        .collect()
-}
-
-fn candidate_route_confidence(
-    harness: &str,
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> Option<RouteConfidence> {
-    candidate_route_confidence_with_auth(
-        harness,
-        provider,
-        model_id,
-        installed_harnesses,
-        opencode_probe_result,
-        native_harness_authenticated,
-    )
-}
-
-/// Core routing logic, parameterized on auth checker for testability.
-fn candidate_route_confidence_with_auth(
-    harness: &str,
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    auth_check: fn(&str) -> bool,
-) -> Option<RouteConfidence> {
-    if !installed_harnesses.contains(harness) {
-        return None;
-    }
-
-    if is_native_match(provider, harness) && auth_check(harness) {
-        return Some(RouteConfidence::Confirmed);
-    }
-
-    if harness == "opencode" {
-        if provider.is_none() || provider.is_some_and(|value| !is_known_provider(value)) {
-            return Some(RouteConfidence::Passthrough);
-        }
-        if opencode_supports_provider_and_model(
-            provider,
-            model_id,
-            installed_harnesses,
-            opencode_probe_result,
-        ) {
-            return Some(RouteConfidence::Likely);
-        }
-    }
-
-    if matches!(harness, "pi" | "cursor") {
-        return Some(RouteConfidence::Passthrough);
-    }
-
-    None
-}
-
-fn is_known_provider(provider: &str) -> bool {
-    matches!(
-        provider.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
-    )
-}
-
-fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
-    matches!(
-        (provider.map(str::to_ascii_lowercase).as_deref(), harness),
-        (Some("anthropic"), "claude") | (Some("openai"), "codex")
-    )
-}
-
-fn native_harness_authenticated(harness: &str) -> bool {
-    models::harness::native_harness_authenticated(harness)
-}
-
-fn opencode_supports_provider_and_model(
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> bool {
-    let Some(provider) = provider else {
-        return false;
-    };
-
-    matches!(
-        crate::models::availability::classify_for_harness(
-            "opencode",
-            provider,
-            model_id,
-            installed_harnesses,
-            opencode_probe_result,
-        ),
-        Some((AvailabilityStatus::Runnable, _, _))
-    )
-}
-
-fn format_harness_order_fallback_warning(
-    harness_order_failure: Option<&HarnessOrderFailure>,
-    has_config_default_harness: bool,
-) -> Option<String> {
-    let mut warning = match harness_order_failure {
-        Some(HarnessOrderFailure::Empty) => "settings.harness_order is empty".to_string(),
-        Some(HarnessOrderFailure::NoneInstalled { valid_candidates }) => format!(
-            "settings.harness_order is set but none of [{}] are installed",
-            valid_candidates.join(", ")
-        ),
-        None => return None,
-    };
-
-    if has_config_default_harness {
-        warning.push_str("; falling through to settings.default_harness");
-    } else {
-        warning
-            .push_str("; settings.default_harness is unset, falling through to hardcoded `claude`");
-    }
-
-    Some(warning)
-}
-
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
     match harness {
         HarnessKind::Claude => "claude",
@@ -445,103 +146,176 @@ pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
+    use std::path::Path;
+
+    use crate::compiler::agents::AgentProfile;
+    use crate::compiler::agents::HarnessOverrides;
+    use crate::models::ModelSpec;
 
     fn installed(names: &[&str]) -> HashSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
+        names.iter().map(|name| (*name).to_string()).collect()
     }
 
-    fn always_authed(_: &str) -> bool {
-        true
+    fn profile(harness: Option<HarnessKind>) -> AgentProfile {
+        AgentProfile {
+            name: None,
+            description: None,
+            harness,
+            model: None,
+            mode: None,
+            model_invocable: false,
+            approval: None,
+            sandbox: None,
+            effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            skills: Vec::new(),
+            tools: Vec::new(),
+            tools_denied: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_tools: Vec::new(),
+            harness_overrides: HarnessOverrides::default(),
+            model_policies: Vec::new(),
+            fanout: Vec::new(),
+        }
     }
 
-    fn never_authed(_: &str) -> bool {
-        false
+    fn model_alias(harness: Option<&str>) -> ModelAlias {
+        ModelAlias {
+            harness: harness.map(str::to_string),
+            description: None,
+            default_effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::Pinned {
+                model: "gpt-5".to_string(),
+                provider: Some("openai".to_string()),
+            },
+        }
     }
 
-    // --- candidate_route_confidence_with_auth: key boundary tests ---
-    // These test the auth-injection seam which cannot be exercised through
-    // integration tests without forking real harness binaries.
-
-    #[test]
-    fn route_confidence_native_match_authed_returns_confirmed() {
-        let result = candidate_route_confidence_with_auth(
-            "claude",
-            Some("anthropic"),
-            "claude-opus-4-7",
-            &installed(&["claude"]),
-            None,
-            always_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Confirmed));
+    fn policy_input<'a>(
+        profile: &'a AgentProfile,
+        model_override: Option<&'a str>,
+        harness_override: Option<&'a str>,
+    ) -> PolicyInput<'a> {
+        PolicyInput {
+            project_root: Path::new("."),
+            profile,
+            model_override,
+            harness_override,
+            effort_override: None,
+            approval_override: None,
+            sandbox_override: None,
+        }
     }
 
-    #[test]
-    fn route_confidence_native_match_not_authed_falls_through() {
-        // Auth gate: native match without auth must NOT return Confirmed.
-        // claude is not pi/cursor/opencode so falls to None entirely.
-        let result = candidate_route_confidence_with_auth(
-            "claude",
-            Some("anthropic"),
-            "claude-opus-4-7",
-            &installed(&["claude"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn route_confidence_pi_installed_returns_passthrough() {
-        let result = candidate_route_confidence_with_auth(
-            "pi",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["pi"]),
-            None,
-            never_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Passthrough));
-    }
-
-    #[test]
-    fn route_confidence_opencode_positive_probe_returns_likely() {
-        let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
-            model_slugs: vec!["openai/gpt-5".to_string()],
-            provider_probe_success: true,
-            model_probe_success: true,
-            error: None,
-        };
-        let result = candidate_route_confidence_with_auth(
-            "opencode",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["opencode"]),
-            Some(&probe),
-            never_authed,
-        );
-        assert_eq!(result, Some(RouteConfidence::Likely));
+    fn evidence<'a>(
+        config_default_harness: Option<&'a str>,
+        harness_order: Option<&'a [String]>,
+        installed_harnesses: &'a HashSet<String>,
+    ) -> HarnessEvidence<'a> {
+        HarnessEvidence {
+            model_id: "gpt-5",
+            provider: Some("openai"),
+            config_default_harness,
+            harness_order,
+            installed_harnesses,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+        }
     }
 
     #[test]
-    fn route_confidence_opencode_negative_probe_returns_none() {
-        let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("google".to_string(), true)]),
-            model_slugs: vec![],
-            provider_probe_success: true,
-            model_probe_success: true,
-            error: None,
-        };
-        // openai provider requested but probe says only google is available
-        let result = candidate_route_confidence_with_auth(
-            "opencode",
-            Some("openai"),
-            "gpt-5",
-            &installed(&["opencode"]),
-            Some(&probe),
-            never_authed,
+    fn cli_override_is_explicit_and_skips_candidate_eval() {
+        let installed = installed(&["codex", "pi"]);
+        let profile = profile(Some(HarnessKind::Claude));
+        let input = policy_input(&profile, None, Some("pi"));
+
+        let resolution = resolve_harness(
+            &input,
+            Some(&model_alias(Some("codex"))),
+            evidence(None, None, &installed),
+        )
+        .expect("harness should resolve");
+
+        assert_eq!(resolution.harness, "pi");
+        assert_eq!(resolution.source, "cli");
+        assert_eq!(resolution.route_confidence, RouteConfidence::Explicit);
+        assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
+        assert_eq!(resolution.harness_order_position, None);
+    }
+
+    #[test]
+    fn model_override_prefers_alias_harness() {
+        let installed = installed(&["codex"]);
+        let profile = profile(Some(HarnessKind::Claude));
+        let input = policy_input(&profile, Some("gptmini"), None);
+
+        let resolution = resolve_harness(
+            &input,
+            Some(&model_alias(Some("codex"))),
+            evidence(None, None, &installed),
+        )
+        .expect("harness should resolve");
+
+        assert_eq!(resolution.harness, "codex");
+        assert_eq!(resolution.source, "alias");
+        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert!(resolution.candidates_tried.is_empty());
+    }
+
+    #[test]
+    fn profile_harness_precedes_alias_when_model_not_overridden() {
+        let installed = installed(&["codex", "pi"]);
+        let profile = profile(Some(HarnessKind::Pi));
+        let input = policy_input(&profile, None, None);
+
+        let resolution = resolve_harness(
+            &input,
+            Some(&model_alias(Some("codex"))),
+            evidence(None, None, &installed),
+        )
+        .expect("harness should resolve");
+
+        assert_eq!(resolution.harness, "pi");
+        assert_eq!(resolution.source, "profile");
+        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert!(resolution.candidates_tried.is_empty());
+    }
+
+    #[test]
+    fn auto_selection_maps_routing_trace_fields() {
+        let installed = installed(&["pi"]);
+        let order = vec!["pi".to_string(), "codex".to_string()];
+        let profile = profile(None);
+        let input = policy_input(&profile, None, None);
+
+        let resolution = resolve_harness(&input, None, evidence(None, Some(&order), &installed))
+            .expect("harness should resolve");
+
+        assert_eq!(resolution.harness, "pi");
+        assert_eq!(resolution.source, "config-order");
+        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert_eq!(resolution.harness_order_position, Some(0));
+        assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
+    }
+
+    #[test]
+    fn invalid_config_default_harness_still_warnings_on_fixed_selection() {
+        let installed = installed(&["pi"]);
+        let profile = profile(Some(HarnessKind::Pi));
+        let input = policy_input(&profile, None, None);
+
+        let resolution = resolve_harness(&input, None, evidence(Some("bogus"), None, &installed))
+            .expect("harness should resolve");
+
+        assert!(
+            resolution
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("settings.default_harness `bogus` is invalid"))
         );
-        assert_eq!(result, None);
     }
 }

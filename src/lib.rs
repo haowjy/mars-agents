@@ -19,6 +19,7 @@ pub mod platform;
 pub(crate) mod reader;
 pub mod reconcile;
 pub mod resolve;
+pub mod routing;
 pub mod source;
 pub mod sync;
 pub mod target;

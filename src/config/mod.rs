@@ -12,6 +12,8 @@ use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
 
+pub mod link_migration;
+
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Config {
@@ -269,15 +271,24 @@ fn default_models_cache_ttl_hours() -> u32 {
 impl Settings {
     /// Returns the effective list of managed target directories.
     ///
-    /// - If `targets` is explicitly set, returns exactly those targets.
-    /// - If `targets` is unset, uses `managed_root` for backwards compatibility.
+    /// - If `targets` is explicitly set, returns those targets normalized through
+    ///   the link migration boundary.
+    /// - If `targets` is unset, uses normalized `managed_root` for backwards compatibility.
     /// - If neither is set, returns no target-sync targets; `.mars/` remains
     ///   the canonical compiled store.
     pub fn managed_targets(&self) -> Vec<String> {
         if let Some(targets) = &self.targets {
-            return targets.clone();
+            return link_migration::normalized_targets(targets.iter().map(String::as_str));
         }
-        self.managed_root.clone().into_iter().collect()
+        link_migration::normalized_targets(self.managed_root.iter().map(String::as_str))
+    }
+
+    /// Returns known harness intents from configured links. Generic targets are ignored.
+    pub fn linked_harnesses(&self) -> Vec<String> {
+        if let Some(targets) = &self.targets {
+            return link_migration::linked_harnesses(targets.iter().map(String::as_str));
+        }
+        link_migration::linked_harnesses(self.managed_root.iter().map(String::as_str))
     }
 }
 
@@ -1889,6 +1900,42 @@ only_skills = true
         };
         // targets takes precedence over managed_root
         assert_eq!(settings.managed_targets(), vec![".codex"]);
+    }
+
+    #[test]
+    fn managed_targets_normalizes_bare_harness_and_generic_links() {
+        let settings = Settings {
+            targets: Some(vec![
+                "codex".to_string(),
+                "agents".to_string(),
+                "foo".to_string(),
+            ]),
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings.managed_targets(),
+            vec![
+                ".codex".to_string(),
+                ".agents".to_string(),
+                ".foo".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn linked_harnesses_extracts_legacy_path_form_harness_links() {
+        let settings = Settings {
+            targets: Some(vec![
+                ".codex".to_string(),
+                ".claude".to_string(),
+                ".agents".to_string(),
+            ]),
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings.linked_harnesses(),
+            vec!["codex".to_string(), "claude".to_string()]
+        );
     }
 
     #[test]

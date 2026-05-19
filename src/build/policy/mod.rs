@@ -58,6 +58,8 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             config_default_harness: resolution_config.default_harness.as_deref(),
             harness_order: resolution_config.harness_order.as_deref(),
             installed_harnesses: &installed_harnesses,
+            linked_harnesses: (!resolution_config.linked_harnesses.is_empty())
+                .then_some(resolution_config.linked_harnesses.as_slice()),
             opencode_probe_result,
         },
     )?;

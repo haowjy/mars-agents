@@ -224,6 +224,11 @@ fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection(
 }
 
 #[test]
+fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
+    routing::build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates();
+}
+
+#[test]
 fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     routing::build_launch_bundle_cli_harness_override_beats_settings_harness_order();
 }

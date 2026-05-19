@@ -56,6 +56,7 @@ pub(super) struct HarnessEvidence<'a> {
     pub(super) config_default_harness: Option<&'a str>,
     pub(super) harness_order: Option<&'a [String]>,
     pub(super) installed_harnesses: &'a HashSet<String>,
+    pub(super) linked_harnesses: Option<&'a [String]>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
 }
 
@@ -95,6 +96,7 @@ pub(super) fn resolve_harness(
                     evidence.provider,
                     evidence.harness_order,
                     evidence.installed_harnesses,
+                    evidence.linked_harnesses,
                     normalized_config_default_harness.clone(),
                     evidence.opencode_probe_result,
                 );
@@ -127,6 +129,7 @@ pub(super) fn resolve_harness(
                 evidence.provider,
                 evidence.harness_order,
                 evidence.installed_harnesses,
+                evidence.linked_harnesses,
                 normalized_config_default_harness,
                 evidence.opencode_probe_result,
             );
@@ -184,6 +187,7 @@ fn resolve_harness_candidate_or_fallback(
     provider: Option<&str>,
     settings_harness_order: Option<&[String]>,
     installed_harnesses: &HashSet<String>,
+    linked_harnesses: Option<&[String]>,
     config_default_harness: Option<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
 ) -> CandidateHarnessResolution {
@@ -191,30 +195,39 @@ fn resolve_harness_candidate_or_fallback(
     let mut candidates_tried = Vec::new();
     let mut harness_order_failure = None;
 
+    let linked_harnesses = linked_harnesses
+        .map(|harnesses| harnesses.iter().map(String::as_str).collect::<HashSet<_>>());
+
     let candidates = if let Some(order) = settings_harness_order {
         let parsed_order = models::harness::parse_settings_harness_order(order);
         warnings.extend(parsed_order.warnings);
         harness_order_failure = parsed_order.failure;
-        if harness_order_failure.is_none()
-            && !parsed_order.valid_candidates.is_empty()
-            && parsed_order
-                .valid_candidates
-                .iter()
-                .all(|candidate| !installed_harnesses.contains(candidate))
-        {
-            harness_order_failure = Some(HarnessOrderFailure::NoneInstalled {
-                valid_candidates: parsed_order.valid_candidates.clone(),
-            });
-        }
-        parsed_order
+        let mut candidate_pairs = parsed_order
             .valid_candidates
             .into_iter()
             .enumerate()
             .map(|(index, harness)| (harness, Some(index)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        filter_candidate_pairs_by_links(&mut candidate_pairs, linked_harnesses.as_ref());
+        let valid_candidates = candidate_pairs
+            .iter()
+            .map(|(harness, _)| harness.clone())
+            .collect::<Vec<_>>();
+        if harness_order_failure.is_none()
+            && !valid_candidates.is_empty()
+            && valid_candidates
+                .iter()
+                .all(|candidate| !installed_harnesses.contains(candidate))
+        {
+            harness_order_failure = Some(HarnessOrderFailure::NoneInstalled {
+                valid_candidates: valid_candidates.clone(),
+            });
+        }
+        candidate_pairs
     } else {
         let provider_for_order = provider.unwrap_or("unknown");
-        models::harness::harness_candidates_for_provider(provider_for_order)
+        let candidates = models::harness::harness_candidates_for_provider(provider_for_order);
+        filter_candidates_by_links(candidates, linked_harnesses.as_ref())
             .into_iter()
             .map(|harness| (harness, None))
             .collect::<Vec<_>>()
@@ -276,6 +289,29 @@ fn resolve_harness_candidate_or_fallback(
         candidates_tried,
         warnings,
     }
+}
+
+fn filter_candidate_pairs_by_links(
+    candidates: &mut Vec<(String, Option<usize>)>,
+    linked_harnesses: Option<&HashSet<&str>>,
+) {
+    if let Some(linked_harnesses) = linked_harnesses {
+        candidates.retain(|(harness, _)| linked_harnesses.contains(harness.as_str()));
+    }
+}
+
+fn filter_candidates_by_links(
+    candidates: Vec<String>,
+    linked_harnesses: Option<&HashSet<&str>>,
+) -> Vec<String> {
+    let Some(linked_harnesses) = linked_harnesses else {
+        return candidates;
+    };
+
+    candidates
+        .into_iter()
+        .filter(|harness| linked_harnesses.contains(harness.as_str()))
+        .collect()
 }
 
 fn candidate_route_confidence(

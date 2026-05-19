@@ -23,7 +23,8 @@ pub struct LinkArgs {
 
 /// Run `mars link`.
 pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let target_name = super::target::normalize_target_name(&args.target)?;
+    let parsed_target = super::target::normalize_target_name(&args.target)?;
+    let target_name = crate::config::link_migration::normalize_link(&parsed_target).target;
     link_target(ctx, &target_name, json)
 }
 
@@ -55,11 +56,7 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
     let mut config = crate::config::load(&ctx.project_root)?;
-    let mut targets = config
-        .settings
-        .targets
-        .clone()
-        .unwrap_or_else(|| config.settings.managed_targets());
+    let mut targets = config.settings.managed_targets();
     if !targets.iter().any(|target| target == target_name) {
         targets.push(target_name.to_string());
     }

@@ -46,7 +46,7 @@ pub const WELL_KNOWN: &[&str] = &[".agents"];
 
 /// Tool-specific directories that commonly need linking.
 /// `mars link` warns if the target isn't in TOOL_DIRS or WELL_KNOWN.
-pub const TOOL_DIRS: &[&str] = &[".claude", ".cursor"];
+pub const TOOL_DIRS: &[&str] = &[".claude", ".codex", ".opencode", ".cursor", ".pi"];
 
 impl MarsContext {
     /// Build context from project root (directory containing mars.toml).
@@ -279,14 +279,16 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
     // 1. Check explicit settings in mars.toml.
     match crate::config::load(project_root) {
         Ok(config) => {
-            if let Some(name) = &config.settings.managed_root {
+            if config.settings.managed_root.is_some()
+                && let Some(name) = config.settings.managed_targets().first()
+            {
                 return Ok(project_root.join(name));
             }
             if config
                 .settings
-                .targets
-                .as_ref()
-                .is_some_and(|targets| targets.iter().any(|target| target == WELL_KNOWN[0]))
+                .managed_targets()
+                .iter()
+                .any(|target| target == WELL_KNOWN[0])
             {
                 return Ok(project_root.join(WELL_KNOWN[0]));
             }

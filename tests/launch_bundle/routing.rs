@@ -1387,6 +1387,58 @@ harness_order = ["opencode", "pi"]"#;
     );
 }
 
+pub(crate) fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.4-mini
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".opencode", ".agents"]"#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.4-mini"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("likely")
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("opencode")
+    );
+}
+
 pub(crate) fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &[]);

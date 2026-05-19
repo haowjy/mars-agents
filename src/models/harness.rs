@@ -101,24 +101,22 @@ pub fn resolve_harness_for_model_with_evidence(
         }
 
         match *harness {
-            "claude" | "codex" => {
+            "claude" | "codex"
                 if is_native_harness_match(provider, harness)
-                    && native_harness_authenticated(harness)
-                {
-                    return Some((*harness).to_string());
-                }
+                    && native_harness_authenticated(harness) =>
+            {
+                return Some((*harness).to_string());
             }
-            "opencode" => {
+            "opencode"
                 if !is_known_provider(provider)
                     || opencode_supports_provider_and_model(
                         provider,
                         model_id,
                         installed,
                         opencode_probe_result,
-                    )
-                {
-                    return Some((*harness).to_string());
-                }
+                    ) =>
+            {
+                return Some((*harness).to_string());
             }
             "pi" | "cursor" => {
                 return Some((*harness).to_string());

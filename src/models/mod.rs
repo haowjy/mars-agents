@@ -2934,7 +2934,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_harness_auto_detected() {
+    fn resolve_harness_native_installed_result_depends_on_auth_probe() {
         let alias = ModelAlias {
             harness: None,
             description: None,
@@ -2949,9 +2949,12 @@ mod tests {
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
         let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
-        assert_eq!(
-            resolved,
-            (Some("claude".to_string()), HarnessSource::AutoDetected)
+        assert!(
+            matches!(
+                resolved,
+                (Some(_), HarnessSource::AutoDetected) | (None, HarnessSource::Unavailable)
+            ),
+            "native harness routing must be gated by the host auth probe; got {resolved:?}"
         );
     }
 

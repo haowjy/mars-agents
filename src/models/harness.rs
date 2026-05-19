@@ -153,7 +153,7 @@ fn is_known_provider(provider: &str) -> bool {
     )
 }
 
-fn native_harness_authenticated(harness: &str) -> bool {
+pub fn native_harness_authenticated(harness: &str) -> bool {
     match harness {
         "codex" => run_auth_status_command("codex", &["login", "status"]),
         "claude" => run_auth_status_command("claude", &["auth", "status"]),
@@ -161,7 +161,7 @@ fn native_harness_authenticated(harness: &str) -> bool {
     }
 }
 
-fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
+pub fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
     let mut child = match Command::new(resolve_command(command))
         .args(args)
         .stdin(Stdio::null())
@@ -184,7 +184,7 @@ fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
     }
 }
 
-fn auth_probe_timeout() -> Duration {
+pub fn auth_probe_timeout() -> Duration {
     std::env::var("MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -192,7 +192,7 @@ fn auth_probe_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(2))
 }
 
-fn resolve_command(command: &str) -> PathBuf {
+pub fn resolve_command(command: &str) -> PathBuf {
     if let Ok(path) = which::which(command) {
         return path;
     }

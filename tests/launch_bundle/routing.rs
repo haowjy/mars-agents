@@ -1559,15 +1559,13 @@ model = "gpt-5""#;
     let warnings = bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("using synthesized path")
-    }));
+    assert!(
+        warnings.is_empty(),
+        "explicit harness synthesized path is intentional and should stay quiet: {warnings:?}"
+    );
 }
 
-pub(crate) fn build_launch_bundle_unknown_harness_model_path_warns_and_passes_through() {
+pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_passes_through_quietly() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -1607,18 +1605,10 @@ Review code changes."#;
     let warnings = bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("using passthrough path")
-    }));
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("is unconfirmed")
-    }));
+    assert!(
+        warnings.is_empty(),
+        "explicit harness passthrough is intentional and should stay quiet: {warnings:?}"
+    );
 }
 
 fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {

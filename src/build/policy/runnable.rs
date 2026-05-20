@@ -7,6 +7,7 @@ pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
     pub(super) model_token: String,
     pub(super) harness: String,
+    pub(super) harness_source: &'static str,
     pub(super) route_confidence: String,
     pub(super) provider: Option<&'a str>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
@@ -25,6 +26,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         model,
         model_token,
         harness,
+        harness_source,
         route_confidence,
         provider,
         opencode_probe_result,
@@ -45,11 +47,14 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .then_some(opencode_probe_result)
         .flatten();
     let runnable = resolve_runnable_path(&model, provider_for_runnable, &harness, cached_probe);
+    let fixed_harness_selection = matches!(harness_source, "cli" | "profile");
 
-    if matches!(
-        runnable.source,
-        RunnablePathSource::Synthesized | RunnablePathSource::Passthrough
-    ) {
+    if !fixed_harness_selection
+        && matches!(
+            runnable.source,
+            RunnablePathSource::Synthesized | RunnablePathSource::Passthrough
+        )
+    {
         warnings.push(format!(
             "model '{}' does not have a confirmed runnable path for harness '{}'; using {} path '{}'",
             model,
@@ -58,7 +63,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             runnable.harness_model_id
         ));
     }
-    if runnable.confidence == RunnableConfidence::Unknown {
+    if !fixed_harness_selection && runnable.confidence == RunnableConfidence::Unknown {
         warnings.push(format!(
             "harness-model for '{}' targeting '{}' is unconfirmed ({})",
             model,
@@ -66,7 +71,8 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             runnable.source.label()
         ));
     }
-    if !alias_exists
+    if !fixed_harness_selection
+        && !alias_exists
         && model_token == model
         && !model_exists_in_cache(cache, &model)
         && matches!(runnable.source, RunnablePathSource::Passthrough)

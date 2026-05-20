@@ -5,6 +5,13 @@ use assert_fs::prelude::*;
 use httpmock::MockServer;
 use serde_json::Value;
 
+fn assert_field_absent_or_null(bundle: &Value, field: &str) {
+    assert!(
+        bundle.get(field).is_none() || bundle[field].is_null(),
+        "{field} should be absent or null"
+    );
+}
+
 pub(crate) fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
@@ -16,7 +23,9 @@ tools: [Bash, Write]
 disallowed-tools: [Agent]
 mcp-tools: [plugin:context7:context7]
 ---
-Review code changes."#;
+
+Review code changes.
+"#;
     let skill_content =
         "---\nname: planning\ndescription: Plan tasks\n---\nUse this skill to plan.";
 
@@ -46,6 +55,15 @@ Review code changes."#;
 
     assert_eq!(bundle["version"].as_u64(), Some(1));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
+    assert_eq!(
+        bundle["agent_body"].as_str(),
+        Some("\nReview code changes.\n")
+    );
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .expect("system instruction should be string");
+    assert!(system_instruction.contains("# Agent Profile\n\nReview code changes.\n\n"));
+    assert!(!system_instruction.contains("# Agent Profile\n\n\nReview code changes.\n\n"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert!(bundle["routing"]["route_confidence"].is_string());
     assert!(bundle["routing"]["harness_model"].is_string());
@@ -105,6 +123,7 @@ Review code changes."#;
 
     assert_eq!(bundle["version"].as_u64(), Some(1));
     assert!(bundle["agent"].is_null());
+    assert_field_absent_or_null(&bundle, "agent_body");
     assert_eq!(
         bundle["routing"]["model_token"].as_str(),
         Some("gpt-5.4-mini")
@@ -147,6 +166,7 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert!(bundle["agent"].is_null());
+    assert_field_absent_or_null(&bundle, "agent_body");
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),

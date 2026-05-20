@@ -30,7 +30,7 @@ pub fn build_launch_bundle(
 ) -> Result<LaunchBundle, MarsError> {
     let mut warnings: Vec<String> = Vec::new();
     let profile: AgentProfile;
-    let body: String;
+    let agent_body: Option<String>;
 
     if let Some(agent) = request.agent.as_deref() {
         let agent_path = agent_file_path(&ctx.project_root, agent);
@@ -67,11 +67,11 @@ pub fn build_launch_bundle(
                 .iter()
                 .map(|diag| format!("agent `{agent}`: {}", diag.message())),
         );
-        body = frontmatter.body().to_string();
+        agent_body = Some(frontmatter.body().to_string());
         profile = parsed_profile;
     } else {
         profile = empty_agent_profile();
-        body = String::new();
+        agent_body = None;
     }
 
     let policy = resolve_policy(PolicyInput {
@@ -91,7 +91,7 @@ pub fn build_launch_bundle(
 
     let prompt = compile_prompt_surface(
         &mars_dir,
-        &body,
+        agent_body.as_deref().unwrap_or(""),
         &effective_skills,
         &request.extra_skills,
         &policy.routing.harness,
@@ -106,6 +106,7 @@ pub fn build_launch_bundle(
     Ok(LaunchBundle {
         version: 1,
         agent: request.agent,
+        agent_body,
         routing: policy.routing,
         execution_policy: policy.execution_policy,
         prompt_surface: bundle::PromptSurface {

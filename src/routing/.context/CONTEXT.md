@@ -90,6 +90,13 @@ always Passthrough (unknown capability). With the Pi probe, Mars knows whether
 the installed Pi supports the required spawn flags, so it can express Confirmed
 confidence.
 
+Route facts (`Passthrough` confidence, `provider-match` source, `unknown`
+harness_model_confidence) are **not warnings**. They belong in routing/provenance
+fields. Warnings are for unexpected user-actionable degraded states — e.g., "linked
+harness constraints left no eligible candidates." The distinction is enforced by
+`build/policy/runnable.rs::resolve_routing()` returning `warnings: Vec::new()` always;
+the caller layer owns warning promotion.
+
 ## Patterns
 
 **Test without real auth probes:**

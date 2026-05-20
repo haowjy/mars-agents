@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.3] - 2026-05-20
+
 ### Changed
 - `mars build launch-bundle` now supports ad-hoc mode without `--agent`; requires `--model`, emits `agent: null`, and keeps profile tools/skills empty unless explicit `--skill` args are passed.
 - Added canonical harness registry + host capability wrappers so harness names/targets/provider order/auth probe wiring come from one boundary.

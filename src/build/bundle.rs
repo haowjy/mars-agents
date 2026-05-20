@@ -8,6 +8,8 @@ pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 pub struct LaunchBundle {
     pub version: u32,
     pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_body: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
     pub prompt_surface: PromptSurface,

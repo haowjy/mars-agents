@@ -556,6 +556,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 ```jsonc
 {
   "agent": "agent-name-or-null",
+  "agent_body": "raw-agent-markdown-body",
   "routing": {
     "model": "...",
     "harness": "...",
@@ -576,6 +577,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "warnings": ["..."]
 }
 ```
+
+- `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
+- `agent_body` is omitted in ad-hoc mode (no `--agent`).
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: linked harness constraints exhausting auto-routing candidates, or Cursor experimental target.
 

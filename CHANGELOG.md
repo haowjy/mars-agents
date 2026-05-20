@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.5] - 2026-05-20
+
 ### Added
 - `[settings].default_model` support for launch-bundle model resolution (`cli > profile > project > error`), with `provenance.model_source = "project"` when selected.
 

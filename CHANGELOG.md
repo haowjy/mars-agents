@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.4] - 2026-05-20
+
 ### Added
 - Bundle now exports agent_body alongside system_instruction for consumers needing decomposed prompt surfaces.
 

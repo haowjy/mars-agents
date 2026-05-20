@@ -1,48 +1,105 @@
-# src/models/probes/ — OpenCode & Pi capability probing
+# src/models/probes/
+
+Capability probing for OpenCode and Pi harnesses, with disk-backed caching.
+
+## Module layout
+
+| File | Responsibility |
+|---|---|
+| `mod.rs` | Re-exports; `should_probe_opencode()` guard |
+| `opencode.rs` | OpenCode probe: provider/model availability via `opencode models ls` |
+| `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode.json` |
+| `pi.rs` | Pi probe: binary present + `--version` exits 0 + `--help` has required tokens |
+| `pi_cache.rs` | Pi probe cache at `~/.mars/cache/availability/pi.json` |
 
 ## Contracts
 
-- **Probes check binary compatibility at capability-collection time.** Results are cached to disk; commands consume cached results via `CapabilitySnapshot` (see [harness/host.rs](../../harness/host.rs)).
-- **`PiProbeResult.compatible == true`** means Pi is installed AND `pi --version` exits 0 AND ALL `PI_REQUIRED_HELP_TOKEN_GROUPS` are present in `pi --help`. Missing any token group → `compatible: false` → routing skips Pi.
-- **Probe token groups are arrays of alternatives.** Any token in the group satisfies the requirement. This handles Pi version variation where flags may be renamed or aliased.
-- **Cache locations:**
-  - OpenCode: `~/.mars/cache/availability/opencode-probe.json`
-  - Pi: `~/.mars/cache/availability/pi.json`
-- **TTL:** `MARS_PROBE_CACHE_TTL_SECS` env var, default 60s for both probes.
-- **Probe timeout:** `MARS_PROBE_TIMEOUT_SECS` env var, default 5s. Applied independently to each subcommand.
-- **When offline (`offline: true`) or `allow_probe_refresh: false`:** use stale cache if present; return `Unavailable` if no cache → Pi/OpenCode treated as `Passthrough` by routing.
-- **Windows/cache isolation:** Tests that depend on probe cache MUST set `MARS_CACHE_DIR` explicitly to a temp directory. XDG env alone is insufficient on Windows. The cache path is resolved via `crate::platform::cache::global_cache_root()`.
+### Pi probe semantics
 
-## Architecture
+`PiProbeResult.compatible == true` means **all three** conditions passed:
+1. `pi` binary found on PATH
+2. `pi --version` exits 0
+3. All token groups in `PI_REQUIRED_HELP_TOKEN_GROUPS` are present in `pi --help` output
 
+A single missing token group → `compatible: false` → routing engine skips Pi
+(records `skip_reason: "pi_incompatible"`).
+
+Token groups are arrays of alternatives: any token in the group satisfies the group.
+Example: `&["--session-dir", "PI_CODING_AGENT_SESSION_DIR"]` — either token satisfies.
+This handles Pi version variation without requiring exact string matches.
+
+**When Pi probe is absent** (offline, stale cache, probe disabled): routing engine
+treats Pi as `Passthrough` (installed but capability unknown). This is safe — Pi
+may still work, but we cannot confirm compatibility.
+
+### OpenCode probe semantics
+
+`OpenCodeProbeResult` records provider presence and model slugs available in the
+OpenCode installation. `Likely` confidence requires positive provider + model match.
+
+### Cache
+
+Both probes cache to `~/.mars/cache/availability/{pi,opencode}.json`.
+TTL: `MARS_PROBE_CACHE_TTL_SECS` env var (default 60s).
+Probe timeout: `MARS_PROBE_TIMEOUT_SECS` (default 5s).
+
+Cache is read at `collect_capability_snapshot()` time. If cache is stale
+and `allow_probe_refresh: true` (default), the probe runs and refreshes the cache.
+If `offline: true` or `allow_probe_refresh: false`, stale cache is used as-is;
+no cache → empty result → routing uses Passthrough.
+
+### Windows/test cache isolation
+
+Tests that exercise probe caching or depend on deterministic cache state **must**
+set `MARS_CACHE_DIR` explicitly to a temp directory. XDG env vars (`XDG_CACHE_HOME`)
+are not honored on Windows, so tests relying on them produce non-deterministic
+results on Windows. `MARS_CACHE_DIR` is cross-platform safe and takes precedence
+over platform-specific cache discovery on all platforms.
+
+```rust
+// In test setup:
+std::env::set_var("MARS_CACHE_DIR", temp_dir.path());
 ```
-probe() / probe_with_timeout()
-    ↓
-probe_cached(installed, is_offline)   ← runs at snapshot collection time
-    ↓
-CachedProbeOutcome / CachedPiProbeOutcome
-    ├── Hit: fresh cache hit
-    ├── Stale: usable but past TTL (triggers background refresh)
-    ├── Miss: no cache, ran synchronous probe
-    └── Unavailable: offline or not installed
-```
-
-Both OpenCode and Pi follow the same pattern:
-1. Check if probe should run (not offline, harness installed)
-2. Check cache freshness
-3. If stale: return stale result + spawn detached background refresh
-4. If missing: run synchronous probe, write result to disk
-
-**Background refresh** spawns a detached child process (`mars models __refresh-probe --target {opencode|pi}`) that acquires the same lock and re-runs the probe without blocking the parent.
 
 ## Rationale
 
-- **Pi probe token list matches Meridian's `_REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED`.** Mars is now the authoritative checker; Meridian trusts Mars `RouteConfidence`.
-- **Compatible Pi now routes as `Confirmed` (not `Passthrough`).** This was a key behavioral change in PR #51: Mars now knows Pi is usable, not just installed.
-- **Caching avoids re-running probes on every command.** A `pi --help` or `opencode providers list` call takes 1-5 seconds; caching drops this to ~0ms for subsequent commands within the TTL window.
+Pi probe token list (`PI_REQUIRED_HELP_TOKEN_GROUPS`) matches Meridian's
+`_REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED`. Mars is now the authoritative
+checker; Meridian trusts Mars route confidence and skips its own probe when
+`route_confidence` is `confirmed` or `likely`.
+
+Before PR #51, Pi was always `Passthrough` in Mars routing regardless of whether
+Pi actually supported the required flags. This meant Mars could route to Pi, and
+Meridian would only discover incompatibility at launch time. The probe moves
+detection earlier.
+
+Caching: `pi --help` runs once per TTL, not on every `mars models` or
+`mars build launch-bundle` invocation. The 60s TTL balances freshness with
+subprocess overhead for commands that run `mars` repeatedly.
 
 ## Patterns
 
-- **Unit tests that don't test Pi routing:** pass `pi_probe_result: None` in `RoutingInput`.
-- **Simulate compatible Pi:** `PiProbeResult { compatible: true, ..PiProbeResult::default() }`.
-- **Cache path injection in tests:** use `probe_cached_impl()` directly with an explicit path pointing to a temp directory.
+**Unit test without real Pi binary:**
+
+```rust
+let pi_probe = PiProbeResult { compatible: true, ..PiProbeResult::default() };
+// Inject Some(&pi_probe) into RoutingInput — no subprocess needed
+```
+
+**Test with incompatible Pi:**
+
+```rust
+let pi_probe = PiProbeResult {
+    compatible: false,
+    help_surface_tokens_missing: vec!["--mode | rpc".to_string()],
+    ..PiProbeResult::default()
+};
+```
+
+**Skip probes in offline test scenarios:**
+
+```rust
+let options = CapabilityCollectionOptions { offline: true, allow_probe_refresh: false };
+let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
+// snapshot.pi will be CachedPiProbeOutcome with no result → Passthrough in routing
+```

@@ -1,38 +1,114 @@
-# src/routing/ — canonical candidate evaluator
+# src/routing/
+
+Single-file module: `mod.rs`. The canonical candidate evaluator for harness selection.
 
 ## Contracts
 
-- **`evaluate_candidates()` is the ONLY candidate evaluator.** Both `mars models` and `mars build` call only this function. There must be no second candidate evaluator anywhere in the codebase. Parity is an invariant, not a coincidence.
-- **`evaluate_fixed_harness()` evaluates one fixed harness without fallback.** Used by CLI/profile/alias fixed-selection paths. Returns a `CandidateAssessment` directly — no candidate iteration, no fallback chain.
-- **RouteConfidence semantics:**
-  - `Explicit`: fixed selection from CLI/profile/alias (v1 compat; maps to confirmed in practice)
-  - `Confirmed`: native provider match + authenticated (Claude/Codex) OR compatible Pi probe
-  - `Likely`: OpenCode cached provider+model evidence
-  - `Passthrough`: universal (Cursor), Pi without probe, OpenCode unknown-provider
-- **`RouteSource` (WHO chose the route) and `RouteConfidence` (HOW strong is the evidence) are separate dimensions.** Do not conflate them.
-- **Link filtering: ONLY `KnownHarness` links filter candidates.** Generic targets (`.agents`, `agents`, unknown names) are invisible to routing. See [config/targets.rs](../config/targets.rs) for link normalization.
-- **When link constraints block all candidates and all fallbacks, the first linked harness is selected with `Passthrough` confidence** — no unrelated harness leaks through.
+### Single evaluator invariant
+
+`evaluate_candidates()` is the **only** candidate evaluator in the codebase.
+Both `mars models` (resolve/list) and `mars build launch-bundle` call it —
+this is what makes their routing outputs consistent. A second evaluator anywhere
+would break the parity invariant.
+
+`evaluate_fixed_harness()` evaluates one specific harness without fallback.
+Used when the caller has already committed to a fixed harness choice
+(CLI `--harness`, profile `harness:`, alias `harness:`). It returns a single
+`CandidateAssessment` — the caller decides what to do with a failed fixed selection.
+
+### `RoutingInput` fields
+
+| Field | Role |
+|---|---|
+| `model_id` | Resolved model identifier (used for OpenCode slug matching) |
+| `provider` | Optional provider name (determines native affinity and candidate order) |
+| `settings_harness_order` | Raw `harness_order` from config, if set |
+| `config_default_harness` | Raw `default_harness` from config, if set |
+| `installed_harnesses` | Set of harness names found on PATH |
+| `linked_harnesses` | Known harness names from `config::targets` link normalization |
+| `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
+| `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
+
+### `RouteConfidence` semantics
+
+| Value | Evidence |
+|---|---|
+| `Explicit` | Fixed selection from CLI/profile/alias (v1 bundle compat) |
+| `Confirmed` | Native provider match + authenticated (Claude/Codex) OR compatible Pi probe |
+| `Likely` | OpenCode cached provider+model evidence |
+| `Passthrough` | Universal passthrough (Cursor), Pi without fresh probe, OpenCode unknown-provider, config-default fallback |
+
+`RouteSource` records **who** chose the route. `RouteConfidence` records **how strong** the evidence is.
+These are separate dimensions — a `ConfigDefault` source is always `Passthrough` confidence;
+a `Provider` source can be `Confirmed` or `Passthrough` depending on evidence.
+
+### Link filtering rule
+
+Only `KnownHarness` links (from `config::targets::normalize_link`) filter routing candidates.
+Generic targets (`.agents`, `agents`, unknown names) and path-like targets are **invisible**
+to routing — they are materialization-only. See `config::targets` for normalization details.
+
+When known linked harnesses exist:
+- Auto-routing candidates are filtered to the linked set before evaluation
+- `settings.default_harness` outside the linked set is ignored (with diagnostic)
+- Hardcoded `claude` fallback is blocked (linked harnesses select themselves instead)
 
 ## Architecture
 
-**Evaluation order:**
-1. Build candidate list from `settings_harness_order` (if set) or `provider_candidate_order` (via `harness::registry`)
-2. Filter candidates by `linked_harnesses` (only `KnownHarness` links; generic targets do NOT filter)
-3. For each candidate: installed check → native match + auth → OpenCode probe → Pi probe → Cursor passthrough
-4. Fallback chain: config `default_harness` → first linked harness → hardcoded `claude`
-5. Link constraints prevent config-default and hardcoded fallbacks from routing outside known links
+```
+RoutingInput
+    │
+    ├─ settings_harness_order? → parse + link-filter → ConfigOrder candidates
+    ├─ (no order) → provider_candidate_order → link-filter → Provider candidates
+    │
+    └─ for each candidate:
+           not installed        → skip (not_installed)
+           native provider + auth  → Confirmed ✓
+           opencode + known provider + probe → Likely ✓
+           opencode + unknown provider → Passthrough ✓
+           pi + compatible probe → Confirmed ✓
+           pi + no probe        → Passthrough ✓
+           cursor               → Passthrough ✓
+           else                 → skip
 
-**Key input struct** `RoutingInput`: carries model_id, provider, harness order config, installed set, linked harnesses, OpenCode probe, Pi probe.
-
-**Output struct** `RoutingTrace`: selected harness, confidence, source, candidates_tried, per-candidate assessments, diagnostics.
+    exhausted candidates → config_default_harness → linked fallback → hardcoded claude
+                           (link constraints can block each of these)
+```
 
 ## Rationale
 
-- **Single evaluator prevents drift.** Before PR #51, `mars models` and `mars build` could route differently for the same inputs. Now both call the same `evaluate_candidates()`.
-- **Link constraints block unreachable fallbacks.** Without link filtering, `config.default_harness = "codex"` would route to Codex even when the project only links `.claude`. This was a bug — linked harnesses express project intent, and routing outside them must not happen silently.
+Single evaluator prevents `mars models` and `mars build` from drifting on
+routing decisions. Before this module, both had independent candidate evaluation
+logic that could diverge on harness ordering, auth gates, and probe handling.
+
+Link constraints blocking hardcoded/config-default fallback is intentional:
+`settings.targets = [".opencode"]` signals project intent to use OpenCode.
+Silently routing to Claude as a fallback contradicts that intent.
+
+Pi upgrade from Passthrough→Confirmed: before PR #51, a Pi binary on PATH was
+always Passthrough (unknown capability). With the Pi probe, Mars knows whether
+the installed Pi supports the required spawn flags, so it can express Confirmed
+confidence.
 
 ## Patterns
 
-- **Auth injection for testing:** Use `evaluate_candidates_with_auth(input, always_authed)` or `evaluate_candidates_with_auth(input, never_authed)` to control auth without real subprocess calls.
-- **Probe injection for testing:** Pass `Some(&probe_result)` or `None` via `RoutingInput` to control OpenCode/Pi probe behavior.
-- **Parity testing:** Same inputs to `mars models resolve --json` and `mars build launch-bundle --json` must yield the same `harness` and `route_confidence` fields.
+**Test without real auth probes:**
+
+```rust
+let trace = evaluate_candidates_with_auth(&input, |_harness| true /* always_authed */);
+```
+
+**Simulate Pi compatibility:**
+
+```rust
+let pi_probe = PiProbeResult { compatible: true, ..PiProbeResult::default() };
+// pass Some(&pi_probe) as pi_probe_result in RoutingInput
+```
+
+**Parity smoke test** (run in a temp project with known config):
+
+```bash
+HARNESS=$(mars models resolve gpt-5.4-mini --json | jq -r '.harness')
+BUNDLE_HARNESS=$(mars build launch-bundle --model gpt-5.4-mini --json | jq -r '.routing.harness')
+[ "$HARNESS" = "$BUNDLE_HARNESS" ] || echo "DRIFT"
+```

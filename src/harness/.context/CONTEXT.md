@@ -1,33 +1,87 @@
-# src/harness/ — canonical harness vocabulary & capability snapshot
+# src/harness/
+
+Two files with a clean boundary: `registry.rs` is pure data; `host.rs` is I/O collected once per command.
 
 ## Contracts
 
-- **`registry::parse()` and `registry::is_known()` are the ONLY harness-name authority.** No other module must independently validate or normalize harness names. Any code checking "is this a valid harness?" must go through registry.
-- **`registry::provider_candidate_order()` is the canonical candidate list for unknown providers.** The order `Pi → OpenCode → Cursor` is defined once in `UNKNOWN_PROVIDER_FALLBACK_ORDER`. Do not duplicate it.
-- **`HarnessClass::Native` means 1:1 provider affinity** (claude↔anthropic, codex↔openai). Auth probing is only meaningful for Native harnesses. Non-native harnesses always return `AuthState::NotApplicable`.
-- **`CapabilitySnapshot` must be collected once per command invocation and shared.** Never re-collect mid-command — this causes redundant PATH lookups, auth probes, and cache reads.
-- **`ExecutableResolver` is the ONLY owner of cross-platform PATH lookup.** No other module should implement its own `which`/extension-loop logic. Windows `.cmd`/`.bat` fallback lives here and ONLY here.
+### `registry.rs` — canonical harness vocabulary
+
+`harness::registry` is the **only** owner of valid harness identity. No other
+module should validate harness names, define provider candidate orders, or
+maintain a list of known harness binaries independently.
+
+- `HarnessId`: `Claude | Codex | Pi | OpenCode | Cursor`
+- `HarnessClass`: `Native { provider }` (claude↔anthropic, codex↔openai) |
+  `ProbeBacked` (pi, opencode) | `UniversalPassthrough` (cursor)
+- `parse(name)` / `is_known(name)` — case-insensitive, trim-safe
+- `provider_candidate_order(provider)` — canonical evaluation order for a given provider
+- `UNKNOWN_PROVIDER_FALLBACK_ORDER` — `[Pi, OpenCode, Cursor]` for unknown/non-native providers
+- `native_harness_for_provider(provider)` — only returns `Some` for anthropic→Claude, openai→Codex
+
+**Invariant:** Adding a new harness means one change here (new descriptor in `DESCRIPTORS`)
+plus registration in `all()` and `names()`. Nothing else needs updating.
+
+### `host.rs` — capability snapshot
+
+`CapabilitySnapshot` must be collected **once per command invocation** and shared.
+Re-collecting mid-command risks probe inconsistency and unnecessary subprocess spawns.
+
+- `collect_capability_snapshot(options)` — collects for all known harnesses
+- `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
+- `CapabilityCollectionOptions { offline, allow_probe_refresh }` — caller controls probe refresh
+- `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl
+- `AuthState`: `NotApplicable` (Pi/OpenCode/Cursor), `Authenticated`, `Unauthenticated`, `Unknown`
+
+`CapabilitySnapshot` fields:
+- `executable: BTreeMap<HarnessId, ExecutableState>` — PATH lookup result per harness
+- `auth: BTreeMap<HarnessId, AuthState>` — auth probe result (only meaningful for Native harnesses)
+- `opencode: CachedProbeOutcome` — OpenCode capability probe from disk cache
+- `pi: CachedPiProbeOutcome` — Pi capability probe from disk cache
 
 ## Architecture
 
 ```
-registry.rs          → pure data (no I/O, no env reads)
-host.rs              → I/O at collection time only, cached as CapabilitySnapshot
+registry.rs   ←── pure static data (no I/O, no env reads)
+                    HarnessId, HarnessDescriptor, HarnessClass
+                    provider orders, normalization, native affinity
+
+host.rs       ←── I/O at collection time only
+                    ExecutableResolver → PATH lookup (once per harness)
+                    native_auth_state → subprocess probe (claude/codex only)
+                    opencode_cache/pi_cache → disk reads
+                    → CapabilitySnapshot (cloneable, shared across command)
 ```
-
-`registry.rs` defines `HarnessId` enum, `HarnessDescriptor` (name, binary, default_target, class), and lookup functions. It is a pure-data module — no filesystem access, no environment reads.
-
-`host.rs` performs all I/O: PATH resolution via `ExecutableResolver` trait, auth probing via subprocess (`claude auth status`, `codex login status`), and delegates OpenCode/Pi probe results to `models::probes::*_cache`. Results are frozen into a `CapabilitySnapshot` for the rest of the command to consume.
 
 ## Rationale
 
-- **Single ownership of harness identity.** Before PR #51, harness names and validity were scattered across `models::harness`, `compiler::agents::HarnessKind`, and ad-hoc error strings — divergence risk was high. Centralizing in `registry` eliminates drift.
-- **`ExecutableResolver` trait enables test injection.** `FakeResolver` (HashMap<String, ExecutableState>) allows tests to control PATH resolution without touching the filesystem.
-- **Windows `.cmd`/`.bat` fallback is localized.** Cross-platform executable lookup is a platform-specific concern; the `ExecutableResolver` trait keeps the abstraction clean while `PathExecutableResolver` handles the platform details.
+Before this module: harness names and validity were scattered across
+`models::harness`, `compiler::agents::HarnessKind`, and hardcoded error strings.
+Divergence between modules was a live risk.
+
+`ExecutableResolver` as a trait enables fake PATH injection in tests (`FakeResolver`
+with a `HashMap<String, ExecutableState>`) without touching the filesystem.
+
+Windows `.cmd`/`.bat` fallback via the `which` crate lives in
+`PathExecutableResolver::resolve` and **only** here. No other module should
+implement its own extension-suffix loop.
 
 ## Patterns
 
-- **Test injection:** Use `FakeResolver` with a `HashMap<String, ExecutableState>` to simulate installed/missing binaries. See `host.rs:221` test module.
-- **Offline/testing mode:** Pass `CapabilityCollectionOptions { offline: true, allow_probe_refresh: false }` to skip all I/O probes.
-- **DO NOT add new harness-name validation logic anywhere else.** Call `registry::parse()`.
-- **DO NOT implement your own `which` or extension loop.** Use `PathExecutableResolver` or inject a custom `ExecutableResolver`.
+**Tests:** Inject `FakeResolver` to control which harnesses are "installed"
+without real binaries:
+
+```rust
+let mut resolver = FakeResolver::default();
+resolver.map.insert("pi".to_string(), ExecutableState::Found { path: PathBuf::from("/tmp/pi") });
+let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
+```
+
+**Offline/test options:**
+
+```rust
+let options = CapabilityCollectionOptions { offline: true, allow_probe_refresh: false };
+```
+
+This prevents probe refresh and uses stale cache (or returns empty probe result).
+
+**Do NOT** add harness-name validation logic outside this module. Use `registry::parse()` or `registry::is_known()`.

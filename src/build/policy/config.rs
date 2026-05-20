@@ -8,6 +8,7 @@ use crate::models::{self, ModelAlias};
 pub(super) struct PolicyResolutionConfig {
     pub(super) aliases: IndexMap<String, ModelAlias>,
     pub(super) default_harness: Option<String>,
+    pub(super) default_model: Option<String>,
     pub(super) harness_order: Option<Vec<String>>,
     pub(super) linked_harnesses: Vec<String>,
 }
@@ -17,6 +18,7 @@ pub(super) fn load_policy_resolution_config(
 ) -> Result<PolicyResolutionConfig, MarsError> {
     let mut merged = models::builtin_aliases();
     let mut default_harness = None;
+    let mut default_model = None;
     let mut harness_order = None;
     let mut linked_harnesses = Vec::new();
 
@@ -32,6 +34,7 @@ pub(super) fn load_policy_resolution_config(
     match crate::config::load(project_root) {
         Ok(config) => {
             default_harness = config.settings.default_harness.clone();
+            default_model = config.settings.default_model.clone();
             harness_order = config.settings.harness_order.clone();
             linked_harnesses = config.settings.linked_harnesses();
             for (name, alias) in &config.models {
@@ -45,6 +48,7 @@ pub(super) fn load_policy_resolution_config(
     Ok(PolicyResolutionConfig {
         aliases: merged,
         default_harness,
+        default_model,
         harness_order,
         linked_harnesses,
     })

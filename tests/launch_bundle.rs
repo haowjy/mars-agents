@@ -224,6 +224,21 @@ fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile
 }
 
 #[test]
+fn build_launch_bundle_uses_settings_default_model_when_profile_and_cli_missing() {
+    routing::build_launch_bundle_uses_settings_default_model_when_profile_and_cli_missing();
+}
+
+#[test]
+fn build_launch_bundle_cli_model_override_beats_settings_default_model() {
+    routing::build_launch_bundle_cli_model_override_beats_settings_default_model();
+}
+
+#[test]
+fn build_launch_bundle_profile_model_beats_settings_default_model() {
+    routing::build_launch_bundle_profile_model_beats_settings_default_model();
+}
+
+#[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     routing::build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default();
 }

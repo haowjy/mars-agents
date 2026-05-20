@@ -305,6 +305,106 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_uses_settings_default_model_when_profile_and_cli_missing() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+default_model = "gpt-5.4-mini""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["routing"]["model_token"].as_str(),
+        Some("gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["provenance"]["model_source"].as_str(),
+        Some("project")
+    );
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+}
+
+pub(crate) fn build_launch_bundle_cli_model_override_beats_settings_default_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+default_model = "gpt-5.4-mini""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "gpt-5",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
+    assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("cli"));
+}
+
+pub(crate) fn build_launch_bundle_profile_model_beats_settings_default_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+default_model = "gpt-5.4-mini""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["routing"]["model_token"].as_str(),
+        Some("claude-opus-4-6")
+    );
+    assert_eq!(
+        bundle["provenance"]["model_source"].as_str(),
+        Some("profile")
+    );
+}
+
 pub(crate) fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default()
 {
     let temp = TempDir::new().unwrap();

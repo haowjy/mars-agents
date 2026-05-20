@@ -228,6 +228,9 @@ pub struct Settings {
     /// Default harness for launch routing when profile/alias/provider cannot resolve one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_harness: Option<String>,
+    /// Project-wide default model token when no CLI override or profile model is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
     /// Ordered harness preference for launch-bundle candidate selection.
     ///
     /// When set, replaces built-in provider preference ordering for candidate
@@ -260,6 +263,7 @@ impl Default for Settings {
             models_cache_ttl_hours: default_models_cache_ttl_hours(),
             min_mars_version: None,
             default_harness: None,
+            default_model: None,
             harness_order: None,
             agent_emission: None,
         }
@@ -776,6 +780,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.default_harness changed during roundtrip ({:?} -> {:?})",
                 original.settings.default_harness, reparsed.settings.default_harness
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.default_model != original.settings.default_model {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.default_model changed during roundtrip ({:?} -> {:?})",
+                original.settings.default_model, reparsed.settings.default_model
             ),
         }
         .into());
@@ -2110,6 +2123,28 @@ default_harness = "codex"
         assert_eq!(
             roundtripped.settings.default_harness,
             config.settings.default_harness
+        );
+    }
+
+    #[test]
+    fn settings_default_model_parses_and_roundtrips() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+default_model = "gpt-5.4-mini"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.settings.default_model.as_deref(),
+            Some("gpt-5.4-mini")
+        );
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let roundtripped: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            roundtripped.settings.default_model,
+            config.settings.default_model
         );
     }
 

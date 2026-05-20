@@ -1,3 +1,5 @@
+// qa-validated: capability-cache-resolver-probe-cache-status
+
 mod common;
 
 use assert_cmd::Command;
@@ -144,6 +146,34 @@ fn resolve_reads_prepopulated_probe_cache_hit() {
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("hit"));
+}
+
+#[test]
+#[serial]
+fn resolve_reports_stale_probe_cache_status_when_reusing_stale_cache() {
+    let temp = TempDir::new().unwrap();
+    let project_root = temp.path().join("project");
+    let cache_dir = temp.path().join("mars-cache");
+    let bin_dir = install_fake_opencode(&temp);
+    setup_project(&project_root);
+    write_probe_cache(&cache_dir, &probe_cache_json(1));
+
+    let output = mars_cmd()
+        .arg("--root")
+        .arg(&project_root)
+        .args(["--json", "models", "resolve", "fast"])
+        .env("MARS_CACHE_DIR", &cache_dir)
+        .env("MARS_PROBE_CACHE_TTL_SECS", "60")
+        .env("PATH", prepend_path(&bin_dir))
+        .env_remove("MARS_OFFLINE")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
 }
 
 #[test]

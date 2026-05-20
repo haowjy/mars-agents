@@ -1,4 +1,4 @@
-use super::common::setup_bundle_project;
+use super::common::{install_fake_harnesses, replace_path_with, setup_bundle_project};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
@@ -54,6 +54,7 @@ Review code changes."#;
 pub(crate) fn build_launch_bundle_harness_override_execution_policy_applies_before_profile_and_alias()
  {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: modelalias
@@ -93,6 +94,7 @@ autocompact_pct = 55"#;
         "--approval",
         "yolo",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

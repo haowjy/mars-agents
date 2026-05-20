@@ -46,7 +46,7 @@ pub const WELL_KNOWN: &[&str] = &[".agents"];
 
 /// Tool-specific directories that commonly need linking.
 /// `mars link` warns if the target isn't in TOOL_DIRS or WELL_KNOWN.
-pub const TOOL_DIRS: &[&str] = &[".claude", ".cursor"];
+pub const TOOL_DIRS: &[&str] = &[".claude", ".codex", ".opencode", ".cursor", ".pi"];
 
 impl MarsContext {
     /// Build context from project root (directory containing mars.toml).
@@ -70,6 +70,8 @@ impl MarsContext {
         };
         let managed_canon = if managed_root.exists() {
             dunce::canonicalize(&managed_root).unwrap_or(managed_root.clone())
+        } else if let Ok(relative_managed) = managed_root.strip_prefix(&project_root) {
+            project_canon.join(relative_managed)
         } else {
             managed_root.clone()
         };
@@ -226,6 +228,10 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                             .unwrap_or_else(|| initialized.project_root.join(".mars")),
                     )?
                 }
+                Err(err) if can_run_without_project(cmd, &err) => {
+                    let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
+                    MarsContext::from_roots(project_root.clone(), project_root.join(".mars"))?
+                }
                 Err(err) => return Err(err),
             };
             dispatch_with_root(cmd, &ctx, cli.json)
@@ -239,6 +245,22 @@ fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
             err,
             MarsError::Config(ConfigError::ProjectRootNotFound { .. })
         )
+}
+
+fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
+    matches!(
+        (cmd, err),
+        (
+            Command::Build(build::BuildArgs {
+                command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
+                    agent: None,
+                    model: Some(_),
+                    ..
+                })
+            }),
+            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
+        )
+    )
 }
 
 fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -279,14 +301,16 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
     // 1. Check explicit settings in mars.toml.
     match crate::config::load(project_root) {
         Ok(config) => {
-            if let Some(name) = &config.settings.managed_root {
+            if config.settings.managed_root.is_some()
+                && let Some(name) = config.settings.managed_targets().first()
+            {
                 return Ok(project_root.join(name));
             }
             if config
                 .settings
-                .targets
-                .as_ref()
-                .is_some_and(|targets| targets.iter().any(|target| target == WELL_KNOWN[0]))
+                .managed_targets()
+                .iter()
+                .any(|target| target == WELL_KNOWN[0])
             {
                 return Ok(project_root.join(WELL_KNOWN[0]));
             }

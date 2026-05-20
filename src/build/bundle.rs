@@ -7,7 +7,7 @@ pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchBundle {
     pub version: u32,
-    pub agent: String,
+    pub agent: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
     pub prompt_surface: PromptSurface,
@@ -23,9 +23,16 @@ pub struct Routing {
     pub model: String,
     pub model_token: String,
     pub harness: String,
+    pub route_confidence: String,
     pub harness_model: String,
     pub harness_model_source: String,
     pub harness_model_confidence: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CodexRule {
+    pub name: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +45,8 @@ pub struct ExecutionPolicy {
     pub timeout: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_rules: Option<Vec<CodexRule>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

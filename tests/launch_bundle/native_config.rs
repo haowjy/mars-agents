@@ -1,4 +1,6 @@
-use super::common::{assert_prompt_surface_excludes, setup_bundle_project};
+use super::common::{
+    assert_prompt_surface_excludes, install_fake_harnesses, replace_path_with, setup_bundle_project,
+};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
@@ -6,6 +8,7 @@ use serde_json::Value;
 pub(crate) fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt_clean()
 {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -29,6 +32,7 @@ Review code changes."#;
         "--harness",
         "codex",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -62,6 +66,7 @@ Review code changes."#;
 
 pub(crate) fn build_launch_bundle_invalid_native_config_shape_fails_with_diagnostic() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -83,6 +88,7 @@ Review code changes."#;
         "--harness",
         "codex",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     cmd.assert()
         .failure()

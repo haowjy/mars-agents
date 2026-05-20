@@ -2,6 +2,8 @@ use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use httpmock::prelude::*;
 use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::test_common::{API_PATH, create_source, mars_cmd, sample_catalog_json};
 
@@ -92,4 +94,41 @@ pub fn assert_prompt_surface_excludes(bundle: &Value, needles: &[&str]) {
             );
         }
     }
+}
+
+pub fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
+    let bin_dir = temp_root.join("harness-bin-common");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    for harness in harnesses {
+        #[cfg(windows)]
+        {
+            let script = if *harness == "pi" {
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else {
+                "@echo off\r\nexit /b 0\r\n"
+            };
+            fs::write(bin_dir.join(format!("{harness}.bat")), script).unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = bin_dir.join(harness);
+            let script = if *harness == "pi" {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            };
+            fs::write(&path, script).unwrap();
+            let mut perms = fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(path, perms).unwrap();
+        }
+    }
+
+    bin_dir
+}
+
+pub fn replace_path_with(bin_dir: &Path) -> String {
+    bin_dir.to_string_lossy().into_owned()
 }

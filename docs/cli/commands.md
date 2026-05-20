@@ -510,3 +510,85 @@ Remove cached source trees (archives + git clones).
 
 - Removes cache contents while preserving the cache directory structure.
 - Prints reclaimed bytes (total, archives, git) and supports `--json`.
+
+---
+
+## `mars build`
+
+Build artifacts from static project state.
+
+```bash
+mars build <launch-bundle> ...
+```
+
+### `mars build launch-bundle`
+
+Build a harness-targeted launch bundle — a JSON artifact containing routing, execution policy, prompt surface, and tooling metadata for spawning an agent.
+
+```bash
+mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
+```
+
+**Two modes:**
+
+**Ad-hoc mode** (no `--agent`):
+- Requires `--model <token>`
+- Does **not** require a `mars.toml` project — runs from any plain directory
+- Uses no agent profile; routing is driven by `--model` and the installed harness environment
+
+**Agent/profile mode** (`--agent <name>`):
+- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
+- Requires a project with `mars sync` already run
+- Inherits all profile fields (model, harness, effort, approval, skills, tools)
+
+| Flag | Description |
+|---|---|
+| `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
+| `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
+| `--effort <level>` | Override effort: `low`, `medium`, `high`, `xhigh`. |
+| `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `yolo`. |
+| `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
+| `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
+
+**Output JSON structure:**
+
+```jsonc
+{
+  "agent": "agent-name-or-null",
+  "routing": {
+    "model": "...",
+    "harness": "...",
+    "route_confidence": "confirmed|likely|passthrough|explicit",
+    "harness_model": "...",
+    "harness_model_source": "provider-match|cached-probe|passthrough|synthesized",
+    "harness_model_confidence": "confirmed|likely|unknown"
+  },
+  "execution_policy": { "..." },
+  "prompt_surface": { "..." },
+  "tools": { "..." },
+  "skills_metadata": { "loaded": ["..."], "missing": ["..."] },
+  "provenance": {
+    "model_source": "...",
+    "harness_source": "...",
+    "candidates_tried": "..."
+  },
+  "warnings": ["..."]
+}
+```
+
+**Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: linked harness constraints exhausting auto-routing candidates, or Cursor experimental target.
+
+```bash
+# Ad-hoc: route gpt-5.4-mini from any directory
+mars build launch-bundle --model gpt-5.4-mini --json
+
+# Agent mode: build bundle for a synced agent
+mars build launch-bundle --agent my-agent --json
+
+# Override harness explicitly
+mars build launch-bundle --model gpt-5.4-mini --harness codex --json
+
+# Add extra skills
+mars build launch-bundle --agent my-agent --skill my-skill --json
+```

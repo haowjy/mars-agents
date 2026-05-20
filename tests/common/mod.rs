@@ -237,40 +237,38 @@ pub fn read_cache_raw(project_root: &Path) -> String {
 pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) {
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
-    let xdg_cache = temp_root.join("xdg-cache");
     let xdg_data = temp_root.join("xdg-data");
+    let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [&home, &xdg_config, &xdg_cache, &xdg_data] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
     cmd.env("MARS_MODELS_API_URL", api_url)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg_config)
-        .env("XDG_CACHE_HOME", &xdg_cache)
         .env("XDG_DATA_HOME", &xdg_data)
+        .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
-        .env_remove("MARS_CACHE_DIR")
         .env_remove("MARS_OFFLINE");
 }
 
 pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) {
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
-    let xdg_cache = temp_root.join("xdg-cache");
     let xdg_data = temp_root.join("xdg-data");
+    let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [&home, &xdg_config, &xdg_cache, &xdg_data] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
     cmd.env("MARS_MODELS_API_URL", api_url)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &xdg_config)
-        .env("XDG_CACHE_HOME", &xdg_cache)
         .env("XDG_DATA_HOME", &xdg_data)
+        .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
-        .env_remove("MARS_CACHE_DIR")
         .env_remove("MARS_OFFLINE");
 }
 

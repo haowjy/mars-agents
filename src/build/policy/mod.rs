@@ -130,13 +130,10 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         model: resolved_model.model,
         model_token: resolved_model.model_token,
         harness: harness_resolution.harness,
-        harness_source: harness_resolution.source,
         route_confidence: harness_resolution.route_confidence.label().to_string(),
         provider: resolved_model.provider.as_deref(),
         opencode_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
-        alias_exists: resolved_model.alias.is_some(),
-        cache: &cache,
     });
 
     warnings.extend(routing_resolution.warnings);

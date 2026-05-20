@@ -457,6 +457,7 @@ model = "gpt-5.4-mini"
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "fast"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", temp.path().join("pi-probe-cache"));
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =

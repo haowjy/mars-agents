@@ -1,10 +1,13 @@
-use super::common::{assert_prompt_surface_excludes, setup_bundle_project};
+use super::common::{
+    assert_prompt_surface_excludes, install_fake_harnesses, replace_path_with, setup_bundle_project,
+};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
 pub(crate) fn build_launch_bundle_accepts_cursor_harness_flag_and_marks_experimental() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -23,6 +26,7 @@ Review code changes."#;
         "--harness",
         "cursor",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -43,6 +47,7 @@ Review code changes."#;
 
 pub(crate) fn build_launch_bundle_accepts_profile_cursor_harness() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -55,6 +60,7 @@ Review code changes."#;
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -72,10 +78,10 @@ Review code changes."#;
 
 pub(crate) fn build_launch_bundle_cursor_alias_uses_cursor_overrides_for_model_facing_policy() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
-harness: codex
 skills: [root_skill]
 tools:
   read: allow
@@ -131,6 +137,7 @@ harness = "cursor""#;
         "--model",
         "cursoralias",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

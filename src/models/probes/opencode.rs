@@ -125,20 +125,8 @@ fn run_command(cmd: &str, args: &[&str], timeout: Duration) -> Result<String, St
 }
 
 fn resolve_command(cmd: &str) -> PathBuf {
-    if let Ok(path) = which::which(cmd) {
-        return path;
-    }
-
-    #[cfg(windows)]
-    {
-        for ext in ["exe", "cmd", "bat"] {
-            if let Ok(path) = which::which(format!("{cmd}.{ext}")) {
-                return path;
-            }
-        }
-    }
-
-    PathBuf::from(cmd)
+    let resolver = crate::harness::host::PathExecutableResolver;
+    crate::harness::host::resolve_binary_path(cmd, &resolver).unwrap_or_else(|| cmd.into())
 }
 
 fn strip_ansi(s: &str) -> String {

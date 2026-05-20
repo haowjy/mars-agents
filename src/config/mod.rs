@@ -13,6 +13,8 @@ use crate::types::{
 };
 
 pub mod migrations;
+pub mod routing_settings;
+pub mod targets;
 
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -269,6 +271,10 @@ fn default_models_cache_ttl_hours() -> u32 {
 }
 
 impl Settings {
+    pub fn effective_links(&self) -> targets::EffectiveLinks {
+        targets::effective_links(self.targets.as_deref(), self.managed_root.as_ref())
+    }
+
     /// Returns the effective list of managed target directories.
     ///
     /// - If `targets` is explicitly set, returns those targets normalized through
@@ -277,18 +283,20 @@ impl Settings {
     /// - If neither is set, returns no target-sync targets; `.mars/` remains
     ///   the canonical compiled store.
     pub fn managed_targets(&self) -> Vec<String> {
-        if let Some(targets) = &self.targets {
-            return migrations::link::normalized_targets(targets.iter().map(String::as_str));
-        }
-        migrations::link::normalized_targets(self.managed_root.iter().map(String::as_str))
+        self.effective_links().managed_targets()
     }
 
     /// Returns known harness intents from configured links. Generic targets are ignored.
     pub fn linked_harnesses(&self) -> Vec<String> {
-        if let Some(targets) = &self.targets {
-            return migrations::link::linked_harnesses(targets.iter().map(String::as_str));
-        }
-        migrations::link::linked_harnesses(self.managed_root.iter().map(String::as_str))
+        self.effective_links()
+            .linked_harnesses()
+            .into_iter()
+            .map(|harness| harness.to_string())
+            .collect()
+    }
+
+    pub fn resolved_routing_settings(&self) -> routing_settings::ResolvedRoutingSettings {
+        routing_settings::resolve(self)
     }
 }
 

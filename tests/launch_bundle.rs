@@ -32,6 +32,16 @@ fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
 }
 
 #[test]
+fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
+    schema::build_launch_bundle_supports_ad_hoc_mode_with_model_override();
+}
+
+#[test]
+fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides() {
+    schema::build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides();
+}
+
+#[test]
 fn build_launch_bundle_rejects_prompt_file_flag() {
     schema::build_launch_bundle_rejects_prompt_file_flag();
 }
@@ -39,6 +49,11 @@ fn build_launch_bundle_rejects_prompt_file_flag() {
 #[test]
 fn build_launch_bundle_fails_when_no_model_available() {
     schema::build_launch_bundle_fails_when_no_model_available();
+}
+
+#[test]
+fn build_launch_bundle_ad_hoc_requires_model() {
+    schema::build_launch_bundle_ad_hoc_requires_model();
 }
 
 #[test]
@@ -226,6 +241,11 @@ fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection(
 #[test]
 fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
     routing::build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates();
+}
+
+#[test]
+fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
+    routing::build_launch_bundle_link_constraints_block_unrelated_default_fallbacks();
 }
 
 #[test]

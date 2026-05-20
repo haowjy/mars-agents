@@ -1,86 +1,28 @@
 //! Link normalization and legacy compatibility.
 //!
-//! This module is the migration boundary between historical path-form link
-//! entries (`.codex`) and canonical read-time intent (`harness = codex`,
-//! `target = .codex`). Normal resolver and sync code should consume the
-//! normalized outputs instead of checking legacy spellings directly.
-
-use std::collections::HashSet;
+//! Backward-compatible migration facade over live `config::targets`.
 
 /// Canonical read-time view of one `settings.targets` / `managed_root` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedLink {
-    /// Materialization directory to sync into.
     pub target: String,
-    /// Harness intent for known harness targets. Generic targets leave this unset.
     pub harness: Option<String>,
 }
 
-/// Normalize one configured link target.
-///
-/// Known harnesses accept both harness-name and legacy path-form spelling:
-/// `codex` and `.codex` both become `{ target: ".codex", harness: "codex" }`.
-/// Unknown simple names are generic materialization targets and are dot-prefixed
-/// for compatibility with historical target directories.
-///
-/// Values containing path separators are preserved as generic targets; CLI
-/// parsing rejects those for new writes, but read-time normalization should not
-/// reinterpret old hand-written path-like config.
 pub fn normalize_link(raw: &str) -> NormalizedLink {
-    let trimmed = raw.trim().trim_end_matches('/').trim_end_matches('\\');
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return NormalizedLink {
-            target: trimmed.to_string(),
-            harness: None,
-        };
-    }
-
-    let bare = trimmed.strip_prefix('.').unwrap_or(trimmed);
-    if let Some(harness) = crate::models::harness::normalize_harness_name(bare) {
-        return NormalizedLink {
-            target: format!(".{harness}"),
-            harness: Some(harness),
-        };
-    }
-
-    if bare.is_empty() {
-        return NormalizedLink {
-            target: trimmed.to_string(),
-            harness: None,
-        };
-    }
-
+    let link = crate::config::targets::normalize_link(raw);
     NormalizedLink {
-        target: format!(".{bare}"),
-        harness: None,
+        target: link.target,
+        harness: link.harness.map(|harness| harness.to_string()),
     }
 }
 
-/// Return canonical materialization target paths, de-duplicated in input order.
 pub fn normalized_targets<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut targets = Vec::new();
-    for link in links {
-        let target = normalize_link(link).target;
-        if seen.insert(target.clone()) {
-            targets.push(target);
-        }
-    }
-    targets
+    crate::config::targets::normalized_targets(links)
 }
 
-/// Return linked harness intents, de-duplicated in input order.
 pub fn linked_harnesses<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut harnesses = Vec::new();
-    for link in links {
-        if let Some(harness) = normalize_link(link).harness
-            && seen.insert(harness.clone())
-        {
-            harnesses.push(harness);
-        }
-    }
-    harnesses
+    crate::config::targets::linked_harnesses(links)
 }
 
 #[cfg(test)]
@@ -127,13 +69,6 @@ mod tests {
     fn dot_prefixes_unknown_bare_names_as_generic_targets() {
         assert_eq!(
             normalize_link("foo"),
-            NormalizedLink {
-                target: ".foo".to_string(),
-                harness: None,
-            }
-        );
-        assert_eq!(
-            normalize_link(".foo"),
             NormalizedLink {
                 target: ".foo".to_string(),
                 harness: None,

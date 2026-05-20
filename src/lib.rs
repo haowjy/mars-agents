@@ -9,6 +9,7 @@ pub mod discover;
 pub mod error;
 pub mod frontmatter;
 pub mod fs;
+pub mod harness;
 pub mod hash;
 pub mod local_source;
 pub mod lock;

@@ -7,7 +7,7 @@ pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchBundle {
     pub version: u32,
-    pub agent: String,
+    pub agent: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
     pub prompt_surface: PromptSurface,

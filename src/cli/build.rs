@@ -14,7 +14,7 @@ pub struct BuildArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum BuildCommand {
-    /// Build a harness-targeted launch scaffold/bundle for one agent.
+    /// Build a harness-targeted launch scaffold/bundle for an agent or ad-hoc launch.
     LaunchBundle(LaunchBundleArgs),
 }
 
@@ -99,8 +99,9 @@ impl SandboxArg {
 #[derive(Debug, clap::Args)]
 pub struct LaunchBundleArgs {
     /// Agent name from `.mars/agents/<name>.md`.
+    /// Omit for ad-hoc mode; then `--model` is required.
     #[arg(long)]
-    pub agent: String,
+    pub agent: Option<String>,
 
     /// Override model token or canonical model id.
     #[arg(long)]
@@ -134,6 +135,12 @@ pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Mars
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {
+    if args.agent.is_none() && args.model.is_none() {
+        return Err(MarsError::InvalidRequest {
+            message: "ad-hoc launch-bundle requires --model".to_string(),
+        });
+    }
+
     let bundle = build_launch_bundle(
         ctx,
         LaunchBundleRequest {

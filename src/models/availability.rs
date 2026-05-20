@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use super::probes::OpenCodeProbeResult;
+use super::probes::{OpenCodeProbeResult, PiProbeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +17,10 @@ pub enum AvailabilityStatus {
 pub enum AvailabilitySource {
     HarnessInstalled,
     UniversalHarness,
+    #[serde(rename = "pi_probe")]
+    PiProbe,
+    #[serde(rename = "pi_probe_negative")]
+    PiProbeNegative,
     #[serde(rename = "opencode_probe")]
     OpenCodeProbe,
     #[serde(rename = "opencode_probe_negative")]
@@ -399,13 +403,14 @@ pub fn classify_model(
     model_id: &str,
     provider: &str,
     installed: &HashSet<String>,
-    probe_result: Option<&OpenCodeProbeResult>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
     offline: bool,
 ) -> ModelAvailability {
     let mut statuses = Vec::new();
     let mut runnable_paths = Vec::new();
 
-    for harness in ["claude", "codex", "pi", "cursor"] {
+    for harness in ["claude", "codex", "cursor"] {
         let Some((status, source, path)) =
             classify_for_harness(harness, provider, model_id, installed, None)
         else {
@@ -417,10 +422,19 @@ pub fn classify_model(
         statuses.push((status, source));
     }
 
+    if let Some((status, source, path)) =
+        classify_pi_for_model(provider, model_id, installed, pi_probe_result, offline)
+    {
+        if let Some(path) = path {
+            runnable_paths.push(path);
+        }
+        statuses.push((status, source));
+    }
+
     if installed.contains("opencode") {
         if offline {
             statuses.push((AvailabilityStatus::Unknown, AvailabilitySource::Offline));
-        } else if let Some(result) = probe_result {
+        } else if let Some(result) = opencode_probe_result {
             if let Some((status, source, path)) =
                 classify_for_harness("opencode", provider, model_id, installed, Some(result))
             {
@@ -438,6 +452,41 @@ pub fn classify_model(
     }
 
     aggregate_statuses(statuses, runnable_paths)
+}
+
+fn classify_pi_for_model(
+    provider: &str,
+    model_id: &str,
+    installed: &HashSet<String>,
+    pi_probe_result: Option<&PiProbeResult>,
+    offline: bool,
+) -> Option<(AvailabilityStatus, AvailabilitySource, Option<RunnablePath>)> {
+    if !installed.contains("pi") {
+        return None;
+    }
+
+    if offline || pi_probe_result.is_none() {
+        return classify_universal_harness();
+    }
+
+    let pi_probe_result = pi_probe_result.expect("checked is_some above");
+    if pi_probe_result.compatible {
+        return Some((
+            AvailabilityStatus::Runnable,
+            AvailabilitySource::PiProbe,
+            Some(RunnablePath {
+                harness: "pi".to_string(),
+                mars_provider: provider.to_string(),
+                harness_model_id: model_id.to_string(),
+            }),
+        ));
+    }
+
+    Some((
+        AvailabilityStatus::Unavailable,
+        AvailabilitySource::PiProbeNegative,
+        None,
+    ))
 }
 
 fn aggregate_statuses(
@@ -622,6 +671,7 @@ mod tests {
             "Anthropic",
             &installed(&["claude", "codex"]),
             None,
+            None,
             false,
         );
         assert_eq!(result.status, AvailabilityStatus::Runnable);
@@ -632,7 +682,14 @@ mod tests {
 
     #[test]
     fn test_classify_multi_harness_all_unavailable() {
-        let result = classify_model("custom-model", "Unknown", &installed(&[]), None, false);
+        let result = classify_model(
+            "custom-model",
+            "Unknown",
+            &installed(&[]),
+            None,
+            None,
+            false,
+        );
         assert_eq!(result.status, AvailabilityStatus::Unavailable);
         assert_eq!(result.source, AvailabilitySource::NoHarness);
         assert!(result.runnable_paths.is_empty());
@@ -640,21 +697,108 @@ mod tests {
 
     #[test]
     fn test_classify_google_model_with_only_pi_installed_is_unknown_universal() {
-        let result = classify_model("gemini-2.5-pro", "Google", &installed(&["pi"]), None, false);
+        let result = classify_model(
+            "gemini-2.5-pro",
+            "Google",
+            &installed(&["pi"]),
+            None,
+            None,
+            false,
+        );
         assert_eq!(result.status, AvailabilityStatus::Unknown);
         assert_eq!(result.source, AvailabilitySource::UniversalHarness);
         assert!(result.runnable_paths.is_empty());
     }
 
     #[test]
+    fn test_classify_pi_probe_compatible_is_runnable() {
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            ..PiProbeResult::default()
+        };
+
+        let result = classify_model(
+            "gpt-5.4-mini",
+            "OpenAI",
+            &installed(&["pi"]),
+            None,
+            Some(&pi_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::PiProbe);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(result.runnable_paths[0].harness, "pi");
+        assert_eq!(result.runnable_paths[0].harness_model_id, "gpt-5.4-mini");
+    }
+
+    #[test]
+    fn test_classify_pi_probe_incompatible_is_unavailable_without_other_harnesses() {
+        let pi_probe = PiProbeResult {
+            compatible: false,
+            ..PiProbeResult::default()
+        };
+
+        let result = classify_model(
+            "gpt-5.4-mini",
+            "OpenAI",
+            &installed(&["pi"]),
+            None,
+            Some(&pi_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::PiProbeNegative);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_pi_probe_incompatible_yields_to_runnable_harness() {
+        let pi_probe = PiProbeResult {
+            compatible: false,
+            ..PiProbeResult::default()
+        };
+
+        let result = classify_model(
+            "gpt-5.4-mini",
+            "OpenAI",
+            &installed(&["pi", "codex"]),
+            None,
+            Some(&pi_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::HarnessInstalled);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(result.runnable_paths[0].harness, "codex");
+    }
+
+    #[test]
     fn test_classify_offline_mode() {
-        let result = classify_model("gpt-5.4", "OpenAI", &installed(&["codex"]), None, true);
+        let result = classify_model(
+            "gpt-5.4",
+            "OpenAI",
+            &installed(&["codex"]),
+            None,
+            None,
+            true,
+        );
         assert_eq!(result.status, AvailabilityStatus::Runnable);
         assert_eq!(result.source, AvailabilitySource::HarnessInstalled);
         assert_eq!(result.runnable_paths.len(), 1);
         assert_eq!(result.runnable_paths[0].harness, "codex");
 
-        let result = classify_model("gpt-5.4", "OpenAI", &installed(&["opencode"]), None, true);
+        let result = classify_model(
+            "gpt-5.4",
+            "OpenAI",
+            &installed(&["opencode"]),
+            None,
+            None,
+            true,
+        );
         assert_eq!(result.status, AvailabilityStatus::Unknown);
         assert_eq!(result.source, AvailabilitySource::Offline);
         assert!(result.runnable_paths.is_empty());
@@ -675,6 +819,7 @@ mod tests {
             "OpenAI",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -700,6 +845,7 @@ mod tests {
             "Anthropic",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -724,6 +870,7 @@ mod tests {
             "OpenAI",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -747,6 +894,7 @@ mod tests {
             "Anthropic",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -770,6 +918,7 @@ mod tests {
             "Anthropic",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -797,6 +946,7 @@ mod tests {
             "Anthropic",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -857,6 +1007,7 @@ mod tests {
             "OpenAI",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 
@@ -879,6 +1030,7 @@ mod tests {
             "unknown",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             false,
         );
 

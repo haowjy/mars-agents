@@ -49,35 +49,43 @@ pub enum HarnessKind {
 
 impl HarnessKind {
     pub fn all() -> &'static [Self] {
-        &[
-            Self::Claude,
-            Self::Codex,
-            Self::OpenCode,
-            Self::Cursor,
-            Self::Pi,
-        ]
+        const ALL: &[HarnessKind] = &[
+            HarnessKind::Claude,
+            HarnessKind::Codex,
+            HarnessKind::Pi,
+            HarnessKind::OpenCode,
+            HarnessKind::Cursor,
+        ];
+        ALL
     }
 
     /// Parse from a frontmatter string value.
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            "opencode" => Some(Self::OpenCode),
-            "cursor" => Some(Self::Cursor),
-            "pi" => Some(Self::Pi),
-            _ => None,
-        }
+        crate::harness::registry::parse(s).map(Self::from_harness_id)
     }
 
     /// Target directory root for harness-native artifacts.
     pub fn target_dir(&self) -> &str {
+        self.to_harness_id().default_target()
+    }
+
+    pub fn to_harness_id(&self) -> crate::harness::registry::HarnessId {
         match self {
-            Self::Claude => ".claude",
-            Self::Codex => ".codex",
-            Self::OpenCode => ".opencode",
-            Self::Cursor => ".cursor",
-            Self::Pi => ".pi",
+            Self::Claude => crate::harness::registry::HarnessId::Claude,
+            Self::Codex => crate::harness::registry::HarnessId::Codex,
+            Self::OpenCode => crate::harness::registry::HarnessId::OpenCode,
+            Self::Cursor => crate::harness::registry::HarnessId::Cursor,
+            Self::Pi => crate::harness::registry::HarnessId::Pi,
+        }
+    }
+
+    pub fn from_harness_id(id: crate::harness::registry::HarnessId) -> Self {
+        match id {
+            crate::harness::registry::HarnessId::Claude => Self::Claude,
+            crate::harness::registry::HarnessId::Codex => Self::Codex,
+            crate::harness::registry::HarnessId::Pi => Self::Pi,
+            crate::harness::registry::HarnessId::OpenCode => Self::OpenCode,
+            crate::harness::registry::HarnessId::Cursor => Self::Cursor,
         }
     }
 }

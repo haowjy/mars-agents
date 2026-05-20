@@ -11,11 +11,11 @@ use prompt::compile_prompt_surface;
 use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_tool_for_harness};
 
 use crate::cli::MarsContext;
-use crate::compiler::agents::{HarnessKind, parse_agent_content};
+use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
 use crate::error::{ConfigError, MarsError};
 
 pub struct LaunchBundleRequest {
-    pub agent: String,
+    pub agent: Option<String>,
     pub model: Option<String>,
     pub harness: Option<String>,
     pub effort: Option<String>,
@@ -28,40 +28,51 @@ pub fn build_launch_bundle(
     ctx: &MarsContext,
     request: LaunchBundleRequest,
 ) -> Result<LaunchBundle, MarsError> {
-    let agent_path = agent_file_path(&ctx.project_root, &request.agent);
-    let agent_content = std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
-        operation: "read launch bundle agent".to_string(),
-        path: agent_path.clone(),
-        source,
-    })?;
+    let mut warnings: Vec<String> = Vec::new();
+    let profile: AgentProfile;
+    let body: String;
 
-    let mut parse_diags = Vec::new();
-    let (profile, frontmatter) =
-        parse_agent_content(&agent_content, &mut parse_diags).map_err(|err| {
+    if let Some(agent) = request.agent.as_deref() {
+        let agent_path = agent_file_path(&ctx.project_root, agent);
+        let agent_content =
+            std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
+                operation: "read launch bundle agent".to_string(),
+                path: agent_path.clone(),
+                source,
+            })?;
+
+        let mut parse_diags = Vec::new();
+        let (parsed_profile, frontmatter) = parse_agent_content(&agent_content, &mut parse_diags)
+            .map_err(|err| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!(
-                    "failed to parse agent `{}` from {}: {err}",
-                    request.agent,
+                    "failed to parse agent `{agent}` from {}: {err}",
                     agent_path.display()
                 ),
             })
         })?;
 
-    if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
-        return Err(MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "agent `{}` has invalid frontmatter in {}: {}",
-                request.agent,
-                agent_path.display(),
-                fatal.message()
-            ),
-        }));
-    }
+        if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
+            return Err(MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "agent `{agent}` has invalid frontmatter in {}: {}",
+                    agent_path.display(),
+                    fatal.message()
+                ),
+            }));
+        }
 
-    let mut warnings: Vec<String> = parse_diags
-        .iter()
-        .map(|diag| format!("agent `{}`: {}", request.agent, diag.message()))
-        .collect();
+        warnings.extend(
+            parse_diags
+                .iter()
+                .map(|diag| format!("agent `{agent}`: {}", diag.message())),
+        );
+        body = frontmatter.body().to_string();
+        profile = parsed_profile;
+    } else {
+        profile = empty_agent_profile();
+        body = String::new();
+    }
 
     let policy = resolve_policy(PolicyInput {
         project_root: &ctx.project_root,
@@ -80,7 +91,7 @@ pub fn build_launch_bundle(
 
     let prompt = compile_prompt_surface(
         &mars_dir,
-        frontmatter.body(),
+        &body,
         &effective_skills,
         &request.extra_skills,
         &policy.routing.harness,
@@ -111,6 +122,30 @@ pub fn build_launch_bundle(
         provenance: policy.provenance,
         warnings,
     })
+}
+
+fn empty_agent_profile() -> AgentProfile {
+    AgentProfile {
+        name: None,
+        description: None,
+        harness: None,
+        model: None,
+        mode: None,
+        model_invocable: true,
+        approval: None,
+        sandbox: None,
+        effort: None,
+        autocompact: None,
+        autocompact_pct: None,
+        skills: Vec::new(),
+        tools: Vec::new(),
+        tools_denied: Vec::new(),
+        disallowed_tools: Vec::new(),
+        mcp_tools: Vec::new(),
+        harness_overrides: Default::default(),
+        model_policies: Vec::new(),
+        fanout: Vec::new(),
+    }
 }
 
 fn agent_file_path(project_root: &std::path::Path, agent: &str) -> PathBuf {

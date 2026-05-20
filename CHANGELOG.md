@@ -5,9 +5,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- `mars build launch-bundle` now supports ad-hoc mode without `--agent`; requires `--model`, emits `agent: null`, and keeps profile tools/skills empty unless explicit `--skill` args are passed.
+- Added canonical harness registry + host capability wrappers so harness names/targets/provider order/auth probe wiring come from one boundary.
+- Added Pi probe/cache (`availability/pi.json`, 60s TTL, hidden `models __refresh-probe --target pi`) and wired routing to mark compatible Pi as `confirmed`, skip incompatible Pi, and keep passthrough when probe evidence is absent.
+- Added live config boundaries (`config::targets`, `config::routing_settings`); legacy link migration now delegates to live target normalization.
 - Removed `gemini` as a launch harness surface. Builtin `gemini` model alias stays valid.
 - Model-alias `harness` values now validate against real launch harnesses.
-- Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; `pi` and `cursor` availability classify as `Unknown` / `UniversalHarness`.
+- Model candidate ordering now falls back through `pi` → `opencode` → `cursor`; compatible Pi now reports runnable via Pi probe, incompatible Pi reports unavailable, and Cursor stays `Unknown` / `UniversalHarness` passthrough.
 - Launch-bundle routing now emits `routing.route_confidence` plus provenance `route_confidence` / `candidates_tried`; execution policy schema now reserves optional `codex_rules` artifacts.
 - Final routing gates now use provider/settings gate checks (not installed-only fallback), require auth evidence for native Codex/Claude provider matches, and fall through on stale/negative OpenCode cache evidence.
 - Final resolver alignment: `mars models list`/`resolve` now share one evidence-aware harness resolver; invalid alias-harness writes fail fast; mixed-case harness names normalize; unknown/third-party models now fall back `opencode` before `cursor` when `pi` is absent.

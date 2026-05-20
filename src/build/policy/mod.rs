@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::error::MarsError;
+use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
 
 mod config;
 mod execution;
@@ -42,12 +43,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         resolved_model.model_source.clone(),
     );
 
-    let installed_harnesses = crate::models::harness::detect_installed_harnesses();
-    let opencode_probe_outcome = crate::models::probes::opencode_cache::probe_cached(
-        &installed_harnesses,
-        crate::models::is_mars_offline(),
-    );
-    let opencode_probe_result = opencode_probe_outcome.result();
+    let capability_snapshot = collect_capability_snapshot(&CapabilityCollectionOptions {
+        offline: crate::models::is_mars_offline(),
+        allow_probe_refresh: true,
+    });
+    let installed_harnesses = capability_snapshot.installed_harnesses();
+    let opencode_probe_result = capability_snapshot.opencode.result();
+    let pi_probe_result = capability_snapshot.pi.result();
 
     let harness_resolution = harness::resolve_harness(
         &input,
@@ -61,6 +63,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             linked_harnesses: (!resolution_config.linked_harnesses.is_empty())
                 .then_some(resolution_config.linked_harnesses.as_slice()),
             opencode_probe_result,
+            pi_probe_result,
         },
     )?;
 

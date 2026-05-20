@@ -2,142 +2,52 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
 
-use wait_timeout::ChildExt;
-
-const HARNESS_BINARIES: &[(&str, &str)] = &[
-    ("claude", "claude"),
-    ("codex", "codex"),
-    ("opencode", "opencode"),
-    ("cursor", "cursor"),
-    ("pi", "pi"),
-];
-
-const ORDERABLE_HARNESSES: &[&str] = &["claude", "codex", "opencode", "cursor", "pi"];
+use crate::harness::host::{
+    ExecutableResolver, ExecutableState, PathExecutableResolver,
+    native_harness_authenticated as host_native_authed, resolve_binary_path,
+};
+use crate::harness::registry::{self, HarnessId};
 
 pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "opencode", "cursor"];
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
-    HARNESS_BINARIES
+    let resolver = PathExecutableResolver;
+    registry::all()
         .iter()
-        .filter(|(_, binary)| harness_binary_exists(binary))
-        .map(|(name, _)| name.to_string())
+        .copied()
+        .filter(|id| {
+            matches!(
+                resolver.resolve(registry::descriptor(*id).binary),
+                ExecutableState::Found { .. }
+            )
+        })
+        .map(|id| id.as_str().to_string())
         .collect()
 }
 
-fn harness_binary_exists(binary: &str) -> bool {
-    if which::which(binary).is_ok() {
-        return true;
-    }
-
-    #[cfg(windows)]
-    {
-        ["exe", "cmd", "bat"]
-            .iter()
-            .any(|ext| which::which(format!("{binary}.{ext}")).is_ok())
-    }
-
-    #[cfg(not(windows))]
-    {
-        false
-    }
-}
-
-const PROVIDER_HARNESS_PREFERENCES: &[(&str, &[&str])] = &[
-    ("anthropic", &["claude", "pi", "opencode", "cursor"]),
-    ("openai", &["codex", "pi", "opencode", "cursor"]),
-    ("google", &["pi", "opencode", "cursor"]),
-    ("meta", &["pi", "opencode", "cursor"]),
-    ("mistral", &["pi", "opencode", "cursor"]),
-    ("deepseek", &["pi", "opencode", "cursor"]),
-    ("cohere", &["pi", "opencode", "cursor"]),
-];
-
-const DEFAULT_FALLBACK_ORDER: &[&str] = &["pi", "opencode", "cursor"];
-
 pub fn is_valid_harness(name: &str) -> bool {
-    normalize_harness_name(name).is_some()
+    registry::is_known(name)
 }
 
 pub fn normalize_harness_name(name: &str) -> Option<String> {
-    let normalized = name.trim().to_ascii_lowercase();
-    VALID_HARNESSES
-        .contains(&normalized.as_str())
-        .then_some(normalized)
-}
-
-fn harness_preferences(provider: &str) -> &'static [&'static str] {
-    let provider_lower = provider.to_ascii_lowercase();
-    PROVIDER_HARNESS_PREFERENCES
-        .iter()
-        .find(|(p, _)| *p == provider_lower)
-        .map(|(_, prefs)| *prefs)
-        .unwrap_or(DEFAULT_FALLBACK_ORDER)
+    registry::normalize_name(name)
 }
 
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
-    harness_preferences(provider)
-        .iter()
-        .map(|h| h.to_string())
+    registry::provider_candidate_order(provider)
+        .into_iter()
+        .map(|id| id.as_str().to_string())
         .collect()
 }
 
 pub fn native_harness_authenticated(harness: &str) -> bool {
-    match harness {
-        "codex" => run_auth_status_command("codex", &["login", "status"]),
-        "claude" => run_auth_status_command("claude", &["auth", "status"]),
-        _ => false,
-    }
-}
-
-pub fn run_auth_status_command(command: &str, args: &[&str]) -> bool {
-    let mut child = match Command::new(resolve_command(command))
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return false,
-    };
-
-    match child.wait_timeout(auth_probe_timeout()) {
-        Ok(Some(status)) => status.success(),
-        Ok(None) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            false
-        }
-        Err(_) => false,
-    }
-}
-
-pub fn auth_probe_timeout() -> Duration {
-    std::env::var("MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(2))
+    host_native_authed(harness)
 }
 
 pub fn resolve_command(command: &str) -> PathBuf {
-    if let Ok(path) = which::which(command) {
-        return path;
-    }
-
-    #[cfg(windows)]
-    {
-        for ext in ["exe", "cmd", "bat"] {
-            if let Ok(path) = which::which(format!("{command}.{ext}")) {
-                return path;
-            }
-        }
-    }
-
-    PathBuf::from(command)
+    let resolver = PathExecutableResolver;
+    resolve_binary_path(command, &resolver).unwrap_or_else(|| PathBuf::from(command))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,17 +77,11 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
         let Some(normalized) = normalize_harness_name(candidate) else {
             warnings.push(format!(
                 "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                ORDERABLE_HARNESSES.join(", ")
+                VALID_HARNESSES.join(", ")
             ));
             continue;
         };
-        if !ORDERABLE_HARNESSES.contains(&normalized.as_str()) {
-            warnings.push(format!(
-                "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                ORDERABLE_HARNESSES.join(", ")
-            ));
-            continue;
-        }
+
         valid_candidates.push(normalized);
     }
 
@@ -186,6 +90,10 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
         warnings,
         failure: None,
     }
+}
+
+pub fn parse_harness_id(name: &str) -> Option<HarnessId> {
+    registry::parse(name)
 }
 
 #[cfg(test)]

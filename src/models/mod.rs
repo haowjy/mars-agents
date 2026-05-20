@@ -853,7 +853,7 @@ pub fn resolve_with_alias_prefix(
     cache: &ModelsCache,
 ) -> Option<ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_with_alias_prefix_with_probe(input, aliases, cache, opencode_probe.as_ref())
+    resolve_with_alias_prefix_with_probe(input, aliases, cache, opencode_probe.as_ref(), None)
 }
 
 pub fn resolve_with_alias_prefix_with_probe(
@@ -861,6 +861,7 @@ pub fn resolve_with_alias_prefix_with_probe(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
+    pi_probe: Option<&probes::PiProbeResult>,
 ) -> Option<ResolvedAlias> {
     let pattern = if input.contains('*') {
         input.to_string()
@@ -971,6 +972,7 @@ pub fn resolve_with_alias_prefix_with_probe(
         installed_harnesses: &installed,
         linked_harnesses: None,
         opencode_probe_result: opencode_probe,
+        pi_probe_result: pi_probe,
     });
     let (harness, harness_source) = if installed.contains(&trace.harness) {
         (Some(trace.harness), HarnessSource::AutoDetected)
@@ -1289,7 +1291,7 @@ pub fn resolve_all(
     diag: &mut DiagnosticCollector,
 ) -> IndexMap<String, ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_all_with_probe(aliases, cache, diag, opencode_probe.as_ref())
+    resolve_all_with_probe(aliases, cache, diag, opencode_probe.as_ref(), None)
 }
 
 pub fn resolve_all_with_probe(
@@ -1297,6 +1299,7 @@ pub fn resolve_all_with_probe(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
+    pi_probe: Option<&probes::PiProbeResult>,
 ) -> IndexMap<String, ResolvedAlias> {
     let _ = diag;
     let installed = harness::detect_installed_harnesses();
@@ -1308,7 +1311,14 @@ pub fn resolve_all_with_probe(
         };
 
         let candidates = harness::harness_candidates_for_provider(&provider);
-        let (h, source) = resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
+        let (h, source) = resolve_harness(
+            alias,
+            &provider,
+            &model_id,
+            &installed,
+            opencode_probe,
+            pi_probe,
+        );
 
         resolved.insert(
             name.clone(),
@@ -1339,7 +1349,7 @@ pub fn resolve_one(
     diag: &mut DiagnosticCollector,
 ) -> Option<ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_one_with_probe(name, aliases, cache, diag, opencode_probe.as_ref())
+    resolve_one_with_probe(name, aliases, cache, diag, opencode_probe.as_ref(), None)
 }
 
 pub fn resolve_one_with_probe(
@@ -1348,13 +1358,20 @@ pub fn resolve_one_with_probe(
     cache: &ModelsCache,
     diag: &mut DiagnosticCollector,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
+    pi_probe: Option<&probes::PiProbeResult>,
 ) -> Option<ResolvedAlias> {
     let alias = aliases.get(name)?;
     let installed = harness::detect_installed_harnesses();
     let (model_id, provider) = resolve_model_and_provider(alias, cache)?;
     let candidates = harness::harness_candidates_for_provider(&provider);
-    let (harness, harness_source) =
-        resolve_harness(alias, &provider, &model_id, &installed, opencode_probe);
+    let (harness, harness_source) = resolve_harness(
+        alias,
+        &provider,
+        &model_id,
+        &installed,
+        opencode_probe,
+        pi_probe,
+    );
     let _ = diag;
     Some(ResolvedAlias {
         name: name.to_string(),
@@ -1516,6 +1533,7 @@ fn resolve_harness(
     model_id: &str,
     installed: &HashSet<String>,
     opencode_probe_result: Option<&probes::OpenCodeProbeResult>,
+    pi_probe_result: Option<&probes::PiProbeResult>,
 ) -> (Option<String>, HarnessSource) {
     if let Some(h) = &alias.harness {
         if installed.contains(h) {
@@ -1532,6 +1550,7 @@ fn resolve_harness(
             installed_harnesses: installed,
             linked_harnesses: None,
             opencode_probe_result,
+            pi_probe_result,
         });
         if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -1937,6 +1956,7 @@ mod tests {
             installed_harnesses: &installed,
             linked_harnesses: None,
             opencode_probe_result: None,
+            pi_probe_result: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2510,6 +2530,7 @@ mod tests {
             installed_harnesses: &installed,
             linked_harnesses: None,
             opencode_probe_result: None,
+            pi_probe_result: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2918,7 +2939,14 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
+        let resolved = resolve_harness(
+            &alias,
+            "anthropic",
+            "claude-opus-4-6",
+            &installed,
+            None,
+            None,
+        );
         assert_eq!(
             resolved,
             (Some("claude".to_string()), HarnessSource::Explicit)
@@ -2940,7 +2968,14 @@ mod tests {
         };
         let installed = HashSet::new();
 
-        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
+        let resolved = resolve_harness(
+            &alias,
+            "anthropic",
+            "claude-opus-4-6",
+            &installed,
+            None,
+            None,
+        );
         assert_eq!(
             resolved,
             (Some("claude".to_string()), HarnessSource::Unavailable)
@@ -2962,7 +2997,14 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
+        let resolved = resolve_harness(
+            &alias,
+            "anthropic",
+            "claude-opus-4-6",
+            &installed,
+            None,
+            None,
+        );
         assert!(
             matches!(
                 resolved,
@@ -2987,7 +3029,14 @@ mod tests {
         };
         let installed = HashSet::new();
 
-        let resolved = resolve_harness(&alias, "anthropic", "claude-opus-4-6", &installed, None);
+        let resolved = resolve_harness(
+            &alias,
+            "anthropic",
+            "claude-opus-4-6",
+            &installed,
+            None,
+            None,
+        );
         assert_eq!(resolved, (None, HarnessSource::Unavailable));
     }
 
@@ -3006,7 +3055,8 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
 
-        let resolved = resolve_harness(&alias, "unknown", "my-custom-model", &installed, None);
+        let resolved =
+            resolve_harness(&alias, "unknown", "my-custom-model", &installed, None, None);
         assert_eq!(
             resolved,
             (Some("claude".to_string()), HarnessSource::AutoDetected)

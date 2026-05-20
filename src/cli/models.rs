@@ -7,9 +7,14 @@ use std::collections::HashSet;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
+use crate::harness::host::{
+    CapabilityCollectionOptions, CapabilitySnapshot, collect_capability_snapshot,
+};
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::OpenCodeProbeResult;
+use crate::models::probes::PiProbeResult;
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
+use crate::models::probes::pi_cache;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
@@ -99,6 +104,14 @@ fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
     ctx.project_root.join(".mars")
 }
 
+fn collect_models_capability_snapshot(no_refresh_models: bool) -> CapabilitySnapshot {
+    let offline = models::is_mars_offline() || no_refresh_models;
+    collect_capability_snapshot(&CapabilityCollectionOptions {
+        offline,
+        allow_probe_refresh: !no_refresh_models,
+    })
+}
+
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
     let ttl = models::load_models_cache_ttl(ctx);
@@ -147,23 +160,32 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let Some((cache, outcome)) = ensure_fresh_or_json_error(&mars, ttl, mode, json)? else {
         return Ok(1);
     };
+    let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
 
     if args.catalog {
-        return run_list_catalog(&cache, &outcome, ctx, args, &routing_settings, json);
+        return run_list_catalog(
+            &cache,
+            &outcome,
+            ctx,
+            args,
+            &routing_settings,
+            &capability_snapshot,
+            json,
+        );
     }
 
     // Load config to get consumer models + trigger merge
     let merged = load_merged_aliases(ctx)?;
-    let installed = models::harness::detect_installed_harnesses();
-    let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
-    let probe_result = cache_outcome.result().cloned();
+    let installed = capability_snapshot.installed_harnesses();
+    let is_offline = capability_snapshot.offline;
+    let opencode_probe_result = capability_snapshot.opencode.result().cloned();
+    let pi_probe_result = capability_snapshot.pi.result().cloned();
     let visibility = effective_visibility(ctx, args);
     if args.all {
         let availability_ctx = AvailabilityContext {
             installed: &installed,
-            harness_probe_result: probe_result.as_ref(),
-            probe_result: probe_result.as_ref(),
+            opencode_probe_result: opencode_probe_result.as_ref(),
+            pi_probe_result: pi_probe_result.as_ref(),
             is_offline,
             routing_settings: &routing_settings,
         };
@@ -180,9 +202,28 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let cache_warning = cache_warning(&outcome);
     let mut diag = DiagnosticCollector::new();
 
-    let mut resolved =
-        models::resolve_all_with_probe(&merged, &cache, &mut diag, probe_result.as_ref());
-    annotate_resolved_availability(&mut resolved, &installed, probe_result.as_ref(), is_offline);
+    let mut resolved = models::resolve_all_with_probe(
+        &merged,
+        &cache,
+        &mut diag,
+        opencode_probe_result.as_ref(),
+        pi_probe_result.as_ref(),
+    );
+    apply_routing_settings_to_resolved_aliases(
+        &mut resolved,
+        &merged,
+        &installed,
+        opencode_probe_result.as_ref(),
+        pi_probe_result.as_ref(),
+        &routing_settings,
+    );
+    annotate_resolved_availability(
+        &mut resolved,
+        &installed,
+        opencode_probe_result.as_ref(),
+        pi_probe_result.as_ref(),
+        is_offline,
+    );
     if !args.unavailable {
         prune_unavailable(&mut resolved);
     }
@@ -229,7 +270,11 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             "aliases": entries,
             "cache_available": cache.fetched_at.is_some(),
         });
-        add_probe_results_json(&mut out, probe_result.as_ref());
+        add_probe_results_json(
+            &mut out,
+            opencode_probe_result.as_ref(),
+            pi_probe_result.as_ref(),
+        );
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
@@ -283,8 +328,8 @@ struct ListModelEntry {
 #[derive(Clone, Copy)]
 struct AvailabilityContext<'a> {
     installed: &'a HashSet<String>,
-    harness_probe_result: Option<&'a OpenCodeProbeResult>,
-    probe_result: Option<&'a OpenCodeProbeResult>,
+    opencode_probe_result: Option<&'a OpenCodeProbeResult>,
+    pi_probe_result: Option<&'a PiProbeResult>,
     is_offline: bool,
     routing_settings: &'a RoutingSettings,
 }
@@ -294,6 +339,8 @@ struct ResolveRuntime<'a> {
     outcome: &'a models::RefreshOutcome,
     installed: &'a HashSet<String>,
     probe_outcome: CachedProbeOutcome,
+    pi_probe_result: Option<&'a PiProbeResult>,
+    routing_settings: &'a RoutingSettings,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -342,7 +389,11 @@ fn run_list_all(
             "models": entries,
             "cache_available": cache.fetched_at.is_some(),
         });
-        add_probe_results_json(&mut out, availability_ctx.probe_result);
+        add_probe_results_json(
+            &mut out,
+            availability_ctx.opencode_probe_result,
+            availability_ctx.pi_probe_result,
+        );
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
@@ -380,17 +431,18 @@ fn run_list_catalog(
     ctx: &MarsContext,
     args: &ListArgs,
     routing_settings: &RoutingSettings,
+    capability_snapshot: &CapabilitySnapshot,
     json: bool,
 ) -> Result<i32, MarsError> {
     let cache_warning = cache_warning(outcome);
-    let installed = models::harness::detect_installed_harnesses();
-    let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
-    let probe_result = cache_outcome.result().cloned();
+    let installed = capability_snapshot.installed_harnesses();
+    let is_offline = capability_snapshot.offline || args.no_refresh_models;
+    let probe_result = capability_snapshot.opencode.result().cloned();
+    let pi_probe_result = capability_snapshot.pi.result().cloned();
     let availability_ctx = AvailabilityContext {
         installed: &installed,
-        harness_probe_result: probe_result.as_ref(),
-        probe_result: probe_result.as_ref(),
+        opencode_probe_result: probe_result.as_ref(),
+        pi_probe_result: pi_probe_result.as_ref(),
         is_offline,
         routing_settings,
     };
@@ -424,7 +476,7 @@ fn run_list_catalog(
             "models": entries,
             "cache_available": cache.fetched_at.is_some(),
         });
-        add_probe_results_json(&mut out, probe_result.as_ref());
+        add_probe_results_json(&mut out, probe_result.as_ref(), pi_probe_result.as_ref());
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
@@ -595,7 +647,8 @@ fn model_entry_for_cached(
         &model.provider,
         &model.id,
         availability_ctx.installed,
-        availability_ctx.harness_probe_result,
+        availability_ctx.opencode_probe_result,
+        availability_ctx.pi_probe_result,
         availability_ctx.routing_settings,
     );
 
@@ -617,7 +670,8 @@ fn model_entry_for_cached(
             &model.id,
             &model.provider,
             availability_ctx.installed,
-            availability_ctx.probe_result,
+            availability_ctx.opencode_probe_result,
+            availability_ctx.pi_probe_result,
             availability_ctx.is_offline,
         )),
     }
@@ -637,7 +691,8 @@ fn model_entry_for_pinned(
         &provider,
         model_id,
         availability_ctx.installed,
-        availability_ctx.harness_probe_result,
+        availability_ctx.opencode_probe_result,
+        availability_ctx.pi_probe_result,
         availability_ctx.routing_settings,
     );
 
@@ -659,7 +714,8 @@ fn model_entry_for_pinned(
             model_id,
             &provider,
             availability_ctx.installed,
-            availability_ctx.probe_result,
+            availability_ctx.opencode_probe_result,
+            availability_ctx.pi_probe_result,
             availability_ctx.is_offline,
         )),
     }
@@ -696,6 +752,7 @@ fn resolve_harness_with_routing(
     model_id: &str,
     installed: &HashSet<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
     routing_settings: &RoutingSettings,
 ) -> (Option<String>, HarnessSource) {
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
@@ -707,6 +764,7 @@ fn resolve_harness_with_routing(
         linked_harnesses: (!routing_settings.linked_harnesses.is_empty())
             .then_some(routing_settings.linked_harnesses.as_slice()),
         opencode_probe_result,
+        pi_probe_result,
     });
 
     if installed.contains(&trace.harness) {
@@ -729,10 +787,55 @@ fn effective_visibility(ctx: &MarsContext, args: &ListArgs) -> crate::config::Mo
         .unwrap_or_default()
 }
 
+fn apply_routing_settings_to_resolved_aliases(
+    resolved: &mut IndexMap<String, models::ResolvedAlias>,
+    aliases: &IndexMap<String, ModelAlias>,
+    installed: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
+    routing_settings: &RoutingSettings,
+) {
+    for alias in resolved.values_mut() {
+        let has_explicit_harness = aliases
+            .get(&alias.name)
+            .is_some_and(|source_alias| source_alias.harness.is_some());
+        if has_explicit_harness {
+            continue;
+        }
+        apply_routing_settings_to_resolved_alias(
+            alias,
+            installed,
+            opencode_probe_result,
+            pi_probe_result,
+            routing_settings,
+        );
+    }
+}
+
+fn apply_routing_settings_to_resolved_alias(
+    alias: &mut models::ResolvedAlias,
+    installed: &HashSet<String>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
+    routing_settings: &RoutingSettings,
+) {
+    let (harness, harness_source) = resolve_harness_with_routing(
+        &alias.provider,
+        &alias.model_id,
+        installed,
+        opencode_probe_result,
+        pi_probe_result,
+        routing_settings,
+    );
+    alias.harness = harness;
+    alias.harness_source = harness_source;
+}
+
 fn annotate_resolved_availability(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
     installed: &HashSet<String>,
-    probe_result: Option<&OpenCodeProbeResult>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
     is_offline: bool,
 ) {
     for alias in resolved.values_mut() {
@@ -740,7 +843,8 @@ fn annotate_resolved_availability(
             &alias.model_id,
             &alias.provider,
             installed,
-            probe_result,
+            opencode_probe_result,
+            pi_probe_result,
             is_offline,
         ));
     }
@@ -806,7 +910,11 @@ fn add_cost_json_fields(obj: &mut serde_json::Value, model: &models::CachedModel
     obj["cost_reasoning"] = serde_json::json!(model.cost_reasoning);
 }
 
-fn add_probe_results_json(out: &mut serde_json::Value, probe_result: Option<&OpenCodeProbeResult>) {
+fn add_probe_results_json(
+    out: &mut serde_json::Value,
+    probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
+) {
     if let Some(probe) = probe_result {
         out["probe_results"] = serde_json::json!({
             "opencode": {
@@ -814,6 +922,16 @@ fn add_probe_results_json(out: &mut serde_json::Value, probe_result: Option<&Ope
                 "providers_found": probe.providers.keys().collect::<Vec<_>>(),
                 "models_found": probe.model_slugs.len(),
             }
+        });
+    }
+    if let Some(probe) = pi_probe_result {
+        if out.get("probe_results").is_none() {
+            out["probe_results"] = serde_json::json!({});
+        }
+        out["probe_results"]["pi"] = serde_json::json!({
+            "compatible": probe.compatible,
+            "version": probe.version,
+            "missing_surface_tokens": probe.help_surface_tokens_missing,
         });
     }
 }
@@ -831,14 +949,16 @@ fn annotate_one_availability(
     resolved: &mut models::ResolvedAlias,
     args: &ResolveAliasArgs,
     installed: &HashSet<String>,
-    probe_result: Option<&OpenCodeProbeResult>,
+    opencode_probe_result: Option<&OpenCodeProbeResult>,
+    pi_probe_result: Option<&PiProbeResult>,
 ) {
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
     resolved.availability = Some(models::availability::classify_model(
         &resolved.model_id,
         &resolved.provider,
         installed,
-        probe_result,
+        opencode_probe_result,
+        pi_probe_result,
         is_offline,
     ));
 }
@@ -870,12 +990,13 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 
     // Cache is enrichment, not a gate. If unavailable, skip to passthrough.
     let cache_result = ensure_fresh_or_json_error(&mars, ttl, mode, json)?;
-    let installed = models::harness::detect_installed_harnesses();
+    let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
+    let installed = capability_snapshot.installed_harnesses();
 
     if let Some((cache, outcome)) = &cache_result {
-        let is_offline = models::is_mars_offline() || args.no_refresh_models;
-        let cache_outcome = opencode_cache::probe_cached(&installed, is_offline);
+        let cache_outcome = capability_snapshot.opencode.clone();
         let probe_result = cache_outcome.result().cloned();
+        let pi_probe_result = capability_snapshot.pi.result().cloned();
 
         // Step 1: exact alias lookup
         if let Some(alias) = merged.get(&args.name) {
@@ -884,6 +1005,8 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 outcome,
                 installed: &installed,
                 probe_outcome: cache_outcome.clone(),
+                pi_probe_result: pi_probe_result.as_ref(),
+                routing_settings: &routing_settings,
             };
             return run_resolve_exact_alias(args, alias, &merged, ctx, runtime, json);
         }
@@ -894,8 +1017,22 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             &merged,
             cache,
             probe_result.as_ref(),
+            pi_probe_result.as_ref(),
         ) {
-            annotate_one_availability(&mut resolved, args, &installed, probe_result.as_ref());
+            apply_routing_settings_to_resolved_alias(
+                &mut resolved,
+                &installed,
+                probe_result.as_ref(),
+                pi_probe_result.as_ref(),
+                &routing_settings,
+            );
+            annotate_one_availability(
+                &mut resolved,
+                args,
+                &installed,
+                probe_result.as_ref(),
+                pi_probe_result.as_ref(),
+            );
             return run_output_resolved(
                 &args.name,
                 &resolved,
@@ -924,10 +1061,11 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 }
 
 fn run_refresh_probe(args: &RefreshProbeArgs) -> Result<i32, MarsError> {
-    if args.target != "opencode" {
-        return Ok(1);
+    match args.target.as_str() {
+        "opencode" => opencode_cache::run_refresh_probe_command(),
+        "pi" => pi_cache::run_refresh_probe_command(),
+        _ => Ok(1),
     }
-    opencode_cache::run_refresh_probe_command()
 }
 
 fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -1025,9 +1163,25 @@ fn run_resolve_exact_alias(
         runtime.cache,
         &mut diag,
         runtime.probe_outcome.result(),
+        runtime.pi_probe_result,
     );
     if let Some(r) = resolved_entry.as_mut() {
-        annotate_one_availability(r, args, runtime.installed, runtime.probe_outcome.result());
+        if alias.harness.is_none() {
+            apply_routing_settings_to_resolved_alias(
+                r,
+                runtime.installed,
+                runtime.probe_outcome.result(),
+                runtime.pi_probe_result,
+                runtime.routing_settings,
+            );
+        }
+        annotate_one_availability(
+            r,
+            args,
+            runtime.installed,
+            runtime.probe_outcome.result(),
+            runtime.pi_probe_result,
+        );
     }
     let diagnostics = diag.drain();
 
@@ -1246,11 +1400,15 @@ fn run_output_passthrough(
     let provider_for_resolution = guessed_provider.as_deref().unwrap_or("unknown");
     let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
     let probe_result = cache_outcome.result().cloned();
+    let pi_probe_result = pi_cache::probe_cached(installed, is_offline)
+        .result()
+        .cloned();
     let (harness, harness_source) = resolve_harness_with_routing(
         provider_for_resolution,
         name,
         installed,
         probe_result.as_ref(),
+        pi_probe_result.as_ref(),
         routing_settings,
     );
     let harness_source = match harness_source {
@@ -1265,6 +1423,7 @@ fn run_output_passthrough(
         provider_for_resolution,
         installed,
         probe_result.as_ref(),
+        pi_probe_result.as_ref(),
         is_offline,
     );
 
@@ -1744,8 +1903,8 @@ description = "Old alias"
         merged: &IndexMap<String, ModelAlias>,
         cache: &models::ModelsCache,
         installed: &HashSet<String>,
-        harness_probe_result: Option<&OpenCodeProbeResult>,
-        probe_result: Option<&OpenCodeProbeResult>,
+        opencode_probe_result: Option<&OpenCodeProbeResult>,
+        pi_probe_result: Option<&PiProbeResult>,
         is_offline: bool,
         routing_settings: &RoutingSettings,
     ) -> Vec<ListModelEntry> {
@@ -1754,8 +1913,8 @@ description = "Old alias"
             cache,
             AvailabilityContext {
                 installed,
-                harness_probe_result,
-                probe_result,
+                opencode_probe_result,
+                pi_probe_result,
                 is_offline,
                 routing_settings,
             },
@@ -1765,8 +1924,8 @@ description = "Old alias"
     fn collect_catalog_model_entries(
         cache: &models::ModelsCache,
         installed: &HashSet<String>,
-        harness_probe_result: Option<&OpenCodeProbeResult>,
-        probe_result: Option<&OpenCodeProbeResult>,
+        opencode_probe_result: Option<&OpenCodeProbeResult>,
+        pi_probe_result: Option<&PiProbeResult>,
         is_offline: bool,
         routing_settings: &RoutingSettings,
     ) -> Vec<ListModelEntry> {
@@ -1774,8 +1933,8 @@ description = "Old alias"
             cache,
             AvailabilityContext {
                 installed,
-                harness_probe_result,
-                probe_result,
+                opencode_probe_result,
+                pi_probe_result,
                 is_offline,
                 routing_settings,
             },

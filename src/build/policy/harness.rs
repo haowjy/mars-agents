@@ -7,6 +7,7 @@ use crate::compiler::agents::HarnessKind;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
 use crate::models::probes::OpenCodeProbeResult;
+use crate::models::probes::PiProbeResult;
 use crate::routing::{self, RouteConfidence, RoutingInput};
 
 pub(super) struct HarnessResolution {
@@ -28,6 +29,7 @@ pub(super) struct HarnessEvidence<'a> {
     pub(super) installed_harnesses: &'a HashSet<String>,
     pub(super) linked_harnesses: Option<&'a [String]>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
+    pub(super) pi_probe_result: Option<&'a PiProbeResult>,
 }
 
 pub(super) fn resolve_harness(
@@ -41,7 +43,6 @@ pub(super) fn resolve_harness(
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
     let normalized_config_default_harness =
         routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
-
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
     let (harness, harness_source, route_confidence, candidates_tried) =
@@ -69,6 +70,7 @@ pub(super) fn resolve_harness(
                     installed_harnesses: evidence.installed_harnesses,
                     linked_harnesses: evidence.linked_harnesses,
                     opencode_probe_result: evidence.opencode_probe_result,
+                    pi_probe_result: evidence.pi_probe_result,
                 });
                 selected_harness_order_position = trace.harness_order_position;
                 warnings.extend(trace.diagnostics);
@@ -102,6 +104,7 @@ pub(super) fn resolve_harness(
                 installed_harnesses: evidence.installed_harnesses,
                 linked_harnesses: evidence.linked_harnesses,
                 opencode_probe_result: evidence.opencode_probe_result,
+                pi_probe_result: evidence.pi_probe_result,
             });
             selected_harness_order_position = trace.harness_order_position;
             warnings.extend(trace.diagnostics);
@@ -224,6 +227,7 @@ mod tests {
             installed_harnesses,
             linked_harnesses: None,
             opencode_probe_result: None,
+            pi_probe_result: None,
         }
     }
 

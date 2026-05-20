@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn build_launch_bundle_cli_model_alias_harness_beats_profile_harness() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -34,6 +35,7 @@ harness = "codex""#;
         "--model",
         "bundlealias",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -53,7 +55,7 @@ harness = "codex""#;
 pub(crate) fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_harness()
 {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -268,7 +270,7 @@ default_harness = "pi""#;
 
 pub(crate) fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -511,7 +513,7 @@ harness_order = ["pi", "opencode"]"#;
 
 pub(crate) fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
+    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex", "opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -550,7 +552,7 @@ harness_order = ["codex", "opencode"]"#;
 
 pub(crate) fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: bundlealias
@@ -597,7 +599,7 @@ harness = "codex""#;
 pub(crate) fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness()
  {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let bin_dir = install_fake_harnesses(&temp, &["claude", "opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -839,7 +841,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
@@ -847,7 +849,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -877,7 +879,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -907,7 +909,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
@@ -915,7 +917,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -945,7 +947,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
@@ -980,7 +982,7 @@ Review code changes."#;
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1030,7 +1032,7 @@ Review code changes."#;
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1375,11 +1377,11 @@ harness_order = ["opencode", "pi"]"#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1437,6 +1439,45 @@ targets = [".opencode", ".agents"]"#;
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("opencode")
     );
+}
+
+pub(crate) fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &[]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+default_harness = "pi""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("provider")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("settings.default_harness is excluded by known linked harness constraints")
+    }));
 }
 
 pub(crate) fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
@@ -1587,17 +1628,23 @@ fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
     for harness in harnesses {
         #[cfg(windows)]
         {
-            fs::write(
-                bin_dir.join(format!("{harness}.bat")),
-                "@echo off\r\nexit /b 0\r\n",
-            )
-            .unwrap();
+            let script = if *harness == "pi" {
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else {
+                "@echo off\r\nexit /b 0\r\n"
+            };
+            fs::write(bin_dir.join(format!("{harness}.bat")), script).unwrap();
         }
         #[cfg(not(windows))]
         {
             use std::os::unix::fs::PermissionsExt;
             let path = bin_dir.join(harness);
-            fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            let script = if *harness == "pi" {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            };
+            fs::write(&path, script).unwrap();
             let mut perms = fs::metadata(&path).unwrap().permissions();
             perms.set_mode(0o755);
             fs::set_permissions(path, perms).unwrap();
@@ -1619,7 +1666,9 @@ fn install_fake_harnesses_with_auth_failures(
         let fail_auth = auth_failures.contains(harness);
         #[cfg(windows)]
         {
-            let script = if fail_auth && *harness == "codex" {
+            let script = if *harness == "pi" {
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else if fail_auth && *harness == "codex" {
                 "@echo off\r\nif \"%~1 %~2\"==\"login status\" exit /b 1\r\nexit /b 0\r\n"
             } else if fail_auth && *harness == "claude" {
                 "@echo off\r\nif \"%~1 %~2\"==\"auth status\" exit /b 1\r\nexit /b 0\r\n"
@@ -1631,7 +1680,9 @@ fn install_fake_harnesses_with_auth_failures(
         #[cfg(not(windows))]
         {
             use std::os::unix::fs::PermissionsExt;
-            let script = if fail_auth && *harness == "codex" {
+            let script = if *harness == "pi" {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+            } else if fail_auth && *harness == "codex" {
                 "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n"
             } else if fail_auth && *harness == "claude" {
                 "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n"

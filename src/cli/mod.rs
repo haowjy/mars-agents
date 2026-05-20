@@ -70,6 +70,8 @@ impl MarsContext {
         };
         let managed_canon = if managed_root.exists() {
             dunce::canonicalize(&managed_root).unwrap_or(managed_root.clone())
+        } else if let Ok(relative_managed) = managed_root.strip_prefix(&project_root) {
+            project_canon.join(relative_managed)
         } else {
             managed_root.clone()
         };

@@ -78,6 +78,7 @@ pub fn build_launch_bundle(
         project_root: &ctx.project_root,
         profile: &profile,
         model_override: request.model.as_deref(),
+        config_default_model: None,
         harness_override: request.harness.as_deref(),
         effort_override: request.effort.as_deref(),
         approval_override: request.approval.as_deref(),

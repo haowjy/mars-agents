@@ -295,7 +295,8 @@ Review code changes."#;
     cmd.assert()
         .failure()
         .code(2)
-        .stderr(predicates::str::contains("requires a model"));
+        .stderr(predicates::str::contains("requires a model"))
+        .stderr(predicates::str::contains("settings.default_model"));
 }
 
 pub(crate) fn build_launch_bundle_ad_hoc_requires_model() {

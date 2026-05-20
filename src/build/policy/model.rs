@@ -16,6 +16,10 @@ pub(super) struct ResolvedModel<'a> {
     pub(super) warnings: Vec<String>,
 }
 
+/// Resolve model selection precedence for launch-bundle.
+///
+/// Resolution order is `cli > profile > project > error` where project maps to
+/// `settings.default_model` from `mars.toml`.
 pub(super) fn resolve_model<'a>(
     input: &PolicyInput<'_>,
     aliases: &'a IndexMap<String, ModelAlias>,
@@ -27,12 +31,15 @@ pub(super) fn resolve_model<'a>(
         Some(model) => (model.to_string(), "cli".to_string()),
         None => match input.profile.model.as_deref() {
             Some(model) => (model.to_string(), "profile".to_string()),
-            None => {
-                return Err(MarsError::Config(ConfigError::Invalid {
-                    message: "launch-bundle requires a model (set `model:` in the agent profile or pass `--model`)"
-                        .to_string(),
-                }));
-            }
+            None => match input.config_default_model {
+                Some(model) => (model.to_string(), "project".to_string()),
+                None => {
+                    return Err(MarsError::Config(ConfigError::Invalid {
+                        message: "launch-bundle requires a model (set `model:` in the agent profile, set `settings.default_model` in mars.toml, or pass `--model`)"
+                            .to_string(),
+                    }));
+                }
+            },
         },
     };
 

@@ -167,6 +167,8 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
 | `models_cache_ttl_hours` | integer | `24` | Model catalog cache TTL; `0` forces refresh |
+| `default_harness` | string | unset | Default harness for launch routing when profile/alias/provider cannot resolve one |
+| `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.

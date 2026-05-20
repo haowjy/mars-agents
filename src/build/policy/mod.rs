@@ -16,6 +16,7 @@ pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
+    pub config_default_model: Option<&'a str>,
     pub harness_override: Option<&'a str>,
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
@@ -35,7 +36,17 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
 
     let resolution_config = config::load_policy_resolution_config(input.project_root)?;
     let cache = model::load_models_cache(input.project_root)?;
-    let resolved_model = model::resolve_model(&input, &resolution_config.aliases, &cache)?;
+    let model_input = PolicyInput {
+        project_root: input.project_root,
+        profile: input.profile,
+        model_override: input.model_override,
+        config_default_model: resolution_config.default_model.as_deref(),
+        harness_override: input.harness_override,
+        effort_override: input.effort_override,
+        approval_override: input.approval_override,
+        sandbox_override: input.sandbox_override,
+    };
+    let resolved_model = model::resolve_model(&model_input, &resolution_config.aliases, &cache)?;
 
     warnings.extend(resolved_model.warnings);
     provenance.insert(
@@ -52,7 +63,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let pi_probe_result = capability_snapshot.pi.result();
 
     let harness_resolution = harness::resolve_harness(
-        &input,
+        &model_input,
         resolved_model.alias,
         harness::HarnessEvidence {
             model_id: &resolved_model.model,

@@ -540,6 +540,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
 - Requires a project with `mars sync` already run
 - Inherits all profile fields (model, harness, effort, approval, skills, tools)
+- Model precedence is `--model` > profile model > `settings.default_model`.
 
 | Flag | Description |
 |---|---|
@@ -570,7 +571,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "tools": { "..." },
   "skills_metadata": { "loaded": ["..."], "missing": ["..."] },
   "provenance": {
-    "model_source": "...",
+    "model_source": "cli|profile|project",
     "harness_source": "...",
     "candidates_tried": "..."
   },

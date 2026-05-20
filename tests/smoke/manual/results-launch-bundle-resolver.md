@@ -27,10 +27,11 @@ mars 0.4.8-rc.2
 
 ## Ad-hoc OpenAI model routes to Codex when available
 
-Command shape:
+Command shape from a plain directory with no `mars.toml`:
 
 ```bash
-mars init --json
+mkdir -p "$SCRATCH/plain"
+cd "$SCRATCH/plain"
 mars build launch-bundle --model gpt-5.4-mini --json
 ```
 
@@ -61,9 +62,11 @@ so Mars selected it without needing Pi/OpenCode/Cursor fallback.
 
 ## Explicit Pi harness passthrough is quiet
 
-Command shape:
+Command shape from a plain directory with no `mars.toml`:
 
 ```bash
+mkdir -p "$SCRATCH/plain"
+cd "$SCRATCH/plain"
 mars build launch-bundle --model gpt-5.4-mini --harness pi --json
 ```
 

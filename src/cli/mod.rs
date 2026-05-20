@@ -226,6 +226,10 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                             .unwrap_or_else(|| initialized.project_root.join(".mars")),
                     )?
                 }
+                Err(err) if can_run_without_project(cmd, &err) => {
+                    let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
+                    MarsContext::from_roots(project_root.clone(), project_root.join(".mars"))?
+                }
                 Err(err) => return Err(err),
             };
             dispatch_with_root(cmd, &ctx, cli.json)
@@ -239,6 +243,22 @@ fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
             err,
             MarsError::Config(ConfigError::ProjectRootNotFound { .. })
         )
+}
+
+fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
+    matches!(
+        (cmd, err),
+        (
+            Command::Build(build::BuildArgs {
+                command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
+                    agent: None,
+                    model: Some(_),
+                    ..
+                })
+            }),
+            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
+        )
+    )
 }
 
 fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {

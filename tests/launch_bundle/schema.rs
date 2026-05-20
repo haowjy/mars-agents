@@ -1,6 +1,8 @@
 use super::common::{install_fake_harnesses, replace_path_with, setup_bundle_project};
-use crate::test_common::{API_PATH, mars_cmd};
+use crate::test_common::{API_PATH, configure_assert_cmd, mars, mars_cmd};
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
+use httpmock::MockServer;
 use serde_json::Value;
 
 pub(crate) fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
@@ -119,6 +121,38 @@ Review code changes."#;
         bundle["prompt_surface"]["supplemental_documents"],
         serde_json::json!(Vec::<Value>::new())
     );
+}
+
+pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
+    let temp = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
+    let project = temp.child("plain-project");
+    project.create_dir_all().unwrap();
+
+    let mut cmd = mars();
+    configure_assert_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
+    cmd.current_dir(project.path())
+        .env("PATH", replace_path_with(&bin_dir))
+        .args([
+            "build",
+            "launch-bundle",
+            "--model",
+            "gpt-5.4-mini",
+            "--harness",
+            "pi",
+        ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(bundle["agent"].is_null());
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
 }
 
 pub(crate) fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides()

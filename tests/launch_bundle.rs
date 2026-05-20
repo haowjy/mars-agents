@@ -37,6 +37,11 @@ fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
 }
 
 #[test]
+fn build_launch_bundle_ad_hoc_without_mars_toml() {
+    schema::build_launch_bundle_ad_hoc_without_mars_toml();
+}
+
+#[test]
 fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides() {
     schema::build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides();
 }

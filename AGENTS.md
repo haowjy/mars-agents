@@ -114,6 +114,38 @@ All model aliases come from packages or consumer config. The binary ships zero h
 
 During `resolve_graph`, model configs from all resolved dependencies are collected in declaration order. `merge_model_config()` layers them: deps first (first-dep wins on conflicts), consumer config on top (always wins). Result is used during sync and persisted to `models-merged.json` in `finalize()` as dependency-only aliases (no consumer config baked in, so `models list` can overlay fresh consumer config at read time).
 
+## Harness Routing
+
+`src/harness/` + `src/routing/` + `src/config/targets.rs` + `src/models/probes/` form the unified routing architecture introduced in PR #51.
+
+### Single authority, single evaluator
+
+- **`harness::registry` is the ONLY harness-name authority.** `registry::parse()`, `registry::is_known()`, `registry::provider_candidate_order()` — all harness identity flows through registry. No other module validates or normalizes harness names independently.
+- **`routing::evaluate_candidates()` is the ONLY candidate evaluator.** Both `mars models` and `mars build` converge on the same route for the same inputs. Parity is an invariant, not a coincidence.
+
+### Evaluation flow
+
+1. Build candidate list from `settings.harness_order` (ConfigOrder source) or `provider_candidate_order` (Provider source)
+2. Filter by `linked_harnesses` — only `KnownHarness` links filter; generic targets like `.agents` do not
+3. Per-candidate gate: installed check → native match + auth → OpenCode probe (`Likely`) → Pi probe (`Confirmed` if compatible) → Cursor (`Passthrough`)
+4. Fallback chain: config `default_harness` → first linked harness → hardcoded `claude`
+5. Link constraints block config-default and hardcoded fallbacks from routing outside known links
+
+### Confidence semantics
+
+| Confidence | Meaning |
+|---|---|
+| `Explicit` | Fixed selection from CLI/profile/alias |
+| `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
+| `Likely` | OpenCode cached provider+model evidence |
+| `Passthrough` | Universal (Cursor), Pi without probe, fallback selections |
+
+### Link constraints
+
+Links from `settings.targets` are normalized via `config::targets::normalize_link()`. Only `LinkKind::KnownHarness` links produce `linked_harnesses` that gate routing candidates. `GenericTarget` (`.agents`, unknown names) and `PathLike` links are materialization targets only — invisible to routing.
+
+See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, and `src/models/probes/` for detailed contracts.
+
 ## Managed Targets
 
 `src/target_sync/mod.rs` — copies content from `.mars/` canonical store to configured target directories.
@@ -148,7 +180,12 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 | `src/target_sync/` | Copy from `.mars/` to managed target directories |
 | `src/reconcile/` | Shared atomic fs operations (Layer 1) + state-based reconciliation (Layer 2) |
 | `src/models/` | Model catalog, auto-resolve, cache, no builtins |
+| `src/models/probes/` | OpenCode and Pi capability probing with disk cache. Compatible Pi → `Confirmed` confidence |
+| `src/harness/` | Canonical harness vocabulary (`HarnessId`, descriptors, provider candidate order) and capability snapshot collection (PATH lookup, auth probing, probe cache integration) |
+| `src/routing/` | Single candidate evaluator — `evaluate_candidates()` and `evaluate_fixed_harness()`. All harness routing goes through here. |
 | `src/config/` | `mars.toml` + `mars.local.toml` schemas, load/save, merge to `EffectiveConfig` |
+| `src/config/targets.rs` | Link normalization — `KnownHarness` links affect routing; `GenericTarget`/`PathLike` links are materialization-only |
+| `src/config/routing_settings.rs` | Raw `Settings` → typed routing config with shared diagnostics |
 | `src/lock/` | `mars.lock` schema, load/write, ownership tracking |
 | `src/resolve/` | Dependency + version resolution and graph ordering |
 | `src/source/` | Source fetching (git + path) and global cache |

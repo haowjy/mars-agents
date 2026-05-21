@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.6] - 2026-05-21
+
 ### Changed
 - Launch-bundle profile harness now pivots through candidate routing when profile harness missing on host; explicit CLI/alias harness still fails unavailable instead of silently pivoting.
 

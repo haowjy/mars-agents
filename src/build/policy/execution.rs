@@ -1,3 +1,7 @@
+use crate::build::policy::PolicySource::{
+    Alias, Cli, Overlay, OverlayModelPolicy, Profile, ProfileHarnessOverride, ProfileModelPolicy,
+    SettingsModelPolicy, Unset,
+};
 use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
     matched_policy_u8_override, matched_policy_u32_override,
@@ -68,6 +72,44 @@ fn resolved_field<T>(value: Option<T>, source: PolicySource) -> ResolvedField<Op
     }
 }
 
+fn field_layer<T>(source: PolicySource, value: Option<T>) -> Option<ResolvedField<Option<T>>> {
+    value.map(|value| resolved_field(Some(value), source))
+}
+
+struct PolicyFieldLayers<T> {
+    cli: Option<T>,
+    harness_override: Option<T>,
+    overlay: Option<T>,
+    profile: Option<T>,
+    alias: Option<T>,
+}
+
+fn resolve_policy_field<T>(
+    key: &str,
+    matched_policy: Option<&MatchedModelPolicy>,
+    policy_override_by_source: impl Fn(
+        Option<&MatchedModelPolicy>,
+        &str,
+        PolicySource,
+    ) -> Option<ResolvedField<Option<T>>>,
+    layers: PolicyFieldLayers<T>,
+) -> ResolvedField<Option<T>> {
+    [
+        field_layer(Cli, layers.cli),
+        field_layer(ProfileHarnessOverride, layers.harness_override),
+        field_layer(Overlay, layers.overlay),
+        policy_override_by_source(matched_policy, key, OverlayModelPolicy),
+        field_layer(Profile, layers.profile),
+        policy_override_by_source(matched_policy, key, ProfileModelPolicy),
+        policy_override_by_source(matched_policy, key, SettingsModelPolicy),
+        field_layer(Alias, layers.alias),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .unwrap_or_else(|| resolved_field(None, Unset))
+}
+
 fn resolved_policy_field<T>(decision: ResolvedField<T>) -> ResolvedField<Option<T>> {
     ResolvedField {
         value: Some(decision.value),
@@ -113,45 +155,28 @@ fn resolve_effort(
     matched_policy: Option<&MatchedModelPolicy>,
     matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
-    if let Some(effort) = input.effort_override {
-        return resolved_field(Some(effort.to_string()), PolicySource::Cli);
-    }
-    if let Some(effort) = matched_harness_override.and_then(|entry| entry.effort.as_ref()) {
-        return resolved_field(
-            Some(effort_level_to_str(effort).to_string()),
-            PolicySource::ProfileHarnessOverride,
-        );
-    }
-    if let Some(overlay_effort) = overlay.and_then(|entry| entry.effort.as_deref()) {
-        return resolved_field(Some(overlay_effort.to_string()), PolicySource::Overlay);
-    }
-    if let Some(decision) =
-        policy_string_override_by_source(matched_policy, "effort", PolicySource::OverlayModelPolicy)
-    {
-        return decision;
-    }
-    if let Some(effort) = input.profile.effort.as_ref() {
-        return resolved_field(
-            Some(effort_level_to_str(effort).to_string()),
-            PolicySource::Profile,
-        );
-    }
-    if let Some(decision) =
-        policy_string_override_by_source(matched_policy, "effort", PolicySource::ProfileModelPolicy)
-    {
-        return decision;
-    }
-    if let Some(decision) = policy_string_override_by_source(
-        matched_policy,
+    resolve_policy_field(
         "effort",
-        PolicySource::SettingsModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(effort) = alias.and_then(|entry| entry.default_effort.clone()) {
-        return resolved_field(Some(effort), PolicySource::Alias);
-    }
-    resolved_field(None, PolicySource::Unset)
+        matched_policy,
+        policy_string_override_by_source,
+        PolicyFieldLayers {
+            cli: input.effort_override.map(str::to_string),
+            harness_override: matched_harness_override
+                .and_then(|entry| entry.effort.as_ref())
+                .map(effort_level_to_str)
+                .map(str::to_string),
+            overlay: overlay
+                .and_then(|entry| entry.effort.as_deref())
+                .map(str::to_string),
+            profile: input
+                .profile
+                .effort
+                .as_ref()
+                .map(effort_level_to_str)
+                .map(str::to_string),
+            alias: alias.and_then(|entry| entry.default_effort.clone()),
+        },
+    )
 }
 
 fn resolve_approval(
@@ -160,46 +185,28 @@ fn resolve_approval(
     matched_policy: Option<&MatchedModelPolicy>,
     matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
-    if let Some(approval) = input.approval_override {
-        return resolved_field(Some(approval.to_string()), PolicySource::Cli);
-    }
-    if let Some(approval) = matched_harness_override.and_then(|entry| entry.approval.as_ref()) {
-        return resolved_field(
-            Some(approval_mode_to_str(approval).to_string()),
-            PolicySource::ProfileHarnessOverride,
-        );
-    }
-    if let Some(overlay_approval) = overlay.and_then(|entry| entry.approval.as_deref()) {
-        return resolved_field(Some(overlay_approval.to_string()), PolicySource::Overlay);
-    }
-    if let Some(decision) = policy_string_override_by_source(
-        matched_policy,
+    resolve_policy_field(
         "approval",
-        PolicySource::OverlayModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(approval) = input.profile.approval.as_ref() {
-        return resolved_field(
-            Some(approval_mode_to_str(approval).to_string()),
-            PolicySource::Profile,
-        );
-    }
-    if let Some(decision) = policy_string_override_by_source(
         matched_policy,
-        "approval",
-        PolicySource::ProfileModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(decision) = policy_string_override_by_source(
-        matched_policy,
-        "approval",
-        PolicySource::SettingsModelPolicy,
-    ) {
-        return decision;
-    }
-    resolved_field(None, PolicySource::Unset)
+        policy_string_override_by_source,
+        PolicyFieldLayers {
+            cli: input.approval_override.map(str::to_string),
+            harness_override: matched_harness_override
+                .and_then(|entry| entry.approval.as_ref())
+                .map(approval_mode_to_str)
+                .map(str::to_string),
+            overlay: overlay
+                .and_then(|entry| entry.approval.as_deref())
+                .map(str::to_string),
+            profile: input
+                .profile
+                .approval
+                .as_ref()
+                .map(approval_mode_to_str)
+                .map(str::to_string),
+            alias: None,
+        },
+    )
 }
 
 fn resolve_sandbox(
@@ -208,46 +215,28 @@ fn resolve_sandbox(
     matched_policy: Option<&MatchedModelPolicy>,
     matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
-    if let Some(sandbox) = input.sandbox_override {
-        return resolved_field(Some(sandbox.to_string()), PolicySource::Cli);
-    }
-    if let Some(sandbox) = matched_harness_override.and_then(|entry| entry.sandbox.as_ref()) {
-        return resolved_field(
-            Some(sandbox_mode_to_str(sandbox).to_string()),
-            PolicySource::ProfileHarnessOverride,
-        );
-    }
-    if let Some(overlay_sandbox) = overlay.and_then(|entry| entry.sandbox.as_deref()) {
-        return resolved_field(Some(overlay_sandbox.to_string()), PolicySource::Overlay);
-    }
-    if let Some(decision) = policy_string_override_by_source(
-        matched_policy,
+    resolve_policy_field(
         "sandbox",
-        PolicySource::OverlayModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(sandbox) = input.profile.sandbox.as_ref() {
-        return resolved_field(
-            Some(sandbox_mode_to_str(sandbox).to_string()),
-            PolicySource::Profile,
-        );
-    }
-    if let Some(decision) = policy_string_override_by_source(
         matched_policy,
-        "sandbox",
-        PolicySource::ProfileModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(decision) = policy_string_override_by_source(
-        matched_policy,
-        "sandbox",
-        PolicySource::SettingsModelPolicy,
-    ) {
-        return decision;
-    }
-    resolved_field(None, PolicySource::Unset)
+        policy_string_override_by_source,
+        PolicyFieldLayers {
+            cli: input.sandbox_override.map(str::to_string),
+            harness_override: matched_harness_override
+                .and_then(|entry| entry.sandbox.as_ref())
+                .map(sandbox_mode_to_str)
+                .map(str::to_string),
+            overlay: overlay
+                .and_then(|entry| entry.sandbox.as_deref())
+                .map(str::to_string),
+            profile: input
+                .profile
+                .sandbox
+                .as_ref()
+                .map(sandbox_mode_to_str)
+                .map(str::to_string),
+            alias: None,
+        },
+    )
 }
 
 fn resolve_autocompact(
@@ -257,43 +246,20 @@ fn resolve_autocompact(
     matched_policy: Option<&MatchedModelPolicy>,
     matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<u32>> {
-    if let Some(autocompact) = matched_harness_override.and_then(|entry| entry.autocompact) {
-        return resolved_field(Some(autocompact), PolicySource::ProfileHarnessOverride);
-    }
-    if let Some(autocompact) = overlay
-        .and_then(|entry| entry.autocompact)
-        .and_then(|value| u32::try_from(value).ok())
-    {
-        return resolved_field(Some(autocompact), PolicySource::Overlay);
-    }
-    if let Some(decision) = policy_u32_override_by_source(
-        matched_policy,
+    resolve_policy_field(
         "autocompact",
-        PolicySource::OverlayModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(autocompact) = input.profile.autocompact {
-        return resolved_field(Some(autocompact), PolicySource::Profile);
-    }
-    if let Some(decision) = policy_u32_override_by_source(
         matched_policy,
-        "autocompact",
-        PolicySource::ProfileModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(decision) = policy_u32_override_by_source(
-        matched_policy,
-        "autocompact",
-        PolicySource::SettingsModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(autocompact) = alias.and_then(|entry| entry.autocompact) {
-        return resolved_field(Some(autocompact), PolicySource::Alias);
-    }
-    resolved_field(None, PolicySource::Unset)
+        policy_u32_override_by_source,
+        PolicyFieldLayers {
+            cli: None,
+            harness_override: matched_harness_override.and_then(|entry| entry.autocompact),
+            overlay: overlay
+                .and_then(|entry| entry.autocompact)
+                .and_then(|value| u32::try_from(value).ok()),
+            profile: input.profile.autocompact,
+            alias: alias.and_then(|entry| entry.autocompact),
+        },
+    )
 }
 
 fn resolve_autocompact_pct(
@@ -303,45 +269,21 @@ fn resolve_autocompact_pct(
     matched_policy: Option<&MatchedModelPolicy>,
     matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<u8>> {
-    if let Some(autocompact_pct) = matched_harness_override.and_then(|entry| entry.autocompact_pct)
-    {
-        return resolved_field(Some(autocompact_pct), PolicySource::ProfileHarnessOverride);
-    }
-    if let Some(autocompact_pct) = overlay
-        .and_then(|entry| entry.autocompact_pct)
-        .and_then(|value| u8::try_from(value).ok())
-        .filter(|value| (1..=100).contains(value))
-    {
-        return resolved_field(Some(autocompact_pct), PolicySource::Overlay);
-    }
-    if let Some(decision) = policy_u8_override_by_source(
-        matched_policy,
+    resolve_policy_field(
         "autocompact_pct",
-        PolicySource::OverlayModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(autocompact_pct) = input.profile.autocompact_pct {
-        return resolved_field(Some(autocompact_pct), PolicySource::Profile);
-    }
-    if let Some(decision) = policy_u8_override_by_source(
         matched_policy,
-        "autocompact_pct",
-        PolicySource::ProfileModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(decision) = policy_u8_override_by_source(
-        matched_policy,
-        "autocompact_pct",
-        PolicySource::SettingsModelPolicy,
-    ) {
-        return decision;
-    }
-    if let Some(autocompact_pct) = alias.and_then(|entry| entry.autocompact_pct) {
-        return resolved_field(Some(autocompact_pct), PolicySource::Alias);
-    }
-    resolved_field(None, PolicySource::Unset)
+        policy_u8_override_by_source,
+        PolicyFieldLayers {
+            cli: None,
+            harness_override: matched_harness_override.and_then(|entry| entry.autocompact_pct),
+            overlay: overlay
+                .and_then(|entry| entry.autocompact_pct)
+                .and_then(|value| u8::try_from(value).ok())
+                .filter(|value| (1..=100).contains(value)),
+            profile: input.profile.autocompact_pct,
+            alias: alias.and_then(|entry| entry.autocompact_pct),
+        },
+    )
 }
 
 fn effort_level_to_str(effort: &EffortLevel) -> &'static str {

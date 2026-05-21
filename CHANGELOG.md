@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8-rc.7] - 2026-05-21
+
 ### Added
 - Added `[agents.<name>]` launch-bundle overlay schema in `mars.toml` / `mars.local.toml` with routing + execution-policy fields and per-overlay `model-policies`.
 - Added `[[settings.model-policies]]` project-level policy schema, shared with profile + overlay via one `ModelPolicyRule` type.

@@ -279,6 +279,21 @@ fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
 }
 
 #[test]
+fn build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate() {
+    routing::build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate();
+}
+
+#[test]
+fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
+    routing::build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback();
+}
+
+#[test]
+fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
+    routing::build_launch_bundle_unavailable_cli_harness_errors_without_pivoting();
+}
+
+#[test]
 fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
     routing::build_launch_bundle_alias_harness_beats_settings_harness_order();
 }

@@ -557,7 +557,7 @@ default_harness = "claude""#;
 
 pub(crate) fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -648,6 +648,143 @@ harness_order = ["codex", "opencode"]"#;
         Some("passthrough")
     );
     assert!(bundle["provenance"]["harness_order_position"].is_null());
+}
+
+pub(crate) fn build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+harness: claude
+model-policies:
+  - match:
+      alias: gpt55
+    override:
+      harness: opencode
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+harness_order = ["opencode", "codex"]
+
+[models.gpt55]
+model = "gpt-5.5"
+provider = "openai""#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.5"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("config-order")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_order_position"].as_str(),
+        Some("0")
+    );
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("likely")
+    );
+    assert_eq!(
+        bundle["provenance"]["route_confidence"].as_str(),
+        Some("likely")
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("opencode")
+    );
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default()
+            == "profile harness 'claude' not installed; pivoting via model-policies"
+    }));
+}
+
+pub(crate) fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: claude
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_OFFLINE", "1");
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+
+    assert!(stderr.contains("profile harness `claude` is not installed"));
+    assert!(stderr.contains("installed harnesses: codex, opencode"));
+}
+
+pub(crate) fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+
+    assert!(stderr.contains("cli harness `claude` is not installed"));
+    assert!(stderr.contains("installed harnesses: codex, opencode"));
+    assert!(
+        !stderr.contains("pivoting via model-policies"),
+        "explicit CLI harness must not auto-pivot: {stderr}"
+    );
 }
 
 pub(crate) fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
@@ -1619,6 +1756,7 @@ default_harness = "Pi""#;
 
 pub(crate) fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt5
@@ -1639,6 +1777,7 @@ model = "gpt-5""#;
         "--harness",
         "opencode",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1667,6 +1806,7 @@ model = "gpt-5""#;
 
 pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_passes_through_quietly() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: unknown-model-token
@@ -1685,6 +1825,7 @@ Review code changes."#;
         "--harness",
         "opencode",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

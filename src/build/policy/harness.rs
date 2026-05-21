@@ -10,6 +10,7 @@ use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
 use crate::routing::{self, RouteConfidence, RoutingInput};
 
+#[derive(Debug)]
 pub(super) struct HarnessResolution {
     pub(super) harness: String,
     pub(super) source: &'static str,
@@ -45,50 +46,20 @@ pub(super) fn resolve_harness(
         routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
-    let (harness, harness_source, route_confidence, candidates_tried) =
-        if let Some(harness) = input.harness_override {
-            (
-                harness.to_string(),
-                "cli",
-                RouteConfidence::Explicit,
-                vec![harness.to_string()],
-            )
-        } else if model_from_cli {
-            if let Some(harness) = alias_harness {
-                (
-                    harness.to_string(),
-                    "alias",
-                    RouteConfidence::Passthrough,
-                    Vec::new(),
-                )
-            } else {
-                let trace = routing::evaluate_candidates(&RoutingInput {
-                    model_id: evidence.model_id,
-                    provider: evidence.provider,
-                    settings_harness_order: evidence.harness_order,
-                    config_default_harness: normalized_config_default_harness.as_deref(),
-                    installed_harnesses: evidence.installed_harnesses,
-                    linked_harnesses: evidence.linked_harnesses,
-                    opencode_probe_result: evidence.opencode_probe_result,
-                    pi_probe_result: evidence.pi_probe_result,
-                });
-                selected_harness_order_position = trace.harness_order_position;
-                warnings.extend(trace.diagnostics);
-                (
-                    trace.harness,
-                    trace.source.label(),
-                    trace.confidence,
-                    trace.candidates_tried,
-                )
-            }
-        } else if let Some(harness) = profile_harness {
-            (
-                harness.to_string(),
-                "profile",
-                RouteConfidence::Passthrough,
-                Vec::new(),
-            )
-        } else if let Some(harness) = alias_harness {
+    let mut fixed_harness_selection = None;
+    let (harness, harness_source, route_confidence, candidates_tried) = if let Some(harness) =
+        input.harness_override
+    {
+        fixed_harness_selection = Some(("cli", harness));
+        (
+            harness.to_string(),
+            "cli",
+            RouteConfidence::Explicit,
+            vec![harness.to_string()],
+        )
+    } else if model_from_cli {
+        if let Some(harness) = alias_harness {
+            fixed_harness_selection = Some(("alias", harness));
             (
                 harness.to_string(),
                 "alias",
@@ -96,16 +67,8 @@ pub(super) fn resolve_harness(
                 Vec::new(),
             )
         } else {
-            let trace = routing::evaluate_candidates(&RoutingInput {
-                model_id: evidence.model_id,
-                provider: evidence.provider,
-                settings_harness_order: evidence.harness_order,
-                config_default_harness: normalized_config_default_harness.as_deref(),
-                installed_harnesses: evidence.installed_harnesses,
-                linked_harnesses: evidence.linked_harnesses,
-                opencode_probe_result: evidence.opencode_probe_result,
-                pi_probe_result: evidence.pi_probe_result,
-            });
+            let trace =
+                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
             selected_harness_order_position = trace.harness_order_position;
             warnings.extend(trace.diagnostics);
             (
@@ -114,7 +77,58 @@ pub(super) fn resolve_harness(
                 trace.confidence,
                 trace.candidates_tried,
             )
-        };
+        }
+    } else if let Some(harness) = profile_harness {
+        if evidence.installed_harnesses.contains(harness) {
+            (
+                harness.to_string(),
+                "profile",
+                RouteConfidence::Passthrough,
+                Vec::new(),
+            )
+        } else {
+            warnings.push(format!(
+                "profile harness '{harness}' not installed; pivoting via model-policies"
+            ));
+            let trace =
+                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+            selected_harness_order_position = trace.harness_order_position;
+            warnings.extend(trace.diagnostics);
+
+            if !evidence.installed_harnesses.contains(&trace.harness) {
+                return Err(unavailable_profile_pivot_error(
+                    harness,
+                    &trace.harness,
+                    evidence.installed_harnesses,
+                ));
+            }
+
+            (
+                trace.harness,
+                trace.source.label(),
+                trace.confidence,
+                trace.candidates_tried,
+            )
+        }
+    } else if let Some(harness) = alias_harness {
+        fixed_harness_selection = Some(("alias", harness));
+        (
+            harness.to_string(),
+            "alias",
+            RouteConfidence::Passthrough,
+            Vec::new(),
+        )
+    } else {
+        let trace = evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+        selected_harness_order_position = trace.harness_order_position;
+        warnings.extend(trace.diagnostics);
+        (
+            trace.harness,
+            trace.source.label(),
+            trace.confidence,
+            trace.candidates_tried,
+        )
+    };
 
     let resolved_harness = HarnessKind::from_str(&harness).ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
@@ -123,6 +137,16 @@ pub(super) fn resolve_harness(
             ),
         })
     })?;
+
+    if let Some((source, requested_harness)) = fixed_harness_selection
+        && !evidence.installed_harnesses.contains(requested_harness)
+    {
+        return Err(unavailable_fixed_harness_error(
+            source,
+            requested_harness,
+            evidence.installed_harnesses,
+        ));
+    }
 
     Ok(HarnessResolution {
         is_experimental: harness == "cursor",
@@ -134,6 +158,62 @@ pub(super) fn resolve_harness(
         candidates_tried,
         warnings,
     })
+}
+
+fn evaluate_candidates(
+    evidence: &HarnessEvidence<'_>,
+    normalized_config_default_harness: Option<&str>,
+) -> routing::RoutingTrace {
+    routing::evaluate_candidates(&RoutingInput {
+        model_id: evidence.model_id,
+        provider: evidence.provider,
+        settings_harness_order: evidence.harness_order,
+        config_default_harness: normalized_config_default_harness,
+        installed_harnesses: evidence.installed_harnesses,
+        linked_harnesses: evidence.linked_harnesses,
+        opencode_probe_result: evidence.opencode_probe_result,
+        pi_probe_result: evidence.pi_probe_result,
+    })
+}
+
+fn unavailable_profile_pivot_error(
+    requested_harness: &str,
+    selected_harness: &str,
+    installed_harnesses: &HashSet<String>,
+) -> MarsError {
+    MarsError::Config(ConfigError::Invalid {
+        message: format!(
+            "profile harness `{requested_harness}` is not installed and no installed fallback harness is available (selected `{selected_harness}`); installed harnesses: {}",
+            format_installed_harnesses(installed_harnesses)
+        ),
+    })
+}
+
+fn unavailable_fixed_harness_error(
+    source: &str,
+    requested_harness: &str,
+    installed_harnesses: &HashSet<String>,
+) -> MarsError {
+    MarsError::Config(ConfigError::Invalid {
+        message: format!(
+            "{source} harness `{requested_harness}` is not installed; installed harnesses: {}",
+            format_installed_harnesses(installed_harnesses)
+        ),
+    })
+}
+
+fn format_installed_harnesses(installed_harnesses: &HashSet<String>) -> String {
+    let mut names = installed_harnesses
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+
+    if names.is_empty() {
+        "(none)".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
@@ -150,6 +230,7 @@ pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
     use std::path::Path;
 
     use crate::compiler::agents::AgentProfile;
@@ -232,6 +313,16 @@ mod tests {
         }
     }
 
+    fn positive_opencode_probe() -> OpenCodeProbeResult {
+        OpenCodeProbeResult {
+            providers: HashMap::from([("openai".to_string(), true)]),
+            model_slugs: vec!["openai/gpt-5".to_string()],
+            provider_probe_success: true,
+            model_probe_success: true,
+            error: None,
+        }
+    }
+
     #[test]
     fn cli_override_is_explicit_and_skips_candidate_eval() {
         let installed = installed(&["codex", "pi"]);
@@ -288,6 +379,68 @@ mod tests {
         assert_eq!(resolution.source, "profile");
         assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
         assert!(resolution.candidates_tried.is_empty());
+    }
+
+    #[test]
+    fn unavailable_profile_harness_pivots_to_candidate_evaluation() {
+        let installed = installed(&["opencode"]);
+        let profile = profile(Some(HarnessKind::Claude));
+        let input = policy_input(&profile, None, None);
+        let opencode_probe = positive_opencode_probe();
+        let evidence = HarnessEvidence {
+            model_id: "gpt-5",
+            provider: Some("openai"),
+            config_default_harness: None,
+            harness_order: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: Some(&opencode_probe),
+            pi_probe_result: None,
+        };
+
+        let resolution =
+            resolve_harness(&input, None, evidence).expect("harness should pivot to opencode");
+
+        assert_eq!(resolution.harness, "opencode");
+        assert_eq!(resolution.source, "provider");
+        assert_eq!(resolution.route_confidence, RouteConfidence::Likely);
+        assert_eq!(resolution.candidates_tried, vec!["codex", "pi", "opencode"]);
+        assert!(resolution.warnings.iter().any(|warning| {
+            warning == "profile harness 'claude' not installed; pivoting via model-policies"
+        }));
+    }
+
+    #[test]
+    fn unavailable_profile_harness_errors_when_no_installed_fallback_is_available() {
+        let installed = installed(&["opencode"]);
+        let profile = profile(Some(HarnessKind::Claude));
+        let input = policy_input(&profile, None, None);
+
+        let error = resolve_harness(&input, None, evidence(None, None, &installed))
+            .expect_err("unavailable profile harness should fail without an installed fallback");
+        let message = error.to_string();
+
+        assert!(message.contains("profile harness `claude` is not installed"));
+        assert!(message.contains("selected `claude`"));
+        assert!(message.contains("installed harnesses: opencode"));
+    }
+
+    #[test]
+    fn unavailable_cli_harness_errors_without_pivoting() {
+        let installed = installed(&["codex", "opencode"]);
+        let profile = profile(Some(HarnessKind::Claude));
+        let input = policy_input(&profile, None, Some("claude"));
+
+        let error = resolve_harness(
+            &input,
+            Some(&model_alias(Some("codex"))),
+            evidence(None, None, &installed),
+        )
+        .expect_err("unavailable explicit harness should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("cli harness `claude` is not installed"));
+        assert!(message.contains("installed harnesses: codex, opencode"));
     }
 
     #[test]

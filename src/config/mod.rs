@@ -225,14 +225,143 @@ pub struct ModelPolicyRule {
     pub overrides: serde_yaml::Mapping,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct RawModelPolicyRule {
-    #[serde(rename = "match")]
-    match_clause: serde_yaml::Mapping,
-    #[serde(default, rename = "override")]
-    overrides: serde_yaml::Mapping,
-    #[serde(default, rename = "no-fallback")]
-    no_fallback: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPolicyRuleParseError {
+    RuleMustBeMapping { found: String },
+    MatchMissing,
+    MatchMustBeMapping { found: String },
+    MatchMustContainExactlyOne { found: String },
+    MatchKeyMustBeString { found: String },
+    UnknownMatchKey { key: String },
+    MatchValueMustBeString { key: String, found: String },
+    MatchValueEmpty { key: String },
+    OverrideMustBeMapping { found: String },
+    NoFallbackMustBeBoolean { found: String },
+}
+
+impl ModelPolicyRuleParseError {
+    fn deserialize_message(&self) -> String {
+        match self {
+            Self::MatchMustContainExactlyOne { .. }
+            | Self::MatchMissing
+            | Self::MatchMustBeMapping { .. } => {
+                "model policy `match` must contain exactly one of model, alias, model-glob"
+                    .to_string()
+            }
+            Self::MatchKeyMustBeString { .. } => {
+                "model policy `match` key must be a string".to_string()
+            }
+            Self::MatchValueMustBeString { .. } => {
+                "model policy `match` value must be a string".to_string()
+            }
+            Self::MatchValueEmpty { .. } => {
+                "model policy `match` value must be a non-empty string".to_string()
+            }
+            Self::UnknownMatchKey { key } => {
+                format!(
+                    "unknown model policy match key `{key}`; expected model, alias, or model-glob"
+                )
+            }
+            Self::OverrideMustBeMapping { .. } => {
+                "model policy `override` must be a mapping".to_string()
+            }
+            Self::NoFallbackMustBeBoolean { .. } => {
+                "model policy `no-fallback` must be a boolean".to_string()
+            }
+            Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
+        }
+    }
+}
+
+pub fn parse_model_policy_rule_value(
+    value: &serde_yaml::Value,
+) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
+    let rule = value
+        .as_mapping()
+        .ok_or_else(|| ModelPolicyRuleParseError::RuleMustBeMapping {
+            found: format!("{value:?}"),
+        })?;
+
+    let match_value = rule.get(serde_yaml::Value::String("match".to_string()));
+    let match_mapping = match match_value {
+        Some(value) => {
+            value
+                .as_mapping()
+                .ok_or_else(|| ModelPolicyRuleParseError::MatchMustBeMapping {
+                    found: format!("{value:?}"),
+                })?
+        }
+        None => return Err(ModelPolicyRuleParseError::MatchMissing),
+    };
+
+    let mut entries = match_mapping.iter();
+    let Some((match_key, match_value)) = entries.next() else {
+        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
+            found: format!("{match_mapping:?}"),
+        });
+    };
+    if entries.next().is_some() {
+        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
+            found: format!("{match_mapping:?}"),
+        });
+    }
+
+    let key =
+        match_key
+            .as_str()
+            .ok_or_else(|| ModelPolicyRuleParseError::MatchKeyMustBeString {
+                found: format!("{match_key:?}"),
+            })?;
+    let value =
+        match_value
+            .as_str()
+            .ok_or_else(|| ModelPolicyRuleParseError::MatchValueMustBeString {
+                key: key.to_string(),
+                found: format!("{match_value:?}"),
+            })?;
+    let match_value = value.trim().to_string();
+    if match_value.is_empty() {
+        return Err(ModelPolicyRuleParseError::MatchValueEmpty {
+            key: key.to_string(),
+        });
+    }
+
+    let match_type = match key {
+        "model" => ModelPolicyMatchType::Model,
+        "alias" => ModelPolicyMatchType::Alias,
+        "model-glob" => ModelPolicyMatchType::ModelGlob,
+        _ => {
+            return Err(ModelPolicyRuleParseError::UnknownMatchKey {
+                key: key.to_string(),
+            });
+        }
+    };
+
+    let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
+        None | Some(serde_yaml::Value::Null) => serde_yaml::Mapping::new(),
+        Some(value) => value.as_mapping().cloned().ok_or_else(|| {
+            ModelPolicyRuleParseError::OverrideMustBeMapping {
+                found: format!("{value:?}"),
+            }
+        })?,
+    };
+
+    let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
+        None | Some(serde_yaml::Value::Null) => false,
+        Some(serde_yaml::Value::Bool(value)) => *value,
+        Some(value) => {
+            return Err(ModelPolicyRuleParseError::NoFallbackMustBeBoolean {
+                found: format!("{value:?}"),
+            });
+        }
+    };
+
+    Ok(ModelPolicyRule {
+        match_type,
+        match_value,
+        no_fallback,
+        overrides,
+    })
 }
 
 impl<'de> Deserialize<'de> for ModelPolicyRule {
@@ -240,50 +369,9 @@ impl<'de> Deserialize<'de> for ModelPolicyRule {
     where
         D: serde::Deserializer<'de>,
     {
-        let raw = RawModelPolicyRule::deserialize(deserializer)?;
-        let mut entries = raw.match_clause.iter();
-        let Some((match_key, match_value)) = entries.next() else {
-            return Err(serde::de::Error::custom(
-                "model policy `match` must contain exactly one of model, alias, model-glob",
-            ));
-        };
-        if entries.next().is_some() {
-            return Err(serde::de::Error::custom(
-                "model policy `match` must contain exactly one of model, alias, model-glob",
-            ));
-        }
-
-        let key = match_key
-            .as_str()
-            .ok_or_else(|| serde::de::Error::custom("model policy `match` key must be a string"))?;
-        let value = match_value
-            .as_str()
-            .ok_or_else(|| serde::de::Error::custom("model policy `match` value must be a string"))?
-            .trim()
-            .to_string();
-        if value.is_empty() {
-            return Err(serde::de::Error::custom(
-                "model policy `match` value must be a non-empty string",
-            ));
-        }
-
-        let match_type = match key {
-            "model" => ModelPolicyMatchType::Model,
-            "alias" => ModelPolicyMatchType::Alias,
-            "model-glob" => ModelPolicyMatchType::ModelGlob,
-            other => {
-                return Err(serde::de::Error::custom(format!(
-                    "unknown model policy match key `{other}`; expected model, alias, or model-glob"
-                )));
-            }
-        };
-
-        Ok(Self {
-            match_type,
-            match_value: value,
-            no_fallback: raw.no_fallback,
-            overrides: raw.overrides,
-        })
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        parse_model_policy_rule_value(&value)
+            .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
     }
 }
 

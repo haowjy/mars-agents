@@ -827,6 +827,81 @@ fn push_model_policy_invalid(
     });
 }
 
+fn push_model_policy_parse_error(
+    diags: &mut Vec<AgentDiagnostic>,
+    position: usize,
+    error: crate::config::ModelPolicyRuleParseError,
+) {
+    let rule_field = format!("model-policies[{position}]");
+    match error {
+        crate::config::ModelPolicyRuleParseError::RuleMustBeMapping { found } => {
+            push_model_policy_invalid(diags, rule_field, found, "mapping with match and override");
+        }
+        crate::config::ModelPolicyRuleParseError::MatchMissing => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                "<missing>",
+                "mapping with exactly one of model, alias, model-glob",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::MatchMustBeMapping { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "mapping with exactly one of model, alias, model-glob",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::MatchMustContainExactlyOne { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "exactly one of model, alias, model-glob",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::MatchKeyMustBeString { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "model, alias, model-glob",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::UnknownMatchKey { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                key,
+                "model, alias, model-glob",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::MatchValueMustBeString { key, found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match.{key}"),
+                found,
+                "non-empty string",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::MatchValueEmpty { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match.{key}"),
+                "<empty>",
+                "non-empty string",
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
+            push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
+        }
+        crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
+            push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
+        }
+    }
+}
+
 fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ModelPolicyRule> {
     let Some(seq) = val.as_sequence() else {
         push_model_policy_invalid(
@@ -841,117 +916,10 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     let mut out = Vec::new();
     for (index, entry) in seq.iter().enumerate() {
         let position = index + 1;
-        let Some(rule) = entry.as_mapping() else {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}]"),
-                format!("{entry:?}"),
-                "mapping with match and override",
-            );
-            continue;
-        };
-
-        let match_value = rule.get(Value::String("match".to_string()));
-        let Some(match_mapping) = match_value.and_then(Value::as_mapping) else {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}].match"),
-                match_value
-                    .map(|value| format!("{value:?}"))
-                    .unwrap_or_else(|| "<missing>".to_string()),
-                "mapping with exactly one of model, alias, model-glob",
-            );
-            continue;
-        };
-
-        let normalized_match_keys: Vec<&str> =
-            match_mapping.keys().filter_map(Value::as_str).collect();
-        if normalized_match_keys.len() != 1 {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}].match"),
-                format!("{match_mapping:?}"),
-                "exactly one of model, alias, model-glob",
-            );
-            continue;
+        match crate::config::parse_model_policy_rule_value(entry) {
+            Ok(rule) => out.push(rule),
+            Err(error) => push_model_policy_parse_error(diags, position, error),
         }
-        let match_key = normalized_match_keys[0];
-        if !matches!(match_key, "model" | "alias" | "model-glob") {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}].match"),
-                match_key,
-                "model, alias, model-glob",
-            );
-            continue;
-        }
-        let raw_match_value = match_mapping.get(Value::String(match_key.to_string()));
-        let Some(match_text) = raw_match_value.and_then(Value::as_str).map(str::trim) else {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}].match.{match_key}"),
-                raw_match_value
-                    .map(|value| format!("{value:?}"))
-                    .unwrap_or_else(|| "<missing>".to_string()),
-                "non-empty string",
-            );
-            continue;
-        };
-        if match_text.is_empty() {
-            push_model_policy_invalid(
-                diags,
-                format!("model-policies[{position}].match.{match_key}"),
-                "<empty>",
-                "non-empty string",
-            );
-            continue;
-        }
-
-        let override_value = rule.get(Value::String("override".to_string()));
-        let empty_override = serde_yaml::Mapping::new();
-        let override_mapping = match override_value {
-            None | Some(Value::Null) => &empty_override,
-            Some(value) => {
-                let Some(mapping) = value.as_mapping() else {
-                    push_model_policy_invalid(
-                        diags,
-                        format!("model-policies[{position}].override"),
-                        format!("{value:?}"),
-                        "mapping",
-                    );
-                    continue;
-                };
-                mapping
-            }
-        };
-
-        let no_fallback = match rule.get(Value::String("no-fallback".to_string())) {
-            None | Some(Value::Null) => false,
-            Some(Value::Bool(value)) => *value,
-            Some(value) => {
-                push_model_policy_invalid(
-                    diags,
-                    format!("model-policies[{position}].no-fallback"),
-                    format!("{value:?}"),
-                    "boolean",
-                );
-                continue;
-            }
-        };
-
-        let match_type = match match_key {
-            "model" => ModelPolicyMatchType::Model,
-            "alias" => ModelPolicyMatchType::Alias,
-            "model-glob" => ModelPolicyMatchType::ModelGlob,
-            _ => unreachable!("match_key was validated above"),
-        };
-
-        out.push(ModelPolicyRule {
-            match_type,
-            match_value: match_text.to_string(),
-            no_fallback,
-            overrides: override_mapping.clone(),
-        });
     }
     out
 }

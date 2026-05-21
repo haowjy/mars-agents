@@ -2,7 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::build::policy::{MatchedModelPolicy, PolicyInput, policy_override_string};
+use crate::build::policy::{
+    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
+};
 use crate::compiler::agents::HarnessKind;
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
@@ -13,8 +15,7 @@ use crate::routing::{self, RouteConfidence, RoutingInput};
 
 #[derive(Debug)]
 pub(super) struct HarnessResolution {
-    pub(super) harness: String,
-    pub(super) source: &'static str,
+    pub(super) harness: ResolvedField<String>,
     pub(super) harness_order_position: Option<usize>,
     pub(super) route_confidence: RouteConfidence,
     pub(super) candidates_tried: Vec<String>,
@@ -48,171 +49,191 @@ pub(super) fn resolve_harness(
         .and_then(|entry| entry.harness.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let overlay_policy_harness = matched_policy
-        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Overlay)
-        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
-    let profile_policy_harness = matched_policy
-        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Profile)
-        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
-    let settings_policy_harness = matched_policy
-        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Settings)
-        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
+    let policy_harness = matched_policy_string_override(matched_policy, "harness");
+    let overlay_policy_harness = policy_harness
+        .as_ref()
+        .filter(|decision| decision.source == PolicySource::OverlayModelPolicy)
+        .cloned();
+    let profile_policy_harness = policy_harness
+        .as_ref()
+        .filter(|decision| decision.source == PolicySource::ProfileModelPolicy)
+        .cloned();
+    let settings_policy_harness = policy_harness
+        .as_ref()
+        .filter(|decision| decision.source == PolicySource::SettingsModelPolicy)
+        .cloned();
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
     let normalized_config_default_harness =
         routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
-    let mut fixed_harness_selection = None;
-    let (harness, harness_source, route_confidence, candidates_tried) = if let Some(harness) =
-        input.harness_override
-    {
-        fixed_harness_selection = Some(("cli", harness));
-        (
-            harness.to_string(),
-            "cli",
-            RouteConfidence::Explicit,
-            vec![harness.to_string()],
-        )
-    } else if let Some(harness) = overlay_harness {
-        fixed_harness_selection = Some(("overlay", harness));
-        (
-            harness.to_string(),
-            "overlay",
-            RouteConfidence::Passthrough,
-            Vec::new(),
-        )
-    } else if let Some(harness) = overlay_policy_harness.as_deref() {
-        fixed_harness_selection = Some(("overlay-model-policy", harness));
-        (
-            harness.to_string(),
-            "overlay-model-policy",
-            RouteConfidence::Passthrough,
-            Vec::new(),
-        )
-    } else if model_from_cli {
-        if let Some(harness) = settings_policy_harness.as_deref() {
-            fixed_harness_selection = Some(("settings-model-policy", harness));
-            (
-                harness.to_string(),
-                "settings-model-policy",
-                RouteConfidence::Passthrough,
-                Vec::new(),
-            )
-        } else if let Some(harness) = alias_harness {
-            fixed_harness_selection = Some(("alias", harness));
-            (
-                harness.to_string(),
-                "alias",
-                RouteConfidence::Passthrough,
-                Vec::new(),
-            )
-        } else {
-            let trace =
-                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
-            selected_harness_order_position = trace.harness_order_position;
-            warnings.extend(trace.diagnostics);
-            (
-                trace.harness,
-                trace.source.label(),
-                trace.confidence,
-                trace.candidates_tried,
-            )
-        }
-    } else if let Some(harness) = profile_harness {
-        if evidence.installed_harnesses.contains(harness) {
-            (
-                harness.to_string(),
-                "profile",
-                RouteConfidence::Passthrough,
-                Vec::new(),
-            )
-        } else {
-            warnings.push(format!(
-                "profile harness '{harness}' not installed; pivoting via model-policies"
-            ));
-            let trace =
-                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
-            selected_harness_order_position = trace.harness_order_position;
-            warnings.extend(trace.diagnostics);
-
-            if !evidence.installed_harnesses.contains(&trace.harness) {
-                return Err(unavailable_profile_pivot_error(
-                    harness,
-                    &trace.harness,
-                    evidence.installed_harnesses,
+    let fixed_harness_selection = resolve_fixed_harness_selection(
+        input,
+        model_from_cli,
+        overlay_harness,
+        overlay_policy_harness,
+        profile_harness,
+        profile_policy_harness,
+        settings_policy_harness,
+        alias_harness,
+    );
+    let (harness, route_confidence, candidates_tried, unavailable_profile_harness) =
+        if let Some(selection) = fixed_harness_selection.clone() {
+            if selection.source == PolicySource::Profile
+                && !evidence
+                    .installed_harnesses
+                    .contains(selection.value.as_str())
+            {
+                warnings.push(format!(
+                    "profile harness '{}' not installed; pivoting via model-policies",
+                    selection.value
                 ));
+                let trace =
+                    evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+                selected_harness_order_position = trace.harness_order_position;
+                warnings.extend(trace.diagnostics);
+                let unavailable = (!evidence.installed_harnesses.contains(&trace.harness))
+                    .then_some(selection.value.clone());
+                (
+                    ResolvedField {
+                        value: trace.harness,
+                        source: trace.source.into(),
+                        matched_rule: None,
+                    },
+                    trace.confidence,
+                    trace.candidates_tried,
+                    unavailable,
+                )
+            } else {
+                let candidates_tried = if selection.source == PolicySource::Cli {
+                    vec![selection.value.clone()]
+                } else {
+                    Vec::new()
+                };
+                let confidence = if selection.source == PolicySource::Cli {
+                    RouteConfidence::Explicit
+                } else {
+                    RouteConfidence::Passthrough
+                };
+                (selection, confidence, candidates_tried, None)
             }
-
+        } else {
+            let trace =
+                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+            selected_harness_order_position = trace.harness_order_position;
+            warnings.extend(trace.diagnostics);
             (
-                trace.harness,
-                trace.source.label(),
+                ResolvedField {
+                    value: trace.harness,
+                    source: trace.source.into(),
+                    matched_rule: None,
+                },
                 trace.confidence,
                 trace.candidates_tried,
+                None,
             )
-        }
-    } else if let Some(harness) = profile_policy_harness.as_deref() {
-        fixed_harness_selection = Some(("profile-model-policy", harness));
-        (
-            harness.to_string(),
-            "profile-model-policy",
-            RouteConfidence::Passthrough,
-            Vec::new(),
-        )
-    } else if let Some(harness) = settings_policy_harness.as_deref() {
-        fixed_harness_selection = Some(("settings-model-policy", harness));
-        (
-            harness.to_string(),
-            "settings-model-policy",
-            RouteConfidence::Passthrough,
-            Vec::new(),
-        )
-    } else if let Some(harness) = alias_harness {
-        fixed_harness_selection = Some(("alias", harness));
-        (
-            harness.to_string(),
-            "alias",
-            RouteConfidence::Passthrough,
-            Vec::new(),
-        )
-    } else {
-        let trace = evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
-        selected_harness_order_position = trace.harness_order_position;
-        warnings.extend(trace.diagnostics);
-        (
-            trace.harness,
-            trace.source.label(),
-            trace.confidence,
-            trace.candidates_tried,
-        )
-    };
+        };
 
-    let resolved_harness = HarnessKind::from_str(&harness).ok_or_else(|| {
+    if let Some(profile_harness) = unavailable_profile_harness {
+        return Err(unavailable_profile_pivot_error(
+            &profile_harness,
+            &harness.value,
+            evidence.installed_harnesses,
+        ));
+    }
+
+    let resolved_harness = HarnessKind::from_str(&harness.value).ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
-                "resolved harness `{harness}` is invalid; expected one of: claude, codex, opencode, cursor, pi"
+                "resolved harness `{}` is invalid; expected one of: claude, codex, opencode, cursor, pi",
+                harness.value
             ),
         })
     })?;
 
-    if let Some((source, requested_harness)) = fixed_harness_selection
-        && !evidence.installed_harnesses.contains(requested_harness)
+    if let Some(selection) = fixed_harness_selection
+        && selection.source != PolicySource::Profile
+        && !evidence
+            .installed_harnesses
+            .contains(selection.value.as_str())
     {
         return Err(unavailable_fixed_harness_error(
-            source,
-            requested_harness,
+            selection.source.label(),
+            &selection.value,
             evidence.installed_harnesses,
         ));
     }
 
     Ok(HarnessResolution {
-        is_experimental: harness == "cursor",
+        is_experimental: harness.value == "cursor",
         resolved_harness,
         harness,
-        source: harness_source,
         harness_order_position: selected_harness_order_position,
         route_confidence,
         candidates_tried,
         warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_fixed_harness_selection(
+    input: &PolicyInput<'_>,
+    model_from_cli: bool,
+    overlay_harness: Option<&str>,
+    overlay_policy_harness: Option<ResolvedField<String>>,
+    profile_harness: Option<&str>,
+    profile_policy_harness: Option<ResolvedField<String>>,
+    settings_policy_harness: Option<ResolvedField<String>>,
+    alias_harness: Option<&str>,
+) -> Option<ResolvedField<String>> {
+    if let Some(harness) = input.harness_override {
+        return Some(ResolvedField {
+            value: harness.to_string(),
+            source: PolicySource::Cli,
+            matched_rule: None,
+        });
+    }
+    if let Some(harness) = overlay_harness {
+        return Some(ResolvedField {
+            value: harness.to_string(),
+            source: PolicySource::Overlay,
+            matched_rule: None,
+        });
+    }
+    if let Some(harness) = overlay_policy_harness {
+        return Some(harness);
+    }
+    if model_from_cli {
+        if let Some(harness) = settings_policy_harness {
+            return Some(harness);
+        }
+        if let Some(harness) = alias_harness {
+            return Some(ResolvedField {
+                value: harness.to_string(),
+                source: PolicySource::Alias,
+                matched_rule: None,
+            });
+        }
+        return None;
+    }
+
+    if let Some(harness) = profile_harness {
+        return Some(ResolvedField {
+            value: harness.to_string(),
+            source: PolicySource::Profile,
+            matched_rule: None,
+        });
+    }
+    if let Some(harness) = profile_policy_harness {
+        return Some(harness);
+    }
+    if let Some(harness) = settings_policy_harness {
+        return Some(harness);
+    }
+    alias_harness.map(|harness| ResolvedField {
+        value: harness.to_string(),
+        source: PolicySource::Alias,
+        matched_rule: None,
     })
 }
 
@@ -395,8 +416,8 @@ mod tests {
         )
         .expect("harness should resolve");
 
-        assert_eq!(resolution.harness, "pi");
-        assert_eq!(resolution.source, "cli");
+        assert_eq!(resolution.harness.value, "pi");
+        assert_eq!(resolution.harness.source, PolicySource::Cli);
         assert_eq!(resolution.route_confidence, RouteConfidence::Explicit);
         assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
         assert_eq!(resolution.harness_order_position, None);
@@ -417,8 +438,8 @@ mod tests {
         )
         .expect("harness should resolve");
 
-        assert_eq!(resolution.harness, "codex");
-        assert_eq!(resolution.source, "alias");
+        assert_eq!(resolution.harness.value, "codex");
+        assert_eq!(resolution.harness.source, PolicySource::Alias);
         assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
         assert!(resolution.candidates_tried.is_empty());
     }
@@ -438,8 +459,8 @@ mod tests {
         )
         .expect("harness should resolve");
 
-        assert_eq!(resolution.harness, "pi");
-        assert_eq!(resolution.source, "profile");
+        assert_eq!(resolution.harness.value, "pi");
+        assert_eq!(resolution.harness.source, PolicySource::Profile);
         assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
         assert!(resolution.candidates_tried.is_empty());
     }
@@ -464,8 +485,8 @@ mod tests {
         let resolution = resolve_harness(&input, None, None, None, evidence)
             .expect("harness should pivot to opencode");
 
-        assert_eq!(resolution.harness, "opencode");
-        assert_eq!(resolution.source, "provider");
+        assert_eq!(resolution.harness.value, "opencode");
+        assert_eq!(resolution.harness.source, PolicySource::Provider);
         assert_eq!(resolution.route_confidence, RouteConfidence::Likely);
         assert_eq!(resolution.candidates_tried, vec!["codex", "pi", "opencode"]);
         assert!(resolution.warnings.iter().any(|warning| {
@@ -524,8 +545,8 @@ mod tests {
         )
         .expect("harness should resolve");
 
-        assert_eq!(resolution.harness, "pi");
-        assert_eq!(resolution.source, "config-order");
+        assert_eq!(resolution.harness.value, "pi");
+        assert_eq!(resolution.harness.source, PolicySource::ConfigOrder);
         assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
         assert_eq!(resolution.harness_order_position, Some(0));
         assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);

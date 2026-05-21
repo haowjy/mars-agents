@@ -2,14 +2,14 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
-use crate::build::policy::PolicyInput;
+use crate::build::policy::{PolicyInput, PolicySource};
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias, ModelsCache};
 
 pub(super) struct ResolvedModel<'a> {
     pub(super) model_token: String,
-    pub(super) model_source: String,
+    pub(super) model_source: PolicySource,
     pub(super) model: String,
     pub(super) alias: Option<&'a ModelAlias>,
     pub(super) alias_resolution_failed: bool,
@@ -30,13 +30,13 @@ pub(super) fn resolve_model<'a>(
     let mut warnings = Vec::new();
 
     let (model_token, model_source) = match input.model_override {
-        Some(model) => (model.to_string(), "cli".to_string()),
+        Some(model) => (model.to_string(), PolicySource::Cli),
         None => match overlay.and_then(|entry| entry.model.as_deref()) {
-            Some(model) => (model.to_string(), "overlay".to_string()),
+            Some(model) => (model.to_string(), PolicySource::Overlay),
             None => match input.profile.model.as_deref() {
-                Some(model) => (model.to_string(), "profile".to_string()),
+                Some(model) => (model.to_string(), PolicySource::Profile),
                 None => match input.config_default_model {
-                    Some(model) => (model.to_string(), "project".to_string()),
+                    Some(model) => (model.to_string(), PolicySource::Project),
                     None => {
                         return Err(MarsError::Config(ConfigError::Invalid {
                             message: "launch-bundle requires a model (set `model:` in the agent profile, set `settings.default_model` in mars.toml, or pass `--model`)"

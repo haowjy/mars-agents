@@ -2,8 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::build::policy::PolicyInput;
+use crate::build::policy::{MatchedModelPolicy, PolicyInput, policy_override_string};
 use crate::compiler::agents::HarnessKind;
+use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
 use crate::models::probes::OpenCodeProbeResult;
@@ -36,11 +37,26 @@ pub(super) struct HarnessEvidence<'a> {
 pub(super) fn resolve_harness(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
+    overlay: Option<&AgentOverlay>,
+    matched_policy: Option<&MatchedModelPolicy>,
     evidence: HarnessEvidence<'_>,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
+    let overlay_harness = overlay
+        .and_then(|entry| entry.harness.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let overlay_policy_harness = matched_policy
+        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Overlay)
+        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
+    let profile_policy_harness = matched_policy
+        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Profile)
+        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
+    let settings_policy_harness = matched_policy
+        .filter(|policy| policy.layer == crate::build::policy::PolicyLayer::Settings)
+        .and_then(|policy| policy_override_string(&policy.rule, "harness"));
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
     let normalized_config_default_harness =
         routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
@@ -57,8 +73,32 @@ pub(super) fn resolve_harness(
             RouteConfidence::Explicit,
             vec![harness.to_string()],
         )
+    } else if let Some(harness) = overlay_harness {
+        fixed_harness_selection = Some(("overlay", harness));
+        (
+            harness.to_string(),
+            "overlay",
+            RouteConfidence::Passthrough,
+            Vec::new(),
+        )
+    } else if let Some(harness) = overlay_policy_harness.as_deref() {
+        fixed_harness_selection = Some(("overlay-model-policy", harness));
+        (
+            harness.to_string(),
+            "overlay-model-policy",
+            RouteConfidence::Passthrough,
+            Vec::new(),
+        )
     } else if model_from_cli {
-        if let Some(harness) = alias_harness {
+        if let Some(harness) = settings_policy_harness.as_deref() {
+            fixed_harness_selection = Some(("settings-model-policy", harness));
+            (
+                harness.to_string(),
+                "settings-model-policy",
+                RouteConfidence::Passthrough,
+                Vec::new(),
+            )
+        } else if let Some(harness) = alias_harness {
             fixed_harness_selection = Some(("alias", harness));
             (
                 harness.to_string(),
@@ -110,6 +150,22 @@ pub(super) fn resolve_harness(
                 trace.candidates_tried,
             )
         }
+    } else if let Some(harness) = profile_policy_harness.as_deref() {
+        fixed_harness_selection = Some(("profile-model-policy", harness));
+        (
+            harness.to_string(),
+            "profile-model-policy",
+            RouteConfidence::Passthrough,
+            Vec::new(),
+        )
+    } else if let Some(harness) = settings_policy_harness.as_deref() {
+        fixed_harness_selection = Some(("settings-model-policy", harness));
+        (
+            harness.to_string(),
+            "settings-model-policy",
+            RouteConfidence::Passthrough,
+            Vec::new(),
+        )
     } else if let Some(harness) = alias_harness {
         fixed_harness_selection = Some(("alias", harness));
         (
@@ -286,6 +342,7 @@ mod tests {
     ) -> PolicyInput<'a> {
         PolicyInput {
             project_root: Path::new("."),
+            agent: None,
             profile,
             model_override,
             config_default_model: None,
@@ -332,6 +389,8 @@ mod tests {
         let resolution = resolve_harness(
             &input,
             Some(&model_alias(Some("codex"))),
+            None,
+            None,
             evidence(None, None, &installed),
         )
         .expect("harness should resolve");
@@ -352,6 +411,8 @@ mod tests {
         let resolution = resolve_harness(
             &input,
             Some(&model_alias(Some("codex"))),
+            None,
+            None,
             evidence(None, None, &installed),
         )
         .expect("harness should resolve");
@@ -371,6 +432,8 @@ mod tests {
         let resolution = resolve_harness(
             &input,
             Some(&model_alias(Some("codex"))),
+            None,
+            None,
             evidence(None, None, &installed),
         )
         .expect("harness should resolve");
@@ -398,8 +461,8 @@ mod tests {
             pi_probe_result: None,
         };
 
-        let resolution =
-            resolve_harness(&input, None, evidence).expect("harness should pivot to opencode");
+        let resolution = resolve_harness(&input, None, None, None, evidence)
+            .expect("harness should pivot to opencode");
 
         assert_eq!(resolution.harness, "opencode");
         assert_eq!(resolution.source, "provider");
@@ -416,7 +479,7 @@ mod tests {
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
 
-        let error = resolve_harness(&input, None, evidence(None, None, &installed))
+        let error = resolve_harness(&input, None, None, None, evidence(None, None, &installed))
             .expect_err("unavailable profile harness should fail without an installed fallback");
         let message = error.to_string();
 
@@ -434,6 +497,8 @@ mod tests {
         let error = resolve_harness(
             &input,
             Some(&model_alias(Some("codex"))),
+            None,
+            None,
             evidence(None, None, &installed),
         )
         .expect_err("unavailable explicit harness should fail");
@@ -450,8 +515,14 @@ mod tests {
         let profile = profile(None);
         let input = policy_input(&profile, None, None);
 
-        let resolution = resolve_harness(&input, None, evidence(None, Some(&order), &installed))
-            .expect("harness should resolve");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence(None, Some(&order), &installed),
+        )
+        .expect("harness should resolve");
 
         assert_eq!(resolution.harness, "pi");
         assert_eq!(resolution.source, "config-order");
@@ -466,8 +537,14 @@ mod tests {
         let profile = profile(Some(HarnessKind::Pi));
         let input = policy_input(&profile, None, None);
 
-        let resolution = resolve_harness(&input, None, evidence(Some("bogus"), None, &installed))
-            .expect("harness should resolve");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence(Some("bogus"), None, &installed),
+        )
+        .expect("harness should resolve");
 
         assert!(
             resolution

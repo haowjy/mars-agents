@@ -3,6 +3,7 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::build::policy::PolicyInput;
+use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias, ModelsCache};
 
@@ -22,6 +23,7 @@ pub(super) struct ResolvedModel<'a> {
 /// `settings.default_model` from `mars.toml`.
 pub(super) fn resolve_model<'a>(
     input: &PolicyInput<'_>,
+    overlay: Option<&AgentOverlay>,
     aliases: &'a IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Result<ResolvedModel<'a>, MarsError> {
@@ -29,16 +31,19 @@ pub(super) fn resolve_model<'a>(
 
     let (model_token, model_source) = match input.model_override {
         Some(model) => (model.to_string(), "cli".to_string()),
-        None => match input.profile.model.as_deref() {
-            Some(model) => (model.to_string(), "profile".to_string()),
-            None => match input.config_default_model {
-                Some(model) => (model.to_string(), "project".to_string()),
-                None => {
-                    return Err(MarsError::Config(ConfigError::Invalid {
-                        message: "launch-bundle requires a model (set `model:` in the agent profile, set `settings.default_model` in mars.toml, or pass `--model`)"
-                            .to_string(),
-                    }));
-                }
+        None => match overlay.and_then(|entry| entry.model.as_deref()) {
+            Some(model) => (model.to_string(), "overlay".to_string()),
+            None => match input.profile.model.as_deref() {
+                Some(model) => (model.to_string(), "profile".to_string()),
+                None => match input.config_default_model {
+                    Some(model) => (model.to_string(), "project".to_string()),
+                    None => {
+                        return Err(MarsError::Config(ConfigError::Invalid {
+                            message: "launch-bundle requires a model (set `model:` in the agent profile, set `settings.default_model` in mars.toml, or pass `--model`)"
+                                .to_string(),
+                        }));
+                    }
+                },
             },
         },
     };

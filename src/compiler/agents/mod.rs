@@ -9,6 +9,7 @@ pub mod lower;
 
 use serde_yaml::Value;
 
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
 // ---------------------------------------------------------------------------
@@ -222,25 +223,6 @@ impl HarnessOverrides {
     }
 }
 
-/// Parsed `model-policies:` entry.
-///
-/// Per the spec (D43), model-policies are consumed by Meridian at runtime.
-/// Mars parses them at compile time only for validation and preservation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelPolicyEntry {
-    pub match_type: ModelPolicyMatchType,
-    pub match_value: String,
-    pub no_fallback: bool,
-    pub overrides: serde_yaml::Mapping,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelPolicyMatchType {
-    Model,
-    Alias,
-    ModelGlob,
-}
-
 /// Marker for a validated fanout inventory entry (`fanout:`).
 ///
 /// Fanout is metadata-only (D43): it never gains lowering behavior.
@@ -290,7 +272,7 @@ pub struct AgentProfile {
 
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
-    pub model_policies: Vec<ModelPolicyEntry>,
+    pub model_policies: Vec<ModelPolicyRule>,
     pub fanout: Vec<FanoutEntry>,
 }
 
@@ -845,7 +827,7 @@ fn push_model_policy_invalid(
     });
 }
 
-fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ModelPolicyEntry> {
+fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ModelPolicyRule> {
     let Some(seq) = val.as_sequence() else {
         push_model_policy_invalid(
             diags,
@@ -964,7 +946,7 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
             _ => unreachable!("match_key was validated above"),
         };
 
-        out.push(ModelPolicyEntry {
+        out.push(ModelPolicyRule {
             match_type,
             match_value: match_text.to_string(),
             no_fallback,

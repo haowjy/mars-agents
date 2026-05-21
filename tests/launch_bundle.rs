@@ -239,6 +239,31 @@ fn build_launch_bundle_profile_model_beats_settings_default_model() {
 }
 
 #[test]
+fn build_launch_bundle_overlay_model_overrides_profile_model() {
+    routing::build_launch_bundle_overlay_model_overrides_profile_model();
+}
+
+#[test]
+fn build_launch_bundle_settings_model_policy_applies_with_provenance() {
+    routing::build_launch_bundle_settings_model_policy_applies_with_provenance();
+}
+
+#[test]
+fn build_launch_bundle_composed_model_policies_overlay_wins() {
+    routing::build_launch_bundle_composed_model_policies_overlay_wins();
+}
+
+#[test]
+fn build_launch_bundle_composed_model_policies_first_match_wins() {
+    routing::build_launch_bundle_composed_model_policies_first_match_wins();
+}
+
+#[test]
+fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
+    routing::build_launch_bundle_local_overlay_replaces_base_overlay_by_name();
+}
+
+#[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     routing::build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default();
 }

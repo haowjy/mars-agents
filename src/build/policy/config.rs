@@ -2,6 +2,7 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
+use crate::config::{AgentOverlay, ModelPolicyRule};
 use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias};
 
@@ -11,6 +12,8 @@ pub(super) struct PolicyResolutionConfig {
     pub(super) default_model: Option<String>,
     pub(super) harness_order: Option<Vec<String>>,
     pub(super) linked_harnesses: Vec<String>,
+    pub(super) agents: IndexMap<String, AgentOverlay>,
+    pub(super) settings_model_policies: Vec<ModelPolicyRule>,
 }
 
 pub(super) fn load_policy_resolution_config(
@@ -21,6 +24,8 @@ pub(super) fn load_policy_resolution_config(
     let mut default_model = None;
     let mut harness_order = None;
     let mut linked_harnesses = Vec::new();
+    let mut agents = IndexMap::new();
+    let mut settings_model_policies = Vec::new();
 
     let merged_path = project_root.join(".mars").join("models-merged.json");
     if let Ok(content) = std::fs::read_to_string(&merged_path)
@@ -37,9 +42,14 @@ pub(super) fn load_policy_resolution_config(
             default_model = config.settings.default_model.clone();
             harness_order = config.settings.harness_order.clone();
             linked_harnesses = config.settings.linked_harnesses();
+            agents = config.agents.clone();
             for (name, alias) in &config.models {
                 merged.insert(name.clone(), alias.clone());
             }
+            let local = crate::config::load_local(project_root)?;
+            agents = crate::config::merged_agent_overlays(&agents, &local);
+            settings_model_policies =
+                crate::config::merged_settings_model_policies(&config.settings, &local);
         }
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {}
         Err(err) => return Err(err),
@@ -51,5 +61,7 @@ pub(super) fn load_policy_resolution_config(
         default_model,
         harness_order,
         linked_harnesses,
+        agents,
+        settings_model_policies,
     })
 }

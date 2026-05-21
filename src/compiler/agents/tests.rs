@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::Config;
 use crate::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
@@ -336,6 +337,39 @@ fn malformed_model_policy_produces_diagnostic() {
     assert!(
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-policies[1].match")
     );
+}
+
+#[test]
+fn model_policy_rule_type_is_shared_across_profile_overlay_and_settings() {
+    let profile_content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    override:\n      harness: codex\n---\n";
+    let (profile, diags) = parse(profile_content);
+    assert!(diags.is_empty());
+
+    let config: Config = toml::from_str(
+        r#"
+[agents.reviewer]
+
+[[agents.reviewer.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "codex" }
+
+[settings]
+
+[[settings.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "codex" }
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(profile.model_policies.len(), 1);
+    assert_eq!(config.agents["reviewer"].model_policies.len(), 1);
+    assert_eq!(config.settings.model_policies.len(), 1);
+    assert_eq!(
+        profile.model_policies[0],
+        config.agents["reviewer"].model_policies[0]
+    );
+    assert_eq!(profile.model_policies[0], config.settings.model_policies[0]);
 }
 
 // --- 3.1: fanout ---

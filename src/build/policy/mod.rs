@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
+use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
 
@@ -14,6 +15,7 @@ mod runnable;
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
+    pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
     pub config_default_model: Option<&'a str>,
@@ -30,14 +32,50 @@ pub struct ResolvedPolicy {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PolicyLayer {
+    Overlay,
+    Profile,
+    Settings,
+}
+
+impl PolicyLayer {
+    fn matched_rule_layer_label(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay",
+            Self::Profile => "profile",
+            Self::Settings => "settings",
+        }
+    }
+
+    pub(super) fn field_source_label(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay-model-policy",
+            Self::Profile => "profile-model-policy",
+            Self::Settings => "settings-model-policy",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct MatchedModelPolicy {
+    pub(super) layer: PolicyLayer,
+    pub(super) index: usize,
+    pub(super) rule: ModelPolicyRule,
+}
+
 pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsError> {
     let mut warnings = Vec::new();
     let mut provenance = BTreeMap::new();
 
     let resolution_config = config::load_policy_resolution_config(input.project_root)?;
+    let overlay = input
+        .agent
+        .and_then(|name| resolution_config.agents.get(name));
     let cache = model::load_models_cache(input.project_root)?;
     let model_input = PolicyInput {
         project_root: input.project_root,
+        agent: input.agent,
         profile: input.profile,
         model_override: input.model_override,
         config_default_model: resolution_config.default_model.as_deref(),
@@ -46,13 +84,33 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         approval_override: input.approval_override,
         sandbox_override: input.sandbox_override,
     };
-    let resolved_model = model::resolve_model(&model_input, &resolution_config.aliases, &cache)?;
+    let resolved_model =
+        model::resolve_model(&model_input, overlay, &resolution_config.aliases, &cache)?;
 
     warnings.extend(resolved_model.warnings);
     provenance.insert(
         "model_source".to_string(),
         resolved_model.model_source.clone(),
     );
+    let matched_policy = match_model_policy(
+        compose_effective_policies(
+            overlay,
+            &input.profile.model_policies,
+            &resolution_config.settings_model_policies,
+        ),
+        &resolved_model.model,
+        &resolved_model.model_token,
+    );
+    if let Some(policy) = matched_policy.as_ref() {
+        provenance.insert(
+            "matched_policy_rule".to_string(),
+            format!(
+                "{}:{}",
+                policy.layer.matched_rule_layer_label(),
+                policy.index
+            ),
+        );
+    }
 
     let capability_snapshot = collect_capability_snapshot(&CapabilityCollectionOptions {
         offline: crate::models::is_mars_offline(),
@@ -65,6 +123,8 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let harness_resolution = harness::resolve_harness(
         &model_input,
         resolved_model.alias,
+        overlay,
+        matched_policy.as_ref(),
         harness::HarnessEvidence {
             model_id: &resolved_model.model,
             provider: resolved_model.provider.as_deref(),
@@ -107,8 +167,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         .profile
         .harness_overrides
         .get(&harness_resolution.resolved_harness);
-    let execution_resolution =
-        execution::resolve_execution_policy(&input, resolved_model.alias, matched_harness_override);
+    let execution_resolution = execution::resolve_execution_policy(
+        &input,
+        resolved_model.alias,
+        overlay,
+        matched_policy.as_ref(),
+        matched_harness_override,
+    );
 
     provenance.insert(
         "effort_source".to_string(),
@@ -164,4 +229,89 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         provenance,
         warnings,
     })
+}
+
+pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Option<String> {
+    let value = rule
+        .overrides
+        .get(serde_yaml::Value::String(key.to_string()))?
+        .as_str()?;
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub(super) fn policy_override_u32(rule: &ModelPolicyRule, key: &str) -> Option<u32> {
+    let value = rule
+        .overrides
+        .get(serde_yaml::Value::String(key.to_string()))?;
+    match value {
+        serde_yaml::Value::Number(number) => {
+            let parsed = number.as_u64()?;
+            u32::try_from(parsed).ok()
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn policy_override_u8(rule: &ModelPolicyRule, key: &str) -> Option<u8> {
+    let value = rule
+        .overrides
+        .get(serde_yaml::Value::String(key.to_string()))?;
+    match value {
+        serde_yaml::Value::Number(number) => {
+            let parsed = number.as_u64()?;
+            let percent = u8::try_from(parsed).ok()?;
+            (1..=100).contains(&percent).then_some(percent)
+        }
+        _ => None,
+    }
+}
+
+fn compose_effective_policies<'a>(
+    overlay: Option<&'a AgentOverlay>,
+    profile_policies: &'a [ModelPolicyRule],
+    settings_policies: &'a [ModelPolicyRule],
+) -> Vec<(PolicyLayer, usize, &'a ModelPolicyRule)> {
+    let mut composed = Vec::new();
+    if let Some(agent_overlay) = overlay {
+        for (index, rule) in agent_overlay.model_policies.iter().enumerate() {
+            composed.push((PolicyLayer::Overlay, index, rule));
+        }
+    }
+    for (index, rule) in profile_policies.iter().enumerate() {
+        composed.push((PolicyLayer::Profile, index, rule));
+    }
+    for (index, rule) in settings_policies.iter().enumerate() {
+        composed.push((PolicyLayer::Settings, index, rule));
+    }
+    composed
+}
+
+fn match_model_policy(
+    policies: Vec<(PolicyLayer, usize, &ModelPolicyRule)>,
+    canonical_model_id: &str,
+    selected_model_token: &str,
+) -> Option<MatchedModelPolicy> {
+    if canonical_model_id.is_empty() || selected_model_token.is_empty() {
+        return None;
+    }
+
+    for (layer, index, rule) in policies {
+        let matched = match rule.match_type {
+            ModelPolicyMatchType::Model => rule.match_value == canonical_model_id,
+            ModelPolicyMatchType::Alias => rule.match_value == selected_model_token,
+            ModelPolicyMatchType::ModelGlob => {
+                crate::models::glob_match(&rule.match_value, canonical_model_id)
+            }
+        };
+        if matched {
+            return Some(MatchedModelPolicy {
+                layer,
+                index,
+                rule: rule.clone(),
+            });
+        }
+    }
+
+    None
 }

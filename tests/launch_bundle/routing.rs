@@ -1852,6 +1852,236 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_overlay_model_overrides_profile_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+harness = "codex"
+
+[agents.reviewer]
+model = "gpt55""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt55"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        bundle["provenance"]["model_source"].as_str(),
+        Some("overlay")
+    );
+}
+
+pub(crate) fn build_launch_bundle_settings_model_policy_applies_with_provenance() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+
+[[settings.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "opencode", effort = "medium" }"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["execution_policy"]["effort"].as_str(),
+        Some("medium")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("settings-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["effort_source"].as_str(),
+        Some("settings-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["matched_policy_rule"].as_str(),
+        Some("settings:0")
+    );
+}
+
+pub(crate) fn build_launch_bundle_composed_model_policies_overlay_wins() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex", "opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+    override:
+      harness: codex
+      effort: high
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+
+[agents.reviewer]
+
+[[agents.reviewer.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "pi", effort = "medium" }
+
+[[settings.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "opencode", effort = "low" }"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(
+        bundle["execution_policy"]["effort"].as_str(),
+        Some("medium")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("overlay-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["effort_source"].as_str(),
+        Some("overlay-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["matched_policy_rule"].as_str(),
+        Some("overlay:0")
+    );
+}
+
+pub(crate) fn build_launch_bundle_composed_model_policies_first_match_wins() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+    override:
+      harness: codex
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+
+[agents.reviewer]
+
+[[agents.reviewer.model-policies]]
+match = { alias = "not-gpt55" }
+override = { harness = "pi" }"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("profile-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["matched_policy_rule"].as_str(),
+        Some("profile:0")
+    );
+}
+
+pub(crate) fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+harness = "codex"
+
+[models.gptmini]
+model = "gpt-5.4-mini"
+harness = "pi"
+
+[agents.reviewer]
+model = "gpt55"
+harness = "codex"
+effort = "high""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[agents.reviewer]
+model = "gptmini""#,
+    )
+    .unwrap();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gptmini"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(
+        bundle["provenance"]["model_source"].as_str(),
+        Some("overlay")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("alias")
+    );
+}
+
 fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
     let bin_dir = temp.path().join("harness-bin");
     fs::create_dir_all(&bin_dir).unwrap();

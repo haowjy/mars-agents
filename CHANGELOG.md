@@ -4,6 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Added `[agents.<name>]` launch-bundle overlay schema in `mars.toml` / `mars.local.toml` with routing + execution-policy fields and per-overlay `model-policies`.
+- Added `[[settings.model-policies]]` project-level policy schema, shared with profile + overlay via one `ModelPolicyRule` type.
+- Added launch-bundle provenance key `matched_policy_rule` (`overlay:<idx>`, `profile:<idx>`, `settings:<idx>`).
+
+### Changed
+- Launch-bundle policy resolution now composes model-policies across overlay → profile → settings (first match wins) and emits new provenance sources: `overlay`, `overlay-model-policy`, `settings-model-policy`.
+- Launch-bundle model resolution now honors `[agents.<name>].model` before profile/default model.
+- `mars.local.toml` overlay merge now does name-keyed replacement for `[agents.<name>]`; local `settings.model-policies` replaces base list.
+
 ## [0.4.8-rc.6] - 2026-05-21
 
 ### Changed

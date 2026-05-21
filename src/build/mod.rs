@@ -76,6 +76,7 @@ pub fn build_launch_bundle(
 
     let policy = resolve_policy(PolicyInput {
         project_root: &ctx.project_root,
+        agent: request.agent.as_deref(),
         profile: &profile,
         model_override: request.model.as_deref(),
         config_default_model: None,

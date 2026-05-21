@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
@@ -36,6 +37,8 @@ pub struct Config {
     pub settings: Settings,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub models: IndexMap<String, crate::models::ModelAlias>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub agents: IndexMap<String, AgentOverlay>,
 }
 
 /// Package metadata.
@@ -179,6 +182,227 @@ impl ModelVisibility {
     }
 }
 
+/// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autocompact: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autocompact_pct: Option<i64>,
+    #[serde(
+        default,
+        rename = "model-policies",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub model_policies: Vec<ModelPolicyRule>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelPolicyMatchType {
+    Model,
+    Alias,
+    ModelGlob,
+}
+
+/// Shared model-policy rule type used by profile frontmatter, agent overlays,
+/// and settings-level model policies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPolicyRule {
+    pub match_type: ModelPolicyMatchType,
+    pub match_value: String,
+    pub no_fallback: bool,
+    pub overrides: serde_yaml::Mapping,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPolicyRuleParseError {
+    RuleMustBeMapping { found: String },
+    MatchMissing,
+    MatchMustBeMapping { found: String },
+    MatchMustContainExactlyOne { found: String },
+    MatchKeyMustBeString { found: String },
+    UnknownMatchKey { key: String },
+    MatchValueMustBeString { key: String, found: String },
+    MatchValueEmpty { key: String },
+    OverrideMustBeMapping { found: String },
+    NoFallbackMustBeBoolean { found: String },
+}
+
+impl ModelPolicyRuleParseError {
+    fn deserialize_message(&self) -> String {
+        match self {
+            Self::MatchMustContainExactlyOne { .. }
+            | Self::MatchMissing
+            | Self::MatchMustBeMapping { .. } => {
+                "model policy `match` must contain exactly one of model, alias, model-glob"
+                    .to_string()
+            }
+            Self::MatchKeyMustBeString { .. } => {
+                "model policy `match` key must be a string".to_string()
+            }
+            Self::MatchValueMustBeString { .. } => {
+                "model policy `match` value must be a string".to_string()
+            }
+            Self::MatchValueEmpty { .. } => {
+                "model policy `match` value must be a non-empty string".to_string()
+            }
+            Self::UnknownMatchKey { key } => {
+                format!(
+                    "unknown model policy match key `{key}`; expected model, alias, or model-glob"
+                )
+            }
+            Self::OverrideMustBeMapping { .. } => {
+                "model policy `override` must be a mapping".to_string()
+            }
+            Self::NoFallbackMustBeBoolean { .. } => {
+                "model policy `no-fallback` must be a boolean".to_string()
+            }
+            Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
+        }
+    }
+}
+
+pub fn parse_model_policy_rule_value(
+    value: &serde_yaml::Value,
+) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
+    let rule = value
+        .as_mapping()
+        .ok_or_else(|| ModelPolicyRuleParseError::RuleMustBeMapping {
+            found: format!("{value:?}"),
+        })?;
+
+    let match_value = rule.get(serde_yaml::Value::String("match".to_string()));
+    let match_mapping = match match_value {
+        Some(value) => {
+            value
+                .as_mapping()
+                .ok_or_else(|| ModelPolicyRuleParseError::MatchMustBeMapping {
+                    found: format!("{value:?}"),
+                })?
+        }
+        None => return Err(ModelPolicyRuleParseError::MatchMissing),
+    };
+
+    let mut entries = match_mapping.iter();
+    let Some((match_key, match_value)) = entries.next() else {
+        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
+            found: format!("{match_mapping:?}"),
+        });
+    };
+    if entries.next().is_some() {
+        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
+            found: format!("{match_mapping:?}"),
+        });
+    }
+
+    let key =
+        match_key
+            .as_str()
+            .ok_or_else(|| ModelPolicyRuleParseError::MatchKeyMustBeString {
+                found: format!("{match_key:?}"),
+            })?;
+    let value =
+        match_value
+            .as_str()
+            .ok_or_else(|| ModelPolicyRuleParseError::MatchValueMustBeString {
+                key: key.to_string(),
+                found: format!("{match_value:?}"),
+            })?;
+    let match_value = value.trim().to_string();
+    if match_value.is_empty() {
+        return Err(ModelPolicyRuleParseError::MatchValueEmpty {
+            key: key.to_string(),
+        });
+    }
+
+    let match_type = match key {
+        "model" => ModelPolicyMatchType::Model,
+        "alias" => ModelPolicyMatchType::Alias,
+        "model-glob" => ModelPolicyMatchType::ModelGlob,
+        _ => {
+            return Err(ModelPolicyRuleParseError::UnknownMatchKey {
+                key: key.to_string(),
+            });
+        }
+    };
+
+    let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
+        None | Some(serde_yaml::Value::Null) => serde_yaml::Mapping::new(),
+        Some(value) => value.as_mapping().cloned().ok_or_else(|| {
+            ModelPolicyRuleParseError::OverrideMustBeMapping {
+                found: format!("{value:?}"),
+            }
+        })?,
+    };
+
+    let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
+        None | Some(serde_yaml::Value::Null) => false,
+        Some(serde_yaml::Value::Bool(value)) => *value,
+        Some(value) => {
+            return Err(ModelPolicyRuleParseError::NoFallbackMustBeBoolean {
+                found: format!("{value:?}"),
+            });
+        }
+    };
+
+    Ok(ModelPolicyRule {
+        match_type,
+        match_value,
+        no_fallback,
+        overrides,
+    })
+}
+
+impl<'de> Deserialize<'de> for ModelPolicyRule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        parse_model_policy_rule_value(&value)
+            .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
+    }
+}
+
+impl Serialize for ModelPolicyRule {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        let match_key = match self.match_type {
+            ModelPolicyMatchType::Model => "model",
+            ModelPolicyMatchType::Alias => "alias",
+            ModelPolicyMatchType::ModelGlob => "model-glob",
+        };
+
+        let mut match_clause = serde_yaml::Mapping::new();
+        match_clause.insert(
+            serde_yaml::Value::String(match_key.to_string()),
+            serde_yaml::Value::String(self.match_value.clone()),
+        );
+        map.serialize_entry("match", &match_clause)?;
+        if !self.overrides.is_empty() {
+            map.serialize_entry("override", &self.overrides)?;
+        }
+        if self.no_fallback {
+            map.serialize_entry("no-fallback", &self.no_fallback)?;
+        }
+        map.end()
+    }
+}
+
 fn is_false(v: &bool) -> bool {
     !v
 }
@@ -191,6 +415,22 @@ fn is_false(v: &bool) -> bool {
 pub struct LocalConfig {
     #[serde(default)]
     pub overrides: IndexMap<SourceName, OverrideEntry>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(default, skip_serializing_if = "LocalSettings::is_empty")]
+    pub settings: LocalSettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LocalSettings {
+    #[serde(default, rename = "model-policies")]
+    pub model_policies: Option<Vec<ModelPolicyRule>>,
+}
+
+impl LocalSettings {
+    fn is_empty(&self) -> bool {
+        self.model_policies.is_none()
+    }
 }
 
 /// Dev override — local path swap for a git source.
@@ -244,6 +484,12 @@ pub struct Settings {
     /// `MERIDIAN_MANAGED=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
+    #[serde(
+        default,
+        rename = "model-policies",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub model_policies: Vec<ModelPolicyRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -266,6 +512,7 @@ impl Default for Settings {
             default_model: None,
             harness_order: None,
             agent_emission: None,
+            model_policies: Vec::new(),
         }
     }
 }
@@ -441,6 +688,28 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(ConfigError::Io(e).into()),
     }
+}
+
+pub fn merged_agent_overlays(
+    base: &IndexMap<String, AgentOverlay>,
+    local: &LocalConfig,
+) -> IndexMap<String, AgentOverlay> {
+    let mut merged = base.clone();
+    for (name, overlay) in &local.agents {
+        merged.insert(name.clone(), overlay.clone());
+    }
+    merged
+}
+
+pub fn merged_settings_model_policies(
+    settings: &Settings,
+    local: &LocalConfig,
+) -> Vec<ModelPolicyRule> {
+    local
+        .settings
+        .model_policies
+        .clone()
+        .unwrap_or_else(|| settings.model_policies.clone())
 }
 
 /// Merge config + local overrides into EffectiveConfig.
@@ -808,6 +1077,19 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
                 "refusing to save config: settings.agent_emission changed during roundtrip ({:?} -> {:?})",
                 original.settings.agent_emission, reparsed.settings.agent_emission
             ),
+        }
+        .into());
+    }
+    if reparsed.settings.model_policies != original.settings.model_policies {
+        return Err(ConfigError::Invalid {
+            message: "refusing to save config: settings.model_policies changed during roundtrip"
+                .to_string(),
+        }
+        .into());
+    }
+    if reparsed.agents != original.agents {
+        return Err(ConfigError::Invalid {
+            message: "refusing to save config: agents changed during roundtrip".to_string(),
         }
         .into());
     }
@@ -1232,6 +1514,147 @@ path = "/home/dev/local-base"
     }
 
     #[test]
+    fn parse_agent_overlay_and_settings_model_policies() {
+        let config: Config = toml::from_str(
+            r#"
+[agents.tech-lead]
+model = "gpt55"
+harness = "codex"
+effort = "medium"
+approval = "default"
+sandbox = "default"
+autocompact = 1200
+autocompact_pct = 80
+
+[[agents.tech-lead.model-policies]]
+match = { alias = "gpt55" }
+override = { harness = "opencode", effort = "low" }
+no-fallback = true
+
+[settings]
+
+[[settings.model-policies]]
+match = { model-glob = "gpt-*" }
+override = { effort = "high" }
+"#,
+        )
+        .unwrap();
+
+        let overlay = config.agents.get("tech-lead").expect("tech-lead overlay");
+        assert_eq!(overlay.model.as_deref(), Some("gpt55"));
+        assert_eq!(overlay.harness.as_deref(), Some("codex"));
+        assert_eq!(overlay.autocompact, Some(1200));
+        assert_eq!(overlay.autocompact_pct, Some(80));
+        assert_eq!(overlay.model_policies.len(), 1);
+        assert_eq!(
+            overlay.model_policies[0].match_type,
+            ModelPolicyMatchType::Alias
+        );
+        assert_eq!(overlay.model_policies[0].match_value, "gpt55");
+        assert!(overlay.model_policies[0].no_fallback);
+
+        assert_eq!(config.settings.model_policies.len(), 1);
+        assert_eq!(
+            config.settings.model_policies[0].match_type,
+            ModelPolicyMatchType::ModelGlob
+        );
+        assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+    }
+
+    #[test]
+    fn merged_agent_overlays_replace_by_agent_name() {
+        let mut base_agents = IndexMap::new();
+        base_agents.insert(
+            "tech-lead".to_string(),
+            AgentOverlay {
+                model: Some("gpt55".to_string()),
+                harness: Some("codex".to_string()),
+                effort: Some("high".to_string()),
+                ..AgentOverlay::default()
+            },
+        );
+        base_agents.insert(
+            "reviewer".to_string(),
+            AgentOverlay {
+                model: Some("gpt-5.4-mini".to_string()),
+                ..AgentOverlay::default()
+            },
+        );
+
+        let mut local_agents = IndexMap::new();
+        local_agents.insert(
+            "tech-lead".to_string(),
+            AgentOverlay {
+                model: Some("gptmini".to_string()),
+                ..AgentOverlay::default()
+            },
+        );
+        let local = LocalConfig {
+            agents: local_agents,
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_agent_overlays(&base_agents, &local);
+        let replaced = merged.get("tech-lead").expect("tech-lead should exist");
+        assert_eq!(replaced.model.as_deref(), Some("gptmini"));
+        assert!(
+            replaced.harness.is_none(),
+            "local overlay must replace the base overlay block"
+        );
+        assert!(
+            replaced.effort.is_none(),
+            "local overlay replacement must not deep-merge base fields"
+        );
+        assert_eq!(
+            merged
+                .get("reviewer")
+                .and_then(|overlay| overlay.model.as_deref()),
+            Some("gpt-5.4-mini")
+        );
+    }
+
+    #[test]
+    fn merged_settings_model_policies_use_local_replacement_when_present() {
+        let mut base_override = serde_yaml::Mapping::new();
+        base_override.insert(
+            serde_yaml::Value::String("harness".to_string()),
+            serde_yaml::Value::String("codex".to_string()),
+        );
+        let base_rule = ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "gpt55".to_string(),
+            no_fallback: false,
+            overrides: base_override,
+        };
+
+        let mut local_override = serde_yaml::Mapping::new();
+        local_override.insert(
+            serde_yaml::Value::String("harness".to_string()),
+            serde_yaml::Value::String("opencode".to_string()),
+        );
+        let local_rule = ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "gpt55".to_string(),
+            no_fallback: false,
+            overrides: local_override,
+        };
+
+        let settings = Settings {
+            model_policies: vec![base_rule],
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                model_policies: Some(vec![local_rule.clone()]),
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings_model_policies(&settings, &local);
+        assert_eq!(merged, vec![local_rule]);
+    }
+
+    #[test]
     fn merge_with_empty_local() {
         let config = Config {
             dependencies: {
@@ -1297,6 +1720,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
+            ..LocalConfig::default()
         };
         let effective = merge(config, local).unwrap();
         let source = &effective.dependencies["base"];
@@ -1350,6 +1774,7 @@ path = "/home/dev/local-base"
                 );
                 m
             },
+            ..LocalConfig::default()
         };
 
         let (effective, _) = merge_with_root(config, local, &temp_root).unwrap();
@@ -2462,7 +2887,10 @@ skills = ["prompt-helper"]
                 path: PathBuf::from("C:\\Users\\dev\\local-pkg"),
             },
         );
-        let local = LocalConfig { overrides };
+        let local = LocalConfig {
+            overrides,
+            ..LocalConfig::default()
+        };
         let toml_str = toml::to_string_pretty(&local).unwrap();
         assert!(
             !toml_str.contains('\\'),

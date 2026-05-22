@@ -173,6 +173,14 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         json!(["pi", "opencode", "cursor"])
     );
     assert!(stdout["route_trace"].is_object());
+    let assessments = stdout["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let pi_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("pi"))
+        .expect("pi assessment should exist");
+    assert_eq!(pi_assessment["skip_reason"].as_str(), Some("not_installed"));
     assert_eq!(stdout["route"]["harness"].as_str(), Some("pi"));
 }
 

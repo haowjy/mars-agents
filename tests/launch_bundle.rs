@@ -189,9 +189,13 @@ fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed
 }
 
 #[test]
-fn build_launch_bundle_opencode_uses_route_chosen_slug_with_provider_order_and_nested_slug_present()
-{
-    routing::build_launch_bundle_opencode_uses_route_chosen_slug_with_provider_order_and_nested_slug_present();
+fn build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug() {
+    routing::build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug();
+}
+
+#[test]
+fn build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match() {
+    routing::build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match();
 }
 
 #[test]

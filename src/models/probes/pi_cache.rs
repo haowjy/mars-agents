@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::pi::PiProbeResult;
 use crate::error::MarsError;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const DEFAULT_TTL_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

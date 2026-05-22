@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
+use crate::routing::slug;
+
 use super::probes::{OpenCodeProbeResult, PiProbeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -90,37 +92,6 @@ pub struct ResolvedRunnablePath {
     pub confidence: RunnableConfidence,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposedSlug {
-    pub provider: String,
-    pub model_part: String,
-    pub full_slug: String,
-}
-
-pub fn decompose_slug(slug: &str) -> Option<DecomposedSlug> {
-    let (provider, model_part) = slug.split_once('/')?;
-    if provider.is_empty() || model_part.is_empty() {
-        return None;
-    }
-    Some(DecomposedSlug {
-        provider: provider.to_string(),
-        model_part: model_part.to_string(),
-        full_slug: slug.to_string(),
-    })
-}
-
-pub fn normalize_model_id(id: &str) -> String {
-    id.to_lowercase().replace('.', "-")
-}
-
-pub fn model_id_matches(mars_id: &str, oc_model: &str) -> bool {
-    normalize_model_id(mars_id) == normalize_model_id(oc_model)
-}
-
-pub fn provider_matches(mars_provider: &str, oc_segment: &str) -> bool {
-    mars_provider.eq_ignore_ascii_case(oc_segment)
-}
-
 pub fn resolve_runnable_path(
     model_id: &str,
     provider: &str,
@@ -166,7 +137,12 @@ fn resolve_cached_probe_path(
         return None;
     }
 
-    let matched_slug = find_matching_slug(model_id, provider, &probe.model_slugs)?;
+    let matched_slug = slug::find_exact_match(
+        model_id,
+        provider,
+        probe.model_slugs.iter().map(String::as_str),
+    )?
+    .slug;
     Some(ResolvedRunnablePath {
         harness_model_id: matched_slug,
         source: RunnablePathSource::CachedProbe,
@@ -192,8 +168,8 @@ pub fn classify_for_harness(
     }
 
     let direct_match = match harness.as_str() {
-        "claude" => provider_matches(provider, "anthropic"),
-        "codex" => provider_matches(provider, "openai"),
+        "claude" => slug::providers_match(provider, "anthropic"),
+        "codex" => slug::providers_match(provider, "openai"),
         "opencode" => return classify_opencode(provider, model_id, probe_result),
         "pi" | "cursor" => return classify_universal_harness(),
         _ => false,
@@ -256,7 +232,12 @@ fn classify_opencode(
         ));
     }
 
-    let Some(harness_model_id) = find_matching_slug(model_id, provider, &probe.model_slugs) else {
+    let Some(harness_model_id) = slug::find_exact_match(
+        model_id,
+        provider,
+        probe.model_slugs.iter().map(String::as_str),
+    )
+    .map(|matched| matched.slug) else {
         return Some((
             AvailabilityStatus::Unavailable,
             AvailabilitySource::OpenCodeProbeNegative,
@@ -288,25 +269,6 @@ fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
         (provider.as_str(), harness.as_str()),
         ("anthropic", "claude") | ("openai", "codex")
     )
-}
-
-fn find_matching_slug(
-    mars_model_id: &str,
-    mars_provider: &str,
-    slugs: &[String],
-) -> Option<String> {
-    for slug in slugs {
-        let Some(decomposed) = decompose_slug(slug) else {
-            continue;
-        };
-        if provider_matches(mars_provider, &decomposed.provider)
-            && model_id_matches(mars_model_id, &decomposed.model_part)
-        {
-            return Some(slug.clone());
-        }
-    }
-
-    None
 }
 
 pub fn classify_model(
@@ -388,9 +350,12 @@ fn classify_pi_for_model(
         ));
     }
 
-    let Some(harness_model_id) =
-        find_matching_pi_slug(model_id, provider, &pi_probe_result.model_slugs)
-    else {
+    let Some(harness_model_id) = slug::find_exact_match(
+        model_id,
+        provider,
+        pi_probe_result.model_slugs.iter().map(String::as_str),
+    )
+    .map(|matched| matched.slug) else {
         return Some((
             AvailabilityStatus::Unavailable,
             AvailabilitySource::PiProbeNegative,
@@ -407,21 +372,6 @@ fn classify_pi_for_model(
             harness_model_id,
         }),
     ))
-}
-
-fn find_matching_pi_slug(
-    model_id: &str,
-    provider: &str,
-    model_slugs: &HashSet<String>,
-) -> Option<String> {
-    model_slugs.iter().find_map(|slug| {
-        let (slug_provider, slug_model_id) = slug.split_once('/')?;
-        if provider_matches(provider, slug_provider) && model_id_matches(model_id, slug_model_id) {
-            Some(slug.clone())
-        } else {
-            None
-        }
-    })
 }
 
 fn aggregate_statuses(
@@ -487,46 +437,6 @@ mod tests {
 
     fn installed(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| (*name).to_string()).collect()
-    }
-
-    #[test]
-    fn test_decompose_slug_two_segments() {
-        let slug = decompose_slug("openai/gpt-5.4").unwrap();
-        assert_eq!(slug.provider, "openai");
-        assert_eq!(slug.model_part, "gpt-5.4");
-        assert_eq!(slug.full_slug, "openai/gpt-5.4");
-    }
-
-    #[test]
-    fn test_decompose_slug_three_segments() {
-        let slug = decompose_slug("openrouter/anthropic/claude-opus-4.7").unwrap();
-        assert_eq!(slug.provider, "openrouter");
-        assert_eq!(slug.model_part, "anthropic/claude-opus-4.7");
-        assert_eq!(slug.full_slug, "openrouter/anthropic/claude-opus-4.7");
-    }
-
-    #[test]
-    fn test_decompose_slug_invalid() {
-        assert!(decompose_slug("gpt-5").is_none());
-        assert!(decompose_slug("openai/").is_none());
-        assert!(decompose_slug("/gpt-5").is_none());
-    }
-
-    #[test]
-    fn test_normalize_model_id() {
-        assert_eq!(normalize_model_id("Claude-Opus-4.7"), "claude-opus-4-7");
-    }
-
-    #[test]
-    fn test_model_id_matches() {
-        assert!(model_id_matches("claude-opus-4-7", "Claude-Opus-4.7"));
-        assert!(!model_id_matches("claude-opus-4-7", "claude-sonnet-4-7"));
-    }
-
-    #[test]
-    fn test_provider_matches() {
-        assert!(provider_matches("Anthropic", "anthropic"));
-        assert!(!provider_matches("Anthropic", "openai"));
     }
 
     #[test]

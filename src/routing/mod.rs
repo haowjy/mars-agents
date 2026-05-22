@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
+pub mod slug;
+
 use crate::models;
 use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::OpenCodeProbeResult;
@@ -448,7 +450,7 @@ where
                 installed: true,
                 candidate_slugs: selection.candidate_slugs,
                 filtered_slugs: selection.filtered_slugs,
-                chosen_model: model_from_slug(&chosen_slug),
+                chosen_model: slug::parse(&chosen_slug).map(|parts| parts.model_id.to_string()),
                 chosen_slug: Some(chosen_slug),
                 confidence: Some(confidence_for_match(input.provider_constraint)),
                 skip_reason: None,
@@ -496,7 +498,8 @@ where
                         installed: true,
                         candidate_slugs: selection.candidate_slugs,
                         filtered_slugs: selection.filtered_slugs,
-                        chosen_model: model_from_slug(&chosen_slug),
+                        chosen_model: slug::parse(&chosen_slug)
+                            .map(|parts| parts.model_id.to_string()),
                         chosen_slug: Some(chosen_slug),
                         confidence: Some(confidence_for_match(input.provider_constraint)),
                         skip_reason: None,
@@ -653,30 +656,6 @@ fn is_known_provider_or_variant(provider: &str) -> bool {
     )
 }
 
-fn provider_key_for_order(provider: &str) -> String {
-    let normalized = provider.trim().to_ascii_lowercase();
-    if let Some(base) = normalized.strip_suffix("-codex")
-        && base == "openai"
-    {
-        return base.to_string();
-    }
-    if let Some(base) = normalized.strip_suffix("-claude")
-        && base == "anthropic"
-    {
-        return base.to_string();
-    }
-    normalized
-}
-
-fn parse_slug(slug: &str) -> Option<(&str, &str)> {
-    let (provider, model_id) = slug.split_once('/')?;
-    (!provider.is_empty() && !model_id.is_empty()).then_some((provider, model_id))
-}
-
-fn model_from_slug(slug: &str) -> Option<String> {
-    parse_slug(slug).map(|(_, model)| model.to_string())
-}
-
 struct SlugSelection {
     candidate_slugs: Vec<String>,
     filtered_slugs: Vec<String>,
@@ -689,15 +668,11 @@ fn select_probe_slug<'a>(
     provider_order: Option<&[String]>,
     slugs: impl IntoIterator<Item = &'a str>,
 ) -> SlugSelection {
-    let mut model_matches = Vec::new();
-    for (index, slug) in slugs.into_iter().enumerate() {
-        let Some((provider, slug_model_id)) = parse_slug(slug) else {
-            continue;
-        };
-        if crate::models::availability::model_id_matches(model_id, slug_model_id) {
-            model_matches.push((index, provider.to_ascii_lowercase(), slug.to_string()));
-        }
-    }
+    let model_matches = slug::find_model_matches(model_id, slugs)
+        .into_iter()
+        .enumerate()
+        .map(|(index, matched)| (index, matched.provider, matched.slug))
+        .collect::<Vec<_>>();
     let candidate_slugs = model_matches
         .iter()
         .map(|(_, _, slug)| slug.clone())
@@ -705,8 +680,9 @@ fn select_probe_slug<'a>(
 
     let mut constrained_matches = model_matches;
     if let Some(constraint) = provider_constraint {
-        let normalized_constraint = constraint.trim().to_ascii_lowercase();
-        constrained_matches.retain(|(_, provider, _)| provider == &normalized_constraint);
+        let normalized_constraint = constraint.trim();
+        constrained_matches
+            .retain(|(_, provider, _)| slug::providers_match(provider, normalized_constraint));
     }
     let filtered_slugs = constrained_matches
         .iter()
@@ -743,10 +719,10 @@ fn select_probe_slug<'a>(
 }
 
 fn provider_order_rank(provider: &str, provider_order: &[String]) -> usize {
-    let key = provider_key_for_order(provider);
+    let key = slug::normalize_provider(provider);
     provider_order
         .iter()
-        .position(|configured| provider_key_for_order(configured) == key)
+        .position(|configured| slug::normalize_provider(configured) == key)
         .unwrap_or(usize::MAX)
 }
 
@@ -909,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_provider_constraint_rejects_variant_provider_name() {
+    fn provider_constraint_accepts_variant_provider_name() {
         let installed = installed(&["pi", "opencode"]);
         let pi_probe = PiProbeResult {
             compatible: true,
@@ -936,23 +912,15 @@ mod tests {
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
-        assert_eq!(trace.harness, "opencode");
+        assert_eq!(trace.harness, "pi");
         assert_eq!(trace.confidence, RouteConfidence::Constrained);
         assert_eq!(
             trace
                 .assessments
                 .iter()
-                .find(|assessment| assessment.harness == "opencode")
-                .and_then(|assessment| assessment.chosen_slug.as_deref()),
-            Some("openai/gpt-5.4-mini")
-        );
-        assert_eq!(
-            trace
-                .assessments
-                .iter()
                 .find(|assessment| assessment.harness == "pi")
-                .and_then(|assessment| assessment.skip_reason),
-            Some("provider_constraint_unsatisfied")
+                .and_then(|assessment| assessment.chosen_slug.as_deref()),
+            Some("openai-codex/gpt-5.4-mini")
         );
     }
 

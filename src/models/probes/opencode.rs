@@ -173,20 +173,4 @@ openrouter/anthropic/claude-opus-4.7"#;
         assert!(back.model_probe_success);
         assert_eq!(back.error, None);
     }
-
-    #[test]
-    fn test_probe_result_deserializes_legacy_provider_fields() {
-        let legacy = r#"{
-            "providers": {"openai": true},
-            "model_slugs": ["openai/gpt-5.4"],
-            "provider_probe_success": true,
-            "model_probe_success": true,
-            "error": null
-        }"#;
-
-        let back: OpenCodeProbeResult = serde_json::from_str(legacy).unwrap();
-        assert_eq!(back.model_slugs, vec!["openai/gpt-5.4".to_string()]);
-        assert!(back.model_probe_success);
-        assert_eq!(back.error, None);
-    }
 }

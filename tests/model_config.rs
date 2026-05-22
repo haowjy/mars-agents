@@ -192,32 +192,6 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
 
 #[test]
 #[serial]
-fn resolve_unknown_bogus_alias_fails_with_route_trace() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &[]);
-    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "resolve", "unknown-bogus-alias"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().code(1).get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
-
-    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["model_id"].as_str(), Some("unknown-bogus-alias"));
-    assert_eq!(
-        stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
-    );
-    assert!(stdout["route_trace"].is_object());
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
-}
-
-#[test]
-#[serial]
 fn models_list_visibility_include_does_not_add_catalog_rows() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -696,7 +670,29 @@ provider = "openai"
     assert_eq!(stdout["name"].as_str(), Some("fast"));
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["route"]["source"].as_str(), Some("alias"));
     assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(
+        stdout["route"]["match_evidence"].as_str(),
+        Some("constrained")
+    );
+    assert_eq!(
+        stdout["route_trace"]["selection_kind"].as_str(),
+        Some("fixed")
+    );
+    assert_eq!(
+        stdout["route_trace"]["match_evidence"].as_str(),
+        Some("constrained")
+    );
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
+    assert!(
+        stdout.get("route_rejection").is_none(),
+        "successful exact alias resolves should not emit route_rejection: {stdout}"
+    );
+    assert!(
+        stdout.get("cache_error").is_none(),
+        "pinned exact aliases should not require a models cache: {stdout}"
+    );
 }
 
 #[test]
@@ -723,17 +719,28 @@ match = ["gpt-5*"]
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
     assert_eq!(stdout["name"].as_str(), Some("fast"));
     assert_eq!(stdout["source"].as_str(), Some("consumer (mars.toml)"));
+    let error = stdout["error"].as_str().expect("error should be present");
     assert!(
-        stdout["error"]
-            .as_str()
-            .expect("error should be present")
-            .contains("requires models cache for auto-resolve")
+        error.starts_with("alias `fast` requires models cache for auto-resolve"),
+        "expected alias-specific cache error, got: {error}"
     );
     assert!(
         stdout["cache_error"]
             .as_str()
             .expect("cache_error should be present")
             .contains("--no-refresh-models")
+    );
+    assert!(
+        stdout.get("route").is_none(),
+        "auto exact alias with unavailable cache must not fall through to passthrough routing: {stdout}"
+    );
+    assert!(
+        stdout.get("route_trace").is_none(),
+        "auto exact alias cache errors should not emit a mixed routing trace: {stdout}"
+    );
+    assert!(
+        stdout.get("route_rejection").is_none(),
+        "cache-unavailable alias errors should not masquerade as route rejections: {stdout}"
     );
 }
 

@@ -2118,6 +2118,47 @@ harness = "codex""#;
     assert!(stderr.contains("provider_constraint_unsatisfied"));
 }
 
+pub(crate) fn build_launch_bundle_alias_fixed_native_harness_accepts_provider_variant_and_marks_provider_match()
+ {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: openai_variant
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.openai_variant]
+model = "gpt-5"
+provider = "openai-codex"
+harness = "codex""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("constrained")
+    );
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("provider-match")
+    );
+    assert_eq!(
+        bundle["routing"]["harness_model_confidence"].as_str(),
+        Some("likely")
+    );
+}
+
 pub(crate) fn build_launch_bundle_overlay_model_overrides_profile_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);

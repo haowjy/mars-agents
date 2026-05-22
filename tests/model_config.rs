@@ -670,6 +670,75 @@ fn resolve_unknown_with_no_refresh_without_cache_is_non_zero() {
 
 #[test]
 #[serial]
+fn resolve_pinned_exact_alias_json_no_refresh_without_cache_succeeds() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "fast", "--no-refresh-models"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stdout["name"].as_str(), Some("fast"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+}
+
+#[test]
+#[serial]
+fn resolve_auto_exact_alias_json_no_refresh_without_cache_returns_alias_cache_error() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.fast]
+provider = "openai"
+match = ["gpt-5*"]
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "fast", "--no-refresh-models"]);
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stdout["name"].as_str(), Some("fast"));
+    assert_eq!(stdout["source"].as_str(), Some("consumer (mars.toml)"));
+    assert!(
+        stdout["error"]
+            .as_str()
+            .expect("error should be present")
+            .contains("requires models cache for auto-resolve")
+    );
+    assert!(
+        stdout["cache_error"]
+            .as_str()
+            .expect("cache_error should be present")
+            .contains("--no-refresh-models")
+    );
+}
+
+#[test]
+#[serial]
 fn resolve_uses_pi_probe_compatibility_for_harness_routing() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);

@@ -262,13 +262,7 @@ fn is_unknown_provider(provider: &str) -> bool {
 }
 
 fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
-    let provider = provider.trim().to_ascii_lowercase();
-    let harness = target_harness.trim().to_ascii_lowercase();
-
-    matches!(
-        (provider.as_str(), harness.as_str()),
-        ("anthropic", "claude") | ("openai", "codex")
-    )
+    slug::provider_matches_native_harness(provider, target_harness)
 }
 
 pub fn classify_model(
@@ -464,6 +458,27 @@ mod tests {
                 .unwrap();
         assert_eq!(result.0, AvailabilityStatus::Runnable);
         assert_eq!(result.1, AvailabilitySource::HarnessInstalled);
+    }
+
+    #[test]
+    fn test_classify_codex_openai_codex_variant_is_runnable() {
+        let result = classify_for_harness(
+            "codex",
+            "openai-codex",
+            "gpt-5.4-mini",
+            &installed(&["codex"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.0, AvailabilityStatus::Runnable);
+        assert_eq!(result.1, AvailabilitySource::HarnessInstalled);
+        assert_eq!(
+            result
+                .2
+                .expect("runnable path should be present")
+                .harness_model_id,
+            "gpt-5.4-mini"
+        );
     }
 
     #[test]

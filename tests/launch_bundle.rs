@@ -230,6 +230,12 @@ fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_co
 }
 
 #[test]
+fn build_launch_bundle_alias_fixed_native_harness_accepts_provider_variant_and_marks_provider_match()
+ {
+    routing::build_launch_bundle_alias_fixed_native_harness_accepts_provider_variant_and_marks_provider_match();
+}
+
+#[test]
 fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     routing::build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache();
 }

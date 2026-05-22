@@ -1142,34 +1142,56 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     };
     let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
     let installed = capability_snapshot.installed_harnesses();
+    let cache_outcome = capability_snapshot.opencode.clone();
+    let probe_result = cache_outcome.result().cloned();
+    let pi_probe_result = capability_snapshot.pi.result().cloned();
 
-    if let Some((cache, outcome)) = &cache_result {
-        let cache_outcome = capability_snapshot.opencode.clone();
-        let probe_result = cache_outcome.result().cloned();
-        let pi_probe_result = capability_snapshot.pi.result().cloned();
-
-        // Step 1: exact alias lookup
-        if let Some(alias) = merged.get(&args.name) {
-            let runtime = ResolveRuntime {
-                cache,
-                outcome,
-                installed: &installed,
-                probe_outcome: cache_outcome.clone(),
-                pi_probe_result: pi_probe_result.as_ref(),
-                routing_settings: &routing_settings,
-            };
-            return run_resolve_exact_alias(
-                args,
-                alias,
-                &merged,
-                ctx,
-                runtime,
-                &routing_diagnostics,
-                json,
+    // Step 1: exact alias lookup
+    if let Some(alias) = merged.get(&args.name) {
+        if cache_result.is_none() && matches!(alias.spec, ModelSpec::AutoResolve { .. }) {
+            return run_auto_resolve_alias_cache_unavailable(
+                AutoResolveAliasCacheUnavailableInput {
+                    name: &args.name,
+                    alias,
+                    ctx,
+                    cache_error: cache_error.as_deref(),
+                    routing_diagnostics: &routing_diagnostics,
+                    json,
+                },
             );
         }
 
-        // Step 2: alias-prefix resolution
+        let fallback_cache = models::ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+        let fallback_outcome = models::RefreshOutcome::Offline;
+        let (cache, outcome) = cache_result
+            .as_ref()
+            .map(|(cache, outcome)| (cache, outcome))
+            .unwrap_or((&fallback_cache, &fallback_outcome));
+
+        let runtime = ResolveRuntime {
+            cache,
+            outcome,
+            installed: &installed,
+            probe_outcome: cache_outcome.clone(),
+            pi_probe_result: pi_probe_result.as_ref(),
+            routing_settings: &routing_settings,
+        };
+        return run_resolve_exact_alias(
+            args,
+            alias,
+            &merged,
+            ctx,
+            runtime,
+            &routing_diagnostics,
+            json,
+        );
+    }
+
+    // Step 2: alias-prefix resolution
+    if let Some((cache, outcome)) = &cache_result {
         if let Some(mut resolved) = models::resolve_with_alias_prefix_with_probe(
             &args.name,
             &merged,
@@ -1540,6 +1562,51 @@ struct ResolveFixedHarnessFailureInput<'a> {
     rejection_reason: &'a crate::routing::acceptance::RejectionReason,
     routing_diagnostics: &'a [String],
     json: bool,
+}
+
+struct AutoResolveAliasCacheUnavailableInput<'a> {
+    name: &'a str,
+    alias: &'a ModelAlias,
+    ctx: &'a MarsContext,
+    cache_error: Option<&'a str>,
+    routing_diagnostics: &'a [String],
+    json: bool,
+}
+
+fn run_auto_resolve_alias_cache_unavailable(
+    input: AutoResolveAliasCacheUnavailableInput<'_>,
+) -> Result<i32, MarsError> {
+    let AutoResolveAliasCacheUnavailableInput {
+        name,
+        alias,
+        ctx,
+        cache_error,
+        routing_diagnostics,
+        json,
+    } = input;
+    let source = determine_source(name, ctx)?;
+    let detail = cache_error.unwrap_or("models cache unavailable");
+    let error = format!(
+        "alias `{name}` requires models cache for auto-resolve, but cache is unavailable ({detail})"
+    );
+
+    if json {
+        let mut out = serde_json::json!({
+            "name": name,
+            "source": source,
+            "spec": format_spec(&alias.spec),
+            "error": error,
+        });
+        if let Some(cache_error) = cache_error {
+            out["cache_error"] = serde_json::json!(cache_error);
+        }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        eprintln!("error: {error}");
+    }
+
+    Ok(1)
 }
 
 fn run_resolve_fixed_harness_failure(

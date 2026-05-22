@@ -59,6 +59,19 @@ pub fn providers_exact_match(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
+/// Whether a provider string maps to a native harness.
+/// Native mappings:
+/// - `claude` ↔ `anthropic` (including variants like `anthropic-claude`)
+/// - `codex` ↔ `openai` (including variants like `openai-codex`)
+pub fn provider_matches_native_harness(provider: &str, harness: &str) -> bool {
+    let harness = harness.trim().to_ascii_lowercase();
+    match harness.as_str() {
+        "claude" => providers_match(provider, "anthropic"),
+        "codex" => providers_match(provider, "openai"),
+        _ => false,
+    }
+}
+
 /// Match tier for provider matching.
 /// - 0: exact provider match
 /// - 1: normalized-provider variant match
@@ -171,6 +184,16 @@ mod tests {
     fn provider_matching_uses_normalized_provider_keys() {
         assert!(providers_match("openai-codex", "openai"));
         assert!(providers_match("anthropic", "anthropic-claude"));
+    }
+
+    #[test]
+    fn provider_matches_native_harness_accepts_provider_variants() {
+        assert!(provider_matches_native_harness("openai-codex", "codex"));
+        assert!(provider_matches_native_harness(
+            "anthropic-claude",
+            "claude"
+        ));
+        assert!(!provider_matches_native_harness("openai-codex", "claude"));
     }
 
     #[test]

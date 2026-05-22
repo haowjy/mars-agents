@@ -693,10 +693,9 @@ fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
 }
 
 fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
-    matches!(
-        (provider.map(str::to_ascii_lowercase).as_deref(), harness),
-        (Some("anthropic"), "claude") | (Some("openai"), "codex")
-    )
+    provider
+        .map(|provider| slug::provider_matches_native_harness(provider, harness))
+        .unwrap_or(false)
 }
 
 fn is_native_harness(harness: &str) -> bool {
@@ -711,13 +710,7 @@ fn provider_constraint_excludes_native_harness(
         return false;
     };
 
-    !matches!(
-        (
-            provider_constraint.trim().to_ascii_lowercase().as_str(),
-            harness
-        ),
-        ("anthropic", "claude") | ("openai", "codex")
-    )
+    !slug::provider_matches_native_harness(provider_constraint, harness)
 }
 
 fn match_evidence_for_match(provider_constraint: Option<&str>) -> MatchEvidence {
@@ -1485,6 +1478,54 @@ mod tests {
             assessment.skip_reason,
             Some("provider_constraint_unsatisfied")
         );
+    }
+
+    #[test]
+    fn fixed_native_codex_accepts_openai_codex_provider_variant() {
+        let installed = installed(&["codex"]);
+        let input = RoutingInput {
+            model_id: "gpt-5",
+            provider_for_order: Some("openai-codex"),
+            provider_constraint: Some("openai-codex"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: None,
+        };
+
+        let assessment = evaluate_fixed_harness_with_auth(&input, "codex", always_authed);
+
+        assert_eq!(assessment.harness, "codex");
+        assert!(assessment.installed);
+        assert_eq!(assessment.match_evidence, Some(MatchEvidence::Constrained));
+        assert_eq!(assessment.skip_reason, None);
+    }
+
+    #[test]
+    fn fixed_native_claude_accepts_anthropic_claude_provider_variant() {
+        let installed = installed(&["claude"]);
+        let input = RoutingInput {
+            model_id: "claude-opus-4-7",
+            provider_for_order: Some("anthropic-claude"),
+            provider_constraint: Some("anthropic-claude"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: None,
+        };
+
+        let assessment = evaluate_fixed_harness_with_auth(&input, "claude", always_authed);
+
+        assert_eq!(assessment.harness, "claude");
+        assert!(assessment.installed);
+        assert_eq!(assessment.match_evidence, Some(MatchEvidence::Constrained));
+        assert_eq!(assessment.skip_reason, None);
     }
 
     #[test]

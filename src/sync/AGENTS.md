@@ -78,4 +78,4 @@ let request = SyncRequest {
 - `src/resolve/AGENTS.md` — dependency resolution (Phase 2)
 - `src/compiler/AGENTS.md` — compilation (Phases 3-5)
 - `src/target_sync/` — target directory copying (Phase 6)
-- `.context/` — none (pipeline is self-documenting via phase structs)
+- `src/target_sync/.context/CONTEXT.md` — per-target ownership, orphan cleanup, collision diagnostics

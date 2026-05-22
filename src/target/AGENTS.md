@@ -23,7 +23,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `CodexAdapter` | `.codex` | `codex` | TOML-based config |
 | `OpencodeAdapter` | `.opencode` | `opencode` | OpenCode format |
 | `PiAdapter` | `.pi` | `pi` | Pi format |
-| `CursorAdapter` | `.cursor` | `cursor` | Experimental |
+| `CursorAdapter` | `.cursor` | `cursor` | Experimental; agents not materialized (`default_dest_path` is `None` for agents — skills/MCP only) |
 
 ## TargetAdapter Trait
 

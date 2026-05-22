@@ -22,6 +22,7 @@ pub mod reconcile;
 pub mod resolve;
 pub mod routing;
 pub mod source;
+pub(crate) mod surface_ownership;
 pub mod sync;
 pub mod target;
 pub mod target_sync;

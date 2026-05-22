@@ -10,6 +10,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch-bundle model now optional; unset model routes to installed/default harness and leaves harness model empty for harness defaults.
 - Default to RC release when no release label present on merged PR (previously skipped release entirely).
 
+### Fixed
+- Linked-target sync no longer deletes or overwrites hand-written files when the lock only tracks the same path under `.mars`. Orphan cleanup, Removed handling, and copy paths now require a per-target `OutputRecord`. Pre-existing untracked collisions are preserved with `target-unmanaged-collision`; `mars sync --force` and `mars link --force` adopt them and record ownership (`target-unmanaged-adopted`). Closes #60.
+
 ## [0.6.0] - 2026-05-22
 
 ### Changed

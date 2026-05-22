@@ -131,10 +131,10 @@ mars unlink .claude          # Remove old link
 mars link .claude            # Re-create correct link
 ```
 
-Or with force:
+If link fails with an unmanaged collision (hand-written file at a path Mars wants to manage):
 
 ```bash
-mars link .claude --force    # Replace whatever exists
+mars link .claude --force    # Adopt collision and record ownership in mars.lock
 ```
 
 ### "override `X` references a dependency not in mars.toml"

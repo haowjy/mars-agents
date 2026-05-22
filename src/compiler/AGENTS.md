@@ -87,8 +87,13 @@ reconcile_native_agent_surfaces(policy, project_root, mars_dir, &outcomes, false
 let policy = agent_surface_policy(Some(&AgentEmission::Auto), true); // meridian → SuppressAll
 ```
 
+## Linked-target writes
+
+Native reconcile and dual-surface compile gate deletes and copies through `surface_ownership` (same rules as `target_sync`). See `src/target_sync/.context/CONTEXT.md`.
+
 ## See Also
 
 - `src/sync/AGENTS.md` — orchestrates the compiler
 - `src/target/AGENTS.md` — per-target adapters the compiler uses
+- `src/target_sync/.context/CONTEXT.md` — per-target lock ownership and collision semantics
 - `src/compiler/agents/mod.rs` — AgentProfile schema details

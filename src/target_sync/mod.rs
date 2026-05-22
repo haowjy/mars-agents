@@ -10,7 +10,9 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
+use crate::lock::LockFile;
 use crate::reconcile::fs_ops;
+use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 use crate::types::managed_cmd;
@@ -20,6 +22,13 @@ use crate::types::managed_cmd;
 pub struct ManagedTarget {
     /// Target directory path relative to project root (e.g. ".claude").
     pub path: String,
+}
+
+/// A linked-target output recorded during sync for lock persistence.
+#[derive(Debug, Clone)]
+pub struct TargetSyncedOutput {
+    pub dest_path: String,
+    pub installed_checksum: ContentHash,
 }
 
 /// Result of syncing content to a single target directory.
@@ -33,6 +42,17 @@ pub struct TargetSyncOutcome {
     pub items_removed: usize,
     /// Non-fatal errors encountered during sync.
     pub errors: Vec<String>,
+    /// Outputs successfully copied to this target (for lock persistence).
+    pub synced_outputs: Vec<TargetSyncedOutput>,
+    /// Dest paths removed from this target (for lock persistence).
+    pub removed_dest_paths: Vec<String>,
+}
+
+/// Per-run target sync options shared across all linked targets.
+pub struct TargetSyncContext<'a> {
+    pub old_lock: &'a LockFile,
+    pub force: bool,
+    pub collision_hint: CollisionAdoptHint,
 }
 
 /// Sync all managed targets from .mars/ canonical store.
@@ -48,23 +68,14 @@ pub fn sync_managed_targets(
     mars_dir: &Path,
     targets: &[String],
     outcomes: &[ActionOutcome],
-    previous_managed_paths: &HashSet<String>,
-    force: bool,
+    ctx: &TargetSyncContext<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<TargetSyncOutcome> {
     let mut results = Vec::new();
 
     for target_name in targets {
         let target_root = project_root.join(target_name);
-        match sync_one_target(
-            mars_dir,
-            &target_root,
-            target_name,
-            outcomes,
-            previous_managed_paths,
-            force,
-            diag,
-        ) {
+        match sync_one_target(mars_dir, &target_root, target_name, outcomes, ctx, diag) {
             Ok(outcome) => {
                 if !outcome.errors.is_empty() {
                     for err in &outcome.errors {
@@ -86,6 +97,8 @@ pub fn sync_managed_targets(
                     items_synced: 0,
                     items_removed: 0,
                     errors: vec![e.to_string()],
+                    synced_outputs: Vec::new(),
+                    removed_dest_paths: Vec::new(),
                 });
             }
         }
@@ -94,24 +107,26 @@ pub fn sync_managed_targets(
     results
 }
 
-/// Sync a single target directory from .mars/ canonical store.
 fn sync_one_target(
     mars_dir: &Path,
     target_root: &Path,
     target_name: &str,
     outcomes: &[ActionOutcome],
-    previous_managed_paths: &HashSet<String>,
-    force: bool,
+    ctx: &TargetSyncContext<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetSyncOutcome, MarsError> {
+    let old_lock = ctx.old_lock;
+    let force = ctx.force;
+    let collision_hint = ctx.collision_hint;
     let mut items_synced = 0;
     let mut items_removed = 0;
     let mut errors = Vec::new();
+    let mut synced_outputs = Vec::new();
+    let mut removed_dest_paths = Vec::new();
+    let previous_managed_paths = old_lock.output_dest_paths_for_target(target_name);
 
-    // Ensure target directory exists
     std::fs::create_dir_all(target_root)?;
 
-    // Track expected paths for orphan cleanup
     let mut expected_paths: HashSet<String> = HashSet::new();
     let target_registry = crate::target::TargetRegistry::new();
     let target_adapter = target_registry.get(target_name);
@@ -128,9 +143,6 @@ fn sync_one_target(
 
     for outcome in outcomes {
         if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
-            // Package-level bootstrap docs are Meridian-only canonical content.
-            // Skill-level bootstrap docs still reach native targets as ordinary
-            // files inside skill directories.
             continue;
         }
         let dest_rel = outcome.dest_path.as_str();
@@ -138,30 +150,34 @@ fn sync_one_target(
         {
             if matches!(outcome.action, ActionTaken::Removed) {
                 let target_path = target_root.join(dest_rel);
-                if target_path.exists() || target_path.symlink_metadata().is_ok() {
-                    if let Err(e) = fs_ops::safe_remove(&target_path) {
-                        errors.push(format!("failed to remove {dest_rel}: {e}"));
-                    } else {
-                        items_removed += 1;
-                    }
+                if remove_target_path_if_managed(
+                    &target_path,
+                    target_name,
+                    dest_rel,
+                    old_lock,
+                    &mut errors,
+                ) {
+                    items_removed += 1;
+                    removed_dest_paths.push(dest_rel.to_string());
                 }
             }
             continue;
         }
         match &outcome.action {
             ActionTaken::Removed => {
-                // Remove from target too
                 let target_path = target_root.join(dest_rel);
-                if target_path.exists() || target_path.symlink_metadata().is_ok() {
-                    if let Err(e) = fs_ops::safe_remove(&target_path) {
-                        errors.push(format!("failed to remove {dest_rel}: {e}"));
-                    } else {
-                        items_removed += 1;
-                    }
+                if remove_target_path_if_managed(
+                    &target_path,
+                    target_name,
+                    dest_rel,
+                    old_lock,
+                    &mut errors,
+                ) {
+                    items_removed += 1;
+                    removed_dest_paths.push(dest_rel.to_string());
                 }
             }
             ActionTaken::Skipped => {
-                // Item is unchanged in .mars/ — still expected in target
                 expected_paths.insert(dest_rel.to_string());
                 let source = mars_dir.join(dest_rel);
                 let dest = target_root.join(dest_rel);
@@ -169,38 +185,58 @@ fn sync_one_target(
                     let should_refresh_native_skill = outcome.item_id.kind
                         == crate::lock::ItemKind::Skill
                         && native_skill_variant_key.is_some();
-                    if force || !dest.exists() || should_refresh_native_skill {
-                        let previous_target_hash = if should_refresh_native_skill && dest.exists() {
-                            crate::hash::compute_hash(&dest, outcome.item_id.kind).ok()
-                        } else {
-                            None
-                        };
-                        match copy_item_to_target(
-                            &source,
+                    let dest_exists = surface_ownership::target_dest_exists(&dest);
+                    let wants_copy = force || !dest_exists || should_refresh_native_skill;
+                    if wants_copy {
+                        if should_copy_to_target(
                             &dest,
-                            outcome.item_id.kind,
-                            outcome.item_id.name.as_str(),
-                            native_skill_variant_key.as_deref(),
+                            target_name,
+                            dest_rel,
+                            old_lock,
+                            force,
+                            collision_hint,
                             diag,
                         ) {
-                            Ok(()) => {
-                                items_synced += 1;
-                                if let Some(previous_target_hash) = previous_target_hash
-                                    && let Ok(current_target_hash) =
-                                        crate::hash::compute_hash(&dest, outcome.item_id.kind)
-                                    && previous_target_hash != current_target_hash
-                                {
-                                    diag.warn(
-                                        "target-native-projection-repaired",
-                                        format!(
-                                            "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
-                                        ),
+                            let previous_target_hash = if should_refresh_native_skill && dest_exists
+                            {
+                                crate::hash::compute_hash(&dest, outcome.item_id.kind).ok()
+                            } else {
+                                None
+                            };
+                            match copy_item_to_target(
+                                &source,
+                                &dest,
+                                outcome.item_id.kind,
+                                outcome.item_id.name.as_str(),
+                                native_skill_variant_key.as_deref(),
+                                diag,
+                            ) {
+                                Ok(()) => {
+                                    items_synced += 1;
+                                    record_synced_output(
+                                        &mut synced_outputs,
+                                        &dest,
+                                        dest_rel,
+                                        outcome.item_id.kind,
                                     );
+                                    if let Some(previous_target_hash) = previous_target_hash
+                                        && let Ok(current_target_hash) =
+                                            crate::hash::compute_hash(&dest, outcome.item_id.kind)
+                                        && previous_target_hash != current_target_hash
+                                    {
+                                        diag.warn(
+                                            "target-native-projection-repaired",
+                                            format!(
+                                                "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
+                                            ),
+                                        );
+                                    }
                                 }
+                                Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
-                            Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                         }
                     } else if native_skill_variant_key.is_none()
+                        && old_lock.contains_output(target_name, dest_rel)
                         && let Some(expected_checksum) = &outcome.installed_checksum
                     {
                         match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
@@ -222,16 +258,31 @@ fn sync_one_target(
                                 errors.push(format!("failed to verify {dest_rel} checksum: {e}"))
                             }
                         }
+                    } else if dest_exists && !old_lock.contains_output(target_name, dest_rel) {
+                        surface_ownership::warn_unmanaged_collision(
+                            target_name,
+                            dest_rel,
+                            collision_hint,
+                            diag,
+                        );
                     }
                 }
             }
             _ => {
-                // Installed, Updated, Merged, Conflicted, Kept
-                // All of these mean content exists in .mars/ and should be copied to target
                 expected_paths.insert(dest_rel.to_string());
                 let source = mars_dir.join(dest_rel);
                 let dest = target_root.join(dest_rel);
-                if source.exists() || source.symlink_metadata().is_ok() {
+                if (source.exists() || source.symlink_metadata().is_ok())
+                    && should_copy_to_target(
+                        &dest,
+                        target_name,
+                        dest_rel,
+                        old_lock,
+                        force,
+                        collision_hint,
+                        diag,
+                    )
+                {
                     match copy_item_to_target(
                         &source,
                         &dest,
@@ -240,7 +291,15 @@ fn sync_one_target(
                         native_skill_variant_key.as_deref(),
                         diag,
                     ) {
-                        Ok(()) => items_synced += 1,
+                        Ok(()) => {
+                            items_synced += 1;
+                            record_synced_output(
+                                &mut synced_outputs,
+                                &dest,
+                                dest_rel,
+                                outcome.item_id.kind,
+                            );
+                        }
                         Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                     }
                 }
@@ -248,11 +307,11 @@ fn sync_one_target(
         }
     }
 
-    // Orphan cleanup: scan target for items not in expected set
     let orphan_removed = cleanup_orphans(
         target_root,
         &expected_paths,
-        previous_managed_paths,
+        &previous_managed_paths,
+        &mut removed_dest_paths,
         &mut errors,
     );
     items_removed += orphan_removed;
@@ -262,7 +321,79 @@ fn sync_one_target(
         items_synced,
         items_removed,
         errors,
+        synced_outputs,
+        removed_dest_paths,
     })
+}
+
+fn should_copy_to_target(
+    dest: &Path,
+    target_name: &str,
+    dest_rel: &str,
+    old_lock: &LockFile,
+    force: bool,
+    collision_hint: CollisionAdoptHint,
+    diag: &mut DiagnosticCollector,
+) -> bool {
+    let dest_exists = surface_ownership::target_dest_exists(dest);
+    match surface_ownership::copy_decision(old_lock, target_name, dest_rel, dest_exists, force) {
+        SurfaceCopyDecision::Proceed => {
+            if dest_exists && force && !old_lock.contains_output(target_name, dest_rel) {
+                surface_ownership::warn_unmanaged_adopted(
+                    target_name,
+                    dest_rel,
+                    collision_hint,
+                    diag,
+                );
+            }
+            true
+        }
+        SurfaceCopyDecision::SkipUnmanagedCollision => {
+            surface_ownership::warn_unmanaged_collision(
+                target_name,
+                dest_rel,
+                collision_hint,
+                diag,
+            );
+            false
+        }
+    }
+}
+
+fn remove_target_path_if_managed(
+    target_path: &Path,
+    target_name: &str,
+    dest_rel: &str,
+    old_lock: &LockFile,
+    errors: &mut Vec<String>,
+) -> bool {
+    if !surface_ownership::target_dest_exists(target_path) {
+        return false;
+    }
+    if !surface_ownership::may_delete(old_lock, target_name, dest_rel) {
+        return false;
+    }
+    match fs_ops::safe_remove(target_path) {
+        Ok(()) => true,
+        Err(e) => {
+            errors.push(format!("failed to remove {dest_rel}: {e}"));
+            false
+        }
+    }
+}
+
+fn record_synced_output(
+    synced_outputs: &mut Vec<TargetSyncedOutput>,
+    dest: &Path,
+    dest_rel: &str,
+    kind: crate::lock::ItemKind,
+) {
+    if let Ok(checksum) = crate::hash::compute_hash(dest, kind) {
+        synced_outputs.push(TargetSyncedOutput {
+            dest_path: dest_rel.to_string(),
+            installed_checksum: ContentHash::from(checksum),
+        });
+    }
 }
 
 /// Copy an item (file or directory) from .mars/ to a target directory.
@@ -317,6 +448,7 @@ fn cleanup_orphans(
     target_root: &Path,
     expected: &HashSet<String>,
     previous_managed_paths: &HashSet<String>,
+    removed_dest_paths: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) -> usize {
     let mut removed = 0;
@@ -348,6 +480,7 @@ fn cleanup_orphans(
             errors.push(format!("failed to remove orphan {managed_path}: {e}"));
         } else {
             removed += 1;
+            removed_dest_paths.push(managed_path.clone());
         }
     }
 
@@ -359,6 +492,8 @@ mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
+    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::surface_ownership::CollisionAdoptHint;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
     use tempfile::TempDir;
@@ -377,11 +512,56 @@ mod tests {
         }
     }
 
-    fn managed_paths(paths: &[&str]) -> HashSet<String> {
-        paths
-            .iter()
-            .map(|p| (*p).to_string())
-            .collect::<HashSet<String>>()
+    fn lock_with_target_outputs(target: &str, outputs: &[(&str, &str)]) -> LockFile {
+        let mut lock = LockFile::empty();
+        for (dest, checksum) in outputs {
+            let name = dest.rsplit('/').next().unwrap_or("item");
+            lock.items.insert(
+                format!("agent/{name}"),
+                LockedItemV2 {
+                    source: "test".into(),
+                    kind: ItemKind::Agent,
+                    version: None,
+                    source_checksum: "sha256:src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: target.to_string(),
+                        dest_path: (*dest).into(),
+                        installed_checksum: (*checksum).into(),
+                    }],
+                },
+            );
+        }
+        lock
+    }
+
+    fn lock_with_skill_target_outputs(target: &str, outputs: &[(&str, &str)]) -> LockFile {
+        let mut lock = LockFile::empty();
+        for (dest, checksum) in outputs {
+            let name = dest.rsplit('/').next().unwrap_or("item");
+            lock.items.insert(
+                format!("skill/{name}"),
+                LockedItemV2 {
+                    source: "test".into(),
+                    kind: ItemKind::Skill,
+                    version: None,
+                    source_checksum: "sha256:src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: target.to_string(),
+                        dest_path: (*dest).into(),
+                        installed_checksum: (*checksum).into(),
+                    }],
+                },
+            );
+        }
+        lock
+    }
+
+    fn target_sync_ctx<'a>(old_lock: &'a LockFile, force: bool) -> TargetSyncContext<'a> {
+        TargetSyncContext {
+            old_lock,
+            force,
+            collision_hint: CollisionAdoptHint::SyncForce,
+        }
     }
 
     fn make_skipped_with_checksum(dest: &str, checksum: &str) -> ActionOutcome {
@@ -408,8 +588,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -441,8 +620,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/old.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/old.md", "sha256:old")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -472,8 +653,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/orphan.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/orphan.md", "sha256:orphan")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -502,8 +685,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -531,8 +713,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/coder.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:coder")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -558,8 +742,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string(), ".custom-target".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -589,8 +772,7 @@ mod tests {
                 ".pi".to_string(),
             ],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -618,8 +800,7 @@ mod tests {
             &mars_dir,
             &[".custom-target".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -646,8 +827,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -687,8 +867,16 @@ mod tests {
             &mars_dir,
             &[".claude".to_string()],
             &outcomes,
-            &managed_paths(&["skills/planning", "skills/orphan"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_skill_target_outputs(
+                    ".claude",
+                    &[
+                        ("skills/planning", "sha256:planning"),
+                        ("skills/orphan", "sha256:orphan"),
+                    ],
+                ),
+                false,
+            ),
             &mut diag,
         );
 
@@ -721,10 +909,20 @@ mod tests {
                 .to_string(),
         );
 
+        let previous = lock_with_target_outputs(
+            ".agents",
+            &[
+                ("agents/coder.md", "sha256:coder"),
+                ("agents/orphan.md", "sha256:orphan"),
+            ],
+        );
+        let previous_paths = previous.output_dest_paths_for_target(".agents");
+        let mut removed_dest_paths = Vec::new();
         let removed = cleanup_orphans(
             &target_root,
             &expected,
-            &managed_paths(&["agents/coder.md", "agents/orphan.md"]),
+            &previous_paths,
+            &mut removed_dest_paths,
             &mut Vec::new(),
         );
 
@@ -751,8 +949,7 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&[]),
-            false,
+            &target_sync_ctx(&LockFile::empty(), false),
             &mut diag,
         );
 
@@ -763,8 +960,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes2,
-            &managed_paths(&["agents/coder.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:coder")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -792,8 +991,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/coder.md"]),
-            true,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:coder")]),
+                true,
+            ),
             &mut diag,
         );
 
@@ -821,8 +1022,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/coder.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:coder")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -850,8 +1053,10 @@ mod tests {
             &mars_dir,
             &[".agents".to_string()],
             &outcomes,
-            &managed_paths(&["agents/coder.md"]),
-            false,
+            &target_sync_ctx(
+                &lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:coder")]),
+                false,
+            ),
             &mut diag,
         );
 
@@ -866,6 +1071,160 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|d| d.code == "target-divergent" && d.message.contains("agents/coder.md"))
+        );
+    }
+
+    #[test]
+    fn sync_preserves_handwritten_collision_when_lock_only_tracks_mars() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".cursor");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/design-lead.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/cursor-only-test.md"), "# custom").unwrap();
+        std::fs::write(target.join("agents/design-lead.md"), "# hand-written").unwrap();
+
+        let mut lock = LockFile::empty();
+        lock.items.insert(
+            "agent/design-lead".to_string(),
+            LockedItemV2 {
+                source: "test".into(),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: "sha256:src".into(),
+                outputs: vec![OutputRecord {
+                    target_root: ".mars".to_string(),
+                    dest_path: "agents/design-lead.md".into(),
+                    installed_checksum: "sha256:mars".into(),
+                }],
+            },
+        );
+
+        let outcomes = vec![make_outcome("agents/design-lead.md", ActionTaken::Removed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".cursor".to_string()],
+            &outcomes,
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_removed, 0);
+        assert!(target.join("agents/cursor-only-test.md").exists());
+        assert!(target.join("agents/design-lead.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/design-lead.md")).unwrap(),
+            "# hand-written"
+        );
+    }
+
+    #[test]
+    fn sync_installed_does_not_overwrite_untracked_collision_in_linked_target() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# hand-written").unwrap();
+
+        let mut lock = LockFile::empty();
+        lock.items.insert(
+            "agent/coder".to_string(),
+            LockedItemV2 {
+                source: "test".into(),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: "sha256:src".into(),
+                outputs: vec![OutputRecord {
+                    target_root: ".mars".to_string(),
+                    dest_path: "agents/coder.md".into(),
+                    installed_checksum: "sha256:mars".into(),
+                }],
+            },
+        );
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 0);
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/coder.md")).unwrap(),
+            "# hand-written"
+        );
+        let diagnostics = diag.drain();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "target-unmanaged-collision")
+        );
+    }
+
+    #[test]
+    fn sync_force_adopts_untracked_collision_in_linked_target() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# hand-written").unwrap();
+
+        let mut lock = LockFile::empty();
+        lock.items.insert(
+            "agent/coder".to_string(),
+            LockedItemV2 {
+                source: "test".into(),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: "sha256:src".into(),
+                outputs: vec![OutputRecord {
+                    target_root: ".mars".to_string(),
+                    dest_path: "agents/coder.md".into(),
+                    installed_checksum: "sha256:mars".into(),
+                }],
+            },
+        );
+
+        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            &target_sync_ctx(&lock, true),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 1);
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/coder.md")).unwrap(),
+            "# Canonical"
+        );
+        assert!(!results[0].synced_outputs.is_empty());
+        let diagnostics = diag.drain();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "target-unmanaged-adopted")
         );
     }
 }

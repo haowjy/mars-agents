@@ -28,7 +28,7 @@ Three bypass conditions:
 | Package mgmt | `add`, `remove`, `upgrade`, `outdated`, `why` | Mutate mars.toml + lock |
 | Sync | `sync`, `repair` | Make reality match config |
 | Build | `validate`, `export`, `build` | Dry-run or produce artifacts |
-| Config | `link`, `unlink`, `override`, `resolve` | Target/dev settings |
+| Config | `link`, `unlink`, `override`, `resolve` | Target/dev settings; `link --force` adopts unmanaged collisions and persists lock |
 | Models | `models` | Alias resolution, catalog cache |
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |

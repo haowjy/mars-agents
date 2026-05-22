@@ -33,7 +33,7 @@ Cursor orchestration: `~/cursor-dev` (`/product-lead`, `work-coordination` skill
 
 **Mars must NEVER delete files it didn't create.** Orphan cleanup, removals, and overwrites in a linked target require a lock `OutputRecord` for that exact `(target_root, dest_path)` pair. A path tracked only under `.mars` does not authorize mutation under `.cursor` or other targets. Never scan-and-delete-unknown.
 
-The lock file (`mars.lock`) is the authority on what mars manages **per target**. If there is no matching record for that target, mars preserves existing local content (diagnostic: `target-unmanaged-collision`). Use `mars sync --force` or `mars link --force` to adopt unmanaged collisions and record ownership (`target-unmanaged-adopted`).
+The lock file (`mars.lock`) is the authority on what mars manages **per target**. Untracked local content in a linked target is preserved unless explicitly adopted — see `src/target_sync/.context/CONTEXT.md`.
 
 ### Atomic writes
 
@@ -132,48 +132,18 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 
 ## Harness Routing
 
-`src/harness/` + `src/routing/` + `src/config/targets.rs` + `src/models/probes/` form the unified routing architecture introduced in PR #51.
+`src/harness/`, `src/routing/`, `src/config/targets.rs`, and `src/models/probes/` share one routing architecture.
 
-### Single authority, single evaluator
+- **`harness::registry` is the ONLY harness-name authority** — no other module validates or normalizes harness names independently.
+- **`routing::evaluate_candidates()` is the ONLY candidate evaluator** — `mars models` and `mars build` must converge on the same route for the same inputs.
 
-- **`harness::registry` is the ONLY harness-name authority.** `registry::parse()`, `registry::is_known()`, `registry::provider_candidate_order()` — all harness identity flows through registry. No other module validates or normalizes harness names independently.
-- **`routing::evaluate_candidates()` is the ONLY candidate evaluator.** Both `mars models` and `mars build` converge on the same route for the same inputs. Parity is an invariant, not a coincidence.
-
-### Evaluation flow
-
-1. Build candidate list from `settings.harness_order` (ConfigOrder source) or `provider_candidate_order` (Provider source)
-2. Filter by `linked_harnesses` — only `KnownHarness` links filter; generic targets like `.agents` do not
-3. Per-candidate gate: installed check → native match + auth → OpenCode probe (`Likely`) → Pi probe (`Confirmed` if compatible) → Cursor (`Passthrough`)
-4. Fallback chain: config `default_harness` → first linked harness → hardcoded `claude`
-5. Link constraints block config-default and hardcoded fallbacks from routing outside known links
-
-### Confidence semantics
-
-| Confidence | Meaning |
-|---|---|
-| `Explicit` | Fixed selection from CLI/profile/alias |
-| `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
-| `Likely` | OpenCode cached provider+model evidence |
-| `Passthrough` | Universal (Cursor), Pi without probe, fallback selections |
-
-### Link constraints
-
-Links from `settings.targets` are normalized via `config::targets::normalize_link()`. Only `LinkKind::KnownHarness` links produce `linked_harnesses` that gate routing candidates. `GenericTarget` (`.agents`, unknown names) and `PathLike` links are materialization targets only — invisible to routing.
-
-See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, `src/models/probes/`, and `src/target_sync/` for detailed contracts.
+Details: `src/routing/.context/CONTEXT.md`, `src/harness/.context/CONTEXT.md`, `src/config/.context/CONTEXT.md`, `src/models/probes/.context/CONTEXT.md`.
 
 ## Managed Targets
 
-`src/target_sync/mod.rs` — copies content from `.mars/` canonical store to configured target directories.
+`src/target_sync/` copies from `.mars/` to configured target directories (`settings.targets`, default `[".agents"]`). File copies only — no symlinks. Non-fatal per-target; lock is written regardless of target sync outcome.
 
-- Targets configured via `settings.targets` in `mars.toml` (default: `[".agents"]`)
-- All targets get file copies — no symlinks anywhere in the pipeline
-- Orphan cleanup scopes to `old_lock.output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target**
-- Deletes, Removed handling, and copy/install paths gate on `surface_ownership::may_delete` / `copy_decision` and `lock.contains_output(target_root, dest_path)`
-- Pre-existing untracked collisions are preserved; `mars sync --force` and `mars link --force` adopt and persist linked-target `OutputRecord`s
-- `mars link` fails by default when adoption would be required (suggests `--force` in the diagnostic)
-- Non-fatal per-target: errors on one target don't stop other targets from syncing
-- Target sync runs after `apply_plan` and before `finalize` — lock is written regardless of target sync outcome
+Per-target ownership, orphan cleanup, and collision/`--force` semantics: `src/target_sync/.context/CONTEXT.md`.
 
 ## Reconciliation Layer
 
@@ -187,7 +157,7 @@ See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, `src
 `src/diagnostic.rs` — `DiagnosticCollector` threaded through the entire pipeline.
 
 - No `eprintln!` in library code — all warnings/info go through the collector
-- Machine-readable codes (e.g. `"shadow-collision"`, `"model-alias-conflict"`, `"target-sync-error"`, `"target-unmanaged-collision"`, `"target-unmanaged-adopted"`)
+- Machine-readable codes (e.g. `"shadow-collision"`, `"model-alias-conflict"`, `"target-sync-error"`)
 - CLI layer formats diagnostics for human or JSON output
 - Diagnostics are non-fatal — pipeline continues, report includes all collected diagnostics
 

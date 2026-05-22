@@ -13,7 +13,7 @@ mars.toml + mars.lock (committed, project root)
 ```
 
 - **`.mars/` is a cache, not the source of truth.** Committed targets + `mars.lock` are the authority. Fresh clone rebuilds `.mars/` from sources.
-- **Mars never deletes files it didn't create.** Lock file is the authority on what mars manages **per target** via `(target_root, dest_path)` on each `OutputRecord`. Orphan cleanup only removes paths previously managed in that target.
+- **Mars never deletes files it didn't create.** Per-target lock ownership — see root `AGENTS.md` Critical Invariants and `target_sync/.context/CONTEXT.md`.
 - **All writes are atomic** (tmp+rename). Crash mid-write leaves old file intact.
 
 ## Dependency Direction
@@ -58,7 +58,7 @@ cli → sync → compiler → target adapters
 
 - **Never add a second candidate evaluator** — `routing::evaluate_candidates()` is the only one. Both `mars models` and `mars build` call it.
 - **Never validate harness names outside `harness::registry`** — `registry::parse()` and `registry::is_known()` are the only authorities.
-- **Never scan-and-delete unknown files in targets** — only remove files tracked in the lock for that `(target_root, dest_path)`.
+- **Never scan-and-delete unknown files in targets** — only remove paths tracked in the lock for that target; see `target_sync/.context/CONTEXT.md`.
 - **Never use `eprintln!` in library code** — all diagnostics go through `DiagnosticCollector`.
 - **Never hardcode model aliases in the binary** — all aliases come from packages or consumer config.
 

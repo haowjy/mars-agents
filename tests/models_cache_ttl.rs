@@ -184,6 +184,86 @@ fn scenario_e_no_refresh_models_flag_matches_offline_behavior() {
 
 #[test]
 #[serial]
+fn scenario_e1_json_list_no_refresh_without_cache_includes_routing_diagnostics() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+default_harness = "gemini"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list", "--no-refresh-models"]);
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    assert!(
+        stdout["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("--no-refresh-models")),
+        "expected no-refresh cache error in JSON: {stdout}"
+    );
+    assert!(
+        stdout["routing_diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().any(|entry| {
+                entry
+                    .as_str()
+                    .is_some_and(|message| message.contains("settings.default_harness"))
+            })),
+        "expected routing diagnostics in JSON: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
+fn scenario_e2_json_resolve_no_refresh_without_cache_emits_single_document() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+default_harness = "gemini"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "--json",
+        "models",
+        "resolve",
+        "unknown-xyz",
+        "--no-refresh-models",
+    ]);
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return one JSON");
+    assert!(
+        stdout["cache_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("--no-refresh-models")),
+        "expected cache_error in JSON: {stdout}"
+    );
+    assert!(
+        stdout["routing_diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().any(|entry| {
+                entry
+                    .as_str()
+                    .is_some_and(|message| message.contains("settings.default_harness"))
+            })),
+        "expected routing diagnostics in JSON: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
 fn scenario_g_offline_sync_succeeds_without_cache_and_emits_diag() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

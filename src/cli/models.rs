@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
+use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{
@@ -156,9 +157,21 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let mars = mars_dir(ctx);
     let ttl = models::load_models_cache_ttl(ctx);
     let mode = models::resolve_refresh_mode(args.no_refresh_models);
-    let routing_settings = load_routing_settings(ctx);
-    let Some((cache, outcome)) = ensure_fresh_or_json_error(&mars, ttl, mode, json)? else {
-        return Ok(1);
+    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
+    let routing_diagnostics = routing_settings.diagnostic_messages();
+    if !json {
+        emit_routing_settings_warnings(&routing_diagnostics);
+    }
+    let (cache, outcome) = match ensure_fresh_or_json_error(&mars, ttl, mode, json)? {
+        FreshOrJsonError::Fresh(cache, outcome) => (cache, outcome),
+        FreshOrJsonError::JsonError(error_message) => {
+            let mut out = serde_json::json!({
+                "error": error_message,
+            });
+            add_routing_diagnostics_json(&mut out, &routing_diagnostics);
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            return Ok(1);
+        }
     };
     let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
 
@@ -169,6 +182,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             ctx,
             args,
             &routing_settings,
+            &routing_diagnostics,
             &capability_snapshot,
             json,
         );
@@ -195,6 +209,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             &outcome,
             &visibility,
             availability_ctx,
+            &routing_diagnostics,
             json,
         );
     }
@@ -281,6 +296,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         if let Some(diagnostics) = drain_diagnostics_json(&mut diag) {
             out["diagnostics"] = diagnostics;
         }
+        add_routing_diagnostics_json(&mut out, &routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if let Some(warning) = cache_warning.as_deref() {
@@ -331,7 +347,7 @@ struct AvailabilityContext<'a> {
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
     is_offline: bool,
-    routing_settings: &'a RoutingSettings,
+    routing_settings: &'a ResolvedRoutingSettings,
 }
 
 struct ResolveRuntime<'a> {
@@ -340,7 +356,7 @@ struct ResolveRuntime<'a> {
     installed: &'a HashSet<String>,
     probe_outcome: CachedProbeOutcome,
     pi_probe_result: Option<&'a PiProbeResult>,
-    routing_settings: &'a RoutingSettings,
+    routing_settings: &'a ResolvedRoutingSettings,
 }
 
 struct RouteTraceInput<'a> {
@@ -350,15 +366,7 @@ struct RouteTraceInput<'a> {
     installed: &'a HashSet<String>,
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
-    routing_settings: &'a RoutingSettings,
-}
-
-#[derive(Debug, Clone, Default)]
-struct RoutingSettings {
-    harness_order: Option<Vec<String>>,
-    provider_order: Option<Vec<String>>,
-    default_harness: Option<String>,
-    linked_harnesses: Vec<String>,
+    routing_settings: &'a ResolvedRoutingSettings,
 }
 
 fn run_list_all(
@@ -367,6 +375,7 @@ fn run_list_all(
     outcome: &models::RefreshOutcome,
     visibility: &crate::config::ModelVisibility,
     availability_ctx: AvailabilityContext<'_>,
+    routing_diagnostics: &[String],
     json: bool,
 ) -> Result<i32, MarsError> {
     let cache_warning = cache_warning(outcome);
@@ -408,6 +417,7 @@ fn run_list_all(
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if let Some(warning) = cache_warning.as_deref() {
@@ -441,7 +451,8 @@ fn run_list_catalog(
     outcome: &models::RefreshOutcome,
     ctx: &MarsContext,
     args: &ListArgs,
-    routing_settings: &RoutingSettings,
+    routing_settings: &ResolvedRoutingSettings,
+    routing_diagnostics: &[String],
     capability_snapshot: &CapabilitySnapshot,
     json: bool,
 ) -> Result<i32, MarsError> {
@@ -491,6 +502,7 @@ fn run_list_catalog(
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if let Some(warning) = cache_warning.as_deref() {
@@ -747,36 +759,27 @@ fn sort_list_model_entries(entries: &mut [ListModelEntry]) {
     });
 }
 
-fn load_routing_settings(ctx: &MarsContext) -> RoutingSettings {
-    match crate::config::load(&ctx.project_root) {
-        Ok(config) => RoutingSettings {
-            harness_order: config.settings.harness_order.clone(),
-            provider_order: config.settings.provider_order.clone(),
-            default_harness: config.settings.default_harness.clone(),
-            linked_harnesses: config.settings.linked_harnesses(),
-        },
-        Err(_) => RoutingSettings::default(),
-    }
-}
-
 fn resolve_harness_with_routing(
     provider: &str,
     model_id: &str,
     installed: &HashSet<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
-    routing_settings: &RoutingSettings,
+    routing_settings: &ResolvedRoutingSettings,
 ) -> (Option<String>, HarnessSource) {
+    let provider_order = routing_settings.provider_order_names();
+    let harness_order = routing_settings.harness_order_names();
+    let default_harness = routing_settings.default_harness_name();
+    let linked_harnesses = routing_settings.linked_harness_names();
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id,
         provider_for_order: Some(provider),
         provider_constraint: None,
-        settings_provider_order: routing_settings.provider_order.as_deref(),
-        settings_harness_order: routing_settings.harness_order.as_deref(),
-        config_default_harness: routing_settings.default_harness.as_deref(),
+        settings_provider_order: provider_order.as_deref(),
+        settings_harness_order: harness_order.as_deref(),
+        config_default_harness: default_harness.as_deref(),
         installed_harnesses: installed,
-        linked_harnesses: (!routing_settings.linked_harnesses.is_empty())
-            .then_some(routing_settings.linked_harnesses.as_slice()),
+        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
         opencode_probe_result,
         pi_probe_result,
     });
@@ -799,7 +802,22 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 }
 
 fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing::RoutingTrace {
-    crate::routing::evaluate_candidates(&build_route_trace_input(input))
+    let provider_order = input.routing_settings.provider_order_names();
+    let harness_order = input.routing_settings.harness_order_names();
+    let default_harness = input.routing_settings.default_harness_name();
+    let linked_harnesses = input.routing_settings.linked_harness_names();
+    crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+        model_id: input.model_id,
+        provider_for_order: Some(input.provider_for_order),
+        provider_constraint: input.provider_constraint,
+        settings_provider_order: provider_order.as_deref(),
+        settings_harness_order: harness_order.as_deref(),
+        config_default_harness: default_harness.as_deref(),
+        installed_harnesses: input.installed,
+        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
+        opencode_probe_result: input.opencode_probe_result,
+        pi_probe_result: input.pi_probe_result,
+    })
 }
 
 fn route_trace_for_fixed_harness(
@@ -807,9 +825,24 @@ fn route_trace_for_fixed_harness(
     fixed_harness: &str,
     source: crate::routing::RouteSource,
 ) -> crate::routing::RoutingTrace {
-    let mut fixed_input = build_route_trace_input(input);
-    fixed_input.provider_for_order =
-        provider_for_order_for_fixed_harness(fixed_input.provider_for_order, fixed_harness);
+    let provider_order = input.routing_settings.provider_order_names();
+    let harness_order = input.routing_settings.harness_order_names();
+    let default_harness = input.routing_settings.default_harness_name();
+    let linked_harnesses = input.routing_settings.linked_harness_names();
+    let provider_for_order =
+        provider_for_order_for_fixed_harness(Some(input.provider_for_order), fixed_harness);
+    let fixed_input = crate::routing::RoutingInput {
+        model_id: input.model_id,
+        provider_for_order,
+        provider_constraint: input.provider_constraint,
+        settings_provider_order: provider_order.as_deref(),
+        settings_harness_order: harness_order.as_deref(),
+        config_default_harness: default_harness.as_deref(),
+        installed_harnesses: input.installed,
+        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
+        opencode_probe_result: input.opencode_probe_result,
+        pi_probe_result: input.pi_probe_result,
+    };
     let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
     crate::routing::RoutingTrace {
         source,
@@ -819,22 +852,6 @@ fn route_trace_for_fixed_harness(
         candidates_tried: vec![fixed_harness.to_string()],
         assessments: vec![assessment],
         diagnostics: Vec::new(),
-    }
-}
-
-fn build_route_trace_input<'a>(input: &'a RouteTraceInput<'a>) -> crate::routing::RoutingInput<'a> {
-    crate::routing::RoutingInput {
-        model_id: input.model_id,
-        provider_for_order: Some(input.provider_for_order),
-        provider_constraint: input.provider_constraint,
-        settings_provider_order: input.routing_settings.provider_order.as_deref(),
-        settings_harness_order: input.routing_settings.harness_order.as_deref(),
-        config_default_harness: input.routing_settings.default_harness.as_deref(),
-        installed_harnesses: input.installed,
-        linked_harnesses: (!input.routing_settings.linked_harnesses.is_empty())
-            .then_some(input.routing_settings.linked_harnesses.as_slice()),
-        opencode_probe_result: input.opencode_probe_result,
-        pi_probe_result: input.pi_probe_result,
     }
 }
 
@@ -880,7 +897,7 @@ fn apply_routing_settings_to_resolved_aliases(
     installed: &HashSet<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
-    routing_settings: &RoutingSettings,
+    routing_settings: &ResolvedRoutingSettings,
 ) {
     for alias in resolved.values_mut() {
         let has_explicit_harness = aliases
@@ -904,7 +921,7 @@ fn apply_routing_settings_to_resolved_alias(
     installed: &HashSet<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
-    routing_settings: &RoutingSettings,
+    routing_settings: &ResolvedRoutingSettings,
 ) {
     let (harness, harness_source) = resolve_harness_with_routing(
         &alias.provider,
@@ -1102,10 +1119,21 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     let mars = mars_dir(ctx);
     let ttl = models::load_models_cache_ttl(ctx);
     let mode = models::resolve_refresh_mode(args.no_refresh_models);
-    let routing_settings = load_routing_settings(ctx);
+    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
+    let routing_diagnostics = routing_settings.diagnostic_messages();
+    if !json {
+        emit_routing_settings_warnings(&routing_diagnostics);
+    }
 
     // Cache is enrichment, not a gate. If unavailable, skip to passthrough.
-    let cache_result = ensure_fresh_or_json_error(&mars, ttl, mode, json)?;
+    let mut cache_error = None;
+    let cache_result = match ensure_fresh_or_json_error(&mars, ttl, mode, json)? {
+        FreshOrJsonError::Fresh(cache, outcome) => Some((cache, outcome)),
+        FreshOrJsonError::JsonError(error_message) => {
+            cache_error = Some(error_message);
+            None
+        }
+    };
     let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
     let installed = capability_snapshot.installed_harnesses();
 
@@ -1124,7 +1152,15 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 pi_probe_result: pi_probe_result.as_ref(),
                 routing_settings: &routing_settings,
             };
-            return run_resolve_exact_alias(args, alias, &merged, ctx, runtime, json);
+            return run_resolve_exact_alias(
+                args,
+                alias,
+                &merged,
+                ctx,
+                runtime,
+                &routing_diagnostics,
+                json,
+            );
         }
 
         // Step 2: alias-prefix resolution
@@ -1166,6 +1202,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 &route_trace,
                 outcome,
                 &cache_outcome,
+                &routing_diagnostics,
                 json,
             );
         }
@@ -1183,6 +1220,8 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         is_offline,
         &installed,
         &routing_settings,
+        cache_error.as_deref(),
+        &routing_diagnostics,
         json,
     )
 }
@@ -1244,23 +1283,21 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
     Ok(0)
 }
 
+enum FreshOrJsonError {
+    Fresh(models::ModelsCache, models::RefreshOutcome),
+    JsonError(String),
+}
+
 fn ensure_fresh_or_json_error(
     mars: &std::path::Path,
     ttl: u32,
     mode: models::RefreshMode,
     json: bool,
-) -> Result<Option<(models::ModelsCache, models::RefreshOutcome)>, MarsError> {
+) -> Result<FreshOrJsonError, MarsError> {
     match models::ensure_fresh(mars, ttl, mode) {
-        Ok(ok) => Ok(Some(ok)),
+        Ok((cache, outcome)) => Ok(FreshOrJsonError::Fresh(cache, outcome)),
         Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "error": format!("{err}"),
-                }))
-                .unwrap()
-            );
-            Ok(None)
+            Ok(FreshOrJsonError::JsonError(format!("{err}")))
         }
         Err(err) => Err(err),
     }
@@ -1272,6 +1309,7 @@ fn run_resolve_exact_alias(
     merged: &IndexMap<String, ModelAlias>,
     ctx: &MarsContext,
     runtime: ResolveRuntime<'_>,
+    routing_diagnostics: &[String],
     json: bool,
 ) -> Result<i32, MarsError> {
     let cache_warning = cache_warning(runtime.outcome);
@@ -1364,6 +1402,7 @@ fn run_resolve_exact_alias(
             cache_warning: cache_warning.as_deref(),
             diagnostics: &diagnostics,
             error_message: &error_message,
+            routing_diagnostics,
             json,
         });
     }
@@ -1402,6 +1441,7 @@ fn run_resolve_exact_alias(
             if !diagnostics.is_empty() {
                 out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
             }
+            add_routing_diagnostics_json(&mut out, routing_diagnostics);
             if let Some(trace) = route_trace.as_ref() {
                 add_route_json_fields(&mut out, trace);
             }
@@ -1416,6 +1456,7 @@ fn run_resolve_exact_alias(
             if !diagnostics.is_empty() {
                 out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
             }
+            add_routing_diagnostics_json(&mut out, routing_diagnostics);
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
             return Ok(1);
         }
@@ -1492,6 +1533,7 @@ struct ResolveFixedHarnessFailureInput<'a> {
     cache_warning: Option<&'a str>,
     diagnostics: &'a [Diagnostic],
     error_message: &'a str,
+    routing_diagnostics: &'a [String],
     json: bool,
 }
 
@@ -1506,6 +1548,7 @@ fn run_resolve_fixed_harness_failure(
         cache_warning,
         diagnostics,
         error_message,
+        routing_diagnostics,
         json,
     } = input;
 
@@ -1527,6 +1570,7 @@ fn run_resolve_fixed_harness_failure(
         if !diagnostics.is_empty() {
             out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(diagnostics));
         }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         eprintln!("error: {error_message}");
@@ -1548,6 +1592,7 @@ fn run_output_resolved(
     route_trace: &crate::routing::RoutingTrace,
     outcome: &models::RefreshOutcome,
     cache_outcome: &CachedProbeOutcome,
+    routing_diagnostics: &[String],
     json: bool,
 ) -> Result<i32, MarsError> {
     let cache_warning = cache_warning(outcome);
@@ -1586,6 +1631,7 @@ fn run_output_resolved(
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
         add_route_json_fields(&mut out, route_trace);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
@@ -1620,18 +1666,21 @@ fn run_output_passthrough(
     outcome: &models::RefreshOutcome,
     is_offline: bool,
     installed: &HashSet<String>,
-    routing_settings: &RoutingSettings,
+    routing_settings: &ResolvedRoutingSettings,
+    cache_error: Option<&str>,
+    routing_diagnostics: &[String],
     json: bool,
 ) -> Result<i32, MarsError> {
     if name.trim().is_empty() {
         if json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "error": "model name cannot be empty"
-                }))
-                .unwrap()
-            );
+            let mut out = serde_json::json!({
+                "error": "model name cannot be empty",
+            });
+            if let Some(cache_error) = cache_error {
+                out["cache_error"] = serde_json::json!(cache_error);
+            }
+            add_routing_diagnostics_json(&mut out, routing_diagnostics);
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
             eprintln!("error: model name cannot be empty");
         }
@@ -1659,16 +1708,19 @@ fn run_output_passthrough(
     let pi_probe_result = pi_cache::probe_cached(installed, is_offline)
         .result()
         .cloned();
+    let provider_order = routing_settings.provider_order_names();
+    let harness_order = routing_settings.harness_order_names();
+    let default_harness = routing_settings.default_harness_name();
+    let linked_harnesses = routing_settings.linked_harness_names();
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id: &passthrough_model_id,
         provider_for_order: Some(provider_for_order),
         provider_constraint: provider_constraint.as_deref(),
-        settings_provider_order: routing_settings.provider_order.as_deref(),
-        settings_harness_order: routing_settings.harness_order.as_deref(),
-        config_default_harness: routing_settings.default_harness.as_deref(),
+        settings_provider_order: provider_order.as_deref(),
+        settings_harness_order: harness_order.as_deref(),
+        config_default_harness: default_harness.as_deref(),
         installed_harnesses: installed,
-        linked_harnesses: (!routing_settings.linked_harnesses.is_empty())
-            .then_some(routing_settings.linked_harnesses.as_slice()),
+        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
     });
@@ -1697,6 +1749,10 @@ fn run_output_passthrough(
             if let Some(warning) = cache_warning.as_deref() {
                 out["cache_warning"] = serde_json::json!(warning);
             }
+            if let Some(cache_error) = cache_error {
+                out["cache_error"] = serde_json::json!(cache_error);
+            }
+            add_routing_diagnostics_json(&mut out, routing_diagnostics);
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
             eprintln!("error: {message}");
@@ -1742,6 +1798,10 @@ fn run_output_passthrough(
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
+        if let Some(cache_error) = cache_error {
+            out["cache_error"] = serde_json::json!(cache_error);
+        }
+        add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         eprintln!("warning: {}", warning);
@@ -1887,6 +1947,18 @@ fn cache_warning(outcome: &models::RefreshOutcome) -> Option<String> {
     match outcome {
         models::RefreshOutcome::StaleFallback { reason } => Some(stale_warning(reason)),
         _ => None,
+    }
+}
+
+fn emit_routing_settings_warnings(routing_diagnostics: &[String]) {
+    for message in routing_diagnostics {
+        eprintln!("warning: {message}");
+    }
+}
+
+fn add_routing_diagnostics_json(out: &mut serde_json::Value, routing_diagnostics: &[String]) {
+    if !routing_diagnostics.is_empty() {
+        out["routing_diagnostics"] = serde_json::json!(routing_diagnostics);
     }
 }
 
@@ -2193,6 +2265,10 @@ description = "Old alias"
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
+    fn default_routing_settings() -> ResolvedRoutingSettings {
+        crate::config::routing_settings::resolve(&crate::config::Settings::default())
+    }
+
     fn collect_all_model_entries(
         merged: &IndexMap<String, ModelAlias>,
         cache: &models::ModelsCache,
@@ -2200,7 +2276,7 @@ description = "Old alias"
         opencode_probe_result: Option<&OpenCodeProbeResult>,
         pi_probe_result: Option<&PiProbeResult>,
         is_offline: bool,
-        routing_settings: &RoutingSettings,
+        routing_settings: &ResolvedRoutingSettings,
     ) -> Vec<ListModelEntry> {
         super::collect_all_model_entries(
             merged,
@@ -2221,7 +2297,7 @@ description = "Old alias"
         opencode_probe_result: Option<&OpenCodeProbeResult>,
         pi_probe_result: Option<&PiProbeResult>,
         is_offline: bool,
-        routing_settings: &RoutingSettings,
+        routing_settings: &ResolvedRoutingSettings,
     ) -> Vec<ListModelEntry> {
         super::collect_catalog_model_entries(
             cache,
@@ -2256,7 +2332,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "claude-opus-4-7");
@@ -2289,7 +2365,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "claude-opus-4-6");
@@ -2314,7 +2390,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "gpt-5.3-codex");
@@ -2335,7 +2411,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "gpt-5.3-codex");
@@ -2361,7 +2437,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "custom-model-id");
@@ -2384,7 +2460,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].harness, None);
@@ -2407,7 +2483,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].id, "claude-opus-4-6");
@@ -2435,7 +2511,7 @@ description = "Old alias"
             None,
             None,
             false,
-            &RoutingSettings::default(),
+            &default_routing_settings(),
         );
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "claude-opus-4-7");

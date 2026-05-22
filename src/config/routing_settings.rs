@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::harness::registry::HarnessId;
 
@@ -19,6 +20,15 @@ pub struct ResolvedRoutingSettings {
 }
 
 impl ResolvedRoutingSettings {
+    /// Resolve routing settings from mars.toml. Falls back to Settings::default()
+    /// if mars.toml cannot be loaded.
+    pub fn from_config(root: &Path) -> Self {
+        match crate::config::load(root) {
+            Ok(config) => resolve(&config.settings),
+            Err(_) => resolve(&Settings::default()),
+        }
+    }
+
     pub fn harness_order_names(&self) -> Option<Vec<String>> {
         self.harness_order.as_ref().map(|order| {
             order
@@ -205,6 +215,7 @@ fn is_known_provider_or_variant(provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn settings_with_links(targets: Option<Vec<&str>>) -> Settings {
         Settings {
@@ -249,5 +260,12 @@ mod tests {
 
         assert!(resolved.linked_harnesses.contains(&HarnessId::OpenCode));
         assert!(!resolved.linked_harnesses.contains(&HarnessId::Codex));
+    }
+
+    #[test]
+    fn from_config_falls_back_to_default_settings_when_missing() {
+        let temp = TempDir::new().expect("temp dir");
+        let resolved = ResolvedRoutingSettings::from_config(temp.path());
+        assert_eq!(resolved, resolve(&Settings::default()));
     }
 }

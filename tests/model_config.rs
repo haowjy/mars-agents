@@ -261,10 +261,12 @@ include = ["catalog-only-*"]
 fn resolve_prefix_no_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "opus-9-9"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =

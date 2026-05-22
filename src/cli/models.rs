@@ -1191,49 +1191,49 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     }
 
     // Step 2: alias-prefix resolution
-    if let Some((cache, outcome)) = &cache_result {
-        if let Some(mut resolved) = models::resolve_with_alias_prefix_with_probe(
+    if let Some((cache, outcome)) = &cache_result
+        && let Some(mut resolved) = models::resolve_with_alias_prefix_with_probe(
             &args.name,
             &merged,
             cache,
             probe_result.as_ref(),
             pi_probe_result.as_ref(),
-        ) {
-            apply_routing_settings_to_resolved_alias(
-                &mut resolved,
-                &installed,
-                probe_result.as_ref(),
-                pi_probe_result.as_ref(),
-                &routing_settings,
-            );
-            annotate_one_availability(
-                &mut resolved,
-                args,
-                &installed,
-                probe_result.as_ref(),
-                pi_probe_result.as_ref(),
-            );
-            let route_input = RouteTraceInput {
-                model_id: &resolved.model_id,
-                provider_for_order: &resolved.provider,
-                provider_constraint: None,
-                installed: &installed,
-                opencode_probe_result: probe_result.as_ref(),
-                pi_probe_result: pi_probe_result.as_ref(),
-                routing_settings: &routing_settings,
-            };
-            let route_trace = route_trace_for_resolved_model(&route_input);
-            return run_output_resolved(OutputResolvedInput {
-                name: &args.name,
-                resolved: &resolved,
-                source: "alias_prefix",
-                route_trace: &route_trace,
-                outcome,
-                cache_outcome: &cache_outcome,
-                routing_diagnostics: &routing_diagnostics,
-                json,
-            });
-        }
+        )
+    {
+        apply_routing_settings_to_resolved_alias(
+            &mut resolved,
+            &installed,
+            probe_result.as_ref(),
+            pi_probe_result.as_ref(),
+            &routing_settings,
+        );
+        annotate_one_availability(
+            &mut resolved,
+            args,
+            &installed,
+            probe_result.as_ref(),
+            pi_probe_result.as_ref(),
+        );
+        let route_input = RouteTraceInput {
+            model_id: &resolved.model_id,
+            provider_for_order: &resolved.provider,
+            provider_constraint: None,
+            installed: &installed,
+            opencode_probe_result: probe_result.as_ref(),
+            pi_probe_result: pi_probe_result.as_ref(),
+            routing_settings: &routing_settings,
+        };
+        let route_trace = route_trace_for_resolved_model(&route_input);
+        return run_output_resolved(OutputResolvedInput {
+            name: &args.name,
+            resolved: &resolved,
+            source: "alias_prefix",
+            route_trace: &route_trace,
+            outcome,
+            cache_outcome: &cache_outcome,
+            routing_diagnostics: &routing_diagnostics,
+            json,
+        });
     }
 
     // Step 3: passthrough — no cache needed

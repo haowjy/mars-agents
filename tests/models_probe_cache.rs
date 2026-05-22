@@ -172,6 +172,7 @@ fn no_refresh_models_skips_probe_refresh_even_with_stale_cache() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
+    let bin_dir = install_fake_opencode(&temp);
     setup_project(&project_root);
     write_probe_cache(&cache_dir, &probe_cache_json(1));
 
@@ -181,6 +182,7 @@ fn no_refresh_models_skips_probe_refresh_even_with_stale_cache() {
         .args(["--json", "models", "resolve", "fast", "--no-refresh-models"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("MARS_OFFLINE", "1")
+        .env("PATH", prepend_path(&bin_dir))
         .assert()
         .success()
         .get_output()

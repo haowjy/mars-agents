@@ -221,6 +221,34 @@ default_harness = "gemini"
 
 #[test]
 #[serial]
+fn scenario_e1b_text_list_no_refresh_without_cache_emits_routing_warning_to_stderr() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+default_harness = "gemini"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["models", "list", "--no-refresh-models"]);
+
+    let output = cmd.assert().code(3).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("settings.default_harness"),
+        "expected routing warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-refresh-models"),
+        "expected no-refresh cache error in stderr: {stderr}"
+    );
+}
+
+#[test]
+#[serial]
 fn scenario_e2_json_resolve_no_refresh_without_cache_emits_single_document() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);

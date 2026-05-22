@@ -238,9 +238,21 @@ The release flow is:
 1. A PR with a `release:*` label lands on `main`.
 2. `.github/workflows/release-on-main.yml` reads the PR label for the pushed commit.
 3. CI skips when no `release:*` label is present or when `release:skip` is present.
-4. CI computes the next patch from `v*` tags.
+4. CI computes the next version from `v*` tags based on the bump label.
 5. CI updates Cargo, PyPI, and npm package versions, promotes `CHANGELOG.md`, commits `release: vX.Y.Z`, and pushes `vX.Y.Z`.
 6. `.github/workflows/release.yml` publishes PyPI, npm, crates.io, and GitHub release artifacts from that tag.
+
+Release labels:
+
+| Label | Effect |
+|---|---|
+| `release:patch` / `release:stable` | Stable patch bump (X.Y.Z+1) |
+| `release:minor` | Stable minor bump (X.Y+1.0) |
+| `release:major` | Stable major bump (X+1.0.0) |
+| `release:rc` | Prerelease (X.Y.Z-rc.N) |
+| `release:skip` | No release |
+
+When multiple bump labels are present, highest wins (major > minor > patch).
 
 Put `release:skip` in the pushed head commit message to skip auto-release even
 when a release label is present. Direct pushes to `main` skip auto-release

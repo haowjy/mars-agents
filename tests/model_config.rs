@@ -178,6 +178,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         json!(["pi", "opencode", "cursor"])
     );
     assert!(stdout["route_trace"].is_object());
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
@@ -212,6 +213,7 @@ fn resolve_unknown_bogus_alias_fails_with_route_trace() {
         json!(["pi", "opencode", "cursor"])
     );
     assert!(stdout["route_trace"].is_object());
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
 }
 
 #[test]
@@ -584,6 +586,7 @@ provider = "anthropic"
         Some("provider_constraint_unsatisfied")
     );
     assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
     assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()

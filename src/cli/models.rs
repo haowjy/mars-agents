@@ -1097,12 +1097,7 @@ fn print_availability_text(availability: Option<&ModelAvailability>) {
 
 fn add_route_json_fields(out: &mut serde_json::Value, trace: &crate::routing::RoutingTrace) {
     let report = trace.to_report();
-    out["route"] = serde_json::json!({
-        "harness": trace.selected_harness(),
-        "source": trace.source.label(),
-        "selection_kind": trace.selected_selection_kind().label(),
-        "match_evidence": trace.selected_match_evidence().label(),
-    });
+    out["route"] = serde_json::json!(report.compact_summary());
     out["route_trace"] = serde_json::json!(report);
 }
 

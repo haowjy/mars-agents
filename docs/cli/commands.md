@@ -556,15 +556,18 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 ```jsonc
 {
+  "version": 2,
   "agent": "agent-name-or-null",
   "agent_body": "raw-agent-markdown-body",
   "routing": {
     "model": "...",
     "harness": "...",
-    "route_confidence": "confirmed|likely|passthrough|explicit",
+    "selection_kind": "auto|fixed|config_default|linked_fallback|hardcoded_default",
+    "match_evidence": "confirmed|constrained|passthrough|none",
     "harness_model": "...",
     "harness_model_source": "provider-match|cached-probe|passthrough|synthesized",
-    "harness_model_confidence": "confirmed|likely|unknown"
+    "harness_model_confidence": "confirmed|likely|unknown",
+    "route_trace": { "version": 1, "..." }
   },
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
@@ -573,6 +576,8 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "provenance": {
     "model_source": "cli|profile|project",
     "harness_source": "...",
+    "selection_kind": "...",
+    "match_evidence": "...",
     "candidates_tried": "..."
   },
   "warnings": ["..."]

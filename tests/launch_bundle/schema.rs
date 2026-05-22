@@ -70,6 +70,10 @@ Review code changes.
     assert!(bundle["routing"]["harness_model"].is_string());
     assert!(bundle["routing"]["harness_model_source"].is_string());
     assert!(bundle["routing"]["harness_model_confidence"].is_string());
+    assert_eq!(
+        bundle["routing"]["route_trace"]["version"].as_u64(),
+        Some(1)
+    );
     assert!(bundle["provenance"]["selection_kind"].is_string());
     assert!(bundle["provenance"]["match_evidence"].is_string());
     assert!(bundle["provenance"]["candidates_tried"].is_string());

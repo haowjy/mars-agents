@@ -543,6 +543,7 @@ where
         let selection = select_probe_slug(
             input.model_id,
             input.provider_constraint,
+            input.provider_for_order,
             provider_order,
             opencode_probe.model_slugs.iter().map(String::as_str),
         );
@@ -591,6 +592,7 @@ where
                 let selection = select_probe_slug(
                     input.model_id,
                     input.provider_constraint,
+                    input.provider_for_order,
                     provider_order,
                     pi_probe.model_slugs.iter().map(String::as_str),
                 );
@@ -776,9 +778,15 @@ struct SlugSelection {
 fn select_probe_slug<'a>(
     model_id: &str,
     provider_constraint: Option<&str>,
+    provider_for_order: Option<&str>,
     provider_order: Option<&[String]>,
     slugs: impl IntoIterator<Item = &'a str>,
 ) -> SlugSelection {
+    let known_provider_for_order = provider_for_order.and_then(|provider| {
+        let normalized = provider.trim();
+        (!normalized.is_empty() && !normalized.eq_ignore_ascii_case("unknown"))
+            .then_some(normalized)
+    });
     let model_matches = slug::find_model_matches(model_id, slugs)
         .into_iter()
         .map(|matched| (matched.provider, matched.slug))
@@ -817,6 +825,14 @@ fn select_probe_slug<'a>(
                 |(left_provider, left_slug), (right_provider, right_slug)| {
                     slug::normalize_provider(left_provider)
                         .cmp(&slug::normalize_provider(right_provider))
+                        .then_with(|| {
+                            provider_exact_match_rank(known_provider_for_order, left_provider).cmp(
+                                &provider_exact_match_rank(
+                                    known_provider_for_order,
+                                    right_provider,
+                                ),
+                            )
+                        })
                         .then_with(|| left_slug.cmp(right_slug))
                 },
             );
@@ -825,6 +841,14 @@ fn select_probe_slug<'a>(
                 |(left_provider, left_slug), (right_provider, right_slug)| {
                     provider_order_rank(left_provider, provider_order)
                         .cmp(&provider_order_rank(right_provider, provider_order))
+                        .then_with(|| {
+                            provider_exact_match_rank(known_provider_for_order, left_provider).cmp(
+                                &provider_exact_match_rank(
+                                    known_provider_for_order,
+                                    right_provider,
+                                ),
+                            )
+                        })
                         .then_with(|| left_slug.cmp(right_slug))
                 },
             );
@@ -834,6 +858,11 @@ fn select_probe_slug<'a>(
         constrained_matches.sort_by(|(left_provider, left_slug), (right_provider, right_slug)| {
             slug::normalize_provider(left_provider)
                 .cmp(&slug::normalize_provider(right_provider))
+                .then_with(|| {
+                    provider_exact_match_rank(known_provider_for_order, left_provider).cmp(
+                        &provider_exact_match_rank(known_provider_for_order, right_provider),
+                    )
+                })
                 .then_with(|| left_slug.cmp(right_slug))
         });
         constrained_matches.first().map(|(_, slug)| slug.clone())
@@ -843,6 +872,19 @@ fn select_probe_slug<'a>(
         candidate_slugs,
         filtered_slugs,
         chosen_slug,
+    }
+}
+
+fn provider_exact_match_rank(
+    known_provider_for_order: Option<&str>,
+    candidate_provider: &str,
+) -> u8 {
+    if known_provider_for_order
+        .is_some_and(|provider| slug::providers_exact_match(provider, candidate_provider))
+    {
+        0
+    } else {
+        1
     }
 }
 
@@ -1505,6 +1547,41 @@ mod tests {
             model_id: "gpt-5.4-mini",
             provider_for_order: Some("openai"),
             provider_constraint: Some("openai"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: Some(&pi_probe),
+        };
+
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+        assert_eq!(trace.harness, "pi");
+        assert_eq!(
+            trace
+                .selected_chosen_slug_evidence()
+                .expect("selected chosen slug evidence")
+                .slug,
+            "openai/gpt-5.4-mini"
+        );
+    }
+
+    #[test]
+    fn unconstrained_slug_selection_prefers_exact_provider_over_variant_when_known() {
+        let installed = installed(&["pi"]);
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from([
+                "openai-codex/gpt-5.4-mini".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
+            ]),
+            ..PiProbeResult::default()
+        };
+        let input = RoutingInput {
+            model_id: "gpt-5.4-mini",
+            provider_for_order: Some("openai"),
+            provider_constraint: None,
             settings_provider_order: None,
             settings_harness_order: None,
             config_default_harness: None,

@@ -521,20 +521,20 @@ mod tests {
 
     #[test]
     fn model_override_prefers_alias_harness() {
-        let installed = installed(&["codex"]);
+        let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, Some("gptmini"), None);
 
         let resolution = resolve_harness(
             &input,
-            Some(&model_alias(Some("codex"))),
+            Some(&model_alias(Some("opencode"))),
             None,
             None,
             evidence(None, None, &installed),
         )
         .expect("harness should resolve");
 
-        assert_eq!(resolution.harness.value, "codex");
+        assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Alias);
         assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
         assert!(resolution.candidates_tried.is_empty());

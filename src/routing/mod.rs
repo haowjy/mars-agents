@@ -717,8 +717,7 @@ fn select_probe_slug<'a>(
         None
     } else if let Some(provider_order) = provider_order {
         if provider_order.is_empty() {
-            constrained_matches
-                .sort_by(|(left_index, _, _), (right_index, _, _)| left_index.cmp(right_index));
+            constrained_matches.sort_by_key(|(left_index, _, _)| *left_index);
         } else {
             constrained_matches.sort_by(
                 |(left_index, left_provider, _), (right_index, right_provider, _)| {

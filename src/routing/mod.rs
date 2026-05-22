@@ -103,6 +103,53 @@ pub struct RoutingTrace {
     pub diagnostics: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedChosenSlugEvidence {
+    pub slug: String,
+    pub match_evidence: Option<MatchEvidence>,
+}
+
+impl RoutingTrace {
+    pub fn selected_harness(&self) -> &str {
+        &self.harness
+    }
+
+    pub fn selected_selection_kind(&self) -> SelectionKind {
+        self.selection_kind
+    }
+
+    pub fn selected_match_evidence(&self) -> MatchEvidence {
+        self.match_evidence
+    }
+
+    pub fn selected_diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+
+    pub fn selected_harness_order_position(&self) -> Option<usize> {
+        self.harness_order_position
+    }
+
+    pub fn selected_chosen_slug_evidence(&self) -> Option<SelectedChosenSlugEvidence> {
+        self.assessments
+            .iter()
+            .find(|assessment| assessment.harness == self.harness)
+            .and_then(|assessment| {
+                assessment
+                    .chosen_slug
+                    .as_ref()
+                    .map(|slug| SelectedChosenSlugEvidence {
+                        slug: slug.clone(),
+                        match_evidence: assessment.match_evidence,
+                    })
+            })
+    }
+
+    pub fn to_report(&self) -> report::RouteDecisionReport {
+        report::RouteDecisionReport::from_trace(self)
+    }
+}
+
 /// Input to the routing engine.
 pub struct RoutingInput<'a> {
     pub model_id: &'a str,
@@ -162,6 +209,21 @@ pub fn trace_for_fixed_harness(
         assessments: vec![assessment],
         diagnostics,
     }
+}
+
+pub fn provider_for_order_for_fixed_harness<'a>(
+    provider_for_order: Option<&'a str>,
+    harness: &str,
+) -> Option<&'a str> {
+    let has_explicit_provider = provider_for_order.is_some_and(|provider| {
+        let normalized = provider.trim();
+        !normalized.is_empty() && !normalized.eq_ignore_ascii_case("unknown")
+    });
+    if has_explicit_provider {
+        return provider_for_order;
+    }
+
+    native_provider_for_harness(harness).or(provider_for_order)
 }
 
 pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
@@ -620,6 +682,14 @@ where
     }
 }
 
+fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
+    match harness {
+        "claude" => Some("anthropic"),
+        "codex" => Some("openai"),
+        _ => None,
+    }
+}
+
 fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
     matches!(
         (provider.map(str::to_ascii_lowercase).as_deref(), harness),
@@ -711,45 +781,62 @@ fn select_probe_slug<'a>(
 ) -> SlugSelection {
     let model_matches = slug::find_model_matches(model_id, slugs)
         .into_iter()
-        .enumerate()
-        .map(|(index, matched)| (index, matched.provider, matched.slug))
+        .map(|matched| (matched.provider, matched.slug))
         .collect::<Vec<_>>();
-    let candidate_slugs = model_matches
+    let mut candidate_slugs = model_matches
         .iter()
-        .map(|(_, _, slug)| slug.clone())
+        .map(|(_, slug)| slug.clone())
         .collect::<Vec<_>>();
+    candidate_slugs.sort();
 
     let mut constrained_matches = model_matches;
     if let Some(constraint) = provider_constraint {
         let normalized_constraint = constraint.trim();
-        constrained_matches
-            .retain(|(_, provider, _)| slug::providers_match(provider, normalized_constraint));
+        constrained_matches.retain(|(provider, _)| {
+            slug::provider_match_tier(normalized_constraint, provider).is_some()
+        });
     }
-    let filtered_slugs = constrained_matches
+    let mut filtered_slugs = constrained_matches
         .iter()
-        .map(|(_, _, slug)| slug.clone())
+        .map(|(_, slug)| slug.clone())
         .collect::<Vec<_>>();
+    filtered_slugs.sort();
 
     let chosen_slug = if constrained_matches.is_empty() {
         None
+    } else if let Some(constraint) = provider_constraint {
+        constrained_matches.sort_by(|(left_provider, left_slug), (right_provider, right_slug)| {
+            slug::provider_match_tier(constraint, left_provider)
+                .cmp(&slug::provider_match_tier(constraint, right_provider))
+                .then_with(|| left_slug.cmp(right_slug))
+        });
+        constrained_matches.first().map(|(_, slug)| slug.clone())
     } else if let Some(provider_order) = provider_order {
         if provider_order.is_empty() {
-            constrained_matches.sort_by_key(|(left_index, _, _)| *left_index);
+            constrained_matches.sort_by(
+                |(left_provider, left_slug), (right_provider, right_slug)| {
+                    slug::normalize_provider(left_provider)
+                        .cmp(&slug::normalize_provider(right_provider))
+                        .then_with(|| left_slug.cmp(right_slug))
+                },
+            );
         } else {
             constrained_matches.sort_by(
-                |(left_index, left_provider, _), (right_index, right_provider, _)| {
+                |(left_provider, left_slug), (right_provider, right_slug)| {
                     provider_order_rank(left_provider, provider_order)
                         .cmp(&provider_order_rank(right_provider, provider_order))
-                        .then_with(|| left_index.cmp(right_index))
+                        .then_with(|| left_slug.cmp(right_slug))
                 },
             );
         }
-        constrained_matches.first().map(|(_, _, slug)| slug.clone())
+        constrained_matches.first().map(|(_, slug)| slug.clone())
     } else {
-        constrained_matches
-            .iter()
-            .min_by_key(|(index, _, _)| *index)
-            .map(|(_, _, slug)| slug.clone())
+        constrained_matches.sort_by(|(left_provider, left_slug), (right_provider, right_slug)| {
+            slug::normalize_provider(left_provider)
+                .cmp(&slug::normalize_provider(right_provider))
+                .then_with(|| left_slug.cmp(right_slug))
+        });
+        constrained_matches.first().map(|(_, slug)| slug.clone())
     };
 
     SlugSelection {
@@ -1355,6 +1442,86 @@ mod tests {
         assert_eq!(
             assessment.skip_reason,
             Some("provider_constraint_unsatisfied")
+        );
+    }
+
+    #[test]
+    fn selected_chosen_slug_evidence_prefers_selected_harness_assessment() {
+        let trace = RoutingTrace {
+            source: RouteSource::Provider,
+            selection_kind: SelectionKind::Auto,
+            match_evidence: MatchEvidence::Confirmed,
+            harness: "pi".to_string(),
+            harness_order_position: None,
+            candidates_tried: vec!["pi".to_string()],
+            assessments: vec![
+                CandidateAssessment {
+                    harness: "opencode".to_string(),
+                    installed: true,
+                    candidate_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                    filtered_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                    chosen_slug: Some("openai/gpt-5.4-mini".to_string()),
+                    chosen_model: Some("gpt-5.4-mini".to_string()),
+                    match_evidence: Some(MatchEvidence::Confirmed),
+                    skip_reason: None,
+                },
+                CandidateAssessment {
+                    harness: "pi".to_string(),
+                    installed: true,
+                    candidate_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                    filtered_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                    chosen_slug: Some("openai/gpt-5.4-mini".to_string()),
+                    chosen_model: Some("gpt-5.4-mini".to_string()),
+                    match_evidence: Some(MatchEvidence::Constrained),
+                    skip_reason: None,
+                },
+            ],
+            diagnostics: vec!["diag".to_string()],
+        };
+
+        let selected = trace
+            .selected_chosen_slug_evidence()
+            .expect("selected slug evidence should be present");
+        assert_eq!(selected.slug, "openai/gpt-5.4-mini");
+        assert_eq!(selected.match_evidence, Some(MatchEvidence::Constrained));
+        assert_eq!(trace.selected_harness(), "pi");
+        assert_eq!(trace.selected_selection_kind(), SelectionKind::Auto);
+        assert_eq!(trace.selected_match_evidence(), MatchEvidence::Confirmed);
+        assert_eq!(trace.selected_diagnostics(), vec!["diag".to_string()]);
+    }
+
+    #[test]
+    fn constrained_slug_selection_prefers_exact_provider_over_variant() {
+        let installed = installed(&["pi"]);
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from([
+                "openai-codex/gpt-5.4-mini".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
+            ]),
+            ..PiProbeResult::default()
+        };
+        let input = RoutingInput {
+            model_id: "gpt-5.4-mini",
+            provider_for_order: Some("openai"),
+            provider_constraint: Some("openai"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: Some(&pi_probe),
+        };
+
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+        assert_eq!(trace.harness, "pi");
+        assert_eq!(
+            trace
+                .selected_chosen_slug_evidence()
+                .expect("selected chosen slug evidence")
+                .slug,
+            "openai/gpt-5.4-mini"
         );
     }
 }

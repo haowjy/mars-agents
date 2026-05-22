@@ -37,10 +37,10 @@ impl RouteDecisionReport {
     pub fn from_trace(trace: &RoutingTrace) -> Self {
         Self {
             source: trace.source.label().to_string(),
-            selection_kind: trace.selection_kind.label().to_string(),
-            match_evidence: trace.match_evidence.label().to_string(),
-            harness: trace.harness.clone(),
-            harness_order_position: trace.harness_order_position,
+            selection_kind: trace.selected_selection_kind().label().to_string(),
+            match_evidence: trace.selected_match_evidence().label().to_string(),
+            harness: trace.selected_harness().to_string(),
+            harness_order_position: trace.selected_harness_order_position(),
             candidates_tried: trace.candidates_tried.clone(),
             assessments: trace
                 .assessments
@@ -58,7 +58,7 @@ impl RouteDecisionReport {
                     skip_reason: assessment.skip_reason.map(str::to_string),
                 })
                 .collect(),
-            diagnostics: trace.diagnostics.clone(),
+            diagnostics: trace.selected_diagnostics().to_vec(),
         }
     }
 }

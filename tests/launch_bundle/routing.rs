@@ -90,7 +90,7 @@ model = "gpt-5""#;
     assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -98,7 +98,7 @@ model = "gpt-5""#;
         Some("provider")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -133,7 +133,7 @@ model = "gpt-5""#;
     assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
@@ -150,7 +150,7 @@ model = "gpt-5""#;
         Some("provider")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -243,11 +243,11 @@ default_harness = "pi""#;
         Some("config")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
@@ -434,11 +434,11 @@ default_harness = "invalid-harness""#;
         Some("default")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
@@ -481,11 +481,11 @@ Review code changes."#;
         Some("default")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
@@ -542,11 +542,11 @@ default_harness = "claude""#;
         Some("1")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -615,7 +615,7 @@ model = "gpt-5.4-mini""#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -689,7 +689,7 @@ model = "gpt-5.4-mini""#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
 
@@ -802,11 +802,11 @@ harness_order = ["pi", "opencode"]"#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(bundle["provenance"]["harness_source"].as_str(), Some("cli"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -863,11 +863,11 @@ harness_order = ["codex", "opencode"]"#;
         Some("profile")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -946,11 +946,11 @@ provider = "openai""#;
         Some("0")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("constrained")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("constrained")
     );
     assert_eq!(
@@ -989,7 +989,7 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
 }
@@ -1064,11 +1064,11 @@ harness = "codex""#;
         Some("alias")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1145,11 +1145,11 @@ harness_order = ["pi", "opencode"]"#;
         Some("1")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1334,7 +1334,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1342,7 +1342,7 @@ Review code changes."#;
         Some("provider")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1372,7 +1372,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1402,7 +1402,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1410,7 +1410,7 @@ Review code changes."#;
         Some("provider")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1440,7 +1440,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1475,7 +1475,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1525,7 +1525,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("constrained")
     );
     assert_eq!(
@@ -1570,7 +1570,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1578,7 +1578,7 @@ Review code changes."#;
         Some("provider")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1731,7 +1731,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
@@ -1780,7 +1780,7 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1814,7 +1814,7 @@ Review code changes."#;
         Some("default")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
@@ -1870,11 +1870,11 @@ harness_order = ["opencode", "pi"]"#;
         Some("1")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -1926,7 +1926,7 @@ targets = [".opencode", ".agents"]"#;
         Some("provider")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -2002,11 +2002,11 @@ default_harness = "Pi""#;
         Some("config")
     );
     assert_eq!(
-        bundle["routing"]["route_confidence"].as_str(),
+        bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
     assert_eq!(
-        bundle["provenance"]["route_confidence"].as_str(),
+        bundle["provenance"]["match_evidence"].as_str(),
         Some("passthrough")
     );
 }

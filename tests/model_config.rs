@@ -166,8 +166,13 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         stdout["error"]
             .as_str()
             .expect("error should be present")
-            .contains("did not match any harness-reported model slug")
+            .contains("selected harness 'pi', but that harness is not installed")
     );
+    assert_eq!(
+        stdout["route_rejection"]["reason"].as_str(),
+        Some("harness_not_installed")
+    );
+    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         stdout["harnesses_tried"],
         json!(["pi", "opencode", "cursor"])
@@ -569,6 +574,15 @@ provider = "anthropic"
     assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
     assert_eq!(stdout["route"]["match_evidence"].as_str(), Some("none"));
+    assert_eq!(
+        stdout["route_rejection"]["reason"].as_str(),
+        Some("assessment_failed")
+    );
+    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        stdout["route_rejection"]["skip_reason"].as_str(),
+        Some("provider_constraint_unsatisfied")
+    );
     assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
     assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
     let assessments = stdout["route_trace"]["assessments"]

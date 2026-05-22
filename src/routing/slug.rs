@@ -54,6 +54,25 @@ pub fn providers_match(a: &str, b: &str) -> bool {
     normalize_provider(a) == normalize_provider(b)
 }
 
+/// Exact provider-name match (case-insensitive, no variant collapsing).
+pub fn providers_exact_match(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// Match tier for provider matching.
+/// - 0: exact provider match
+/// - 1: normalized-provider variant match
+/// - None: no match
+pub fn provider_match_tier(target_provider: &str, candidate_provider: &str) -> Option<u8> {
+    if providers_exact_match(target_provider, candidate_provider) {
+        Some(0)
+    } else if providers_match(target_provider, candidate_provider) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 /// Result of matching a model against a set of slugs.
 #[derive(Debug, Clone)]
 pub struct SlugMatch {
@@ -86,9 +105,17 @@ pub fn find_exact_match<'a>(
     target_provider: &str,
     slugs: impl IntoIterator<Item = &'a str>,
 ) -> Option<SlugMatch> {
-    find_model_matches(target_model_id, slugs)
+    let mut matches = find_model_matches(target_model_id, slugs)
         .into_iter()
-        .find(|entry| providers_match(target_provider, &entry.provider))
+        .filter(|entry| provider_match_tier(target_provider, &entry.provider).is_some())
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        provider_match_tier(target_provider, &left.provider)
+            .cmp(&provider_match_tier(target_provider, &right.provider))
+            .then_with(|| left.slug.cmp(&right.slug))
+    });
+    matches.into_iter().next()
 }
 
 #[cfg(test)]
@@ -171,7 +198,14 @@ mod tests {
 
         let matched =
             find_exact_match("gpt-5-4-mini", "openai", slugs.iter().map(String::as_str)).unwrap();
-        assert!(providers_match(&matched.provider, "openai"));
+        assert_eq!(matched.provider, "openai");
+    }
+
+    #[test]
+    fn find_exact_match_prefers_exact_provider_before_variant() {
+        let slugs = vec!["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"];
+        let matched = find_exact_match("gpt-5-4-mini", "openai", slugs).unwrap();
+        assert_eq!(matched.slug, "openai/gpt-5.4-mini");
     }
 
     #[test]

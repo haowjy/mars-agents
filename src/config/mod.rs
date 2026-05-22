@@ -552,10 +552,6 @@ impl Settings {
             .map(|harness| harness.to_string())
             .collect()
     }
-
-    pub fn resolved_routing_settings(&self) -> routing_settings::ResolvedRoutingSettings {
-        routing_settings::resolve(self)
-    }
 }
 
 /// Resolved source specification after merging config and overrides.

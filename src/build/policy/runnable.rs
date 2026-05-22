@@ -1,13 +1,14 @@
 use crate::build::bundle::Routing;
 use crate::models::availability::resolve_runnable_path;
 use crate::models::probes::OpenCodeProbeResult;
-use crate::routing::{MatchEvidence, RoutingTrace, report::RouteDecisionReport};
+use crate::routing::{MatchEvidence, RoutingTrace};
 
 pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
     pub(super) model_token: String,
     pub(super) harness: String,
-    pub(super) route_confidence: String,
+    pub(super) selection_kind: String,
+    pub(super) match_evidence: String,
     pub(super) provider: Option<&'a str>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub(super) alias_resolution_failed: bool,
@@ -24,7 +25,8 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         model,
         model_token,
         harness,
-        route_confidence,
+        selection_kind,
+        match_evidence,
         provider,
         opencode_probe_result,
         alias_resolution_failed,
@@ -41,15 +43,15 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .then_some(opencode_probe_result)
         .flatten();
     let mut runnable = resolve_runnable_path(&model, provider_for_runnable, &harness, cached_probe);
-    if let Some((chosen_slug, chosen_confidence)) = selected_chosen_slug(&route_trace) {
+    if let Some(chosen_slug) = route_trace.selected_chosen_slug_evidence() {
         let use_chosen_slug = harness.eq_ignore_ascii_case("pi")
             || (harness.eq_ignore_ascii_case("opencode")
                 && matches!(
-                    chosen_confidence,
+                    chosen_slug.match_evidence,
                     Some(MatchEvidence::Confirmed | MatchEvidence::Constrained)
                 ));
         if use_chosen_slug {
-            runnable.harness_model_id = chosen_slug;
+            runnable.harness_model_id = chosen_slug.slug;
             runnable.source = crate::models::availability::RunnablePathSource::CachedProbe;
             runnable.confidence = crate::models::availability::RunnableConfidence::Confirmed;
         }
@@ -60,27 +62,15 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             model,
             model_token,
             harness,
-            route_confidence,
+            selection_kind,
+            match_evidence,
             harness_model: runnable.harness_model_id,
             harness_model_source: runnable.source.label().to_string(),
             harness_model_confidence: runnable.confidence.label().to_string(),
-            route_trace: RouteDecisionReport::from_trace(&route_trace),
+            route_trace: route_trace.to_report(),
         },
         warnings: Vec::new(),
     }
-}
-
-fn selected_chosen_slug(trace: &RoutingTrace) -> Option<(String, Option<MatchEvidence>)> {
-    trace
-        .assessments
-        .iter()
-        .find(|assessment| assessment.harness == trace.harness)
-        .and_then(|assessment| {
-            assessment
-                .chosen_slug
-                .as_ref()
-                .map(|slug| (slug.clone(), assessment.match_evidence))
-        })
 }
 
 #[cfg(test)]
@@ -115,7 +105,8 @@ mod tests {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gptmini".to_string(),
             harness: "opencode".to_string(),
-            route_confidence: "confirmed".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
             provider: None,
             opencode_probe_result: None,
             alias_resolution_failed: false,
@@ -134,7 +125,8 @@ mod tests {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gptmini".to_string(),
             harness: "opencode".to_string(),
-            route_confidence: "passthrough".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "passthrough".to_string(),
             provider: None,
             opencode_probe_result: None,
             alias_resolution_failed: false,

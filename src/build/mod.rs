@@ -14,6 +14,8 @@ use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
 use crate::error::{ConfigError, MarsError};
 
+pub const LAUNCH_BUNDLE_VERSION: u32 = 2;
+
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
     pub model: Option<String>,
@@ -106,7 +108,7 @@ pub fn build_launch_bundle(
     warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {
-        version: 1,
+        version: LAUNCH_BUNDLE_VERSION,
         agent: request.agent,
         agent_body,
         routing: policy.routing,

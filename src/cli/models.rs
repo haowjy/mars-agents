@@ -17,7 +17,6 @@ use crate::models::probes::PiProbeResult;
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
 use crate::models::probes::pi_cache;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
-use crate::routing::report::RouteDecisionReport;
 use crate::types::MarsContext;
 
 /// Manage model aliases and the models cache.
@@ -824,7 +823,10 @@ fn resolve_harness_with_routing(
         installed,
         crate::routing::acceptance::MatchPolicy::InstalledOnly,
     ) {
-        Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
+        Ok(()) => (
+            Some(trace.selected_harness().to_string()),
+            HarnessSource::AutoDetected,
+        ),
         Err(_) => (None, HarnessSource::Unavailable),
     }
 }
@@ -867,8 +869,10 @@ fn route_trace_for_fixed_harness(
     let harness_order = input.routing_settings.harness_order_names();
     let default_harness = input.routing_settings.default_harness_name();
     let linked_harnesses = input.routing_settings.linked_harness_names();
-    let provider_for_order =
-        provider_for_order_for_fixed_harness(Some(input.provider_for_order), fixed_harness);
+    let provider_for_order = crate::routing::provider_for_order_for_fixed_harness(
+        Some(input.provider_for_order),
+        fixed_harness,
+    );
     let fixed_input = crate::routing::RoutingInput {
         model_id: input.model_id,
         provider_for_order,
@@ -883,29 +887,6 @@ fn route_trace_for_fixed_harness(
     };
     let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
     crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
-}
-
-fn provider_for_order_for_fixed_harness<'a>(
-    provider_for_order: Option<&'a str>,
-    harness: &str,
-) -> Option<&'a str> {
-    let has_explicit_provider = provider_for_order.is_some_and(|provider| {
-        let normalized = provider.trim();
-        !normalized.is_empty() && !normalized.eq_ignore_ascii_case("unknown")
-    });
-    if has_explicit_provider {
-        return provider_for_order;
-    }
-
-    native_provider_for_harness(harness).or(provider_for_order)
-}
-
-fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
-    match harness {
-        "claude" => Some("anthropic"),
-        "codex" => Some("openai"),
-        _ => None,
-    }
 }
 
 fn effective_visibility(ctx: &MarsContext, args: &ListArgs) -> crate::config::ModelVisibility {
@@ -1115,28 +1096,29 @@ fn print_availability_text(availability: Option<&ModelAvailability>) {
 }
 
 fn add_route_json_fields(out: &mut serde_json::Value, trace: &crate::routing::RoutingTrace) {
-    let report = RouteDecisionReport::from_trace(trace);
+    let report = trace.to_report();
     out["route"] = serde_json::json!({
-        "harness": report.harness,
-        "source": report.source,
-        "selection_kind": report.selection_kind,
-        "match_evidence": report.match_evidence,
+        "harness": trace.selected_harness(),
+        "source": trace.source.label(),
+        "selection_kind": trace.selected_selection_kind().label(),
+        "match_evidence": trace.selected_match_evidence().label(),
     });
     out["route_trace"] = serde_json::json!(report);
 }
 
 fn print_route_text(trace: &crate::routing::RoutingTrace) {
+    let report = trace.to_report();
     println!(
         "Route:    {} ({}, {}, {})",
-        trace.harness,
+        trace.selected_harness(),
         trace.source.label(),
-        trace.selection_kind.label(),
-        trace.match_evidence.label()
+        trace.selected_selection_kind().label(),
+        trace.selected_match_evidence().label()
     );
-    if !trace.candidates_tried.is_empty() {
-        println!("Tried:    {}", trace.candidates_tried.join(", "));
+    if !report.candidates_tried.is_empty() {
+        println!("Tried:    {}", report.candidates_tried.join(", "));
     }
-    for assessment in &trace.assessments {
+    for assessment in report.assessments {
         if let Some(skip_reason) = assessment.skip_reason {
             println!("Skip:     {} ({})", assessment.harness, skip_reason);
         }
@@ -1360,7 +1342,7 @@ fn run_resolve_exact_alias(
         runtime.pi_probe_result,
     );
     let mut route_trace = None;
-    let mut fixed_harness_route_failure = None;
+    let mut fixed_harness_route_rejection = None;
     if let Some(r) = resolved_entry.as_mut() {
         if alias.harness.is_none() {
             apply_routing_settings_to_resolved_alias(
@@ -1387,21 +1369,20 @@ fn run_resolve_exact_alias(
                 fixed_harness,
                 crate::routing::RouteSource::Alias,
             );
-            let fixed_assessment_failed =
-                fixed_trace.assessments.first().is_none_or(|assessment| {
-                    crate::routing::acceptance::accept_assessment(assessment).is_err()
-                });
-            if fixed_assessment_failed {
-                let skip_reason = fixed_trace
-                    .assessments
-                    .first()
-                    .and_then(|assessment| assessment.skip_reason);
-                fixed_harness_route_failure = Some(format!(
-                    "alias harness `{}` cannot run resolved model under model-first routing ({})",
-                    fixed_harness,
-                    skip_reason.unwrap_or("unavailable")
-                ));
-            }
+            let assessed = fixed_trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == fixed_harness)
+                .or_else(|| fixed_trace.assessments.first());
+            fixed_harness_route_rejection = match assessed {
+                Some(assessment) => crate::routing::acceptance::accept_assessment(assessment).err(),
+                None => Some(
+                    crate::routing::acceptance::RejectionReason::AssessmentFailed {
+                        harness: fixed_harness.to_string(),
+                        skip_reason: Some("missing_assessment".to_string()),
+                    },
+                ),
+            };
             fixed_trace
         } else {
             route_trace_for_resolved_model(&route_input)
@@ -1416,7 +1397,7 @@ fn run_resolve_exact_alias(
     }
     let diagnostics = diag.drain();
 
-    if let Some(error_message) = fixed_harness_route_failure {
+    if let Some(rejection_reason) = fixed_harness_route_rejection {
         let trace = route_trace
             .as_ref()
             .expect("fixed harness route trace exists");
@@ -1430,7 +1411,7 @@ fn run_resolve_exact_alias(
             trace,
             cache_warning: cache_warning.as_deref(),
             diagnostics: &diagnostics,
-            error_message: &error_message,
+            rejection_reason: &rejection_reason,
             routing_diagnostics,
             json,
         });
@@ -1561,7 +1542,7 @@ struct ResolveFixedHarnessFailureInput<'a> {
     trace: &'a crate::routing::RoutingTrace,
     cache_warning: Option<&'a str>,
     diagnostics: &'a [Diagnostic],
-    error_message: &'a str,
+    rejection_reason: &'a crate::routing::acceptance::RejectionReason,
     routing_diagnostics: &'a [String],
     json: bool,
 }
@@ -1576,20 +1557,22 @@ fn run_resolve_fixed_harness_failure(
         trace,
         cache_warning,
         diagnostics,
-        error_message,
+        rejection_reason,
         routing_diagnostics,
         json,
     } = input;
+    let error_message = fixed_alias_rejection_message(rejection_reason);
 
     if json {
         let mut out = serde_json::json!({
             "name": name,
             "source": source,
             "provider": resolved.provider,
-            "harness": trace.harness,
+            "harness": trace.selected_harness(),
             "model_id": resolved.model_id,
             "resolved_model": resolved.model_id,
             "error": error_message,
+            "route_rejection": route_rejection_json(rejection_reason),
             "harnesses_tried": trace.candidates_tried,
         });
         add_route_json_fields(&mut out, trace);
@@ -1755,17 +1738,12 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
     });
-    if crate::routing::acceptance::accept_route(
+    if let Err(rejection_reason) = crate::routing::acceptance::accept_route(
         &trace,
         installed,
         crate::routing::acceptance::MatchPolicy::RequireSlugEvidence,
-    )
-    .is_err()
-    {
-        let message = format!(
-            "model '{}' did not match any harness-reported model slug under model-first routing",
-            name
-        );
+    ) {
+        let message = passthrough_rejection_message(name, &rejection_reason);
         if json {
             let mut out = serde_json::json!({
                 "error": message,
@@ -1774,10 +1752,11 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
                 "resolved_model": passthrough_model_id,
                 "provider_constraint": provider_constraint,
                 "harnesses_tried": trace.candidates_tried,
+                "route_rejection": route_rejection_json(&rejection_reason),
             });
             add_route_json_fields(&mut out, &trace);
-            if !trace.diagnostics.is_empty() {
-                out["diagnostics"] = serde_json::json!(trace.diagnostics);
+            if !trace.selected_diagnostics().is_empty() {
+                out["diagnostics"] = serde_json::json!(trace.selected_diagnostics());
             }
             if let Some(warning) = cache_warning.as_deref() {
                 out["cache_warning"] = serde_json::json!(warning);
@@ -1795,8 +1774,8 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     }
 
     let harness = installed
-        .contains(&trace.harness)
-        .then_some(trace.harness.clone());
+        .contains(trace.selected_harness())
+        .then_some(trace.selected_harness().to_string());
     let harness_source = "pattern_guess";
     let harness_candidates = models::harness::harness_candidates_for_provider(provider_for_order);
     let availability = models::availability::classify_model(
@@ -1969,6 +1948,76 @@ fn unavailable_harness_error(resolved: &models::ResolvedAlias) -> Option<String>
             resolved.provider,
             resolved.harness_candidates.join(", ")
         ))
+    }
+}
+
+fn fixed_alias_rejection_message(
+    rejection: &crate::routing::acceptance::RejectionReason,
+) -> String {
+    match rejection {
+        crate::routing::acceptance::RejectionReason::HarnessNotInstalled { harness } => format!(
+            "alias harness `{harness}` is not installed and cannot run resolved model under model-first routing"
+        ),
+        crate::routing::acceptance::RejectionReason::NoSlugEvidence { harness } => format!(
+            "alias harness `{harness}` did not provide required model slug evidence under model-first routing"
+        ),
+        crate::routing::acceptance::RejectionReason::AssessmentFailed {
+            harness,
+            skip_reason,
+        } => format!(
+            "alias harness `{harness}` cannot run resolved model under model-first routing ({})",
+            skip_reason.as_deref().unwrap_or("unavailable")
+        ),
+    }
+}
+
+fn passthrough_rejection_message(
+    model_name: &str,
+    rejection: &crate::routing::acceptance::RejectionReason,
+) -> String {
+    match rejection {
+        crate::routing::acceptance::RejectionReason::HarnessNotInstalled { harness } => format!(
+            "model '{model_name}' selected harness '{harness}', but that harness is not installed"
+        ),
+        crate::routing::acceptance::RejectionReason::NoSlugEvidence { .. } => format!(
+            "model '{model_name}' did not match any harness-reported model slug under model-first routing"
+        ),
+        crate::routing::acceptance::RejectionReason::AssessmentFailed {
+            harness,
+            skip_reason,
+        } => format!(
+            "model '{model_name}' failed model-first routing assessment on harness '{harness}' ({})",
+            skip_reason.as_deref().unwrap_or("unavailable")
+        ),
+    }
+}
+
+fn route_rejection_json(
+    rejection: &crate::routing::acceptance::RejectionReason,
+) -> serde_json::Value {
+    match rejection {
+        crate::routing::acceptance::RejectionReason::HarnessNotInstalled { harness } => {
+            serde_json::json!({
+                "reason": "harness_not_installed",
+                "harness": harness,
+            })
+        }
+        crate::routing::acceptance::RejectionReason::NoSlugEvidence { harness } => {
+            serde_json::json!({
+                "reason": "no_slug_evidence",
+                "harness": harness,
+            })
+        }
+        crate::routing::acceptance::RejectionReason::AssessmentFailed {
+            harness,
+            skip_reason,
+        } => {
+            serde_json::json!({
+                "reason": "assessment_failed",
+                "harness": harness,
+                "skip_reason": skip_reason,
+            })
+        }
     }
 }
 

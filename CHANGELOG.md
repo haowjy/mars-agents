@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Launch-bundle tool projection now warns unknown tool names only in `tools.allowed` for first-class harnesses; unknown `tools.disallowed` entries are dropped silently.
+- Claude tool registry covers full Claude Code tool surface: Cron, AskUser, Notifications, PlanMode, Worktree, LSP, Monitor, SendUserFile, ScheduleWakeup, RemoteTrigger, ToolSearch, and Task sub-tool aliases.
 
 ## [0.5.0] - 2026-05-22
 

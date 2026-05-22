@@ -76,11 +76,28 @@ fn canonical_claude_tool(key: &str) -> Option<&'static str> {
         "glob" | "find" => Some("Glob"),
         "grep" | "search" | "rg" => Some("Grep"),
         "notebook" | "jupyter" => Some("Notebook"),
-        "task" | "task_tool" => Some("Task"),
+        "task" | "task_tool" | "taskcreate" | "task_create" | "taskget" | "task_get"
+        | "tasklist" | "task_list" | "taskoutput" | "task_output" | "taskstop" | "task_stop"
+        | "taskupdate" | "task_update" => Some("Task"),
         "web_search" | "websearch" => Some("WebSearch"),
         "web_fetch" | "webfetch" => Some("WebFetch"),
         "todo_read" | "todoread" => Some("TodoRead"),
         "todo_write" | "todowrite" => Some("TodoWrite"),
+        "cron" | "croncreate" | "cron_create" | "crondelete" | "cron_delete" | "cronlist"
+        | "cron_list" => Some("Cron"),
+        "ask_user" | "askuser" | "askuserquestion" | "ask_user_question" => Some("AskUser"),
+        "notifications" | "pushnotification" | "push_notification" => Some("Notifications"),
+        "plan_mode" | "planmode" | "enterplanmode" | "enter_plan_mode" | "exitplanmode"
+        | "exit_plan_mode" => Some("PlanMode"),
+        "worktree" | "enterworktree" | "enter_worktree" | "exitworktree" | "exit_worktree" => {
+            Some("Worktree")
+        }
+        "lsp" => Some("LSP"),
+        "monitor" => Some("Monitor"),
+        "send_user_file" | "senduserfile" => Some("SendUserFile"),
+        "schedule_wakeup" | "schedulewakeup" => Some("ScheduleWakeup"),
+        "remote_trigger" | "remotetrigger" => Some("RemoteTrigger"),
+        "tool_search" | "toolsearch" => Some("ToolSearch"),
         _ => None,
     }
 }

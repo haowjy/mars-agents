@@ -148,7 +148,10 @@ Review code changes."#;
         bundle["tools"]["allowed"],
         serde_json::json!(["unknown_allow", "Notebook"])
     );
-    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
+    assert_eq!(
+        bundle["tools"]["disallowed"],
+        serde_json::json!(["PlanMode"])
+    );
     assert_eq!(
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])

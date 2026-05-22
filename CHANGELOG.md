@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-05-22
+
 ### Changed
 - Shared route slug matching for routing + availability; Pi probe cache schema v2 invalidates legacy no-slug entries.
 - Models CLI now consumes typed routing settings and surfaces routing config diagnostics in JSON/stderr.

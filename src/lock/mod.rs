@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -97,6 +97,56 @@ impl LockFile {
         self.items
             .values()
             .flat_map(|item| item.outputs.iter().map(|o| &o.dest_path))
+    }
+
+    /// Dest paths previously managed under a specific target root.
+    pub fn output_dest_paths_for_target(&self, target_root: &str) -> HashSet<String> {
+        self.items
+            .values()
+            .flat_map(|item| item.outputs.iter())
+            .filter(|output| output.target_root == target_root)
+            .map(|output| output.dest_path.to_string())
+            .collect()
+    }
+
+    /// Whether the lock records ownership of `dest_path` under `target_root`.
+    pub fn contains_output(&self, target_root: &str, dest_path: &str) -> bool {
+        self.items.values().any(|item| {
+            item.outputs.iter().any(|output| {
+                output.target_root == target_root
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
+            })
+        })
+    }
+
+    /// Flat view of canonical `.mars` outputs only.
+    pub fn canonical_flat_items(&self) -> Vec<(DestPath, LockedItem)> {
+        self.flat_items_for_target(CANONICAL_TARGET_ROOT)
+    }
+
+    /// Flat view of outputs materialized under `target_root`.
+    pub fn flat_items_for_target(&self, target_root: &str) -> Vec<(DestPath, LockedItem)> {
+        self.items
+            .values()
+            .flat_map(|item_v2| {
+                item_v2.outputs.iter().filter_map(|output| {
+                    if output.target_root != target_root {
+                        return None;
+                    }
+                    Some((
+                        output.dest_path.clone(),
+                        LockedItem {
+                            source: item_v2.source.clone(),
+                            kind: item_v2.kind,
+                            version: item_v2.version.clone(),
+                            source_checksum: item_v2.source_checksum.clone(),
+                            installed_checksum: output.installed_checksum.clone(),
+                            dest_path: output.dest_path.clone(),
+                        },
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Flat view of all items as owned `(dest_path, LockedItem)` pairs.
@@ -256,6 +306,8 @@ pub use crate::types::{ItemId, ItemKind};
 const LOCK_FILE: &str = "mars.lock";
 /// Current lock file schema version.
 const LOCK_VERSION: u32 = 2;
+/// Canonical materialization root for `.mars/` apply outcomes.
+pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
 // ---------------------------------------------------------------------------
 // V1 wire type — used only for reading legacy lock files.
@@ -638,6 +690,82 @@ pub fn build(
     })
 }
 
+/// Merge per-target sync results into a built lock file.
+pub fn apply_target_sync_outputs(
+    lock: &mut LockFile,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) {
+    for outcome in target_outcomes {
+        for dest_path in &outcome.removed_dest_paths {
+            remove_target_output(lock, &outcome.target, dest_path);
+        }
+        for synced in &outcome.synced_outputs {
+            upsert_target_output(
+                lock,
+                &outcome.target,
+                &synced.dest_path,
+                &synced.installed_checksum,
+            );
+        }
+    }
+}
+
+/// Record native harness outputs produced by dual-surface compile.
+pub fn apply_compiled_native_outputs(
+    lock: &mut LockFile,
+    records: &[(String, String, ContentHash)],
+) {
+    for (target_root, dest_path, installed_checksum) in records {
+        upsert_target_output(lock, target_root, dest_path, installed_checksum);
+    }
+}
+
+fn upsert_target_output(
+    lock: &mut LockFile,
+    target_root: &str,
+    dest_path: &str,
+    installed_checksum: &ContentHash,
+) {
+    let dest = DestPath::from(dest_path);
+    for item in lock.items.values_mut() {
+        if !item.outputs.iter().any(|output| {
+            crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
+        }) {
+            continue;
+        }
+
+        if let Some(output) = item.outputs.iter_mut().find(|output| {
+            output.target_root == target_root
+                && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
+        }) {
+            output.installed_checksum = installed_checksum.clone();
+            return;
+        }
+
+        item.outputs.push(OutputRecord {
+            target_root: target_root.to_string(),
+            dest_path: dest,
+            installed_checksum: installed_checksum.clone(),
+        });
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        return;
+    }
+}
+
+fn remove_target_output(lock: &mut LockFile, target_root: &str, dest_path: &str) {
+    for item in lock.items.values_mut() {
+        item.outputs.retain(|output| {
+            !(output.target_root == target_root
+                && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
+        });
+    }
+    lock.items.retain(|_, item| !item.outputs.is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1012,6 +1140,113 @@ installed_checksum = "sha256:222"
 
         assert!(index.contains_dest_path(&DestPath::from("agents/coder.md")));
         assert!(!index.contains_dest_path(&DestPath::from("agents/nobody.md")));
+    }
+
+    #[test]
+    fn output_dest_paths_for_target_filters_by_target_root() {
+        let mut lock = sample_lock();
+        lock.items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".cursor".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:cursor".into(),
+            });
+
+        let mars_paths = lock.output_dest_paths_for_target(".mars");
+        assert!(mars_paths.contains("agents/coder.md"));
+        assert!(mars_paths.contains("skills/review"));
+
+        let cursor_paths = lock.output_dest_paths_for_target(".cursor");
+        assert_eq!(cursor_paths.len(), 1);
+        assert!(cursor_paths.contains("agents/coder.md"));
+        assert!(lock.output_dest_paths_for_target(".claude").is_empty());
+    }
+
+    #[test]
+    fn contains_output_matches_target_root_and_dest_path() {
+        let mut lock = sample_lock();
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+
+        lock.items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".cursor".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:cursor".into(),
+            });
+        assert!(lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".cursor", "agents/missing.md"));
+    }
+
+    #[test]
+    fn apply_target_sync_outputs_upserts_and_removes_target_records() {
+        let mut lock = sample_lock();
+        apply_target_sync_outputs(
+            &mut lock,
+            &[crate::target_sync::TargetSyncOutcome {
+                target: ".cursor".to_string(),
+                items_synced: 1,
+                items_removed: 0,
+                errors: Vec::new(),
+                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
+                    dest_path: "agents/coder.md".to_string(),
+                    installed_checksum: "sha256:cursor".into(),
+                }],
+                removed_dest_paths: Vec::new(),
+            }],
+        );
+        assert!(lock.contains_output(".cursor", "agents/coder.md"));
+
+        apply_target_sync_outputs(
+            &mut lock,
+            &[crate::target_sync::TargetSyncOutcome {
+                target: ".cursor".to_string(),
+                items_synced: 0,
+                items_removed: 1,
+                errors: Vec::new(),
+                synced_outputs: Vec::new(),
+                removed_dest_paths: vec!["agents/coder.md".to_string()],
+            }],
+        );
+        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+    }
+
+    #[test]
+    fn canonical_flat_items_excludes_linked_target_outputs() {
+        let mut lock = sample_lock();
+        lock.items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".cursor".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:cursor".into(),
+            });
+
+        let canonical = lock.canonical_flat_items();
+        assert_eq!(canonical.len(), 2);
+        assert!(
+            canonical
+                .iter()
+                .any(|(dp, _)| dp.as_str() == "agents/coder.md")
+        );
+        assert!(
+            canonical
+                .iter()
+                .all(|(_, item)| { lock.contains_output(".mars", item.dest_path.as_str()) })
+        );
+
+        let cursor = lock.flat_items_for_target(".cursor");
+        assert_eq!(cursor.len(), 1);
+        assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
     }
 
     #[test]

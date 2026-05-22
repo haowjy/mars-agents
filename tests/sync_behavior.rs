@@ -1098,3 +1098,198 @@ fn lock_dependency_version(project_root: &Path, source_name: &str) -> Option<Str
         .and_then(toml::Value::as_str)
         .map(ToOwned::to_owned)
 }
+
+#[test]
+fn sync_preserves_handwritten_cursor_agents_when_lock_only_tracks_mars() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[("design-lead", "# Design lead from Mars")],
+        &[],
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "never"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::write(
+        project.child(".cursor/agents/cursor-only-test.md").path(),
+        "# custom\n",
+    )
+    .unwrap();
+    fs::write(
+        project.child(".cursor/agents/design-lead.md").path(),
+        "# hand-written\n",
+    )
+    .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(project.child(".cursor/agents/cursor-only-test.md").exists());
+    assert!(project.child(".cursor/agents/design-lead.md").exists());
+    assert_eq!(
+        fs::read_to_string(project.child(".cursor/agents/design-lead.md").path()).unwrap(),
+        "# hand-written\n"
+    );
+}
+
+#[test]
+fn sync_preserves_handwritten_cursor_agent_with_agent_emission_always() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[("design-lead", "# Design lead from Mars")],
+        &[],
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::write(
+        project.child(".cursor/agents/design-lead.md").path(),
+        "# hand-written\n",
+    )
+    .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(project.child(".cursor/agents/design-lead.md").path()).unwrap(),
+        "# hand-written\n"
+    );
+}
+
+#[test]
+fn link_fails_on_unmanaged_collision_without_force() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[("coder", "# Coder from Mars")], &[]);
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::create_dir_all(project.child(".agents/agents").path()).unwrap();
+    fs::write(
+        project.child(".agents/agents/coder.md").path(),
+        "# hand-written\n",
+    )
+    .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    assert_eq!(
+        fs::read_to_string(project.child(".agents/agents/coder.md").path()).unwrap(),
+        "# hand-written\n"
+    );
+}
+
+#[test]
+fn link_force_adopts_unmanaged_collision_and_records_lock() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[("coder", "# Coder from Mars")], &[]);
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::create_dir_all(project.child(".agents/agents").path()).unwrap();
+    fs::write(
+        project.child(".agents/agents/coder.md").path(),
+        "# hand-written\n",
+    )
+    .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--force",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(project.child(".agents/agents/coder.md").path()).unwrap(),
+        "# Coder from Mars"
+    );
+
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(lock.contains_output(".agents", "agents/coder.md"));
+}

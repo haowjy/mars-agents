@@ -74,12 +74,23 @@ pub fn compile(
         &ctx.project_root,
         &mars_dir,
         &applied.applied.outcomes,
+        &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.dry_run,
         diag,
     );
-    if matches!(agent_surface_policy, AgentSurfacePolicy::EmitAll) {
-        dual_surface_compile(&ctx.project_root, &mars_dir, request.options.dry_run, diag);
-    }
+    let compiled_native_outputs = if matches!(agent_surface_policy, AgentSurfacePolicy::EmitAll) {
+        dual_surface_compile(
+            &ctx.project_root,
+            &mars_dir,
+            &applied.planned.targeted.resolved.loaded.old_lock,
+            request.options.force,
+            crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            request.options.dry_run,
+            diag,
+        )
+    } else {
+        Vec::new()
+    };
 
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
     // Discovers MCP server and hook items from all packages, validates env refs,
@@ -91,6 +102,7 @@ pub fn compile(
     // Phase 6: copy from canonical store to managed target directories.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy, diag);
     synced.config_entries = config_entry_records;
+    synced.compiled_native_outputs = compiled_native_outputs;
 
     // Phase 7: write lock file, build report.
     finalize(ctx, synced, request, diag)
@@ -144,13 +156,14 @@ fn reconcile_native_agent_surfaces(
     project_root: &Path,
     mars_dir: &Path,
     outcomes: &[crate::sync::apply::ActionOutcome],
+    old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) {
     use crate::lock::ItemKind;
 
     if matches!(policy, AgentSurfacePolicy::SuppressAll) {
-        remove_current_native_agent_surfaces(project_root, mars_dir, dry_run, diag);
+        remove_current_native_agent_surfaces(project_root, mars_dir, old_lock, dry_run, diag);
     }
 
     for outcome in outcomes {
@@ -161,13 +174,14 @@ fn reconcile_native_agent_surfaces(
         }
 
         let agent_name = outcome.dest_path.item_name(ItemKind::Agent);
-        remove_native_agent_shapes(project_root, &agent_name, dry_run, diag);
+        remove_native_agent_shapes(project_root, &agent_name, old_lock, dry_run, diag);
     }
 }
 
 fn remove_current_native_agent_surfaces(
     project_root: &Path,
     mars_dir: &Path,
+    old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) {
@@ -212,13 +226,14 @@ fn remove_current_native_agent_surfaces(
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
         });
-        remove_native_agent_shapes(project_root, agent_name, dry_run, diag);
+        remove_native_agent_shapes(project_root, agent_name, old_lock, dry_run, diag);
     }
 }
 
 fn remove_native_agent_shapes(
     project_root: &Path,
     agent_name: &str,
+    old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) {
@@ -227,6 +242,10 @@ fn remove_native_agent_shapes(
     for harness in HarnessKind::all() {
         let target = harness.target_dir();
         for extension in ["md", "toml"] {
+            let dest_rel = format!("agents/{agent_name}.{extension}");
+            if !old_lock.contains_output(target, &dest_rel) {
+                continue;
+            }
             let native_path = project_root
                 .join(target)
                 .join("agents")
@@ -261,18 +280,22 @@ fn remove_native_agent_shapes(
 fn dual_surface_compile(
     project_root: &Path,
     mars_dir: &Path,
+    old_lock: &crate::lock::LockFile,
+    force: bool,
+    collision_hint: crate::surface_ownership::CollisionAdoptHint,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
-) {
+) -> Vec<(String, String, crate::types::ContentHash)> {
     use crate::compiler::agents::HarnessKind;
     use crate::compiler::agents::lower::lower_for_harness;
     use crate::compiler::agents::parse_agent_content;
+    use crate::surface_ownership::{self, SurfaceCopyDecision};
 
     let agents_dir = mars_dir.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        // .mars/agents/ doesn't exist yet (e.g., first dry-run or empty project).
-        return;
+        return Vec::new();
     };
+    let mut records = Vec::new();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -361,6 +384,31 @@ fn dual_surface_compile(
             _ => format!("{agent_name}.md"),
         };
         let native_path = native_agents_dir.join(&file_name);
+        let dest_rel = format!("agents/{file_name}");
+        let target_dir = harness.target_dir();
+        let dest_exists = surface_ownership::target_dest_exists(&native_path);
+        match surface_ownership::copy_decision(old_lock, target_dir, &dest_rel, dest_exists, force)
+        {
+            SurfaceCopyDecision::SkipUnmanagedCollision => {
+                surface_ownership::warn_unmanaged_collision(
+                    target_dir,
+                    &dest_rel,
+                    collision_hint,
+                    diag,
+                );
+                continue;
+            }
+            SurfaceCopyDecision::Proceed => {
+                if dest_exists && force && !old_lock.contains_output(target_dir, &dest_rel) {
+                    surface_ownership::warn_unmanaged_adopted(
+                        target_dir,
+                        &dest_rel,
+                        collision_hint,
+                        diag,
+                    );
+                }
+            }
+        }
 
         // Write native artifact (atomic tmp+rename) — skipped on dry runs.
         if !dry_run {
@@ -377,9 +425,14 @@ fn dual_surface_compile(
                     "dual-surface-write",
                     format!("could not write {}: {e}", native_path.display()),
                 );
+            } else {
+                let checksum =
+                    crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
+                records.push((target_dir.to_string(), dest_rel, checksum));
             }
         }
     }
+    records
 }
 
 #[cfg(test)]
@@ -387,7 +440,7 @@ mod skill_surface_tests {
     use super::*;
     use crate::compiler::agents::HarnessKind;
     use crate::diagnostic::DiagnosticCollector;
-    use crate::lock::{ItemId, ItemKind};
+    use crate::lock::{ItemId, ItemKind, LockFile, LockedItemV2, OutputRecord};
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
     use tempfile::TempDir;
@@ -424,6 +477,29 @@ mod skill_surface_tests {
         );
     }
 
+    fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> LockFile {
+        let mut lock = LockFile::empty();
+        let outputs = targets
+            .iter()
+            .map(|target| OutputRecord {
+                target_root: (*target).to_string(),
+                dest_path: dest.into(),
+                installed_checksum: checksum.into(),
+            })
+            .collect();
+        lock.items.insert(
+            "agent/coder".to_string(),
+            LockedItemV2 {
+                source: "test".into(),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: "sha256:src".into(),
+                outputs,
+            },
+        );
+        lock
+    }
+
     fn agent_outcome(name: &str, action: ActionTaken) -> ActionOutcome {
         ActionOutcome {
             item_id: ItemId {
@@ -448,12 +524,29 @@ mod skill_surface_tests {
             std::fs::write(agents_dir.join("coder.toml"), "old = true\n").unwrap();
         }
 
+        let tracked_targets: Vec<&str> =
+            HarnessKind::all().iter().map(|h| h.target_dir()).collect();
+        let mut lock =
+            lock_with_target_outputs(&tracked_targets, "agents/coder.md", "sha256:coder");
+        for target in &tracked_targets {
+            lock.items
+                .get_mut("agent/coder")
+                .unwrap()
+                .outputs
+                .push(OutputRecord {
+                    target_root: (*target).to_string(),
+                    dest_path: "agents/coder.toml".into(),
+                    installed_checksum: "sha256:coder-toml".into(),
+                });
+        }
+
         let mut diag = DiagnosticCollector::new();
         reconcile_native_agent_surfaces(
             AgentSurfacePolicy::EmitAll,
             dir.path(),
             &dir.path().join(".mars"),
             &[agent_outcome("coder", ActionTaken::Removed)],
+            &lock,
             false,
             &mut diag,
         );
@@ -496,12 +589,17 @@ mod skill_surface_tests {
         }
 
         let mut diag = DiagnosticCollector::new();
+        let lock = lock_with_target_outputs(
+            &[".claude", ".codex", ".opencode"],
+            "agents/coder.md",
+            "sha256:coder",
+        );
         reconcile_native_agent_surfaces(
             AgentSurfacePolicy::SuppressAll,
             dir.path(),
             &dir.path().join(".mars"),
-            // No removed outcomes — suppression removes current agents regardless
             &[agent_outcome("coder", ActionTaken::Installed)],
+            &lock,
             false,
             &mut diag,
         );
@@ -512,6 +610,36 @@ mod skill_surface_tests {
                 "native agent should be removed under SuppressAll for target {target}"
             );
         }
+    }
+
+    #[test]
+    fn reconcile_suppress_all_preserves_untracked_native_agents() {
+        let dir = TempDir::new().unwrap();
+
+        let mars_agents = dir.path().join(".mars").join("agents");
+        std::fs::create_dir_all(&mars_agents).unwrap();
+        std::fs::write(
+            mars_agents.join("coder.md"),
+            "---\nname: coder\n---\n# Coder\n",
+        )
+        .unwrap();
+
+        let agents_dir = dir.path().join(".cursor").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(agents_dir.join("coder.md"), "# hand-written\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        reconcile_native_agent_surfaces(
+            AgentSurfacePolicy::SuppressAll,
+            dir.path(),
+            &dir.path().join(".mars"),
+            &[agent_outcome("coder", ActionTaken::Installed)],
+            &LockFile::empty(),
+            false,
+            &mut diag,
+        );
+
+        assert!(dir.path().join(".cursor/agents/coder.md").exists());
     }
 
     #[test]
@@ -528,8 +656,8 @@ mod skill_surface_tests {
             AgentSurfacePolicy::EmitAll,
             dir.path(),
             &dir.path().join(".mars"),
-            // Agent is Installed (not Removed) — should be preserved
             &[agent_outcome("coder", ActionTaken::Installed)],
+            &LockFile::empty(),
             false,
             &mut diag,
         );

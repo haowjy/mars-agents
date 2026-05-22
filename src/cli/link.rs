@@ -7,10 +7,10 @@
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind, LockFile};
+use crate::surface_ownership::CollisionAdoptHint;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ItemName;
 use crate::types::managed_cmd;
-use std::collections::HashSet;
 
 use super::output;
 
@@ -19,16 +19,24 @@ use super::output;
 pub struct LinkArgs {
     /// Target directory to materialize (e.g. `.claude`).
     pub target: String,
+    /// Adopt untracked collisions in the linked target (overwrite + record in lock).
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Run `mars link`.
 pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let parsed_target = super::target::normalize_target_name(&args.target)?;
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
-    link_target(ctx, &target_name, json)
+    link_target(ctx, &target_name, args.force, json)
 }
 
-fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Result<i32, MarsError> {
+fn link_target(
+    ctx: &super::MarsContext,
+    target_name: &str,
+    force: bool,
+    json: bool,
+) -> Result<i32, MarsError> {
     let config_path = ctx.project_root.join("mars.toml");
     if !config_path.exists() {
         return Err(MarsError::Link {
@@ -79,24 +87,39 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
     } else {
         &outcomes
     };
-    let previous_managed_paths = lock
-        .all_output_dest_paths()
-        .map(|dest_path| dest_path.to_string())
-        .collect::<HashSet<String>>();
 
     let mut diag = DiagnosticCollector::new();
+    let target_sync_ctx = crate::target_sync::TargetSyncContext {
+        old_lock: &lock,
+        force,
+        collision_hint: CollisionAdoptHint::LinkForce,
+    };
     let target_outcomes = crate::target_sync::sync_managed_targets(
         &ctx.project_root,
         &mars_dir,
         &[target_name.to_string()],
         sync_outcomes,
-        &previous_managed_paths,
-        true,
+        &target_sync_ctx,
         &mut diag,
     );
     let mut diagnostics = diag.drain();
     if let Some(diagnostic) = deprecated_agents_target_diagnostic(target_name) {
         diagnostics.push(diagnostic);
+    }
+
+    if !force
+        && diagnostics
+            .iter()
+            .any(|d| d.code == "target-unmanaged-collision")
+    {
+        return Err(MarsError::Link {
+            target: target_name.to_string(),
+            message: format!(
+                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
+                 run `{}` to adopt",
+                managed_cmd(&format!("mars link {target_name} --force")),
+            ),
+        });
     }
 
     let Some(outcome) = target_outcomes.first() else {
@@ -112,6 +135,10 @@ fn link_target(ctx: &super::MarsContext, target_name: &str, json: bool) -> Resul
             message: outcome.errors.join("; "),
         });
     }
+
+    let mut new_lock = lock;
+    crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
+    crate::lock::write(&ctx.project_root, &new_lock)?;
 
     if settings_changed {
         config.settings.targets = Some(targets);
@@ -151,7 +178,7 @@ fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> 
 }
 
 fn lock_items_as_sync_outcomes(lock: &LockFile) -> Vec<ActionOutcome> {
-    lock.flat_items()
+    lock.canonical_flat_items()
         .into_iter()
         .map(|(dest_path, item)| ActionOutcome {
             item_id: ItemId {

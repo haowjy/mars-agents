@@ -127,6 +127,7 @@ pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
+    pub compiled_native_outputs: Vec<(String, String, ContentHash)>,
 }
 
 /// Execute the unified sync pipeline.
@@ -502,6 +503,7 @@ pub(crate) fn sync_targets(
             applied,
             target_outcomes: Vec::new(),
             config_entries: BTreeMap::new(),
+            compiled_native_outputs: Vec::new(),
         };
     }
 
@@ -514,15 +516,7 @@ pub(crate) fn sync_targets(
         .effective
         .settings
         .managed_targets();
-    let previous_managed_paths = applied
-        .planned
-        .targeted
-        .resolved
-        .loaded
-        .old_lock
-        .all_output_dest_paths()
-        .map(|dest_path| dest_path.to_string())
-        .collect::<HashSet<String>>();
+    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let outcomes;
     let target_outcomes_source = if matches!(
@@ -535,13 +529,17 @@ pub(crate) fn sync_targets(
         &applied.applied.outcomes
     };
 
+    let target_sync_ctx = crate::target_sync::TargetSyncContext {
+        old_lock,
+        force: request.options.force,
+        collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+    };
     let target_outcomes = crate::target_sync::sync_managed_targets(
         &ctx.project_root,
         &mars_dir,
         &targets,
         target_outcomes_source,
-        &previous_managed_paths,
-        request.options.force,
+        &target_sync_ctx,
         diag,
     );
 
@@ -549,6 +547,7 @@ pub(crate) fn sync_targets(
         applied,
         target_outcomes,
         config_entries: BTreeMap::new(),
+        compiled_native_outputs: Vec::new(),
     }
 }
 
@@ -567,12 +566,14 @@ pub(crate) fn finalize(
 
     // Write lock file (D21 — regardless of target sync outcome).
     if !request.options.dry_run {
-        let new_lock = crate::lock::build(
+        let mut new_lock = crate::lock::build(
             graph,
             &state.applied.applied,
             old_lock,
             state.config_entries,
         )?;
+        crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
+        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
         crate::lock::write(project_root, &new_lock)?;
 
         // Persist dependency-only model aliases so `mars models list` can load

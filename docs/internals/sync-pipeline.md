@@ -212,7 +212,7 @@ Copies content from `.mars/` canonical store to each configured target directory
 - Targets include the managed root (default: `.agents/`) plus any additional directories added via `mars link` (`settings.targets`)
 - All targets get file copies
 - Uses `reconcile::fs_ops` for atomic operations (tmp+rename)
-- Orphan cleanup: uses the previous lock to identify mars-managed files in each target, removes only those that are no longer in the current apply outcomes
+- Orphan cleanup: scoped per target via `output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target** (`target_root` + `dest_path` on lock `OutputRecord`). A `.mars`-only record does not authorize deletes under `.cursor` or other targets. Untracked collisions are preserved unless `mars sync --force` adopts them (see `src/target_sync/.context/CONTEXT.md`)
 - Non-fatal per-target: errors on one target are recorded in `TargetSyncOutcome` but don't stop other targets from syncing
 
 ### 7. Finalize (`finalize`)

@@ -12,11 +12,11 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**Managed root** is the directory Mars copies content into from `.mars/` (default: `.agents/`, configurable via `settings.managed_root`). The managed root may contain non-mars content — mars only manages files it created (tracked in the lock). Additional tool directories (`.claude/`, `.cursor/`) can be added as targets via `mars link`.
+**Managed root** is the directory Mars copies content into from `.mars/` (default: `.agents/`, configurable via `settings.managed_root`). The managed root may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. Additional tool directories (`.claude/`, `.cursor/`) can be added as targets via `mars link`.
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
-**Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. It is the authority for what Mars manages. See [internals/lock-file.md](internals/lock-file.md) for format details.
+**Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. Lock v2 tracks outputs per `(target_root, dest_path)` — ownership in `.cursor` is independent from the same path under `.mars/`. See [internals/lock-file.md](internals/lock-file.md) for format details.
 
 **Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [config/mars-toml.md](config/mars-toml.md).
 

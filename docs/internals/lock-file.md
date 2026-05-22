@@ -40,7 +40,7 @@ dest_path = "skills/review"
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | integer | Schema version (currently `1`) |
+| `version` | integer | Schema version (`2` is current; `1` is legacy) |
 | `dependencies` | table | Resolved source entries |
 | `items` | table | Installed items with checksums |
 
@@ -102,6 +102,18 @@ source_checksum = "sha256:..."
 installed_checksum = "sha256:..."
 dest_path = "skills/local-skill"
 ```
+
+## Lock v2 and per-target outputs
+
+Current locks use `version = 2`. Items are keyed by stable id (e.g. `agent/coder`) and may have multiple `[[items."…".outputs]]` rows:
+
+| Field | Description |
+|---|---|
+| `target_root` | Target directory Mars wrote to (e.g. `.mars`, `.cursor`, `.agents`) |
+| `dest_path` | Path relative to that target root |
+| `installed_checksum` | SHA-256 of content at that target path |
+
+Mars may delete or overwrite a path in a linked target only when the previous lock contains a matching `(target_root, dest_path)`. The same `dest_path` under `.mars` does not imply ownership under `.cursor`. See `src/target_sync/.context/CONTEXT.md`.
 
 ## Building the Lock
 

@@ -198,7 +198,9 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         matched_policy.as_ref(),
         harness::HarnessEvidence {
             model_id: &resolved_model.model,
-            provider: resolved_model.provider.as_deref(),
+            provider_for_order: resolved_model.provider_for_order.as_deref(),
+            provider_constraint: resolved_model.provider_constraint.as_deref(),
+            provider_order: resolution_config.provider_order.as_deref(),
             config_default_harness: resolution_config.default_harness.as_deref(),
             harness_order: resolution_config.harness_order.as_deref(),
             installed_harnesses: &installed_harnesses,
@@ -298,9 +300,10 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         model_token: resolved_model.model_token,
         harness: harness_resolution.harness.value,
         route_confidence: harness_resolution.route_confidence.label().to_string(),
-        provider: resolved_model.provider.as_deref(),
+        provider: resolved_model.provider_for_order.as_deref(),
         opencode_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
+        route_trace: harness_resolution.route_trace,
     });
 
     warnings.extend(routing_resolution.warnings);

@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Phase 1 model-first probes now gate OpenCode/Pi routing on harness-reported model slug lists (`opencode models`, `pi --list-models`) instead of provider-auth probe signals, with cache reuse keyed to model-list evidence and fail-closed availability when no matching slug exists.
+- Phase 2/3 routing now threads explicit provider constraints from alias `provider` fields and `provider/model` CLI tokens, keeps bare-model provider inference as ordering-only (not a hard gate), enforces strict provider constraint matching (`openai` does not match `openai-codex`), and keeps provider-order ranking lenient for known variant suffixes.
+- `mars models resolve` passthrough now fails cleanly when no harness-reported model slug matches under model-first routing, while still allowing direct constrained slugs (for example `openai/gpt-5.4-mini`) when a harness model list confirms them.
+- Phase 4/5 routing now emits serializable `route_trace` assessments (candidate slugs, provider-filtered slugs, chosen slug/model, skip reasons) and threads that trace into launch-bundle routing JSON plus `mars models resolve` JSON/text output.
+- Bare direct model tokens (no alias, no `provider/model` prefix) now route through unknown-provider candidate order (`pi, opencode, cursor`) instead of inferred provider-family order; explicit provider constraints remain strict and still fail closed when unsatisfied.
 
 ## [0.4.8-rc.7] - 2026-05-21
 

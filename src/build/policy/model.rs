@@ -13,7 +13,8 @@ pub(super) struct ResolvedModel<'a> {
     pub(super) model: String,
     pub(super) alias: Option<&'a ModelAlias>,
     pub(super) alias_resolution_failed: bool,
-    pub(super) provider: Option<String>,
+    pub(super) provider_for_order: Option<String>,
+    pub(super) provider_constraint: Option<String>,
     pub(super) warnings: Vec<String>,
 }
 
@@ -49,6 +50,8 @@ pub(super) fn resolve_model<'a>(
     };
 
     let alias = aliases.get(&model_token);
+    let (raw_model_token, token_provider_constraint) =
+        models::split_provider_constrained_model_token(&model_token);
     let mut alias_resolution_failed = false;
     let model = if let Some(alias) = alias {
         match models::resolve_model_id_for_alias(alias, cache) {
@@ -58,16 +61,22 @@ pub(super) fn resolve_model<'a>(
                 warnings.push(format!(
                     "model alias `{model_token}` did not resolve from cached catalog; using token as model id"
                 ));
-                model_token.clone()
+                raw_model_token.clone()
             }
         }
     } else {
-        model_token.clone()
+        raw_model_token.clone()
     };
 
-    let provider = alias
-        .and_then(|entry| models::resolve_provider_for_alias(entry, cache))
-        .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string));
+    let provider_constraint = alias
+        .and_then(provider_constraint_for_alias)
+        .or(token_provider_constraint.clone());
+    let provider_for_order = if let Some(entry) = alias {
+        models::resolve_provider_for_alias(entry, cache)
+            .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string))
+    } else {
+        token_provider_constraint
+    };
 
     Ok(ResolvedModel {
         model_token,
@@ -75,9 +84,19 @@ pub(super) fn resolve_model<'a>(
         model,
         alias,
         alias_resolution_failed,
-        provider,
+        provider_for_order,
+        provider_constraint,
         warnings,
     })
+}
+
+fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        models::ModelSpec::Pinned { provider, .. }
+        | models::ModelSpec::PinnedWithMatch { provider, .. } => provider.clone(),
+        models::ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+    }
+    .map(|provider| provider.trim().to_ascii_lowercase())
 }
 
 pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {

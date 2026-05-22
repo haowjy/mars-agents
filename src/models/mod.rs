@@ -966,7 +966,9 @@ pub fn resolve_with_alias_prefix_with_probe(
     let installed = harness::detect_installed_harnesses();
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id: &winner.id,
-        provider: Some(&provider),
+        provider_for_order: Some(&provider),
+        provider_constraint: None,
+        settings_provider_order: None,
         settings_harness_order: None,
         config_default_harness: None,
         installed_harnesses: &installed,
@@ -1499,6 +1501,16 @@ fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
     }
 }
 
+fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
+            provider.clone()
+        }
+        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+    }
+    .map(|provider| provider.trim().to_ascii_lowercase())
+}
+
 fn format_alias_resolution_for_diag(
     alias: &ModelAlias,
     source_name: &str,
@@ -1542,9 +1554,12 @@ fn resolve_harness(
             (Some(h.clone()), HarnessSource::Unavailable)
         }
     } else {
+        let provider_constraint = provider_constraint_for_alias(alias);
         let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
             model_id,
-            provider: Some(provider),
+            provider_for_order: Some(provider),
+            provider_constraint: provider_constraint.as_deref(),
+            settings_provider_order: None,
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: installed,
@@ -1591,6 +1606,22 @@ pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
         return Some("cohere");
     }
     None
+}
+
+/// Split a token shaped like `provider/model` into `(model, provider_constraint)`.
+///
+/// Returns `(trimmed_token, None)` when the token is not a valid constrained slug.
+pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<String>) {
+    let trimmed = token.trim();
+    let Some((provider, model_name)) = trimmed.split_once('/') else {
+        return (trimmed.to_string(), None);
+    };
+    let provider = provider.trim();
+    let model_name = model_name.trim();
+    if provider.is_empty() || model_name.is_empty() {
+        return (trimmed.to_string(), None);
+    }
+    (model_name.to_string(), Some(provider.to_ascii_lowercase()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1950,7 +1981,9 @@ mod tests {
         let installed = harness::detect_installed_harnesses();
         let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
             model_id: "claude-opus-4-6",
-            provider: Some("anthropic"),
+            provider_for_order: Some("anthropic"),
+            provider_constraint: None,
+            settings_provider_order: None,
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
@@ -2524,7 +2557,9 @@ mod tests {
         let installed = harness::detect_installed_harnesses();
         let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
             model_id: "claude-opus-4-6",
-            provider: Some("anthropic"),
+            provider_for_order: Some("anthropic"),
+            provider_constraint: None,
+            settings_provider_order: None,
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
@@ -3041,7 +3076,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_harness_unknown_provider_falls_back_to_default_claude_when_installed() {
+    fn resolve_harness_unknown_provider_uses_pi_first_fallback_ladder() {
         let alias = ModelAlias {
             harness: None,
             description: None,
@@ -3053,13 +3088,13 @@ mod tests {
                 provider: Some("unknown".to_string()),
             },
         };
-        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
+        let installed: HashSet<String> = ["claude", "pi"].iter().map(|s| s.to_string()).collect();
 
         let resolved =
             resolve_harness(&alias, "unknown", "my-custom-model", &installed, None, None);
         assert_eq!(
             resolved,
-            (Some("claude".to_string()), HarnessSource::AutoDetected)
+            (Some("pi".to_string()), HarnessSource::AutoDetected)
         );
     }
 

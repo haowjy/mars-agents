@@ -19,6 +19,7 @@ pub(super) struct HarnessResolution {
     pub(super) harness_order_position: Option<usize>,
     pub(super) route_confidence: RouteConfidence,
     pub(super) candidates_tried: Vec<String>,
+    pub(super) route_trace: routing::RoutingTrace,
     pub(super) is_experimental: bool,
     pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
@@ -26,7 +27,9 @@ pub(super) struct HarnessResolution {
 
 pub(super) struct HarnessEvidence<'a> {
     pub(super) model_id: &'a str,
-    pub(super) provider: Option<&'a str>,
+    pub(super) provider_for_order: Option<&'a str>,
+    pub(super) provider_constraint: Option<&'a str>,
+    pub(super) provider_order: Option<&'a [String]>,
     pub(super) config_default_harness: Option<&'a str>,
     pub(super) harness_order: Option<&'a [String]>,
     pub(super) installed_harnesses: &'a HashSet<String>,
@@ -77,7 +80,7 @@ pub(super) fn resolve_harness(
         settings_policy_harness,
         alias_harness,
     );
-    let (harness, route_confidence, candidates_tried, unavailable_profile_harness) =
+    let (harness, route_confidence, candidates_tried, route_trace, unavailable_profile_harness) =
         if let Some(selection) = fixed_harness_selection.clone() {
             if selection.source == PolicySource::Profile
                 && !evidence
@@ -91,45 +94,85 @@ pub(super) fn resolve_harness(
                 let trace =
                     evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
                 selected_harness_order_position = trace.harness_order_position;
-                warnings.extend(trace.diagnostics);
+                warnings.extend(trace.diagnostics.clone());
                 let unavailable = (!evidence.installed_harnesses.contains(&trace.harness))
                     .then_some(selection.value.clone());
+                let candidates_tried = trace.candidates_tried.clone();
                 (
                     ResolvedField {
-                        value: trace.harness,
+                        value: trace.harness.clone(),
                         source: trace.source.into(),
                         matched_rule: None,
                     },
                     trace.confidence,
-                    trace.candidates_tried,
+                    candidates_tried,
+                    trace,
                     unavailable,
                 )
             } else {
+                let fixed_provider_for_order = native_provider_for_fixed_harness(&selection.value)
+                    .or(evidence.provider_for_order);
+                let fixed_assessment = routing::evaluate_fixed_harness(
+                    &RoutingInput {
+                        model_id: evidence.model_id,
+                        provider_for_order: fixed_provider_for_order,
+                        provider_constraint: evidence.provider_constraint,
+                        settings_provider_order: evidence.provider_order,
+                        settings_harness_order: evidence.harness_order,
+                        config_default_harness: normalized_config_default_harness.as_deref(),
+                        installed_harnesses: evidence.installed_harnesses,
+                        linked_harnesses: evidence.linked_harnesses,
+                        opencode_probe_result: evidence.opencode_probe_result,
+                        pi_probe_result: evidence.pi_probe_result,
+                    },
+                    &selection.value,
+                );
+                if fixed_assessment.confidence.is_none() {
+                    if fixed_assessment.skip_reason == Some("not_installed") {
+                        return Err(unavailable_fixed_harness_error(
+                            selection.source.label(),
+                            &selection.value,
+                            evidence.installed_harnesses,
+                        ));
+                    }
+                    return Err(fixed_harness_constraint_error(
+                        selection.source.label(),
+                        &selection.value,
+                        fixed_assessment.skip_reason,
+                    ));
+                }
                 let candidates_tried = if selection.source == PolicySource::Cli {
                     vec![selection.value.clone()]
                 } else {
                     Vec::new()
                 };
-                let confidence = if selection.source == PolicySource::Cli {
-                    RouteConfidence::Explicit
-                } else {
-                    RouteConfidence::Passthrough
+                let confidence = RouteConfidence::Forced;
+                let route_trace = routing::RoutingTrace {
+                    source: route_source_for_policy_source(selection.source),
+                    confidence,
+                    harness: selection.value.clone(),
+                    harness_order_position: None,
+                    candidates_tried: candidates_tried.clone(),
+                    assessments: vec![fixed_assessment],
+                    diagnostics: Vec::new(),
                 };
-                (selection, confidence, candidates_tried, None)
+                (selection, confidence, candidates_tried, route_trace, None)
             }
         } else {
             let trace =
                 evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
             selected_harness_order_position = trace.harness_order_position;
-            warnings.extend(trace.diagnostics);
+            warnings.extend(trace.diagnostics.clone());
+            let candidates_tried = trace.candidates_tried.clone();
             (
                 ResolvedField {
-                    value: trace.harness,
+                    value: trace.harness.clone(),
                     source: trace.source.into(),
                     matched_rule: None,
                 },
                 trace.confidence,
-                trace.candidates_tried,
+                candidates_tried,
+                trace,
                 None,
             )
         };
@@ -171,6 +214,7 @@ pub(super) fn resolve_harness(
         harness_order_position: selected_harness_order_position,
         route_confidence,
         candidates_tried,
+        route_trace,
         warnings,
     })
 }
@@ -243,7 +287,9 @@ fn evaluate_candidates(
 ) -> routing::RoutingTrace {
     routing::evaluate_candidates(&RoutingInput {
         model_id: evidence.model_id,
-        provider: evidence.provider,
+        provider_for_order: evidence.provider_for_order,
+        provider_constraint: evidence.provider_constraint,
+        settings_provider_order: evidence.provider_order,
         settings_harness_order: evidence.harness_order,
         config_default_harness: normalized_config_default_harness,
         installed_harnesses: evidence.installed_harnesses,
@@ -251,6 +297,27 @@ fn evaluate_candidates(
         opencode_probe_result: evidence.opencode_probe_result,
         pi_probe_result: evidence.pi_probe_result,
     })
+}
+
+fn native_provider_for_fixed_harness(harness: &str) -> Option<&'static str> {
+    match harness {
+        "claude" => Some("anthropic"),
+        "codex" => Some("openai"),
+        _ => None,
+    }
+}
+
+fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource {
+    match source {
+        PolicySource::Cli => routing::RouteSource::Cli,
+        PolicySource::Profile => routing::RouteSource::Profile,
+        PolicySource::Alias => routing::RouteSource::Alias,
+        PolicySource::ConfigOrder => routing::RouteSource::ConfigOrder,
+        PolicySource::Config => routing::RouteSource::ConfigDefault,
+        PolicySource::Default => routing::RouteSource::HardcodedDefault,
+        PolicySource::Provider => routing::RouteSource::Provider,
+        _ => routing::RouteSource::Provider,
+    }
 }
 
 fn unavailable_profile_pivot_error(
@@ -275,6 +342,19 @@ fn unavailable_fixed_harness_error(
         message: format!(
             "{source} harness `{requested_harness}` is not installed; installed harnesses: {}",
             format_installed_harnesses(installed_harnesses)
+        ),
+    })
+}
+
+fn fixed_harness_constraint_error(
+    source: &str,
+    requested_harness: &str,
+    skip_reason: Option<&str>,
+) -> MarsError {
+    let detail = skip_reason.unwrap_or("unavailable");
+    MarsError::Config(ConfigError::Invalid {
+        message: format!(
+            "{source} harness `{requested_harness}` cannot run requested model under model-first routing ({detail})",
         ),
     })
 }
@@ -380,7 +460,9 @@ mod tests {
     ) -> HarnessEvidence<'a> {
         HarnessEvidence {
             model_id: "gpt-5",
-            provider: Some("openai"),
+            provider_for_order: Some("openai"),
+            provider_constraint: None,
+            provider_order: None,
             config_default_harness,
             harness_order,
             installed_harnesses,
@@ -415,7 +497,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "pi");
         assert_eq!(resolution.harness.source, PolicySource::Cli);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Explicit);
+        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
         assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
         assert_eq!(resolution.harness_order_position, None);
     }
@@ -437,7 +519,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "codex");
         assert_eq!(resolution.harness.source, PolicySource::Alias);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
         assert!(resolution.candidates_tried.is_empty());
     }
 
@@ -458,7 +540,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "pi");
         assert_eq!(resolution.harness.source, PolicySource::Profile);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
         assert!(resolution.candidates_tried.is_empty());
     }
 
@@ -470,7 +552,9 @@ mod tests {
         let opencode_probe = positive_opencode_probe();
         let evidence = HarnessEvidence {
             model_id: "gpt-5",
-            provider: Some("openai"),
+            provider_for_order: Some("openai"),
+            provider_constraint: None,
+            provider_order: None,
             config_default_harness: None,
             harness_order: None,
             installed_harnesses: &installed,
@@ -484,7 +568,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Likely);
+        assert_eq!(resolution.route_confidence, RouteConfidence::Confirmed);
         assert_eq!(resolution.candidates_tried, vec!["codex", "pi", "opencode"]);
         assert!(resolution.warnings.iter().any(|warning| {
             warning == "profile harness 'claude' not installed; pivoting via model-policies"
@@ -492,18 +576,17 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_profile_harness_errors_when_no_installed_fallback_is_available() {
+    fn unavailable_profile_harness_pivots_when_installed_candidate_remains() {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
 
-        let error = resolve_harness(&input, None, None, None, evidence(None, None, &installed))
-            .expect_err("unavailable profile harness should fail without an installed fallback");
-        let message = error.to_string();
-
-        assert!(message.contains("profile harness `claude` is not installed"));
-        assert!(message.contains("selected `claude`"));
-        assert!(message.contains("installed harnesses: opencode"));
+        let resolution =
+            resolve_harness(&input, None, None, None, evidence(None, None, &installed))
+                .expect("profile harness should pivot to available candidates");
+        assert_eq!(resolution.harness.value, "opencode");
+        assert_eq!(resolution.harness.source, PolicySource::Provider);
+        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
     }
 
     #[test]

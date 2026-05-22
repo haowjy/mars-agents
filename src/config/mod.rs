@@ -477,6 +477,12 @@ pub struct Settings {
     /// selection. First installed candidate wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_order: Option<Vec<String>>,
+    /// Ordered provider preference for model-first routing tie-breaks.
+    ///
+    /// Optional soft preference used only after model-name matching. Empty means
+    /// preserve harness-reported model order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_order: Option<Vec<String>>,
     /// Controls whether harness-bound agents are emitted to native harness dirs.
     ///
     /// `auto` (the default when unset) emits for standalone mars syncs and
@@ -511,6 +517,7 @@ impl Default for Settings {
             default_harness: None,
             default_model: None,
             harness_order: None,
+            provider_order: None,
             agent_emission: None,
             model_policies: Vec::new(),
         }
@@ -1067,6 +1074,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.harness_order changed during roundtrip ({:?} -> {:?})",
                 original.settings.harness_order, reparsed.settings.harness_order
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.provider_order != original.settings.provider_order {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.provider_order changed during roundtrip ({:?} -> {:?})",
+                original.settings.provider_order, reparsed.settings.provider_order
             ),
         }
         .into());

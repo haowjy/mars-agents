@@ -297,11 +297,11 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
     assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("default")
     );
 }
 
@@ -334,10 +334,10 @@ default_model = "gpt-5.4-mini""#;
         bundle["provenance"]["model_source"].as_str(),
         Some("project")
     );
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("default")
     );
 }
 
@@ -428,7 +428,7 @@ default_harness = "invalid-harness""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("default")
@@ -475,7 +475,7 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("default")
@@ -490,7 +490,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,opencode,cursor")
+        Some("pi,opencode,cursor")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -543,15 +543,24 @@ default_harness = "claude""#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("pi,opencode")
+    );
+    assert!(bundle["routing"]["route_trace"].is_object());
+    assert_eq!(
+        bundle["routing"]["route_trace"]["harness"].as_str(),
+        Some("opencode")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["assessments"][1]["chosen_slug"].as_str(),
+        Some("openai/gpt-5")
     );
 }
 
@@ -588,11 +597,11 @@ harness_order = ["pi", "opencode"]"#;
     assert_eq!(bundle["provenance"]["harness_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("explicit")
+        Some("forced")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("explicit")
+        Some("forced")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -641,11 +650,11 @@ harness_order = ["codex", "opencode"]"#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("forced")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("forced")
     );
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }
@@ -708,11 +717,11 @@ provider = "openai""#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("constrained")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("constrained")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -746,11 +755,13 @@ Review code changes."#;
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_OFFLINE", "1");
 
-    let output = cmd.assert().failure().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-
-    assert!(stderr.contains("profile harness `claude` is not installed"));
-    assert!(stderr.contains("installed harnesses: codex, opencode"));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("passthrough")
+    );
 }
 
 pub(crate) fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
@@ -824,11 +835,11 @@ harness = "codex""#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("forced")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("passthrough")
+        Some("forced")
     );
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }
@@ -889,11 +900,11 @@ harness_order = ["pi", "opencode"]"#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1090,7 +1101,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi")
+        Some("pi")
     );
 }
 
@@ -1120,7 +1131,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi")
+        Some("pi")
     );
 }
 
@@ -1158,7 +1169,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("pi")
     );
 }
 
@@ -1192,7 +1203,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("pi")
     );
 }
 
@@ -1269,7 +1280,7 @@ Review code changes."#;
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("confirmed")
+        Some("constrained")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1314,7 +1325,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
@@ -1322,11 +1333,11 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode")
+        Some("pi,opencode")
     );
 }
 
@@ -1367,7 +1378,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi")
+        Some("pi")
     );
 }
 
@@ -1408,7 +1419,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode")
+        Some("pi,opencode")
     );
 }
 
@@ -1449,7 +1460,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode,cursor")
+        Some("pi,opencode,cursor")
     );
 }
 
@@ -1483,7 +1494,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode,cursor")
+        Some("pi,opencode,cursor")
     );
 }
 
@@ -1524,11 +1535,11 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex,pi,opencode")
+        Some("pi,opencode")
     );
 }
 
@@ -1551,10 +1562,10 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("default")
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
@@ -1562,7 +1573,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("pi,opencode,cursor")
     );
 }
 
@@ -1670,7 +1681,7 @@ targets = [".opencode", ".agents"]"#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -1782,14 +1793,17 @@ model = "gpt-5""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5")
+    );
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+        Some("cached-probe")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("unknown")
+        Some("confirmed")
     );
 
     let warnings = bundle["warnings"]
@@ -1801,7 +1815,7 @@ model = "gpt-5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_passes_through_quietly() {
+pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_fails_closed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -1824,29 +1838,10 @@ Review code changes."#;
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("unknown-model-token")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("unknown")
-    );
-
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(
-        warnings.is_empty(),
-        "explicit harness passthrough is intentional and should stay quiet: {warnings:?}"
-    );
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("cli harness `opencode` cannot run requested model"));
+    assert!(stderr.contains("no_model_match"));
 }
 
 pub(crate) fn build_launch_bundle_overlay_model_overrides_profile_model() {
@@ -2087,7 +2082,9 @@ fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
         #[cfg(windows)]
         {
             let script = if *harness == "pi" {
-                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else if *harness == "opencode" {
+                "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else {
                 "@echo off\r\nexit /b 0\r\n"
             };
@@ -2098,7 +2095,9 @@ fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
             use std::os::unix::fs::PermissionsExt;
             let path = bin_dir.join(harness);
             let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
+            } else if *harness == "opencode" {
+                "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 0\n"
             };
@@ -2125,7 +2124,9 @@ fn install_fake_harnesses_with_auth_failures(
         #[cfg(windows)]
         {
             let script = if *harness == "pi" {
-                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else if *harness == "opencode" {
+                "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else if fail_auth && *harness == "codex" {
                 "@echo off\r\nif \"%~1 %~2\"==\"login status\" exit /b 1\r\nexit /b 0\r\n"
             } else if fail_auth && *harness == "claude" {
@@ -2139,7 +2140,9 @@ fn install_fake_harnesses_with_auth_failures(
         {
             use std::os::unix::fs::PermissionsExt;
             let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
+            } else if *harness == "opencode" {
+                "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else if fail_auth && *harness == "codex" {
                 "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n"
             } else if fail_auth && *harness == "claude" {

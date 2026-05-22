@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use serde::Serialize;
 
 use crate::models;
-use crate::models::availability::AvailabilityStatus;
 use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
@@ -12,25 +11,26 @@ use crate::models::probes::PiProbeResult;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteConfidence {
-    Explicit,
     Confirmed,
-    Likely,
+    Constrained,
+    Forced,
     Passthrough,
 }
 
 impl RouteConfidence {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Explicit => "explicit",
             Self::Confirmed => "confirmed",
-            Self::Likely => "likely",
+            Self::Constrained => "constrained",
+            Self::Forced => "forced",
             Self::Passthrough => "passthrough",
         }
     }
 }
 
 /// How the harness was selected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RouteSource {
     Cli,
     Profile,
@@ -56,16 +56,24 @@ impl RouteSource {
 }
 
 /// Assessment of one candidate harness.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CandidateAssessment {
     pub harness: String,
     pub installed: bool,
+    pub candidate_slugs: Vec<String>,
+    pub filtered_slugs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<RouteConfidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<&'static str>,
 }
 
 /// Full routing trace for diagnostics/provenance.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RoutingTrace {
     pub source: RouteSource,
     pub confidence: RouteConfidence,
@@ -79,7 +87,9 @@ pub struct RoutingTrace {
 /// Input to the routing engine.
 pub struct RoutingInput<'a> {
     pub model_id: &'a str,
-    pub provider: Option<&'a str>,
+    pub provider_for_order: Option<&'a str>,
+    pub provider_constraint: Option<&'a str>,
+    pub settings_provider_order: Option<&'a [String]>,
     pub settings_harness_order: Option<&'a [String]>,
     pub config_default_harness: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
@@ -112,15 +122,7 @@ pub fn evaluate_fixed_harness_with_auth<F>(
 where
     F: Fn(&str) -> bool,
 {
-    candidate_route_confidence_with_auth(
-        harness,
-        input.provider,
-        input.model_id,
-        input.installed_harnesses,
-        input.opencode_probe_result,
-        input.pi_probe_result,
-        &auth_check,
-    )
+    candidate_route_confidence_with_auth(input, harness, input.settings_provider_order, &auth_check)
 }
 
 pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
@@ -128,6 +130,8 @@ where
     F: Fn(&str) -> bool,
 {
     let mut diagnostics = Vec::new();
+    let parsed_provider_order =
+        parse_settings_provider_order(input.settings_provider_order, &mut diagnostics);
     let config_default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
     let linked_harnesses = input
@@ -167,7 +171,7 @@ where
                 "settings.harness_order is empty; falling through to provider candidate order"
                     .to_string(),
             );
-            let provider_for_order = input.provider.unwrap_or("unknown");
+            let provider_for_order = input.provider_for_order.unwrap_or("unknown");
             filter_candidates_by_links(
                 models::harness::harness_candidates_for_provider(provider_for_order),
                 linked_harnesses_set.as_ref(),
@@ -204,7 +208,7 @@ where
             candidate_pairs
         }
     } else {
-        let provider_for_order = input.provider.unwrap_or("unknown");
+        let provider_for_order = input.provider_for_order.unwrap_or("unknown");
         filter_candidates_by_links(
             models::harness::harness_candidates_for_provider(provider_for_order),
             linked_harnesses_set.as_ref(),
@@ -219,12 +223,9 @@ where
 
     for (harness, harness_order_position) in candidates {
         let assessment = candidate_route_confidence_with_auth(
+            input,
             &harness,
-            input.provider,
-            input.model_id,
-            input.installed_harnesses,
-            input.opencode_probe_result,
-            input.pi_probe_result,
+            Some(parsed_provider_order.as_slice()),
             &auth_check,
         );
 
@@ -288,14 +289,13 @@ where
         };
     }
 
-    diagnostics.push(
-        "harness not set by CLI/profile/alias/provider/config; defaulting to `claude`".into(),
-    );
+    diagnostics
+        .push("harness not set by CLI/profile/alias/provider/config; defaulting to `pi`".into());
 
     RoutingTrace {
         source: RouteSource::HardcodedDefault,
         confidence: RouteConfidence::Passthrough,
-        harness: "claude".to_string(),
+        harness: "pi".to_string(),
         harness_order_position: None,
         candidates_tried,
         assessments,
@@ -347,32 +347,37 @@ fn filter_candidates_by_links(
 }
 
 fn candidate_route_confidence_with_auth<F>(
+    input: &RoutingInput<'_>,
     harness: &str,
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
+    provider_order: Option<&[String]>,
     auth_check: &F,
 ) -> CandidateAssessment
 where
     F: Fn(&str) -> bool,
 {
-    if !installed_harnesses.contains(harness) {
+    if !input.installed_harnesses.contains(harness) {
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: false,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
             confidence: None,
             skip_reason: Some("not_installed"),
         };
     }
 
-    if is_native_match(provider, harness) {
+    if is_native_match(input.provider_for_order, harness) {
         if auth_check(harness) {
             return CandidateAssessment {
                 harness: harness.to_string(),
                 installed: true,
-                confidence: Some(RouteConfidence::Confirmed),
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: Some(input.model_id.to_string()),
+                confidence: Some(confidence_for_match(input.provider_constraint)),
                 skip_reason: None,
             };
         }
@@ -380,56 +385,140 @@ where
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
             confidence: None,
             skip_reason: Some("native_auth_unavailable"),
         };
     }
 
     if harness == "opencode" {
-        if provider.is_none() || provider.is_some_and(|value| !is_known_provider(value)) {
+        let Some(opencode_probe) = input.opencode_probe_result else {
             return CandidateAssessment {
                 harness: harness.to_string(),
                 installed: true,
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: None,
+                confidence: Some(RouteConfidence::Passthrough),
+                skip_reason: None,
+            };
+        };
+        if !opencode_probe.model_probe_success {
+            return CandidateAssessment {
+                harness: harness.to_string(),
+                installed: true,
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: None,
                 confidence: Some(RouteConfidence::Passthrough),
                 skip_reason: None,
             };
         }
 
-        if opencode_supports_provider_and_model(
-            provider,
-            model_id,
-            installed_harnesses,
-            opencode_probe_result,
-        ) {
+        let selection = select_probe_slug(
+            input.model_id,
+            input.provider_constraint,
+            provider_order,
+            opencode_probe.model_slugs.iter().map(String::as_str),
+        );
+
+        if let Some(chosen_slug) = selection.chosen_slug.clone() {
             return CandidateAssessment {
                 harness: harness.to_string(),
                 installed: true,
-                confidence: Some(RouteConfidence::Likely),
+                candidate_slugs: selection.candidate_slugs,
+                filtered_slugs: selection.filtered_slugs,
+                chosen_model: model_from_slug(&chosen_slug),
+                chosen_slug: Some(chosen_slug),
+                confidence: Some(confidence_for_match(input.provider_constraint)),
                 skip_reason: None,
+            };
+        }
+
+        if !selection.candidate_slugs.is_empty() {
+            return CandidateAssessment {
+                harness: harness.to_string(),
+                installed: true,
+                candidate_slugs: selection.candidate_slugs,
+                filtered_slugs: selection.filtered_slugs,
+                chosen_slug: None,
+                chosen_model: None,
+                confidence: None,
+                skip_reason: Some("provider_constraint_unsatisfied"),
             };
         }
 
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,
+            candidate_slugs: selection.candidate_slugs,
+            filtered_slugs: selection.filtered_slugs,
+            chosen_slug: None,
+            chosen_model: None,
             confidence: None,
-            skip_reason: Some("opencode_unavailable"),
+            skip_reason: Some("no_model_match"),
         };
     }
 
     if harness == "pi" {
-        if let Some(pi_probe) = pi_probe_result {
+        if let Some(pi_probe) = input.pi_probe_result {
             if pi_probe.compatible {
+                let selection = select_probe_slug(
+                    input.model_id,
+                    input.provider_constraint,
+                    provider_order,
+                    pi_probe.model_slugs.iter().map(String::as_str),
+                );
+
+                if let Some(chosen_slug) = selection.chosen_slug.clone() {
+                    return CandidateAssessment {
+                        harness: harness.to_string(),
+                        installed: true,
+                        candidate_slugs: selection.candidate_slugs,
+                        filtered_slugs: selection.filtered_slugs,
+                        chosen_model: model_from_slug(&chosen_slug),
+                        chosen_slug: Some(chosen_slug),
+                        confidence: Some(confidence_for_match(input.provider_constraint)),
+                        skip_reason: None,
+                    };
+                }
+
+                if !selection.candidate_slugs.is_empty() {
+                    return CandidateAssessment {
+                        harness: harness.to_string(),
+                        installed: true,
+                        candidate_slugs: selection.candidate_slugs,
+                        filtered_slugs: selection.filtered_slugs,
+                        chosen_slug: None,
+                        chosen_model: None,
+                        confidence: None,
+                        skip_reason: Some("provider_constraint_unsatisfied"),
+                    };
+                }
+
                 return CandidateAssessment {
                     harness: harness.to_string(),
                     installed: true,
-                    confidence: Some(RouteConfidence::Confirmed),
-                    skip_reason: None,
+                    candidate_slugs: selection.candidate_slugs,
+                    filtered_slugs: selection.filtered_slugs,
+                    chosen_slug: None,
+                    chosen_model: None,
+                    confidence: None,
+                    skip_reason: Some("no_model_match"),
                 };
             }
             return CandidateAssessment {
                 harness: harness.to_string(),
                 installed: true,
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: None,
                 confidence: None,
                 skip_reason: Some("pi_incompatible"),
             };
@@ -438,6 +527,10 @@ where
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
             confidence: Some(RouteConfidence::Passthrough),
             skip_reason: None,
         };
@@ -447,6 +540,10 @@ where
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
             confidence: Some(RouteConfidence::Passthrough),
             skip_reason: None,
         };
@@ -455,16 +552,13 @@ where
     CandidateAssessment {
         harness: harness.to_string(),
         installed: true,
+        candidate_slugs: Vec::new(),
+        filtered_slugs: Vec::new(),
+        chosen_slug: None,
+        chosen_model: None,
         confidence: None,
         skip_reason: Some("unsupported_candidate"),
     }
-}
-
-fn is_known_provider(provider: &str) -> bool {
-    matches!(
-        provider.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
-    )
 }
 
 fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
@@ -474,26 +568,151 @@ fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
     )
 }
 
-fn opencode_supports_provider_and_model(
-    provider: Option<&str>,
-    model_id: &str,
-    installed_harnesses: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-) -> bool {
-    let Some(provider) = provider else {
-        return false;
+fn confidence_for_match(provider_constraint: Option<&str>) -> RouteConfidence {
+    if provider_constraint.is_some() {
+        RouteConfidence::Constrained
+    } else {
+        RouteConfidence::Confirmed
+    }
+}
+
+fn parse_settings_provider_order(
+    provider_order: Option<&[String]>,
+    diagnostics: &mut Vec<String>,
+) -> Vec<String> {
+    let Some(provider_order) = provider_order else {
+        return Vec::new();
     };
 
+    provider_order
+        .iter()
+        .filter_map(|provider| {
+            let normalized = provider.trim().to_ascii_lowercase();
+            if normalized.is_empty() {
+                return None;
+            }
+            if !is_known_provider_or_variant(&normalized) {
+                diagnostics.push(format!(
+                    "settings.provider_order contains unknown provider `{provider}`; keeping it for forward-compat routing preferences"
+                ));
+            }
+            Some(normalized)
+        })
+        .collect()
+}
+
+fn is_known_provider_or_variant(provider: &str) -> bool {
     matches!(
-        crate::models::availability::classify_for_harness(
-            "opencode",
-            provider,
-            model_id,
-            installed_harnesses,
-            opencode_probe_result,
-        ),
-        Some((AvailabilityStatus::Runnable, _, _))
+        provider,
+        "anthropic"
+            | "openai"
+            | "google"
+            | "meta"
+            | "mistral"
+            | "deepseek"
+            | "cohere"
+            | "openrouter"
+            | "openai-codex"
+            | "anthropic-claude"
     )
+}
+
+fn provider_key_for_order(provider: &str) -> String {
+    let normalized = provider.trim().to_ascii_lowercase();
+    if let Some(base) = normalized.strip_suffix("-codex")
+        && base == "openai"
+    {
+        return base.to_string();
+    }
+    if let Some(base) = normalized.strip_suffix("-claude")
+        && base == "anthropic"
+    {
+        return base.to_string();
+    }
+    normalized
+}
+
+fn parse_slug(slug: &str) -> Option<(&str, &str)> {
+    let (provider, model_id) = slug.split_once('/')?;
+    (!provider.is_empty() && !model_id.is_empty()).then_some((provider, model_id))
+}
+
+fn model_from_slug(slug: &str) -> Option<String> {
+    parse_slug(slug).map(|(_, model)| model.to_string())
+}
+
+struct SlugSelection {
+    candidate_slugs: Vec<String>,
+    filtered_slugs: Vec<String>,
+    chosen_slug: Option<String>,
+}
+
+fn select_probe_slug<'a>(
+    model_id: &str,
+    provider_constraint: Option<&str>,
+    provider_order: Option<&[String]>,
+    slugs: impl IntoIterator<Item = &'a str>,
+) -> SlugSelection {
+    let mut model_matches = Vec::new();
+    for (index, slug) in slugs.into_iter().enumerate() {
+        let Some((provider, slug_model_id)) = parse_slug(slug) else {
+            continue;
+        };
+        if crate::models::availability::model_id_matches(model_id, slug_model_id) {
+            model_matches.push((index, provider.to_ascii_lowercase(), slug.to_string()));
+        }
+    }
+    let candidate_slugs = model_matches
+        .iter()
+        .map(|(_, _, slug)| slug.clone())
+        .collect::<Vec<_>>();
+
+    let mut constrained_matches = model_matches;
+    if let Some(constraint) = provider_constraint {
+        let normalized_constraint = constraint.trim().to_ascii_lowercase();
+        constrained_matches.retain(|(_, provider, _)| provider == &normalized_constraint);
+    }
+    let filtered_slugs = constrained_matches
+        .iter()
+        .map(|(_, _, slug)| slug.clone())
+        .collect::<Vec<_>>();
+
+    let chosen_slug = if constrained_matches.is_empty() {
+        None
+    } else if let Some(provider_order) = provider_order {
+        if provider_order.is_empty() {
+            constrained_matches
+                .sort_by(|(left_index, _, _), (right_index, _, _)| left_index.cmp(right_index));
+        } else {
+            constrained_matches.sort_by(
+                |(left_index, left_provider, _), (right_index, right_provider, _)| {
+                    provider_order_rank(left_provider, provider_order)
+                        .cmp(&provider_order_rank(right_provider, provider_order))
+                        .then_with(|| left_index.cmp(right_index))
+                },
+            );
+        }
+        constrained_matches.first().map(|(_, _, slug)| slug.clone())
+    } else {
+        constrained_matches
+            .iter()
+            .min_by_key(|(index, _, _)| *index)
+            .map(|(_, _, slug)| slug.clone())
+    };
+
+    SlugSelection {
+        candidate_slugs,
+        filtered_slugs,
+        chosen_slug,
+    }
+}
+
+fn provider_order_rank(provider: &str, provider_order: &[String]) -> usize {
+    let key = provider_key_for_order(provider);
+    provider_order
+        .iter()
+        .position(|configured| provider_key_for_order(configured) == key)
+        .unwrap_or(usize::MAX)
 }
 
 fn format_harness_order_fallback_warning(
@@ -515,8 +734,7 @@ fn format_harness_order_fallback_warning(
     } else if has_link_constraints {
         warning.push_str("; linked harness constraints prevent unrelated fallback");
     } else {
-        warning
-            .push_str("; settings.default_harness is unset, falling through to hardcoded `claude`");
+        warning.push_str("; settings.default_harness is unset, falling through to hardcoded `pi`");
     }
 
     Some(warning)
@@ -542,7 +760,7 @@ mod tests {
 
     fn routing_input<'a>(
         model_id: &'a str,
-        provider: Option<&'a str>,
+        provider_for_order: Option<&'a str>,
         settings_harness_order: Option<&'a [String]>,
         config_default_harness: Option<&'a str>,
         installed_harnesses: &'a HashSet<String>,
@@ -552,7 +770,9 @@ mod tests {
         let (opencode_probe_result, pi_probe_result) = probe_inputs;
         RoutingInput {
             model_id,
-            provider,
+            provider_for_order,
+            provider_constraint: None,
+            settings_provider_order: None,
             settings_harness_order,
             config_default_harness,
             installed_harnesses,
@@ -654,6 +874,101 @@ mod tests {
     }
 
     #[test]
+    fn strict_provider_constraint_rejects_variant_provider_name() {
+        let installed = installed(&["pi", "opencode"]);
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from(["openai-codex/gpt-5.4-mini".to_string()]),
+            ..PiProbeResult::default()
+        };
+        let opencode_probe = OpenCodeProbeResult {
+            model_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let input = RoutingInput {
+            model_id: "gpt-5.4-mini",
+            provider_for_order: Some("openai"),
+            provider_constraint: Some("openai"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: Some(&opencode_probe),
+            pi_probe_result: Some(&pi_probe),
+        };
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+
+        assert_eq!(trace.harness, "opencode");
+        assert_eq!(trace.confidence, RouteConfidence::Constrained);
+        assert_eq!(
+            trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == "opencode")
+                .and_then(|assessment| assessment.chosen_slug.as_deref()),
+            Some("openai/gpt-5.4-mini")
+        );
+        assert_eq!(
+            trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == "pi")
+                .and_then(|assessment| assessment.skip_reason),
+            Some("provider_constraint_unsatisfied")
+        );
+    }
+
+    #[test]
+    fn bare_direct_model_prefers_unknown_provider_ladder_and_pi_slug() {
+        let installed = installed(&["codex", "pi", "opencode"]);
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from(["openai-codex/gpt-5.4".to_string()]),
+            ..PiProbeResult::default()
+        };
+        let input = RoutingInput {
+            model_id: "gpt-5.4",
+            provider_for_order: None,
+            provider_constraint: None,
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: Some(&pi_probe),
+        };
+
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+
+        assert_eq!(trace.harness, "pi");
+        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.candidates_tried, vec!["pi".to_string()]);
+        assert_eq!(
+            trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == "pi")
+                .and_then(|assessment| assessment.chosen_slug.as_deref()),
+            Some("openai-codex/gpt-5.4")
+        );
+    }
+
+    #[test]
+    fn provider_order_ranking_is_lenient_for_known_variants() {
+        let provider_order = vec!["openai".to_string(), "anthropic".to_string()];
+        assert_eq!(provider_order_rank("openai-codex", &provider_order), 0);
+        assert_eq!(provider_order_rank("anthropic-claude", &provider_order), 1);
+        assert_eq!(
+            provider_order_rank("openrouter", &provider_order),
+            usize::MAX
+        );
+    }
+
+    #[test]
     fn incompatible_pi_probe_skips_to_next_candidate() {
         let installed = installed(&["pi", "cursor"]);
         let pi_probe = PiProbeResult {
@@ -704,7 +1019,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "opencode");
-        assert_eq!(trace.confidence, RouteConfidence::Likely);
+        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
     }
 
     #[test]
@@ -735,7 +1050,7 @@ mod tests {
                 .iter()
                 .find(|assessment| assessment.harness == "opencode")
                 .and_then(|assessment| assessment.skip_reason),
-            Some("opencode_unavailable")
+            Some("no_model_match")
         );
     }
 
@@ -827,17 +1142,20 @@ mod tests {
     }
 
     #[test]
-    fn uses_hardcoded_claude_fallback_with_warning() {
+    fn uses_hardcoded_pi_fallback_with_warning() {
         let installed = installed(&[]);
         let input = routing_input("model", None, None, None, &installed, None, (None, None));
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.source, RouteSource::HardcodedDefault);
-        assert_eq!(trace.harness, "claude");
-        assert!(trace.diagnostics.iter().any(|diagnostic| {
-            diagnostic.contains("harness not set by CLI/profile/alias/provider/config")
-        }));
+        assert_eq!(trace.harness, "pi");
+        assert!(
+            trace
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.contains("defaulting to `pi`") })
+        );
     }
 
     #[test]

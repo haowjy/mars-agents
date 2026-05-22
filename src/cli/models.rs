@@ -343,9 +343,20 @@ struct ResolveRuntime<'a> {
     routing_settings: &'a RoutingSettings,
 }
 
+struct RouteTraceInput<'a> {
+    model_id: &'a str,
+    provider_for_order: &'a str,
+    provider_constraint: Option<&'a str>,
+    installed: &'a HashSet<String>,
+    opencode_probe_result: Option<&'a OpenCodeProbeResult>,
+    pi_probe_result: Option<&'a PiProbeResult>,
+    routing_settings: &'a RoutingSettings,
+}
+
 #[derive(Debug, Clone, Default)]
 struct RoutingSettings {
     harness_order: Option<Vec<String>>,
+    provider_order: Option<Vec<String>>,
     default_harness: Option<String>,
     linked_harnesses: Vec<String>,
 }
@@ -740,6 +751,7 @@ fn load_routing_settings(ctx: &MarsContext) -> RoutingSettings {
     match crate::config::load(&ctx.project_root) {
         Ok(config) => RoutingSettings {
             harness_order: config.settings.harness_order.clone(),
+            provider_order: config.settings.provider_order.clone(),
             default_harness: config.settings.default_harness.clone(),
             linked_harnesses: config.settings.linked_harnesses(),
         },
@@ -757,7 +769,9 @@ fn resolve_harness_with_routing(
 ) -> (Option<String>, HarnessSource) {
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id,
-        provider: Some(provider),
+        provider_for_order: Some(provider),
+        provider_constraint: None,
+        settings_provider_order: routing_settings.provider_order.as_deref(),
         settings_harness_order: routing_settings.harness_order.as_deref(),
         config_default_harness: routing_settings.default_harness.as_deref(),
         installed_harnesses: installed,
@@ -771,6 +785,59 @@ fn resolve_harness_with_routing(
         (Some(trace.harness), HarnessSource::AutoDetected)
     } else {
         (None, HarnessSource::Unavailable)
+    }
+}
+
+fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
+            provider.clone()
+        }
+        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+    }
+    .map(|provider| provider.trim().to_ascii_lowercase())
+}
+
+fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing::RoutingTrace {
+    crate::routing::evaluate_candidates(&build_route_trace_input(input))
+}
+
+fn route_trace_for_fixed_harness(
+    input: &RouteTraceInput<'_>,
+    fixed_harness: &str,
+    source: crate::routing::RouteSource,
+) -> crate::routing::RoutingTrace {
+    let assessment =
+        crate::routing::evaluate_fixed_harness(&build_route_trace_input(input), fixed_harness);
+    let confidence = if assessment.confidence.is_some() {
+        crate::routing::RouteConfidence::Forced
+    } else {
+        crate::routing::RouteConfidence::Passthrough
+    };
+    crate::routing::RoutingTrace {
+        source,
+        confidence,
+        harness: fixed_harness.to_string(),
+        harness_order_position: None,
+        candidates_tried: vec![fixed_harness.to_string()],
+        assessments: vec![assessment],
+        diagnostics: Vec::new(),
+    }
+}
+
+fn build_route_trace_input<'a>(input: &'a RouteTraceInput<'a>) -> crate::routing::RoutingInput<'a> {
+    crate::routing::RoutingInput {
+        model_id: input.model_id,
+        provider_for_order: Some(input.provider_for_order),
+        provider_constraint: input.provider_constraint,
+        settings_provider_order: input.routing_settings.provider_order.as_deref(),
+        settings_harness_order: input.routing_settings.harness_order.as_deref(),
+        config_default_harness: input.routing_settings.default_harness.as_deref(),
+        installed_harnesses: input.installed,
+        linked_harnesses: (!input.routing_settings.linked_harnesses.is_empty())
+            .then_some(input.routing_settings.linked_harnesses.as_slice()),
+        opencode_probe_result: input.opencode_probe_result,
+        pi_probe_result: input.pi_probe_result,
     }
 }
 
@@ -980,6 +1047,36 @@ fn print_availability_text(availability: Option<&ModelAvailability>) {
     }
 }
 
+fn route_confidence_label(confidence: crate::routing::RouteConfidence) -> &'static str {
+    confidence.label()
+}
+
+fn add_route_json_fields(out: &mut serde_json::Value, trace: &crate::routing::RoutingTrace) {
+    out["route"] = serde_json::json!({
+        "harness": trace.harness,
+        "source": trace.source.label(),
+        "confidence": route_confidence_label(trace.confidence),
+    });
+    out["route_trace"] = serde_json::json!(trace);
+}
+
+fn print_route_text(trace: &crate::routing::RoutingTrace) {
+    println!(
+        "Route:    {} ({}, {})",
+        trace.harness,
+        trace.source.label(),
+        trace.confidence.label()
+    );
+    if !trace.candidates_tried.is_empty() {
+        println!("Tried:    {}", trace.candidates_tried.join(", "));
+    }
+    for assessment in &trace.assessments {
+        if let Some(skip_reason) = assessment.skip_reason {
+            println!("Skip:     {} ({})", assessment.harness, skip_reason);
+        }
+    }
+}
+
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let merged = load_merged_aliases(ctx)?;
     let mars = mars_dir(ctx);
@@ -1032,10 +1129,21 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 probe_result.as_ref(),
                 pi_probe_result.as_ref(),
             );
+            let route_input = RouteTraceInput {
+                model_id: &resolved.model_id,
+                provider_for_order: &resolved.provider,
+                provider_constraint: None,
+                installed: &installed,
+                opencode_probe_result: probe_result.as_ref(),
+                pi_probe_result: pi_probe_result.as_ref(),
+                routing_settings: &routing_settings,
+            };
+            let route_trace = route_trace_for_resolved_model(&route_input);
             return run_output_resolved(
                 &args.name,
                 &resolved,
                 "alias_prefix",
+                &route_trace,
                 outcome,
                 &cache_outcome,
                 json,
@@ -1164,6 +1272,7 @@ fn run_resolve_exact_alias(
         runtime.probe_outcome.result(),
         runtime.pi_probe_result,
     );
+    let mut route_trace = None;
     if let Some(r) = resolved_entry.as_mut() {
         if alias.harness.is_none() {
             apply_routing_settings_to_resolved_alias(
@@ -1174,6 +1283,25 @@ fn run_resolve_exact_alias(
                 runtime.routing_settings,
             );
         }
+        let provider_constraint = provider_constraint_for_alias(alias);
+        let route_input = RouteTraceInput {
+            model_id: &r.model_id,
+            provider_for_order: &r.provider,
+            provider_constraint: provider_constraint.as_deref(),
+            installed: runtime.installed,
+            opencode_probe_result: runtime.probe_outcome.result(),
+            pi_probe_result: runtime.pi_probe_result,
+            routing_settings: runtime.routing_settings,
+        };
+        route_trace = Some(if let Some(fixed_harness) = alias.harness.as_deref() {
+            route_trace_for_fixed_harness(
+                &route_input,
+                fixed_harness,
+                crate::routing::RouteSource::Alias,
+            )
+        } else {
+            route_trace_for_resolved_model(&route_input)
+        });
         annotate_one_availability(
             r,
             args,
@@ -1217,6 +1345,9 @@ fn run_resolve_exact_alias(
             }
             if !diagnostics.is_empty() {
                 out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
+            }
+            if let Some(trace) = route_trace.as_ref() {
+                add_route_json_fields(&mut out, trace);
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
@@ -1288,6 +1419,9 @@ fn run_resolve_exact_alias(
         if let Some(desc) = &r.description {
             println!("Desc:     {}", desc);
         }
+        if let Some(trace) = route_trace.as_ref() {
+            print_route_text(trace);
+        }
         emit_drained_text_diagnostics(&diagnostics);
     }
 
@@ -1298,6 +1432,7 @@ fn run_output_resolved(
     name: &str,
     resolved: &models::ResolvedAlias,
     source: &str,
+    route_trace: &crate::routing::RoutingTrace,
     outcome: &models::RefreshOutcome,
     cache_outcome: &CachedProbeOutcome,
     json: bool,
@@ -1338,6 +1473,7 @@ fn run_output_resolved(
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
+        add_route_json_fields(&mut out, route_trace);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if matches!(cache_outcome, CachedProbeOutcome::Stale(_)) {
@@ -1360,6 +1496,7 @@ fn run_output_resolved(
         if let Some(desc) = &resolved.description {
             println!("Desc:     {}", desc);
         }
+        print_route_text(route_trace);
     }
 
     Ok(0)
@@ -1395,31 +1532,74 @@ fn run_output_passthrough(
         eprintln!("warning: {warning}");
     }
 
-    let guessed_provider = models::infer_provider_from_model_id(name).map(str::to_string);
-    let provider_for_resolution = guessed_provider.as_deref().unwrap_or("unknown");
+    let (passthrough_model_id, provider_constraint) =
+        models::split_provider_constrained_model_token(name);
+    let guessed_provider =
+        models::infer_provider_from_model_id(&passthrough_model_id).map(str::to_string);
+    let provider_for_order = provider_constraint.as_deref().unwrap_or("unknown");
+    let provider_for_classification = guessed_provider
+        .as_deref()
+        .or(provider_constraint.as_deref())
+        .unwrap_or("unknown");
     let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
     let probe_result = cache_outcome.result().cloned();
     let pi_probe_result = pi_cache::probe_cached(installed, is_offline)
         .result()
         .cloned();
-    let (harness, harness_source) = resolve_harness_with_routing(
-        provider_for_resolution,
-        name,
-        installed,
-        probe_result.as_ref(),
-        pi_probe_result.as_ref(),
-        routing_settings,
+    let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+        model_id: &passthrough_model_id,
+        provider_for_order: Some(provider_for_order),
+        provider_constraint: provider_constraint.as_deref(),
+        settings_provider_order: routing_settings.provider_order.as_deref(),
+        settings_harness_order: routing_settings.harness_order.as_deref(),
+        config_default_harness: routing_settings.default_harness.as_deref(),
+        installed_harnesses: installed,
+        linked_harnesses: (!routing_settings.linked_harnesses.is_empty())
+            .then_some(routing_settings.linked_harnesses.as_slice()),
+        opencode_probe_result: probe_result.as_ref(),
+        pi_probe_result: pi_probe_result.as_ref(),
+    });
+    let routed_from_model_list = matches!(
+        trace.confidence,
+        crate::routing::RouteConfidence::Confirmed | crate::routing::RouteConfidence::Constrained
     );
-    let harness_source = match harness_source {
-        HarnessSource::AutoDetected => "pattern_guess",
-        HarnessSource::Unavailable => "unavailable",
-        HarnessSource::Explicit => "pattern_guess",
-    };
-    let harness_candidates =
-        models::harness::harness_candidates_for_provider(provider_for_resolution);
+    if !routed_from_model_list {
+        let message = format!(
+            "model '{}' did not match any harness-reported model slug under model-first routing",
+            name
+        );
+        if json {
+            let mut out = serde_json::json!({
+                "error": message,
+                "source": "passthrough",
+                "model_id": passthrough_model_id,
+                "resolved_model": passthrough_model_id,
+                "provider_constraint": provider_constraint,
+                "harnesses_tried": trace.candidates_tried,
+            });
+            add_route_json_fields(&mut out, &trace);
+            if !trace.diagnostics.is_empty() {
+                out["diagnostics"] = serde_json::json!(trace.diagnostics);
+            }
+            if let Some(warning) = cache_warning.as_deref() {
+                out["cache_warning"] = serde_json::json!(warning);
+            }
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            eprintln!("error: {message}");
+            print_route_text(&trace);
+        }
+        return Ok(1);
+    }
+
+    let harness = installed
+        .contains(&trace.harness)
+        .then_some(trace.harness.clone());
+    let harness_source = "pattern_guess";
+    let harness_candidates = models::harness::harness_candidates_for_provider(provider_for_order);
     let availability = models::availability::classify_model(
-        name,
-        provider_for_resolution,
+        &passthrough_model_id,
+        provider_for_classification,
         installed,
         probe_result.as_ref(),
         pi_probe_result.as_ref(),
@@ -1435,8 +1615,8 @@ fn run_output_passthrough(
         let mut out = serde_json::json!({
             "name": name,
             "source": "passthrough",
-            "model_id": name,
-            "resolved_model": name,
+            "model_id": passthrough_model_id,
+            "resolved_model": passthrough_model_id,
             "provider": guessed_provider,
             "harness": harness,
             "harness_source": harness_source,
@@ -1445,6 +1625,7 @@ fn run_output_passthrough(
             "warning": warning,
         });
         add_availability_json_fields(&mut out, Some(&availability));
+        add_route_json_fields(&mut out, &trace);
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
@@ -1461,6 +1642,7 @@ fn run_output_passthrough(
         if !harness_candidates.is_empty() {
             println!("Candidates: {}", harness_candidates.join(", "));
         }
+        print_route_text(&trace);
     }
 
     Ok(0)

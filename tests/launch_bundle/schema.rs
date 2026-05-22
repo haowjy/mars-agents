@@ -170,7 +170,7 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+        Some("cached-probe")
     );
     assert_eq!(bundle["warnings"], serde_json::json!([]));
 }

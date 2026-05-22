@@ -121,13 +121,17 @@ fn release_on_main_has_rc_default_label_contract() {
     assert!(workflow.contains("if [[ \"${candidate_count}\" -eq 0 ]]; then"));
     assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
     assert!(workflow.contains("release:skip"));
-    assert!(workflow.contains("release:(skip|patch|stable|rc)"));
+    assert!(workflow.contains("release:(skip|patch|stable|minor|major|rc)"));
     assert!(workflow.contains("release_kind=\"rc\""));
     assert!(workflow.contains("if [[ -n \"${unknown_release_labels}\" ]]; then"));
     assert!(workflow.contains("elif [[ \"${has_rc_label}\" == \"true\" ]]; then"));
-    assert!(workflow.contains("elif [[ \"${has_stable_label}\" == \"true\" ]]; then"));
     assert!(workflow.contains("release_kind=\"stable\""));
     assert!(workflow.contains("echo \"release_kind=${release_kind}\" >> \"$GITHUB_OUTPUT\""));
+    // Bump kind: major > minor > patch precedence
+    assert!(workflow.contains("bump_kind=\"patch\""));
+    assert!(workflow.contains("bump_kind=\"major\""));
+    assert!(workflow.contains("bump_kind=\"minor\""));
+    assert!(workflow.contains("echo \"bump_kind=${bump_kind}\" >> \"$GITHUB_OUTPUT\""));
 
     assert_before(
         &workflow,
@@ -139,10 +143,11 @@ fn release_on_main_has_rc_default_label_contract() {
         "if [[ -n \"${unknown_release_labels}\" ]]; then",
         "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
     );
+    // Major > minor > patch label precedence
     assert_before(
         &workflow,
-        "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
-        "elif [[ \"${has_stable_label}\" == \"true\" ]]; then",
+        "if [[ \"${has_major_label}\" == \"true\" ]]; then",
+        "elif [[ \"${has_minor_label}\" == \"true\" ]]; then",
     );
 }
 
@@ -259,9 +264,9 @@ fn release_on_main_computes_stable_and_rc_versions() {
     assert!(workflow.contains("max_rc=0"));
     assert!(workflow.contains("if (( rc_number > max_rc )); then"));
     assert!(workflow.contains("next_rc=$((max_rc + 1))"));
-    assert!(workflow.contains("next_version=\"${next_patch}-rc.${next_rc}\""));
-    assert!(workflow.contains("python_version=\"${next_patch}rc${next_rc}\""));
-    assert!(workflow.contains("done < <(git tag --list \"v${next_patch}-rc.*\")"));
+    assert!(workflow.contains("next_version=\"${next_base_version}-rc.${next_rc}\""));
+    assert!(workflow.contains("python_version=\"${next_base_version}rc${next_rc}\""));
+    assert!(workflow.contains("done < <(git tag --list \"v${next_base_version}-rc.*\")"));
     assert!(workflow.contains("git tag --list 'v*' --sort=-version:refname"));
 }
 

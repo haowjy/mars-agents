@@ -169,9 +169,18 @@ fn resolve_bundle_tools(
     let effective_tools = profile.effective_tool_policy(&harness_kind);
     let mut warnings = Vec::new();
 
-    let allowed = normalize_and_dedupe_tools(&effective_tools.allowed, harness, &mut warnings);
-    let disallowed =
-        normalize_and_dedupe_tools(&effective_tools.disallowed, harness, &mut warnings);
+    let allowed = normalize_and_dedupe_tools(
+        &effective_tools.allowed,
+        harness,
+        ToolPolicyKind::Allowed,
+        &mut warnings,
+    );
+    let disallowed = normalize_and_dedupe_tools(
+        &effective_tools.disallowed,
+        harness,
+        ToolPolicyKind::Disallowed,
+        &mut warnings,
+    );
 
     Ok((
         ToolsSpec {
@@ -186,6 +195,7 @@ fn resolve_bundle_tools(
 fn normalize_and_dedupe_tools(
     tools: &[String],
     harness: &str,
+    kind: ToolPolicyKind,
     warnings: &mut Vec<String>,
 ) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
@@ -194,9 +204,12 @@ fn normalize_and_dedupe_tools(
     for tool in tools {
         let normalized = normalize_tool_for_harness(tool, harness);
         if normalized.status == ToolProjectionStatus::Unknown && is_first_class_harness(harness) {
-            warnings.push(format!(
-                "tool '{tool}' is not a known {harness} tool; passing through verbatim"
-            ));
+            match kind {
+                ToolPolicyKind::Allowed => warnings.push(format!(
+                    "tool '{tool}' is not a known {harness} tool; passing through verbatim"
+                )),
+                ToolPolicyKind::Disallowed => continue,
+            }
         }
 
         let trimmed = normalized.name.trim();
@@ -209,6 +222,12 @@ fn normalize_and_dedupe_tools(
     }
 
     projected
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ToolPolicyKind {
+    Allowed,
+    Disallowed,
 }
 
 fn resolve_effective_skills(

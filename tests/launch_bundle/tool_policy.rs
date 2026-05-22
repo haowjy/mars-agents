@@ -120,6 +120,7 @@ name: reviewer
 model: claude-opus-4-6
 tools:
   plan_mode: deny
+  unknown_allow: allow
   notebook: allow
 mcp-tools:
   - plugin:context7:context7
@@ -143,11 +144,11 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Notebook"]));
     assert_eq!(
-        bundle["tools"]["disallowed"],
-        serde_json::json!(["plan_mode"])
+        bundle["tools"]["allowed"],
+        serde_json::json!(["unknown_allow", "Notebook"])
     );
+    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
     assert_eq!(
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])
@@ -156,6 +157,12 @@ Review code changes."#;
         .as_array()
         .expect("warnings should be an array");
     assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("tool 'unknown_allow' is not a known claude tool")
+    }));
+    assert!(!warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()
@@ -173,6 +180,7 @@ tools:
   Bash: allow
   read: allow
   Write: allow
+  unknown_allow: allow
   edit: deny
   Agent: deny
   web_search: allow
@@ -199,17 +207,23 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["bash", "read", "write", "browser", "fetch"])
+        serde_json::json!(["bash", "read", "write", "unknown_allow", "browser", "fetch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["edit", "agent", "plan_mode"])
+        serde_json::json!(["edit", "agent"])
     );
 
     let warnings = bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
     assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("tool 'unknown_allow' is not a known opencode tool")
+    }));
+    assert!(!warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()

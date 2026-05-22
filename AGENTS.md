@@ -2,6 +2,22 @@
 
 Mars is an agent package manager. It installs agent profiles and skills from git/local sources into a `.mars/` canonical store, then copies managed content into target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
+## Meridian work context
+
+This repo has **no** `[context.work]` / `[context.kb]` in `meridian.toml`. Do not run
+`meridian work` here for product feature work.
+
+| PR touches | Run `meridian work` from | Work + KB |
+|---|---|---|
+| Meridian CLI, mars sync, shared prompts infra | `~/gitrepos/meridian-cli` | haowjy-meridian-cli-docs work + meridian-cli-kb |
+| Voluma product / voluma-bio packages | `~/gitrepos/voluma` | voluma-bio-docs work + kb |
+
+Use the active work item on **that** product before writing design notes or handoffs.
+Code for mars-agents itself still lives in `~/gitrepos/mars-agents` (and
+`mars-agents.worktrees/<slug>/` when using a worktree).
+
+Cursor orchestration: `~/cursor-dev` (`/product-lead`, `work-coordination` skill).
+
 ## Target Support Status
 
 - `.claude`, `.codex`, `.opencode` are first-class external harness materialization targets.

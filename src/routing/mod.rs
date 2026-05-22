@@ -1005,6 +1005,38 @@ mod tests {
     }
 
     #[test]
+    fn unknown_provider_order_entries_warn_but_do_not_block_routing() {
+        let installed = installed(&["opencode"]);
+        let provider_order = vec!["future-provider".to_string()];
+        let probe = OpenCodeProbeResult {
+            model_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let input = RoutingInput {
+            model_id: "gpt-5.4-mini",
+            provider_for_order: Some("openai"),
+            provider_constraint: None,
+            settings_provider_order: Some(&provider_order),
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: Some(&probe),
+            pi_probe_result: None,
+        };
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+
+        assert_eq!(trace.harness, "opencode");
+        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert!(trace.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .contains("settings.provider_order contains unknown provider `future-provider`")
+        }));
+    }
+
+    #[test]
     fn incompatible_pi_probe_skips_to_next_candidate() {
         let installed = installed(&["pi", "cursor"]);
         let pi_probe = PiProbeResult {

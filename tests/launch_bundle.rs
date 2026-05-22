@@ -214,7 +214,7 @@ fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
 }
 
 #[test]
-fn build_launch_bundle_explicit_unknown_harness_model_path_passes_through_quietly() {
+fn build_launch_bundle_explicit_unknown_harness_model_path_fails_closed() {
     routing::build_launch_bundle_explicit_unknown_harness_model_path_fails_closed();
 }
 

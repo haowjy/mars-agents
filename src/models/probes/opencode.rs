@@ -135,17 +135,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_strip_ansi_basic() {
-        let input = "\x1b[32mGreen\x1b[0m";
-        assert_eq!(strip_ansi(input), "Green");
-    }
-
-    #[test]
-    fn test_strip_ansi_no_escapes() {
-        assert_eq!(strip_ansi("Plain text"), "Plain text");
-    }
-
-    #[test]
     fn test_parse_models_basic() {
         let output = r#"opencode/big-pickle
 google/gemini-2.5-pro

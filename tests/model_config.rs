@@ -568,8 +568,15 @@ provider = "anthropic"
     );
     assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["route"]["confidence"].as_str(), Some("forced"));
+    let assessments = stdout["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let codex_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("codex"))
+        .expect("codex assessment should exist");
     assert_eq!(
-        stdout["route_trace"]["assessments"][0]["skip_reason"].as_str(),
+        codex_assessment["skip_reason"].as_str(),
         Some("provider_constraint_unsatisfied")
     );
 }

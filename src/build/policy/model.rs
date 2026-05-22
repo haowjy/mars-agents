@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::build::policy::{PolicyInput, PolicySource};
 use crate::config::AgentOverlay;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::models::{self, ModelAlias, ModelsCache};
 
 pub(super) struct ResolvedModel<'a> {
@@ -20,7 +20,7 @@ pub(super) struct ResolvedModel<'a> {
 
 /// Resolve model selection precedence for launch-bundle.
 ///
-/// Resolution order is `cli > profile > project > error` where project maps to
+/// Resolution order is `cli > overlay > profile > project > unset` where project maps to
 /// `settings.default_model` from `mars.toml`.
 pub(super) fn resolve_model<'a>(
     input: &PolicyInput<'_>,
@@ -38,12 +38,7 @@ pub(super) fn resolve_model<'a>(
                 Some(model) => (model.to_string(), PolicySource::Profile),
                 None => match input.config_default_model {
                     Some(model) => (model.to_string(), PolicySource::Project),
-                    None => {
-                        return Err(MarsError::Config(ConfigError::Invalid {
-                            message: "launch-bundle requires a model (set `model:` in the agent profile, set `settings.default_model` in mars.toml, or pass `--model`)"
-                                .to_string(),
-                        }));
-                    }
+                    None => (String::new(), PolicySource::Unset),
                 },
             },
         },
@@ -102,4 +97,68 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
     let mars_dir = project_root.join(".mars");
     models::read_cache(&mars_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::compiler::agents::{AgentProfile, HarnessOverrides};
+
+    fn empty_profile() -> AgentProfile {
+        AgentProfile {
+            name: None,
+            description: None,
+            harness: None,
+            model: None,
+            mode: None,
+            model_invocable: true,
+            approval: None,
+            sandbox: None,
+            effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            skills: Vec::new(),
+            tools: Vec::new(),
+            tools_denied: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_tools: Vec::new(),
+            harness_overrides: HarnessOverrides::default(),
+            model_policies: Vec::new(),
+            fanout: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn resolve_model_returns_unset_when_no_model_source_exists() {
+        let profile = empty_profile();
+        let input = PolicyInput {
+            project_root: Path::new("."),
+            agent: None,
+            profile: &profile,
+            model_override: None,
+            config_default_model: None,
+            harness_override: None,
+            effort_override: None,
+            approval_override: None,
+            sandbox_override: None,
+        };
+        let aliases = IndexMap::new();
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved =
+            resolve_model(&input, None, &aliases, &cache).expect("missing model is allowed");
+
+        assert_eq!(resolved.model_token, "");
+        assert_eq!(resolved.model_source, PolicySource::Unset);
+        assert_eq!(resolved.model, "");
+        assert!(resolved.alias.is_none());
+        assert!(!resolved.alias_resolution_failed);
+        assert_eq!(resolved.provider_for_order, None);
+        assert_eq!(resolved.provider_constraint, None);
+        assert!(resolved.warnings.is_empty());
+    }
 }

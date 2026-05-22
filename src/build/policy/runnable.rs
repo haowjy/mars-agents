@@ -135,4 +135,36 @@ mod tests {
 
         assert_eq!(resolution.routing.harness_model, "gpt-5.4-mini".to_string());
     }
+
+    #[test]
+    fn empty_model_keeps_empty_harness_model_for_harness_default() {
+        let resolution = resolve_routing(RoutingInput {
+            model: String::new(),
+            model_token: String::new(),
+            harness: "claude".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "passthrough".to_string(),
+            provider: None,
+            opencode_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: RoutingTrace {
+                source: crate::routing::RouteSource::Provider,
+                selection_kind: crate::routing::SelectionKind::Auto,
+                match_evidence: MatchEvidence::Passthrough,
+                harness: "claude".to_string(),
+                harness_order_position: None,
+                candidates_tried: vec!["claude".to_string()],
+                assessments: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+        });
+
+        assert_eq!(resolution.routing.model, "");
+        assert_eq!(resolution.routing.model_token, "");
+        assert_eq!(resolution.routing.harness_model, "");
+        assert_eq!(
+            resolution.routing.harness_model_source,
+            "passthrough".to_string()
+        );
+    }
 }

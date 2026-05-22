@@ -19,7 +19,7 @@ The CLI layer is **policy** — what to do, which model, what output. Library mo
 Three bypass conditions:
 1. **Root-free**: `init`, `check`, `cache` — no project needed
 2. **Auto-init**: `add`, `link` — creates mars.toml if missing
-3. **Ad-hoc launch**: `build launch-bundle --model <x>` (no `--agent`) — works in plain directory
+3. **Ad-hoc launch**: `build launch-bundle` (no `--agent`, optional `--model <x>`) — works in plain directory
 
 ## Command Categories
 

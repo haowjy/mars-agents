@@ -99,7 +99,7 @@ impl SandboxArg {
 #[derive(Debug, clap::Args)]
 pub struct LaunchBundleArgs {
     /// Agent name from `.mars/agents/<name>.md`.
-    /// Omit for ad-hoc mode; then `--model` is required.
+    /// Omit for ad-hoc mode; without `--model`, the resolved harness uses its default model.
     #[arg(long)]
     pub agent: Option<String>,
 
@@ -135,12 +135,6 @@ pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Mars
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {
-    if args.agent.is_none() && args.model.is_none() {
-        return Err(MarsError::InvalidRequest {
-            message: "ad-hoc launch-bundle requires --model".to_string(),
-        });
-    }
-
     let bundle = build_launch_bundle(
         ctx,
         LaunchBundleRequest {

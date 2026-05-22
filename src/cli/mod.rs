@@ -254,7 +254,6 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
             Command::Build(build::BuildArgs {
                 command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
                     agent: None,
-                    model: Some(_),
                     ..
                 })
             }),

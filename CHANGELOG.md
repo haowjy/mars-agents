@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Launch-bundle model now optional; unset model routes to installed/default harness and leaves harness model empty for harness defaults.
+
 ## [0.6.0] - 2026-05-22
 
 ### Changed

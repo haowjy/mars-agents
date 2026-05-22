@@ -19,8 +19,10 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 
 ## Two Modes
 
-### Ad-hoc Mode (`--model`, no `--agent`)
+### Ad-hoc Mode (no `--agent`)
 - Works from a plain directory with **no `mars.toml`**
+- `--model` is optional; when omitted, the selected harness receives an empty
+  model field and uses its own default model
 - `can_run_without_project()` in `src/cli/mod.rs` supplies synthetic `MarsContext`
 - No skills loaded, no tools resolved (empty sets)
 
@@ -48,7 +50,7 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 
 ```
 config::load_policy_resolution_config()  → aliases, harness_order, linked targets
-model::resolve_model()                   → alias → model_id + provider
+model::resolve_model()                   → alias → model_id + provider, or unset
 harness::resolve_harness()               → route selection, candidate eval
 execution::resolve_execution_policy()    → effort, approval, sandbox, autocompact
 runnable::resolve_routing()              → populate Routing (warnings always empty)

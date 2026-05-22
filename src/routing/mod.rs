@@ -308,6 +308,17 @@ where
 
             candidate_pairs
         }
+    } else if input.model_id.trim().is_empty() {
+        filter_candidates_by_links(
+            models::harness::VALID_HARNESSES
+                .iter()
+                .map(|harness| (*harness).to_string())
+                .collect(),
+            linked_harnesses_set.as_ref(),
+        )
+        .into_iter()
+        .map(|harness| (harness, None))
+        .collect::<Vec<_>>()
     } else {
         let provider_for_order = input.provider_for_order.unwrap_or("unknown");
         filter_candidates_by_links(
@@ -485,6 +496,19 @@ where
             chosen_model: None,
             match_evidence: None,
             skip_reason: Some("provider_constraint_unsatisfied"),
+        };
+    }
+
+    if input.model_id.trim().is_empty() {
+        return CandidateAssessment {
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
+            match_evidence: Some(MatchEvidence::Passthrough),
+            skip_reason: None,
         };
     }
 

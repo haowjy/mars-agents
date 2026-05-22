@@ -52,13 +52,13 @@ fn build_launch_bundle_rejects_prompt_file_flag() {
 }
 
 #[test]
-fn build_launch_bundle_fails_when_no_model_available() {
-    schema::build_launch_bundle_fails_when_no_model_available();
+fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
+    schema::build_launch_bundle_uses_installed_harness_default_when_no_model_available();
 }
 
 #[test]
-fn build_launch_bundle_ad_hoc_requires_model() {
-    schema::build_launch_bundle_ad_hoc_requires_model();
+fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default() {
+    schema::build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default();
 }
 
 #[test]

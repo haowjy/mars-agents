@@ -7,8 +7,10 @@ launch an agent with resolved routing, execution policy, tools, and prompt surfa
 
 ### Two launch-bundle modes
 
-1. **Ad-hoc mode** (`--model`, no `--agent`):
-   - Requires `--model`; `--agent` must be absent
+1. **Ad-hoc mode** (no `--agent`):
+   - `--model` is optional; when omitted, routing selects an installed/default
+     harness and leaves `routing.model`, `routing.model_token`, and
+     `routing.harness_model` empty so the harness can use its own default model
    - Works from a plain directory with **no `mars.toml`** — `can_run_without_project()`
      in `src/cli/mod.rs:248` supplies a synthetic `MarsContext` when project
      discovery fails and the exact ad-hoc condition is met
@@ -53,7 +55,6 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
             Command::Build(build::BuildArgs {
                 command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
                     agent: None,
-                    model: Some(_),
                     ..
                 })
             }),
@@ -63,9 +64,9 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
 }
 ```
 
-Only ad-hoc launch-bundle (`--agent` absent, `--model` present) bypasses project
-discovery. Every other command — including agent-mode launch-bundle — requires
-`mars.toml` in an ancestor directory.
+Only ad-hoc launch-bundle (`--agent` absent) bypasses project discovery. Every
+other command — including agent-mode launch-bundle — requires `mars.toml` in an
+ancestor directory.
 
 ### Warning accumulation pipeline
 
@@ -90,7 +91,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
     │
     └─ resolve_policy()
            ├─ config::load_policy_resolution_config()  (aliases, harness_order, linked targets)
-           ├─ model::resolve_model()                   (alias → model_id + provider)
+           ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
            ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, autocompact)
            └─ runnable::resolve_routing()              (populate Routing, warnings always empty)
@@ -111,8 +112,8 @@ gracefully (empty aliases, empty model cache).
 
 Ad-hoc mode exists because callers outside a Mars-managed project (e.g., Meridian CLI,
 scripting) need routing decisions without a full `mars sync` pipeline. The guard in
-`can_run_without_project` scopes this bypass narrowly — only `--model` + no `--agent`
-ad-hoc launch-bundles skip project discovery.
+`can_run_without_project` scopes this bypass narrowly — only no-`--agent`
+ad-hoc launch-bundles skip project discovery, with `--model` optional.
 
 Warning semantics are split between `warnings` (user-actionable) and routing/provenance
 fields (route metadata) because callers consume the bundle differently. A downstream

@@ -287,8 +287,9 @@ Review code changes."#;
         .stderr(predicates::str::contains("--prompt-file"));
 }
 
-pub(crate) fn build_launch_bundle_fails_when_no_model_available() {
+pub(crate) fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 ---
@@ -299,32 +300,45 @@ Review code changes."#;
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("requires a model"))
-        .stderr(predicates::str::contains("settings.default_model"));
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
 }
 
-pub(crate) fn build_launch_bundle_ad_hoc_requires_model() {
+pub(crate) fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default() {
     let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
+    let server = MockServer::start();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let project = temp.child("plain-project");
+    project.create_dir_all().unwrap();
 
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    let mut cmd = mars();
+    configure_assert_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
+    cmd.current_dir(project.path())
+        .env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains(
-            "ad-hoc launch-bundle requires --model",
-        ));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(bundle["agent"].is_null());
+    assert_field_absent_or_null(&bundle, "agent_body");
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+    assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
 }
 
 pub(crate) fn build_launch_bundle_resolves_model_alias_from_consumer_config() {

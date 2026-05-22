@@ -366,6 +366,48 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v1_cache_without_model_slugs_is_reprobed() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 1,
+                "harness": "pi",
+                "fetched_at": now_unix_secs(),
+                "last_attempt_at": now_unix_secs(),
+                "last_error": null,
+                "result": {
+                    "binary_path": "/tmp/pi",
+                    "version": "pi 0.4.2",
+                    "compatible": true,
+                    "help_surface_tokens_present": ["--mode"],
+                    "help_surface_tokens_missing": [],
+                    "error": null
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let outcome = probe_cached_impl(
+            false,
+            &Some(path),
+            || PiProbeResult {
+                model_slugs: HashSet::from(["openai/gpt-5.5".to_string()]),
+                ..compatible_result()
+            },
+            || Ok(()),
+        );
+
+        let CachedPiProbeOutcome::Miss(result) = outcome else {
+            panic!("legacy cache entries without model slug capability must trigger a fresh probe");
+        };
+        assert!(result.model_slugs.contains("openai/gpt-5.5"));
+    }
+
+    #[test]
     fn fresh_hit_returns_cached_result() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);

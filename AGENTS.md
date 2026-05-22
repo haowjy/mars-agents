@@ -31,9 +31,9 @@ Cursor orchestration: `~/cursor-dev` (`/product-lead`, `work-coordination` skill
 
 `.agents/`, `.claude/`, `.codex/`, `.cursor/` can contain hand-written content that mars didn't create. These are shared directories — mars writes into them but doesn't own them.
 
-**Mars must NEVER delete files it didn't create.** Orphan cleanup must only remove files whose `dest_path` was in the previous `mars.lock` but not in the current sync result. Never scan-and-delete-unknown.
+**Mars must NEVER delete files it didn't create.** Orphan cleanup, removals, and overwrites in a linked target require a lock `OutputRecord` for that exact `(target_root, dest_path)` pair. A path tracked only under `.mars` does not authorize mutation under `.cursor` or other targets. Never scan-and-delete-unknown.
 
-The lock file (`mars.lock`) is the authority on what mars manages. If it's not in the lock, mars doesn't touch it.
+The lock file (`mars.lock`) is the authority on what mars manages **per target**. If there is no matching record for that target, mars preserves existing local content (diagnostic: `target-unmanaged-collision`). Use `mars sync --force` or `mars link --force` to adopt unmanaged collisions and record ownership (`target-unmanaged-adopted`).
 
 ### Atomic writes
 
@@ -160,7 +160,7 @@ During `resolve_graph`, model configs from all resolved dependencies are collect
 
 Links from `settings.targets` are normalized via `config::targets::normalize_link()`. Only `LinkKind::KnownHarness` links produce `linked_harnesses` that gate routing candidates. `GenericTarget` (`.agents`, unknown names) and `PathLike` links are materialization targets only — invisible to routing.
 
-See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, and `src/models/probes/` for detailed contracts.
+See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, `src/models/probes/`, and `src/target_sync/` for detailed contracts.
 
 ## Managed Targets
 
@@ -168,7 +168,10 @@ See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, and 
 
 - Targets configured via `settings.targets` in `mars.toml` (default: `[".agents"]`)
 - All targets get file copies — no symlinks anywhere in the pipeline
-- Orphan cleanup uses the previous lock to identify mars-managed files, only removes those
+- Orphan cleanup scopes to `old_lock.output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target**
+- Deletes, Removed handling, and copy/install paths gate on `surface_ownership::may_delete` / `copy_decision` and `lock.contains_output(target_root, dest_path)`
+- Pre-existing untracked collisions are preserved; `mars sync --force` and `mars link --force` adopt and persist linked-target `OutputRecord`s
+- `mars link` fails by default when adoption would be required (suggests `--force` in the diagnostic)
 - Non-fatal per-target: errors on one target don't stop other targets from syncing
 - Target sync runs after `apply_plan` and before `finalize` — lock is written regardless of target sync outcome
 
@@ -184,7 +187,7 @@ See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, and 
 `src/diagnostic.rs` — `DiagnosticCollector` threaded through the entire pipeline.
 
 - No `eprintln!` in library code — all warnings/info go through the collector
-- Machine-readable codes (e.g. `"shadow-collision"`, `"model-alias-conflict"`, `"target-sync-error"`)
+- Machine-readable codes (e.g. `"shadow-collision"`, `"model-alias-conflict"`, `"target-sync-error"`, `"target-unmanaged-collision"`, `"target-unmanaged-adopted"`)
 - CLI layer formats diagnostics for human or JSON output
 - Diagnostics are non-fatal — pipeline continues, report includes all collected diagnostics
 
@@ -194,6 +197,7 @@ See `.context/CONTEXT.md` in `src/harness/`, `src/routing/`, `src/config/`, and 
 |---|---|
 | `src/sync/` | Pipeline orchestration + typed phase functions |
 | `src/target_sync/` | Copy from `.mars/` to managed target directories |
+| `src/surface_ownership/` | Per-target delete/copy gating for linked targets; shared by target sync, native reconcile, and dual-surface compile |
 | `src/reconcile/` | Shared atomic fs operations (Layer 1) + state-based reconciliation (Layer 2) |
 | `src/models/` | Model catalog, auto-resolve, cache, no builtins |
 | `src/models/probes/` | OpenCode and Pi capability probing with disk cache. Compatible Pi → `Confirmed` confidence |

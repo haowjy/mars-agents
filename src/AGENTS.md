@@ -13,7 +13,7 @@ mars.toml + mars.lock (committed, project root)
 ```
 
 - **`.mars/` is a cache, not the source of truth.** Committed targets + `mars.lock` are the authority. Fresh clone rebuilds `.mars/` from sources.
-- **Mars never deletes files it didn't create.** Lock file is the authority on what mars manages. Orphan cleanup only removes files whose `dest_path` was in the previous lock.
+- **Mars never deletes files it didn't create.** Lock file is the authority on what mars manages **per target** via `(target_root, dest_path)` on each `OutputRecord`. Orphan cleanup only removes paths previously managed in that target.
 - **All writes are atomic** (tmp+rename). Crash mid-write leaves old file intact.
 
 ## Dependency Direction
@@ -36,6 +36,7 @@ cli → sync → compiler → target adapters
 - `compiler/` compiles IR into target state, handles dual-surface emission
 - `target/` per-target compilation adapters (`.claude`, `.codex`, etc.)
 - `target_sync/` copies from `.mars/` to configured target directories
+- `surface_ownership/` gates linked-target deletes and copy/install on per-target lock records
 - `models/` model catalog, alias resolution, auto-resolve against cached catalog
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
@@ -57,7 +58,7 @@ cli → sync → compiler → target adapters
 
 - **Never add a second candidate evaluator** — `routing::evaluate_candidates()` is the only one. Both `mars models` and `mars build` call it.
 - **Never validate harness names outside `harness::registry`** — `registry::parse()` and `registry::is_known()` are the only authorities.
-- **Never scan-and-delete unknown files in targets** — only remove files tracked in the lock.
+- **Never scan-and-delete unknown files in targets** — only remove files tracked in the lock for that `(target_root, dest_path)`.
 - **Never use `eprintln!` in library code** — all diagnostics go through `DiagnosticCollector`.
 - **Never hardcode model aliases in the binary** — all aliases come from packages or consumer config.
 

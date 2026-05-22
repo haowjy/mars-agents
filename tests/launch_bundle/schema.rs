@@ -53,7 +53,7 @@ Review code changes.
 
     let bundle: Value = serde_json::from_str(&stdout).expect("launch-bundle should emit JSON");
 
-    assert_eq!(bundle["version"].as_u64(), Some(1));
+    assert_eq!(bundle["version"].as_u64(), Some(2));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
     assert_eq!(
         bundle["agent_body"].as_str(),
@@ -65,11 +65,17 @@ Review code changes.
     assert!(system_instruction.contains("# Agent Profile\n\nReview code changes.\n\n"));
     assert!(!system_instruction.contains("# Agent Profile\n\n\nReview code changes.\n\n"));
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
-    assert!(bundle["routing"]["route_confidence"].is_string());
+    assert!(bundle["routing"]["selection_kind"].is_string());
+    assert!(bundle["routing"]["match_evidence"].is_string());
     assert!(bundle["routing"]["harness_model"].is_string());
     assert!(bundle["routing"]["harness_model_source"].is_string());
     assert!(bundle["routing"]["harness_model_confidence"].is_string());
-    assert!(bundle["provenance"]["route_confidence"].is_string());
+    assert_eq!(
+        bundle["routing"]["route_trace"]["version"].as_u64(),
+        Some(1)
+    );
+    assert!(bundle["provenance"]["selection_kind"].is_string());
+    assert!(bundle["provenance"]["match_evidence"].is_string());
     assert!(bundle["provenance"]["candidates_tried"].is_string());
     assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
@@ -121,7 +127,7 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["version"].as_u64(), Some(1));
+    assert_eq!(bundle["version"].as_u64(), Some(2));
     assert!(bundle["agent"].is_null());
     assert_field_absent_or_null(&bundle, "agent_body");
     assert_eq!(
@@ -170,7 +176,7 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+        Some("cached-probe")
     );
     assert_eq!(bundle["warnings"], serde_json::json!([]));
 }
@@ -249,7 +255,8 @@ Review code changes."#;
         Some("gpt-5.4-mini")
     );
     assert!(bundle["routing"]["harness"].is_string());
-    assert!(bundle["routing"]["route_confidence"].is_string());
+    assert!(bundle["routing"]["selection_kind"].is_string());
+    assert!(bundle["routing"]["match_evidence"].is_string());
     assert!(bundle["routing"]["harness_model"].is_string());
 }
 

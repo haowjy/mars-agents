@@ -21,6 +21,7 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
     });
 
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let source_root = write_local_source_with_model_alias(
         temp.path(),
         "alias-source-force-sync",
@@ -38,6 +39,7 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
 
     let mut resolve_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     resolve_cmd.args(["--json", "models", "resolve", "test-alias"]);
+    resolve_cmd.env("PATH", replace_path_with(&bin_dir));
     let resolve_output = resolve_cmd.assert().success().get_output().clone();
     let resolve_json: Value =
         serde_json::from_slice(&resolve_output.stdout).expect("resolve --json should return JSON");
@@ -90,6 +92,7 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
     });
 
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let source_root = write_local_source_with_model_alias(
         temp.path(),
         "alias-source-immediate",
@@ -103,6 +106,7 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
 
     let mut resolve_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     resolve_cmd.args(["models", "resolve", "test-alias-immediate"]);
+    resolve_cmd.env("PATH", replace_path_with(&bin_dir));
     let resolve_output = resolve_cmd.assert().success().get_output().clone();
     let resolve_stdout =
         String::from_utf8(resolve_output.stdout).expect("resolve stdout should be utf-8");
@@ -142,7 +146,7 @@ fn resolve_alias_prefix_exits_zero() {
 
 #[test]
 #[serial]
-fn resolve_unknown_exits_zero_with_passthrough() {
+fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &[]);
@@ -152,32 +156,38 @@ fn resolve_unknown_exits_zero_with_passthrough() {
     cmd.args(["--json", "models", "resolve", "unknown-xyz"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
+    let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["model_id"].as_str(), Some("unknown-xyz"));
-    assert_eq!(stdout["resolved_model"].as_str(), Some("unknown-xyz"));
-    assert_eq!(stdout["provider"], Value::Null);
-    assert_eq!(stdout["harness"], Value::Null);
-    assert_eq!(stdout["harness_source"].as_str(), Some("unavailable"));
+    assert!(
+        stdout["error"]
+            .as_str()
+            .expect("error should be present")
+            .contains("selected harness 'pi', but that harness is not installed")
+    );
     assert_eq!(
-        stdout["harness_candidates"],
+        stdout["route_rejection"]["reason"].as_str(),
+        Some("harness_not_installed")
+    );
+    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("pi"));
+    assert_eq!(
+        stdout["harnesses_tried"],
         json!(["pi", "opencode", "cursor"])
     );
-    assert!(stdout["availability"].is_string());
-    assert!(stdout["availability_source"].is_string());
-    assert!(
-        stdout["runnable_paths"].is_array(),
-        "passthrough JSON should include availability runnable paths"
-    );
-    assert!(
-        stdout["warning"]
-            .as_str()
-            .expect("passthrough warning should be present")
-            .contains("passing through to harness")
-    );
+    assert!(stdout["route_trace"].is_object());
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
+    let assessments = stdout["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let pi_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("pi"))
+        .expect("pi assessment should exist");
+    assert_eq!(pi_assessment["skip_reason"].as_str(), Some("not_installed"));
+    assert_eq!(stdout["route"]["harness"].as_str(), Some("pi"));
 }
 
 #[test]
@@ -222,25 +232,33 @@ include = ["catalog-only-*"]
 
 #[test]
 #[serial]
-fn resolve_prefix_no_match_exits_zero_with_passthrough() {
+fn resolve_prefix_no_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "opus-9-9"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
+    let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["resolved_model"].as_str(), Some("opus-9-9"));
+    assert!(
+        stdout["error"]
+            .as_str()
+            .expect("error should be present")
+            .contains("did not match any harness-reported model slug")
+    );
 }
 
 #[test]
 #[serial]
-fn resolve_passthrough_pattern_guesses_harness() {
+fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
@@ -250,23 +268,21 @@ fn resolve_passthrough_pattern_guesses_harness() {
     cmd.args(["--json", "models", "resolve", "claude-brand-new"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
+    let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider"].as_str(), Some("anthropic"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
-        stdout["harness_candidates"],
-        json!(["claude", "pi", "opencode", "cursor"])
+        stdout["harnesses_tried"],
+        json!(["pi", "opencode", "cursor"])
     );
-    assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
-    assert_eq!(stdout["harness"].as_str(), Some("pi"));
 }
 
 #[test]
 #[serial]
-fn resolve_passthrough_unrecognized_pattern_harness_null() {
+fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &[]);
@@ -276,23 +292,21 @@ fn resolve_passthrough_unrecognized_pattern_harness_null() {
     cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
+    let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider"], Value::Null);
-    assert_eq!(stdout["harness"], Value::Null);
-    assert_eq!(stdout["harness_source"].as_str(), Some("unavailable"));
+    assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
-        stdout["harness_candidates"],
+        stdout["harnesses_tried"],
         json!(["pi", "opencode", "cursor"])
     );
 }
 
 #[test]
 #[serial]
-fn resolve_passthrough_unrecognized_pattern_uses_unknown_provider_fallback_harnesses() {
+fn resolve_passthrough_unrecognized_pattern_with_pi_installed_still_fails_closed() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
@@ -302,23 +316,21 @@ fn resolve_passthrough_unrecognized_pattern_uses_unknown_provider_fallback_harne
     cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
+    let output = cmd.assert().code(1).get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider"], Value::Null);
-    assert_eq!(stdout["harness"].as_str(), Some("pi"));
-    assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
+    assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
-        stdout["harness_candidates"],
+        stdout["harnesses_tried"],
         json!(["pi", "opencode", "cursor"])
     );
 }
 
 #[test]
 #[serial]
-fn resolve_passthrough_unrecognized_pattern_opencode_only_is_unknown_availability() {
+fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
@@ -329,22 +341,52 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_is_unknown_availabilit
     cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
+    assert_eq!(stdout["provider_constraint"], Value::Null);
+    assert_eq!(
+        stdout["harnesses_tried"],
+        json!(["pi", "opencode", "cursor"])
+    );
+}
+
+#[test]
+#[serial]
+fn resolve_passthrough_provider_model_slug_succeeds_when_harness_reports_match() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+    write_opencode_probe_cache(
+        temp.path(),
+        json!({"openai": true}),
+        vec!["openai/gpt-5.4-mini"],
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "openai/gpt-5.4-mini"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider"], Value::Null);
+    assert_eq!(stdout["model_id"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5.4-mini"));
     assert_eq!(stdout["harness"].as_str(), Some("opencode"));
     assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
-    assert_eq!(
-        stdout["harness_candidates"],
-        json!(["pi", "opencode", "cursor"])
-    );
-    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
-    assert_eq!(
-        stdout["availability_source"].as_str(),
-        Some("opencode_probe_unknown")
+    assert!(stdout["route_trace"].is_object());
+    let assessments = stdout["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    assert!(
+        assessments.iter().any(|assessment| {
+            assessment["chosen_slug"].as_str() == Some("openai/gpt-5.4-mini")
+        })
     );
 }
 
@@ -468,6 +510,75 @@ model = "gpt-5.4-mini"
 
 #[test]
 #[serial]
+fn resolve_exact_alias_fixed_native_harness_fails_when_provider_constraint_is_incompatible() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.badnative]
+harness = "codex"
+model = "gpt-5"
+provider = "anthropic"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "badnative"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert!(
+        stdout["error"]
+            .as_str()
+            .expect("error should be present")
+            .contains("cannot run resolved model under model-first routing")
+    );
+    assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(stdout["route"]["match_evidence"].as_str(), Some("none"));
+    assert_eq!(
+        stdout["route_rejection"]["reason"].as_str(),
+        Some("assessment_failed")
+    );
+    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        stdout["route_rejection"]["skip_reason"].as_str(),
+        Some("provider_constraint_unsatisfied")
+    );
+    assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
+    assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
+    let assessments = stdout["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let codex_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("codex"))
+        .expect("codex assessment should exist");
+    assert_eq!(
+        codex_assessment["skip_reason"].as_str(),
+        Some("provider_constraint_unsatisfied")
+    );
+}
+
+#[test]
+#[serial]
 fn sync_rejects_dependency_model_alias_with_invalid_harness() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -533,6 +644,108 @@ fn resolve_unknown_with_no_refresh_without_cache_is_non_zero() {
 
 #[test]
 #[serial]
+fn resolve_pinned_exact_alias_json_no_refresh_without_cache_succeeds() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "fast", "--no-refresh-models"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stdout["name"].as_str(), Some("fast"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["route"]["source"].as_str(), Some("alias"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(
+        stdout["route"]["match_evidence"].as_str(),
+        Some("constrained")
+    );
+    assert_eq!(
+        stdout["route_trace"]["selection_kind"].as_str(),
+        Some("fixed")
+    );
+    assert_eq!(
+        stdout["route_trace"]["match_evidence"].as_str(),
+        Some("constrained")
+    );
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
+    assert!(
+        stdout.get("route_rejection").is_none(),
+        "successful exact alias resolves should not emit route_rejection: {stdout}"
+    );
+    assert!(
+        stdout.get("cache_error").is_none(),
+        "pinned exact aliases should not require a models cache: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
+fn resolve_auto_exact_alias_json_no_refresh_without_cache_returns_alias_cache_error() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.fast]
+provider = "openai"
+match = ["gpt-5*"]
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "fast", "--no-refresh-models"]);
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stdout["name"].as_str(), Some("fast"));
+    assert_eq!(stdout["source"].as_str(), Some("consumer (mars.toml)"));
+    let error = stdout["error"].as_str().expect("error should be present");
+    assert!(
+        error.starts_with("alias `fast` requires models cache for auto-resolve"),
+        "expected alias-specific cache error, got: {error}"
+    );
+    assert!(
+        stdout["cache_error"]
+            .as_str()
+            .expect("cache_error should be present")
+            .contains("--no-refresh-models")
+    );
+    assert!(
+        stdout.get("route").is_none(),
+        "auto exact alias with unavailable cache must not fall through to passthrough routing: {stdout}"
+    );
+    assert!(
+        stdout.get("route_trace").is_none(),
+        "auto exact alias cache errors should not emit a mixed routing trace: {stdout}"
+    );
+    assert!(
+        stdout.get("route_rejection").is_none(),
+        "cache-unavailable alias errors should not masquerade as route rejections: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
 fn resolve_uses_pi_probe_compatibility_for_harness_routing() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -577,7 +790,9 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
         #[cfg(windows)]
         {
             let script = if *harness == "pi" {
-                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else if *harness == "opencode" {
+                "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else {
                 "@echo off\r\nexit /b 0\r\n"
             };
@@ -588,7 +803,9 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
             use std::os::unix::fs::PermissionsExt;
             let path = bin_dir.join(harness);
             let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nexit 0\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
+            } else if *harness == "opencode" {
+                "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 0\n"
             };
@@ -615,7 +832,7 @@ fn install_fake_harnesses_with_pi_help(
         {
             let script = if *harness == "pi" {
                 format!(
-                    "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo {pi_help_output}\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+                    "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo {pi_help_output}\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
                 )
             } else {
                 "@echo off\r\nexit /b 0\r\n".to_string()
@@ -628,7 +845,7 @@ fn install_fake_harnesses_with_pi_help(
             let path = bin_dir.join(harness);
             let script = if *harness == "pi" {
                 format!(
-                    "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"{pi_help_output}\"\n  exit 0\nfi\nexit 0\n"
+                    "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"{pi_help_output}\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
                 )
             } else {
                 "#!/bin/sh\nexit 0\n".to_string()

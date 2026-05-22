@@ -25,10 +25,12 @@ pub struct Routing {
     pub model: String,
     pub model_token: String,
     pub harness: String,
-    pub route_confidence: String,
+    pub selection_kind: String,
+    pub match_evidence: String,
     pub harness_model: String,
     pub harness_model_source: String,
     pub harness_model_confidence: String,
+    pub route_trace: crate::routing::report::RouteDecisionReport,
 }
 
 #[derive(Debug, Clone, Serialize)]

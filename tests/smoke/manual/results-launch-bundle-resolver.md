@@ -39,11 +39,13 @@ Representative output:
 
 ```json
 {
+  "version": 2,
   "agent": null,
   "routing": {
     "model": "gpt-5.4-mini",
     "harness": "codex",
-    "route_confidence": "confirmed",
+    "selection_kind": "auto",
+    "match_evidence": "confirmed",
     "harness_model": "gpt-5.4-mini",
     "harness_model_source": "provider-match",
     "harness_model_confidence": "likely"
@@ -51,7 +53,9 @@ Representative output:
   "provenance": {
     "candidates_tried": "codex",
     "harness_source": "provider",
-    "model_source": "cli"
+    "model_source": "cli",
+    "selection_kind": "auto",
+    "match_evidence": "confirmed"
   },
   "warnings": []
 }
@@ -74,9 +78,11 @@ Representative output after the warning-semantics fix:
 
 ```json
 {
+  "version": 2,
   "routing": {
     "harness": "pi",
-    "route_confidence": "explicit",
+    "selection_kind": "fixed",
+    "match_evidence": "passthrough",
     "harness_model": "gpt-5.4-mini",
     "harness_model_source": "passthrough",
     "harness_model_confidence": "unknown"
@@ -85,7 +91,8 @@ Representative output after the warning-semantics fix:
     "candidates_tried": "pi",
     "harness_source": "cli",
     "model_source": "cli",
-    "route_confidence": "explicit"
+    "selection_kind": "fixed",
+    "match_evidence": "passthrough"
   },
   "warnings": []
 }
@@ -119,9 +126,11 @@ Representative output:
 
 ```json
 {
+  "version": 2,
   "routing": {
     "harness": "pi",
-    "route_confidence": "passthrough",
+    "selection_kind": "fixed",
+    "match_evidence": "passthrough",
     "harness_model": "gpt-5.4-mini",
     "harness_model_source": "passthrough",
     "harness_model_confidence": "unknown"
@@ -130,7 +139,8 @@ Representative output:
     "candidates_tried": "",
     "harness_source": "profile",
     "model_source": "profile",
-    "route_confidence": "passthrough"
+    "selection_kind": "fixed",
+    "match_evidence": "passthrough"
   },
   "warnings": []
 }
@@ -156,9 +166,11 @@ Representative result:
 
 ```json
 {
+  "version": 2,
   "routing": {
     "harness": "opencode",
-    "route_confidence": "likely",
+    "selection_kind": "auto",
+    "match_evidence": "confirmed",
     "harness_model": "openai/gpt-5.4-mini",
     "harness_model_source": "cached-probe",
     "harness_model_confidence": "confirmed"
@@ -182,9 +194,11 @@ Representative result under the same PATH:
 
 ```json
 {
+  "version": 2,
   "routing": {
     "harness": "codex",
-    "route_confidence": "passthrough",
+    "selection_kind": "linked_fallback",
+    "match_evidence": "passthrough",
     "harness_model": "gpt-5.4-mini",
     "harness_model_source": "provider-match",
     "harness_model_confidence": "likely"

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::harness::registry::HarnessId;
 
@@ -12,12 +13,22 @@ pub struct RoutingConfigDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRoutingSettings {
     pub harness_order: Option<ParsedHarnessOrder>,
+    pub provider_order: Option<ParsedProviderOrder>,
     pub default_harness: Option<ParsedHarnessValue>,
     pub linked_harnesses: BTreeSet<HarnessId>,
     pub diagnostics: Vec<RoutingConfigDiagnostic>,
 }
 
 impl ResolvedRoutingSettings {
+    /// Resolve routing settings from mars.toml. Falls back to Settings::default()
+    /// if mars.toml cannot be loaded.
+    pub fn from_config(root: &Path) -> Self {
+        match crate::config::load(root) {
+            Ok(config) => resolve(&config.settings),
+            Err(_) => resolve(&Settings::default()),
+        }
+    }
+
     pub fn harness_order_names(&self) -> Option<Vec<String>> {
         self.harness_order.as_ref().map(|order| {
             order
@@ -32,6 +43,12 @@ impl ResolvedRoutingSettings {
         self.default_harness
             .as_ref()
             .map(|value| value.harness.to_string())
+    }
+
+    pub fn provider_order_names(&self) -> Option<Vec<String>> {
+        self.provider_order
+            .as_ref()
+            .map(|order| order.providers.clone())
     }
 
     pub fn linked_harness_names(&self) -> Vec<String> {
@@ -59,6 +76,11 @@ pub struct ParsedHarnessValue {
 pub struct ParsedHarnessOrder {
     pub candidates: Vec<OrderedHarnessCandidate>,
     pub failure: Option<HarnessOrderFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedProviderOrder {
+    pub providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,19 +165,57 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         }
     });
 
+    let provider_order = settings.provider_order.as_ref().map(|order| ParsedProviderOrder {
+        providers: order
+            .iter()
+            .filter_map(|provider| {
+                let normalized = provider.trim().to_ascii_lowercase();
+                if normalized.is_empty() {
+                    return None;
+                }
+                if !is_known_provider_or_variant(&normalized) {
+                    diagnostics.push(RoutingConfigDiagnostic {
+                        message: format!(
+                            "settings.provider_order contains unknown provider `{provider}`; keeping it for forward-compat routing preferences"
+                        ),
+                    });
+                }
+                Some(normalized)
+            })
+            .collect(),
+    });
+
     let linked_harnesses = settings.effective_links().linked_harnesses_set();
 
     ResolvedRoutingSettings {
         harness_order,
+        provider_order,
         default_harness,
         linked_harnesses,
         diagnostics,
     }
 }
 
+fn is_known_provider_or_variant(provider: &str) -> bool {
+    matches!(
+        provider,
+        "anthropic"
+            | "openai"
+            | "google"
+            | "meta"
+            | "mistral"
+            | "deepseek"
+            | "cohere"
+            | "openrouter"
+            | "openai-codex"
+            | "anthropic-claude"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn settings_with_links(targets: Option<Vec<&str>>) -> Settings {
         Settings {
@@ -200,5 +260,12 @@ mod tests {
 
         assert!(resolved.linked_harnesses.contains(&HarnessId::OpenCode));
         assert!(!resolved.linked_harnesses.contains(&HarnessId::Codex));
+    }
+
+    #[test]
+    fn from_config_falls_back_to_default_settings_when_missing() {
+        let temp = TempDir::new().expect("temp dir");
+        let resolved = ResolvedRoutingSettings::from_config(temp.path());
+        assert_eq!(resolved, resolve(&Settings::default()));
     }
 }

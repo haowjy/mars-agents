@@ -11,6 +11,7 @@ pub(super) struct PolicyResolutionConfig {
     pub(super) default_harness: Option<String>,
     pub(super) default_model: Option<String>,
     pub(super) harness_order: Option<Vec<String>>,
+    pub(super) provider_order: Option<Vec<String>>,
     pub(super) linked_harnesses: Vec<String>,
     pub(super) agents: IndexMap<String, AgentOverlay>,
     pub(super) settings_model_policies: Vec<ModelPolicyRule>,
@@ -23,6 +24,7 @@ pub(super) fn load_policy_resolution_config(
     let mut default_harness = None;
     let mut default_model = None;
     let mut harness_order = None;
+    let mut provider_order = None;
     let mut linked_harnesses = Vec::new();
     let mut agents = IndexMap::new();
     let mut settings_model_policies = Vec::new();
@@ -41,6 +43,7 @@ pub(super) fn load_policy_resolution_config(
             default_harness = config.settings.default_harness.clone();
             default_model = config.settings.default_model.clone();
             harness_order = config.settings.harness_order.clone();
+            provider_order = config.settings.provider_order.clone();
             linked_harnesses = config.settings.linked_harnesses();
             agents = config.agents.clone();
             for (name, alias) in &config.models {
@@ -60,6 +63,7 @@ pub(super) fn load_policy_resolution_config(
         default_harness,
         default_model,
         harness_order,
+        provider_order,
         linked_harnesses,
         agents,
         settings_model_policies,

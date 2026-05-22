@@ -104,10 +104,7 @@ fn is_fresh(entry: &ProbeCacheEntry) -> bool {
 }
 
 fn is_usable(entry: &ProbeCacheEntry) -> bool {
-    entry
-        .result
-        .as_ref()
-        .is_some_and(|r| r.provider_probe_success)
+    entry.result.as_ref().is_some_and(|r| r.model_probe_success)
 }
 
 fn read_cache_tolerant() -> Option<ProbeCacheEntry> {
@@ -265,7 +262,7 @@ where
             return CachedProbeOutcome::Hit(entry.result.unwrap());
         }
         let probe_result = probe();
-        if probe_result.provider_probe_success {
+        if probe_result.model_probe_success {
             write_probe_attempt(path, probe_result.clone());
             return CachedProbeOutcome::Miss(probe_result);
         } else {
@@ -280,7 +277,7 @@ where
     }
     drop(lock);
 
-    if probe_result.provider_probe_success {
+    if probe_result.model_probe_success {
         CachedProbeOutcome::Miss(probe_result)
     } else {
         CachedProbeOutcome::Unavailable
@@ -293,7 +290,7 @@ fn write_probe_attempt(path: &Path, probe_result: OpenCodeProbeResult) {
         schema_version: SCHEMA_VERSION,
         fetched_at: now,
         last_attempt_at: now,
-        last_error: if probe_result.provider_probe_success {
+        last_error: if probe_result.model_probe_success {
             None
         } else {
             probe_result.error.clone()
@@ -370,7 +367,7 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
     let now = now_unix_secs();
     let existing = read_cache_tolerant();
 
-    let entry = if probe_result.provider_probe_success {
+    let entry = if probe_result.model_probe_success {
         ProbeCacheEntry {
             schema_version: SCHEMA_VERSION,
             fetched_at: now,
@@ -400,9 +397,7 @@ mod tests {
 
     fn ok_result() -> OpenCodeProbeResult {
         OpenCodeProbeResult {
-            providers: std::collections::HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5.4".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         }
@@ -410,7 +405,7 @@ mod tests {
 
     fn fail_result() -> OpenCodeProbeResult {
         OpenCodeProbeResult {
-            provider_probe_success: false,
+            model_probe_success: false,
             error: Some("boom".to_string()),
             ..OpenCodeProbeResult::default()
         }
@@ -466,7 +461,7 @@ mod tests {
         assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
 
         let on_disk = read_cache_tolerant_at(&path).unwrap();
-        assert!(on_disk.result.as_ref().unwrap().provider_probe_success);
+        assert!(on_disk.result.as_ref().unwrap().model_probe_success);
         assert_eq!(on_disk.fetched_at, 1);
     }
 

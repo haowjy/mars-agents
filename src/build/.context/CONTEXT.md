@@ -134,7 +134,8 @@ to real warnings.
 ## Related docs
 
 - [src/routing/.context/CONTEXT.md](../routing/.context/CONTEXT.md) — harness candidate
-  evaluation, RouteConfidence semantics, link filtering
+  evaluation, selection-kind vs match-evidence semantics, and `RouteDecisionReport`
+  serialization surface
 - [src/harness/.context/CONTEXT.md](../harness/.context/CONTEXT.md) — harness registry,
   capability snapshot, probe integration
 - [src/cli/build.rs](../cli/build.rs) — CLI arg definitions and entry points

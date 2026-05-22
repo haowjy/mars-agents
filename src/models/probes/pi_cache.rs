@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::pi::PiProbeResult;
 use crate::error::MarsError;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const DEFAULT_TTL_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,10 +191,10 @@ where
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
 
     match cached {
-        Some(entry) if is_fresh(&entry) && entry.result.is_some() => {
+        Some(entry) if is_fresh(&entry) && is_usable_result(entry.result.as_ref()) => {
             CachedPiProbeOutcome::Hit(entry.result.unwrap())
         }
-        Some(entry) if entry.result.is_some() => {
+        Some(entry) if is_usable_result(entry.result.as_ref()) => {
             let result = entry.result.clone().unwrap();
             if !is_offline {
                 trigger_background_refresh_with(spawn_refresh);
@@ -213,7 +213,7 @@ where
     let Some(lock) = try_lock() else { return };
     if let Some(entry) = read_cache_tolerant()
         && is_fresh(&entry)
-        && entry.result.is_some()
+        && is_usable_result(entry.result.as_ref())
     {
         drop(lock);
         return;
@@ -231,7 +231,7 @@ where
     if lock.is_some()
         && let Some(path) = path
         && let Some(entry) = read_cache_tolerant_at(path)
-        && entry.result.is_some()
+        && is_usable_result(entry.result.as_ref())
     {
         if is_fresh(&entry) {
             return CachedPiProbeOutcome::Hit(entry.result.unwrap());
@@ -303,7 +303,7 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
 
     if let Some(entry) = read_cache_tolerant()
         && is_fresh(&entry)
-        && entry.result.is_some()
+        && is_usable_result(entry.result.as_ref())
     {
         return Ok(0);
     }
@@ -314,6 +314,10 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
     }
 
     Ok(0)
+}
+
+fn is_usable_result(result: Option<&PiProbeResult>) -> bool {
+    result.is_some_and(|probe| probe.error.is_none())
 }
 
 #[cfg(test)]
@@ -328,6 +332,7 @@ mod tests {
             compatible: true,
             help_surface_tokens_present: vec!["--mode".to_string()],
             help_surface_tokens_missing: Vec::new(),
+            model_slugs: HashSet::from(["openai/gpt-5.4".to_string()]),
             error: None,
         }
     }
@@ -358,6 +363,48 @@ mod tests {
 
     fn write_entry(path: &Path, entry: &PiProbeCacheEntry) {
         write_cache_at(path, entry).unwrap();
+    }
+
+    #[test]
+    fn legacy_v1_cache_without_model_slugs_is_reprobed() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 1,
+                "harness": "pi",
+                "fetched_at": now_unix_secs(),
+                "last_attempt_at": now_unix_secs(),
+                "last_error": null,
+                "result": {
+                    "binary_path": "/tmp/pi",
+                    "version": "pi 0.4.2",
+                    "compatible": true,
+                    "help_surface_tokens_present": ["--mode"],
+                    "help_surface_tokens_missing": [],
+                    "error": null
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let outcome = probe_cached_impl(
+            false,
+            &Some(path),
+            || PiProbeResult {
+                model_slugs: HashSet::from(["openai/gpt-5.5".to_string()]),
+                ..compatible_result()
+            },
+            || Ok(()),
+        );
+
+        let CachedPiProbeOutcome::Miss(result) = outcome else {
+            panic!("legacy cache entries without model slug capability must trigger a fresh probe");
+        };
+        assert!(result.model_slugs.contains("openai/gpt-5.5"));
     }
 
     #[test]

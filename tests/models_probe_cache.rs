@@ -40,7 +40,7 @@ fn probe_cache_path(cache_dir: &Path) -> PathBuf {
 fn models_cache_json() -> String {
     serde_json::to_string_pretty(&json!({
         "models": [{
-            "id": "openai/gpt-5",
+            "id": "gpt-5",
             "provider": "OpenAI",
             "release_date": "2026-01-01"
         }],
@@ -56,9 +56,7 @@ fn probe_cache_json(fetched_at: u64) -> String {
         "last_attempt_at": fetched_at,
         "last_error": null,
         "result": {
-            "providers": {"openai": true},
             "model_slugs": ["openai/gpt-5"],
-            "provider_probe_success": true,
             "model_probe_success": true,
             "error": null
         }
@@ -73,7 +71,7 @@ fn setup_project(project_root: &Path) {
 
 [models.fast]
 harness = "opencode"
-model = "openai/gpt-5"
+model = "gpt-5"
 "#,
     );
     write_models_cache(project_root, &models_cache_json());
@@ -86,22 +84,14 @@ fn install_fake_opencode(temp: &TempDir) -> PathBuf {
     #[cfg(windows)]
     {
         let path = bin_dir.join("opencode.bat");
-        fs::write(
-            &path,
-            "@echo off\r\nif \"%1\"==\"providers\" (echo *  OpenAI oauth) else (echo openai/gpt-5)\r\n",
-        )
-        .unwrap();
+        fs::write(&path, "@echo off\r\necho openai/gpt-5\r\n").unwrap();
     }
 
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
         let path = bin_dir.join("opencode");
-        fs::write(
-            &path,
-            "#!/bin/sh\nif [ \"$1\" = \"providers\" ]; then echo '*  OpenAI oauth'; else echo 'openai/gpt-5'; fi\n",
-        )
-        .unwrap();
+        fs::write(&path, "#!/bin/sh\necho 'openai/gpt-5'\n").unwrap();
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&path, perms).unwrap();
@@ -144,7 +134,7 @@ fn resolve_reads_prepopulated_probe_cache_hit() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("hit"));
 }
 
@@ -172,7 +162,7 @@ fn resolve_reports_stale_probe_cache_status_when_reusing_stale_cache() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
 }
 
@@ -182,6 +172,7 @@ fn no_refresh_models_skips_probe_refresh_even_with_stale_cache() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
+    let bin_dir = install_fake_opencode(&temp);
     setup_project(&project_root);
     write_probe_cache(&cache_dir, &probe_cache_json(1));
 
@@ -191,6 +182,7 @@ fn no_refresh_models_skips_probe_refresh_even_with_stale_cache() {
         .args(["--json", "models", "resolve", "fast", "--no-refresh-models"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("MARS_OFFLINE", "1")
+        .env("PATH", prepend_path(&bin_dir))
         .assert()
         .success()
         .get_output()
@@ -226,10 +218,7 @@ fn cold_probe_write_creates_valid_json_cache_file() {
     assert!(cache["fetched_at"].as_u64().is_some());
     assert!(cache["last_attempt_at"].as_u64().is_some());
     assert_eq!(cache["last_error"], Value::Null);
-    assert_eq!(
-        cache["result"]["provider_probe_success"].as_bool(),
-        Some(true)
-    );
+    assert_eq!(cache["result"]["model_probe_success"].as_bool(), Some(true));
 }
 
 #[test]

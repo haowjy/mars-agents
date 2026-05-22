@@ -201,9 +201,8 @@ CLI `--include`/`--exclude` replace config entirely for that invocation.
 
 ## OpenCode Probe
 
-When OpenCode is installed, mars probes for available providers and models:
+When OpenCode is installed, mars probes for available model slugs:
 
-- Runs `opencode providers list` to detect configured credentials
 - Runs `opencode models` to get available model slugs
 - Probe timeout configurable via `MARS_PROBE_TIMEOUT_SECS` (default: 5)
 - Probe failures degrade to `unknown`, not `unavailable`

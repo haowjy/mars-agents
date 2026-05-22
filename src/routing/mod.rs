@@ -525,7 +525,6 @@ fn format_harness_order_fallback_warning(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn installed(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| (*name).to_string()).collect()
@@ -635,6 +634,7 @@ mod tests {
         let installed = installed(&["pi"]);
         let pi_probe = PiProbeResult {
             compatible: true,
+            model_slugs: HashSet::from(["google/gemini-2.5-pro".to_string()]),
             ..PiProbeResult::default()
         };
         let input = routing_input(
@@ -687,9 +687,7 @@ mod tests {
     fn opencode_positive_probe_returns_likely() {
         let installed = installed(&["opencode"]);
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -713,9 +711,7 @@ mod tests {
     fn opencode_negative_probe_falls_through() {
         let installed = installed(&["opencode", "cursor"]);
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("google".to_string(), true)]),
             model_slugs: Vec::new(),
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };

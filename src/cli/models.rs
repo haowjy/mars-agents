@@ -918,8 +918,7 @@ fn add_probe_results_json(
     if let Some(probe) = probe_result {
         out["probe_results"] = serde_json::json!({
             "opencode": {
-                "success": probe.provider_probe_success && probe.model_probe_success,
-                "providers_found": probe.providers.keys().collect::<Vec<_>>(),
+                "success": probe.model_probe_success,
                 "models_found": probe.model_slugs.len(),
             }
         });

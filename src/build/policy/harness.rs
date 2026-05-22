@@ -307,7 +307,6 @@ pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
     use std::path::Path;
 
     use crate::compiler::agents::AgentProfile;
@@ -393,9 +392,7 @@ mod tests {
 
     fn positive_opencode_probe() -> OpenCodeProbeResult {
         OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         }

@@ -157,14 +157,6 @@ pub fn resolve_runnable_path(
         };
     }
 
-    if target_harness.eq_ignore_ascii_case("opencode") && !provider.trim().is_empty() {
-        return ResolvedRunnablePath {
-            harness_model_id: synthesize_opencode_slug(model_id, provider, probe_result),
-            source: RunnablePathSource::Synthesized,
-            confidence: RunnableConfidence::Likely,
-        };
-    }
-
     ResolvedRunnablePath {
         harness_model_id: model_id.to_string(),
         source: RunnablePathSource::Passthrough,
@@ -264,7 +256,7 @@ fn classify_opencode(
         ));
     };
 
-    if !probe.provider_probe_success {
+    if !probe.model_probe_success {
         return Some((
             AvailabilityStatus::Unknown,
             AvailabilitySource::OpenCodeProbeUnknown,
@@ -280,22 +272,13 @@ fn classify_opencode(
         ));
     }
 
-    let provider_capability = classify_opencode_provider(provider, probe);
-
-    if !provider_capability.provider_available && !provider_capability.openrouter_only {
+    let Some(harness_model_id) = find_matching_slug(model_id, provider, &probe.model_slugs) else {
         return Some((
             AvailabilityStatus::Unavailable,
             AvailabilitySource::OpenCodeProbeNegative,
             None,
         ));
-    }
-
-    let harness_model_id = if probe.model_probe_success {
-        find_matching_slug(model_id, provider, &probe.model_slugs)
-    } else {
-        None
-    }
-    .unwrap_or_else(|| synthesize_opencode_slug(model_id, provider, Some(probe)));
+    };
 
     Some((
         AvailabilityStatus::Runnable,
@@ -313,51 +296,6 @@ fn is_unknown_provider(provider: &str) -> bool {
     provider.is_empty() || provider.eq_ignore_ascii_case("unknown")
 }
 
-fn classify_opencode_provider(
-    provider: &str,
-    probe: &OpenCodeProbeResult,
-) -> OpencodeProviderCapability {
-    let provider_lower = provider.trim().to_ascii_lowercase();
-    let provider_available = probe
-        .providers
-        .get(&provider_lower)
-        .copied()
-        .unwrap_or(false);
-    let has_openrouter = probe.providers.get("openrouter").copied().unwrap_or(false);
-    let openrouter_only =
-        !provider_available && has_openrouter && openrouter_supports_provider(&provider_lower);
-
-    OpencodeProviderCapability {
-        provider_lower,
-        provider_available,
-        openrouter_only,
-    }
-}
-
-fn synthesize_opencode_slug(
-    model_id: &str,
-    provider: &str,
-    probe_result: Option<&OpenCodeProbeResult>,
-) -> String {
-    let provider_lower = provider.trim().to_ascii_lowercase();
-    if let Some(probe) = probe_result
-        && probe.provider_probe_success
-    {
-        let capability = classify_opencode_provider(provider, probe);
-        if capability.openrouter_only {
-            return format!("openrouter/{}/{model_id}", capability.provider_lower);
-        }
-    }
-    format!("{provider_lower}/{model_id}")
-}
-
-#[derive(Debug, Clone)]
-struct OpencodeProviderCapability {
-    provider_lower: String,
-    provider_available: bool,
-    openrouter_only: bool,
-}
-
 fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
     let provider = provider.trim().to_ascii_lowercase();
     let harness = target_harness.trim().to_ascii_lowercase();
@@ -365,13 +303,6 @@ fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
     matches!(
         (provider.as_str(), harness.as_str()),
         ("anthropic", "claude") | ("openai", "codex")
-    )
-}
-
-fn openrouter_supports_provider(provider: &str) -> bool {
-    matches!(
-        provider,
-        "anthropic" | "meta" | "mistral" | "deepseek" | "cohere"
     )
 }
 
@@ -470,23 +401,48 @@ fn classify_pi_for_model(
     }
 
     let pi_probe_result = pi_probe_result.expect("checked is_some above");
-    if pi_probe_result.compatible {
+    if !pi_probe_result.compatible {
         return Some((
-            AvailabilityStatus::Runnable,
-            AvailabilitySource::PiProbe,
-            Some(RunnablePath {
-                harness: "pi".to_string(),
-                mars_provider: provider.to_string(),
-                harness_model_id: model_id.to_string(),
-            }),
+            AvailabilityStatus::Unavailable,
+            AvailabilitySource::PiProbeNegative,
+            None,
         ));
     }
 
+    let Some(harness_model_id) =
+        find_matching_pi_slug(model_id, provider, &pi_probe_result.model_slugs)
+    else {
+        return Some((
+            AvailabilityStatus::Unavailable,
+            AvailabilitySource::PiProbeNegative,
+            None,
+        ));
+    };
+
     Some((
-        AvailabilityStatus::Unavailable,
-        AvailabilitySource::PiProbeNegative,
-        None,
+        AvailabilityStatus::Runnable,
+        AvailabilitySource::PiProbe,
+        Some(RunnablePath {
+            harness: "pi".to_string(),
+            mars_provider: provider.to_string(),
+            harness_model_id,
+        }),
     ))
+}
+
+fn find_matching_pi_slug(
+    model_id: &str,
+    provider: &str,
+    model_slugs: &HashSet<String>,
+) -> Option<String> {
+    model_slugs.iter().find_map(|slug| {
+        let (slug_provider, slug_model_id) = slug.split_once('/')?;
+        if provider_matches(provider, slug_provider) && model_id_matches(model_id, slug_model_id) {
+            Some(slug.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn aggregate_statuses(
@@ -549,7 +505,6 @@ fn aggregate_statuses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn installed(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| (*name).to_string()).collect()
@@ -714,6 +669,7 @@ mod tests {
     fn test_classify_pi_probe_compatible_is_runnable() {
         let pi_probe = PiProbeResult {
             compatible: true,
+            model_slugs: HashSet::from(["openai/gpt-5.4-mini".to_string()]),
             ..PiProbeResult::default()
         };
 
@@ -730,7 +686,10 @@ mod tests {
         assert_eq!(result.source, AvailabilitySource::PiProbe);
         assert_eq!(result.runnable_paths.len(), 1);
         assert_eq!(result.runnable_paths[0].harness, "pi");
-        assert_eq!(result.runnable_paths[0].harness_model_id, "gpt-5.4-mini");
+        assert_eq!(
+            result.runnable_paths[0].harness_model_id,
+            "openai/gpt-5.4-mini"
+        );
     }
 
     #[test]
@@ -777,6 +736,28 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_pi_probe_missing_model_is_unavailable() {
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from(["openai/gpt-5.4".to_string()]),
+            ..PiProbeResult::default()
+        };
+
+        let result = classify_model(
+            "gpt-5.4-mini",
+            "OpenAI",
+            &installed(&["pi"]),
+            None,
+            Some(&pi_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::PiProbeNegative);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
     fn test_classify_offline_mode() {
         let result = classify_model(
             "gpt-5.4",
@@ -807,9 +788,7 @@ mod tests {
     #[test]
     fn test_classify_opencode_direct_slug() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5.4".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -833,9 +812,7 @@ mod tests {
     #[test]
     fn test_classify_opencode_openrouter_slug() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openrouter".to_string(), true)]),
             model_slugs: vec!["openrouter/anthropic/claude-opus-4.7".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -860,8 +837,8 @@ mod tests {
     #[test]
     fn test_classify_opencode_provider_negative() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("google".to_string(), true)]),
-            provider_probe_success: true,
+            model_slugs: vec!["google/gemini-2.5-pro".to_string()],
+            model_probe_success: true,
             ..OpenCodeProbeResult::default()
         };
 
@@ -880,11 +857,9 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_opencode_empty_providers() {
+    fn test_classify_opencode_empty_slugs() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::new(),
             model_slugs: Vec::new(),
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -906,9 +881,7 @@ mod tests {
     #[test]
     fn test_classify_opencode_no_matching_slug() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("anthropic".to_string(), true)]),
             model_slugs: vec!["anthropic/claude-3-5-sonnet".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -922,20 +895,14 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.status, AvailabilityStatus::Runnable);
-        assert_eq!(result.source, AvailabilitySource::OpenCodeProbe);
-        assert_eq!(result.runnable_paths.len(), 1);
-        assert_eq!(
-            result.runnable_paths[0].harness_model_id,
-            "anthropic/claude-opus-4-7"
-        );
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
+        assert!(result.runnable_paths.is_empty());
     }
 
     #[test]
-    fn test_classify_opencode_synthesizes_slug_when_model_probe_fails() {
+    fn test_classify_opencode_unknown_when_model_probe_fails() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("anthropic".to_string(), true)]),
-            provider_probe_success: true,
             model_probe_success: false,
             error: Some("model probe failed: timeout".to_string()),
             ..OpenCodeProbeResult::default()
@@ -950,21 +917,15 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.status, AvailabilityStatus::Runnable);
-        assert_eq!(result.source, AvailabilitySource::OpenCodeProbe);
-        assert_eq!(result.runnable_paths.len(), 1);
-        assert_eq!(
-            result.runnable_paths[0].harness_model_id,
-            "anthropic/claude-opus-4-7"
-        );
+        assert_eq!(result.status, AvailabilityStatus::Unknown);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeUnknown);
+        assert!(result.runnable_paths.is_empty());
     }
 
     #[test]
     fn test_resolve_runnable_path_prefers_cached_probe_slug() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5.4".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
@@ -976,29 +937,24 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_runnable_path_synthesizes_openrouter_when_probe_has_openrouter_only() {
+    fn test_resolve_runnable_path_falls_back_to_passthrough_without_slug_match() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openrouter".to_string(), true)]),
             model_slugs: vec!["openrouter/anthropic/claude-sonnet-4-7".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
 
         let resolved =
             resolve_runnable_path("claude-opus-4-7", "Anthropic", "opencode", Some(&probe));
-        assert_eq!(
-            resolved.harness_model_id,
-            "openrouter/anthropic/claude-opus-4-7"
-        );
-        assert_eq!(resolved.source, RunnablePathSource::Synthesized);
-        assert_eq!(resolved.confidence, RunnableConfidence::Likely);
+        assert_eq!(resolved.harness_model_id, "claude-opus-4-7");
+        assert_eq!(resolved.source, RunnablePathSource::Passthrough);
+        assert_eq!(resolved.confidence, RunnableConfidence::Unknown);
     }
 
     #[test]
     fn test_classify_opencode_unknown_when_probe_fails() {
         let probe = OpenCodeProbeResult {
-            error: Some("provider probe failed: timeout".to_string()),
+            error: Some("model probe failed: timeout".to_string()),
             ..OpenCodeProbeResult::default()
         };
 
@@ -1019,8 +975,7 @@ mod tests {
     #[test]
     fn test_classify_opencode_unknown_provider_stays_unknown() {
         let probe = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
-            provider_probe_success: true,
+            model_slugs: vec!["openai/gpt-5.4".to_string()],
             model_probe_success: true,
             ..OpenCodeProbeResult::default()
         };

@@ -1782,17 +1782,14 @@ model = "gpt-5""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("openai/gpt-5")
-    );
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("synthesized")
+        Some("passthrough")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("likely")
+        Some("unknown")
     );
 
     let warnings = bundle["warnings"]
@@ -1800,7 +1797,7 @@ model = "gpt-5""#;
         .expect("warnings should be an array");
     assert!(
         warnings.is_empty(),
-        "explicit harness synthesized path is intentional and should stay quiet: {warnings:?}"
+        "explicit harness passthrough path is intentional and should stay quiet: {warnings:?}"
     );
 }
 

@@ -56,9 +56,7 @@ fn probe_cache_json(fetched_at: u64) -> String {
         "last_attempt_at": fetched_at,
         "last_error": null,
         "result": {
-            "providers": {"openai": true},
             "model_slugs": ["openai/gpt-5"],
-            "provider_probe_success": true,
             "model_probe_success": true,
             "error": null
         }
@@ -86,22 +84,14 @@ fn install_fake_opencode(temp: &TempDir) -> PathBuf {
     #[cfg(windows)]
     {
         let path = bin_dir.join("opencode.bat");
-        fs::write(
-            &path,
-            "@echo off\r\nif \"%1\"==\"providers\" (echo *  OpenAI oauth) else (echo openai/gpt-5)\r\n",
-        )
-        .unwrap();
+        fs::write(&path, "@echo off\r\necho openai/gpt-5\r\n").unwrap();
     }
 
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
         let path = bin_dir.join("opencode");
-        fs::write(
-            &path,
-            "#!/bin/sh\nif [ \"$1\" = \"providers\" ]; then echo '*  OpenAI oauth'; else echo 'openai/gpt-5'; fi\n",
-        )
-        .unwrap();
+        fs::write(&path, "#!/bin/sh\necho 'openai/gpt-5'\n").unwrap();
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&path, perms).unwrap();
@@ -226,10 +216,7 @@ fn cold_probe_write_creates_valid_json_cache_file() {
     assert!(cache["fetched_at"].as_u64().is_some());
     assert!(cache["last_attempt_at"].as_u64().is_some());
     assert_eq!(cache["last_error"], Value::Null);
-    assert_eq!(
-        cache["result"]["provider_probe_success"].as_bool(),
-        Some(true)
-    );
+    assert_eq!(cache["result"]["model_probe_success"].as_bool(), Some(true));
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -32,6 +33,8 @@ pub struct PiProbeResult {
     pub compatible: bool,
     pub help_surface_tokens_present: Vec<String>,
     pub help_surface_tokens_missing: Vec<String>,
+    #[serde(default)]
+    pub model_slugs: HashSet<String>,
     pub error: Option<String>,
 }
 
@@ -76,13 +79,30 @@ pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {
     };
 
     let (present, missing) = classify_help_tokens(&help_output);
+    let compatible = missing.is_empty();
+
+    let list_models_output = match run_command(&binary_path, &["--list-models"], timeout) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            return PiProbeResult {
+                binary_path: binary_path_text,
+                version: first_non_empty_line(&version_output),
+                compatible: false,
+                help_surface_tokens_present: present,
+                help_surface_tokens_missing: missing,
+                model_slugs: HashSet::new(),
+                error: Some(format!("pi --list-models probe failed: {error}")),
+            };
+        }
+    };
 
     PiProbeResult {
         binary_path: binary_path_text,
         version: first_non_empty_line(&version_output),
-        compatible: missing.is_empty(),
+        compatible,
         help_surface_tokens_present: present,
         help_surface_tokens_missing: missing,
+        model_slugs: parse_models_output(&list_models_output),
         error: None,
     }
 }
@@ -151,6 +171,142 @@ fn first_non_empty_line(output: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+fn parse_models_output(output: &str) -> HashSet<String> {
+    let mut model_slugs = HashSet::new();
+    for raw_line in output.lines() {
+        let line = strip_ansi(raw_line.trim());
+        if line.is_empty() || is_separator_line(&line) {
+            continue;
+        }
+
+        if let Some((provider, model_id)) = parse_table_row(&line) {
+            model_slugs.insert(format!("{provider}/{model_id}"));
+            continue;
+        }
+
+        if let Some((provider, model_id)) = parse_slug_row(&line) {
+            model_slugs.insert(format!("{provider}/{model_id}"));
+        }
+    }
+
+    model_slugs
+}
+
+fn parse_table_row(line: &str) -> Option<(String, String)> {
+    let normalized = line.replace('│', "|");
+    let has_table_separators = normalized.contains('|');
+    let columns: Vec<String> = if has_table_separators {
+        normalized
+            .split('|')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        normalized
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+
+    if columns.len() < 2 {
+        return None;
+    }
+    if !has_table_separators && columns.len() != 2 {
+        return None;
+    }
+
+    let provider = columns[0].trim().to_ascii_lowercase();
+    let model_id = columns[1].trim().to_string();
+    if is_header_cell(&provider) || is_header_cell(&model_id) {
+        return None;
+    }
+    if provider.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    if model_id.ends_with(':') {
+        return None;
+    }
+    if !provider
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+    {
+        return None;
+    }
+
+    Some((provider, model_id))
+}
+
+fn parse_slug_row(line: &str) -> Option<(String, String)> {
+    if is_header_cell(line) {
+        return None;
+    }
+    let (provider, model_id) = line.split_once('/')?;
+    let provider = provider.trim().to_ascii_lowercase();
+    let model_id = model_id.trim().to_string();
+    if provider.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    if !provider
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+    {
+        return None;
+    }
+    Some((provider, model_id))
+}
+
+fn is_header_cell(cell: &str) -> bool {
+    matches!(
+        cell.trim().to_ascii_lowercase().as_str(),
+        "provider" | "providers" | "model" | "models" | "id" | "name"
+    )
+}
+
+fn is_separator_line(line: &str) -> bool {
+    line.chars().all(|ch| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '-' | '='
+                    | '+'
+                    | '|'
+                    | '│'
+                    | '┌'
+                    | '┐'
+                    | '└'
+                    | '┘'
+                    | '├'
+                    | '┤'
+                    | '┬'
+                    | '┴'
+                    | '┼'
+                    | '─'
+                    | '━'
+            )
+    })
+}
+
 fn classify_help_tokens(help_output: &str) -> (Vec<String>, Vec<String>) {
     let mut present = Vec::new();
     let mut missing = Vec::new();
@@ -191,5 +347,64 @@ mod tests {
         let (_present, missing) = classify_help_tokens(help);
         assert!(missing.iter().any(|m| m.contains("--append-system-prompt")));
         assert!(missing.iter().any(|m| m.contains("--session")));
+    }
+
+    #[test]
+    fn parse_models_output_parses_pipe_table() {
+        let output = r#"
+| Provider | Model | Reasoning |
+| --- | --- | --- |
+| openai | gpt-5.4-mini | true |
+| anthropic | claude-sonnet-4.7 | true |
+"#;
+
+        let model_slugs = parse_models_output(output);
+        assert!(model_slugs.contains("openai/gpt-5.4-mini"));
+        assert!(model_slugs.contains("anthropic/claude-sonnet-4.7"));
+    }
+
+    #[test]
+    fn parse_models_output_parses_box_table_and_strips_ansi() {
+        let output = "\
+┌─────────┬───────────────────────┐\n\
+│ Provider│ Model                 │\n\
+├─────────┼───────────────────────┤\n\
+│ openai  │ \u{1b}[32mgpt-5.4\u{1b}[0m               │\n\
+│ openai-codex │ gpt-5.4-mini     │\n\
+└─────────┴───────────────────────┘\n";
+
+        let model_slugs = parse_models_output(output);
+        assert!(model_slugs.contains("openai/gpt-5.4"));
+        assert!(model_slugs.contains("openai-codex/gpt-5.4-mini"));
+    }
+
+    #[test]
+    fn parse_models_output_keeps_nested_model_ids_from_table_column() {
+        let output = "openrouter | openai/gpt-5.4 | text";
+        let model_slugs = parse_models_output(output);
+        assert!(model_slugs.contains("openrouter/openai/gpt-5.4"));
+    }
+
+    #[test]
+    fn parse_models_output_accepts_simple_slug_lines() {
+        let output = "openai/gpt-5.4\nanthropic/claude-sonnet-4.7\n";
+        let model_slugs = parse_models_output(output);
+        assert!(model_slugs.contains("openai/gpt-5.4"));
+        assert!(model_slugs.contains("anthropic/claude-sonnet-4.7"));
+    }
+
+    #[test]
+    fn probe_result_round_trip_defaults_model_slugs() {
+        let raw = r#"{
+            "binary_path": "/usr/bin/pi",
+            "version": "pi 0.4.2",
+            "compatible": true,
+            "help_surface_tokens_present": ["--mode"],
+            "help_surface_tokens_missing": [],
+            "error": null
+        }"#;
+
+        let parsed: PiProbeResult = serde_json::from_str(raw).unwrap();
+        assert!(parsed.model_slugs.is_empty());
     }
 }

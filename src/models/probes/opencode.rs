@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use wait_timeout::ChildExt;
@@ -11,15 +10,11 @@ use wait_timeout::ChildExt;
 /// Result of probing OpenCode's runtime availability.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OpenCodeProbeResult {
-    /// Provider availability: OpenCode provider ID -> has credentials.
-    pub providers: HashMap<String, bool>,
     /// Full model slug list, e.g. `openai/gpt-5.4`.
     pub model_slugs: Vec<String>,
-    /// Whether the provider probe succeeded.
-    pub provider_probe_success: bool,
     /// Whether the model list probe succeeded.
     pub model_probe_success: bool,
-    /// Redacted error message if either probe failed.
+    /// Redacted error message if probing failed.
     pub error: Option<String>,
 }
 
@@ -32,39 +27,16 @@ pub fn probe() -> OpenCodeProbeResult {
 
 /// Probe OpenCode with a specific timeout.
 pub fn probe_with_timeout(timeout: Duration) -> OpenCodeProbeResult {
-    let deadline = Instant::now() + timeout;
     let mut result = OpenCodeProbeResult::default();
 
-    match run_command("opencode", &["providers", "list"], timeout) {
-        Ok(stdout) => {
-            result.providers = parse_providers_output(&stdout);
-            result.provider_probe_success = true;
-        }
-        Err(error) => {
-            result.error = Some(format!("provider probe failed: {error}"));
-            result.provider_probe_success = false;
-        }
-    }
-
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        result.model_probe_success = false;
-        if result.error.is_none() {
-            result.error = Some("timeout before model probe".to_string());
-        }
-        return result;
-    }
-
-    match run_command("opencode", &["models"], remaining) {
+    match run_command("opencode", &["models"], timeout) {
         Ok(stdout) => {
             result.model_slugs = parse_models_output(&stdout);
             result.model_probe_success = true;
         }
         Err(error) => {
             result.model_probe_success = false;
-            if result.error.is_none() {
-                result.error = Some(format!("model probe failed: {error}"));
-            }
+            result.error = Some(format!("model probe failed: {error}"));
         }
     }
 
@@ -149,26 +121,6 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Parse `opencode providers list` output.
-///
-/// SECURITY: The raw input may reference credential paths. Do not log, store,
-/// or include it in diagnostics.
-fn parse_providers_output(stdout: &str) -> HashMap<String, bool> {
-    let mut providers = HashMap::new();
-
-    for line in stdout.lines() {
-        let clean = strip_ansi(line.trim());
-        if let Some(rest) = clean.strip_prefix('●').or_else(|| clean.strip_prefix('*')) {
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            if parts.len() >= 2 {
-                providers.insert(parts[0].to_lowercase(), true);
-            }
-        }
-    }
-
-    providers
-}
-
 /// Parse `opencode models` output into slug list.
 fn parse_models_output(stdout: &str) -> Vec<String> {
     stdout
@@ -191,31 +143,6 @@ mod tests {
     #[test]
     fn test_strip_ansi_no_escapes() {
         assert_eq!(strip_ansi("Plain text"), "Plain text");
-    }
-
-    #[test]
-    fn test_parse_providers_bullet() {
-        let output = r#"┌  Credentials [path redacted]
-│
-●  OpenAI oauth
-│
-●  Google api
-│
-●  OpenRouter api
-│
-└  3 credentials"#;
-
-        let providers = parse_providers_output(output);
-
-        assert!(providers.get("openai").copied().unwrap_or(false));
-        assert!(providers.get("google").copied().unwrap_or(false));
-        assert!(providers.get("openrouter").copied().unwrap_or(false));
-        assert!(!providers.contains_key("credentials"));
-    }
-
-    #[test]
-    fn test_parse_providers_empty() {
-        assert!(parse_providers_output("").is_empty());
     }
 
     #[test]
@@ -247,17 +174,29 @@ openrouter/anthropic/claude-opus-4.7"#;
     #[test]
     fn test_probe_result_round_trip() {
         let result = OpenCodeProbeResult {
-            providers: HashMap::from([("openai".to_string(), true)]),
             model_slugs: vec!["openai/gpt-5.4".to_string()],
-            provider_probe_success: true,
             model_probe_success: true,
             error: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         let back: OpenCodeProbeResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.providers.get("openai"), Some(&true));
         assert_eq!(back.model_slugs, result.model_slugs);
-        assert!(back.provider_probe_success);
+        assert!(back.model_probe_success);
+        assert_eq!(back.error, None);
+    }
+
+    #[test]
+    fn test_probe_result_deserializes_legacy_provider_fields() {
+        let legacy = r#"{
+            "providers": {"openai": true},
+            "model_slugs": ["openai/gpt-5.4"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }"#;
+
+        let back: OpenCodeProbeResult = serde_json::from_str(legacy).unwrap();
+        assert_eq!(back.model_slugs, vec!["openai/gpt-5.4".to_string()]);
         assert!(back.model_probe_success);
         assert_eq!(back.error, None);
     }

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Phase 1 model-first probes now gate OpenCode/Pi routing on harness-reported model slug lists (`opencode models`, `pi --list-models`) instead of provider-auth probe signals, with cache reuse keyed to model-list evidence and fail-closed availability when no matching slug exists.
+
 ## [0.4.8-rc.7] - 2026-05-21
 
 ### Added

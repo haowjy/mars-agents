@@ -177,16 +177,16 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
 
     if args.catalog {
-        return run_list_catalog(
-            &cache,
-            &outcome,
+        return run_list_catalog(ListCatalogInput {
+            cache: &cache,
+            outcome: &outcome,
             ctx,
             args,
-            &routing_settings,
-            &routing_diagnostics,
-            &capability_snapshot,
+            routing_settings: &routing_settings,
+            routing_diagnostics: &routing_diagnostics,
+            capability_snapshot: &capability_snapshot,
             json,
-        );
+        });
     }
 
     // Load config to get consumer models + trigger merge
@@ -370,6 +370,39 @@ struct RouteTraceInput<'a> {
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
+struct ListCatalogInput<'a> {
+    cache: &'a models::ModelsCache,
+    outcome: &'a models::RefreshOutcome,
+    ctx: &'a MarsContext,
+    args: &'a ListArgs,
+    routing_settings: &'a ResolvedRoutingSettings,
+    routing_diagnostics: &'a [String],
+    capability_snapshot: &'a CapabilitySnapshot,
+    json: bool,
+}
+
+struct OutputResolvedInput<'a> {
+    name: &'a str,
+    resolved: &'a models::ResolvedAlias,
+    source: &'a str,
+    route_trace: &'a crate::routing::RoutingTrace,
+    outcome: &'a models::RefreshOutcome,
+    cache_outcome: &'a CachedProbeOutcome,
+    routing_diagnostics: &'a [String],
+    json: bool,
+}
+
+struct OutputPassthroughInput<'a> {
+    name: &'a str,
+    outcome: &'a models::RefreshOutcome,
+    is_offline: bool,
+    installed: &'a HashSet<String>,
+    routing_settings: &'a ResolvedRoutingSettings,
+    cache_error: Option<&'a str>,
+    routing_diagnostics: &'a [String],
+    json: bool,
+}
+
 fn run_list_all(
     merged: &IndexMap<String, ModelAlias>,
     cache: &models::ModelsCache,
@@ -447,16 +480,17 @@ fn run_list_all(
     Ok(0)
 }
 
-fn run_list_catalog(
-    cache: &models::ModelsCache,
-    outcome: &models::RefreshOutcome,
-    ctx: &MarsContext,
-    args: &ListArgs,
-    routing_settings: &ResolvedRoutingSettings,
-    routing_diagnostics: &[String],
-    capability_snapshot: &CapabilitySnapshot,
-    json: bool,
-) -> Result<i32, MarsError> {
+fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
+    let ListCatalogInput {
+        cache,
+        outcome,
+        ctx,
+        args,
+        routing_settings,
+        routing_diagnostics,
+        capability_snapshot,
+        json,
+    } = input;
     let cache_warning = cache_warning(outcome);
     let installed = capability_snapshot.installed_harnesses();
     let is_offline = capability_snapshot.offline || args.no_refresh_models;
@@ -1190,16 +1224,16 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 routing_settings: &routing_settings,
             };
             let route_trace = route_trace_for_resolved_model(&route_input);
-            return run_output_resolved(
-                &args.name,
-                &resolved,
-                "alias_prefix",
-                &route_trace,
+            return run_output_resolved(OutputResolvedInput {
+                name: &args.name,
+                resolved: &resolved,
+                source: "alias_prefix",
+                route_trace: &route_trace,
                 outcome,
-                &cache_outcome,
-                &routing_diagnostics,
+                cache_outcome: &cache_outcome,
+                routing_diagnostics: &routing_diagnostics,
                 json,
-            );
+            });
         }
     }
 
@@ -1209,16 +1243,16 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .map(|(_, o)| o.clone())
         .unwrap_or(models::RefreshOutcome::Offline);
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    run_output_passthrough(
-        &args.name,
-        &outcome,
+    run_output_passthrough(OutputPassthroughInput {
+        name: &args.name,
+        outcome: &outcome,
         is_offline,
-        &installed,
-        &routing_settings,
-        cache_error.as_deref(),
-        &routing_diagnostics,
+        installed: &installed,
+        routing_settings: &routing_settings,
+        cache_error: cache_error.as_deref(),
+        routing_diagnostics: &routing_diagnostics,
         json,
-    )
+    })
 }
 
 fn run_refresh_probe(args: &RefreshProbeArgs) -> Result<i32, MarsError> {
@@ -1580,16 +1614,17 @@ fn run_resolve_fixed_harness_failure(
     Ok(1)
 }
 
-fn run_output_resolved(
-    name: &str,
-    resolved: &models::ResolvedAlias,
-    source: &str,
-    route_trace: &crate::routing::RoutingTrace,
-    outcome: &models::RefreshOutcome,
-    cache_outcome: &CachedProbeOutcome,
-    routing_diagnostics: &[String],
-    json: bool,
-) -> Result<i32, MarsError> {
+fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError> {
+    let OutputResolvedInput {
+        name,
+        resolved,
+        source,
+        route_trace,
+        outcome,
+        cache_outcome,
+        routing_diagnostics,
+        json,
+    } = input;
     let cache_warning = cache_warning(outcome);
     if let Some(warning) = cache_warning.as_deref()
         && !json
@@ -1656,16 +1691,17 @@ fn run_output_resolved(
     Ok(0)
 }
 
-fn run_output_passthrough(
-    name: &str,
-    outcome: &models::RefreshOutcome,
-    is_offline: bool,
-    installed: &HashSet<String>,
-    routing_settings: &ResolvedRoutingSettings,
-    cache_error: Option<&str>,
-    routing_diagnostics: &[String],
-    json: bool,
-) -> Result<i32, MarsError> {
+fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, MarsError> {
+    let OutputPassthroughInput {
+        name,
+        outcome,
+        is_offline,
+        installed,
+        routing_settings,
+        cache_error,
+        routing_diagnostics,
+        json,
+    } = input;
     if name.trim().is_empty() {
         if json {
             let mut out = serde_json::json!({

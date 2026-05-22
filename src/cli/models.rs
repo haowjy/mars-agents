@@ -807,16 +807,13 @@ fn route_trace_for_fixed_harness(
     fixed_harness: &str,
     source: crate::routing::RouteSource,
 ) -> crate::routing::RoutingTrace {
-    let assessment =
-        crate::routing::evaluate_fixed_harness(&build_route_trace_input(input), fixed_harness);
-    let confidence = if assessment.confidence.is_some() {
-        crate::routing::RouteConfidence::Forced
-    } else {
-        crate::routing::RouteConfidence::Passthrough
-    };
+    let mut fixed_input = build_route_trace_input(input);
+    fixed_input.provider_for_order =
+        provider_for_order_for_fixed_harness(fixed_input.provider_for_order, fixed_harness);
+    let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
     crate::routing::RoutingTrace {
         source,
-        confidence,
+        confidence: crate::routing::RouteConfidence::Forced,
         harness: fixed_harness.to_string(),
         harness_order_position: None,
         candidates_tried: vec![fixed_harness.to_string()],
@@ -838,6 +835,29 @@ fn build_route_trace_input<'a>(input: &'a RouteTraceInput<'a>) -> crate::routing
             .then_some(input.routing_settings.linked_harnesses.as_slice()),
         opencode_probe_result: input.opencode_probe_result,
         pi_probe_result: input.pi_probe_result,
+    }
+}
+
+fn provider_for_order_for_fixed_harness<'a>(
+    provider_for_order: Option<&'a str>,
+    harness: &str,
+) -> Option<&'a str> {
+    let has_explicit_provider = provider_for_order.is_some_and(|provider| {
+        let normalized = provider.trim();
+        !normalized.is_empty() && !normalized.eq_ignore_ascii_case("unknown")
+    });
+    if has_explicit_provider {
+        return provider_for_order;
+    }
+
+    native_provider_for_harness(harness).or(provider_for_order)
+}
+
+fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
+    match harness {
+        "claude" => Some("anthropic"),
+        "codex" => Some("openai"),
+        _ => None,
     }
 }
 
@@ -1273,6 +1293,7 @@ fn run_resolve_exact_alias(
         runtime.pi_probe_result,
     );
     let mut route_trace = None;
+    let mut fixed_harness_route_failure = None;
     if let Some(r) = resolved_entry.as_mut() {
         if alias.harness.is_none() {
             apply_routing_settings_to_resolved_alias(
@@ -1294,11 +1315,27 @@ fn run_resolve_exact_alias(
             routing_settings: runtime.routing_settings,
         };
         route_trace = Some(if let Some(fixed_harness) = alias.harness.as_deref() {
-            route_trace_for_fixed_harness(
+            let fixed_trace = route_trace_for_fixed_harness(
                 &route_input,
                 fixed_harness,
                 crate::routing::RouteSource::Alias,
-            )
+            );
+            let failed_assessment = fixed_trace
+                .assessments
+                .first()
+                .is_some_and(|assessment| assessment.confidence.is_none());
+            if failed_assessment {
+                let skip_reason = fixed_trace
+                    .assessments
+                    .first()
+                    .and_then(|assessment| assessment.skip_reason);
+                fixed_harness_route_failure = Some(format!(
+                    "alias harness `{}` cannot run resolved model under model-first routing ({})",
+                    fixed_harness,
+                    skip_reason.unwrap_or("unavailable")
+                ));
+            }
+            fixed_trace
         } else {
             route_trace_for_resolved_model(&route_input)
         });
@@ -1311,6 +1348,25 @@ fn run_resolve_exact_alias(
         );
     }
     let diagnostics = diag.drain();
+
+    if let Some(error_message) = fixed_harness_route_failure {
+        let trace = route_trace
+            .as_ref()
+            .expect("fixed harness route trace exists");
+        let Some(resolved) = resolved_entry.as_ref() else {
+            return Ok(1);
+        };
+        return run_resolve_fixed_harness_failure(ResolveFixedHarnessFailureInput {
+            name,
+            source: source.as_str(),
+            resolved,
+            trace,
+            cache_warning: cache_warning.as_deref(),
+            diagnostics: &diagnostics,
+            error_message: &error_message,
+            json,
+        });
+    }
 
     if json {
         if let Some(r) = resolved_entry.as_ref() {
@@ -1426,6 +1482,63 @@ fn run_resolve_exact_alias(
     }
 
     Ok(0)
+}
+
+struct ResolveFixedHarnessFailureInput<'a> {
+    name: &'a str,
+    source: &'a str,
+    resolved: &'a models::ResolvedAlias,
+    trace: &'a crate::routing::RoutingTrace,
+    cache_warning: Option<&'a str>,
+    diagnostics: &'a [Diagnostic],
+    error_message: &'a str,
+    json: bool,
+}
+
+fn run_resolve_fixed_harness_failure(
+    input: ResolveFixedHarnessFailureInput<'_>,
+) -> Result<i32, MarsError> {
+    let ResolveFixedHarnessFailureInput {
+        name,
+        source,
+        resolved,
+        trace,
+        cache_warning,
+        diagnostics,
+        error_message,
+        json,
+    } = input;
+
+    if json {
+        let mut out = serde_json::json!({
+            "name": name,
+            "source": source,
+            "provider": resolved.provider,
+            "harness": trace.harness,
+            "model_id": resolved.model_id,
+            "resolved_model": resolved.model_id,
+            "error": error_message,
+            "harnesses_tried": trace.candidates_tried,
+        });
+        add_route_json_fields(&mut out, trace);
+        if let Some(warning) = cache_warning {
+            out["cache_warning"] = serde_json::json!(warning);
+        }
+        if !diagnostics.is_empty() {
+            out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(diagnostics));
+        }
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        eprintln!("error: {error_message}");
+        println!("Alias:    {name}");
+        println!("Source:   {source}");
+        println!("Provider: {}", resolved.provider);
+        println!("Resolved: {}", resolved.model_id);
+        print_route_text(trace);
+        emit_drained_text_diagnostics(diagnostics);
+    }
+
+    Ok(1)
 }
 
 fn run_output_resolved(

@@ -110,8 +110,10 @@ pub(super) fn resolve_harness(
                     unavailable,
                 )
             } else {
-                let fixed_provider_for_order = native_provider_for_fixed_harness(&selection.value)
-                    .or(evidence.provider_for_order);
+                let fixed_provider_for_order = provider_for_order_for_fixed_harness(
+                    evidence.provider_for_order,
+                    &selection.value,
+                );
                 let fixed_assessment = routing::evaluate_fixed_harness(
                     &RoutingInput {
                         model_id: evidence.model_id,
@@ -299,7 +301,22 @@ fn evaluate_candidates(
     })
 }
 
-fn native_provider_for_fixed_harness(harness: &str) -> Option<&'static str> {
+fn provider_for_order_for_fixed_harness<'a>(
+    provider_for_order: Option<&'a str>,
+    harness: &str,
+) -> Option<&'a str> {
+    let has_explicit_provider = provider_for_order.is_some_and(|provider| {
+        let normalized = provider.trim();
+        !normalized.is_empty() && !normalized.eq_ignore_ascii_case("unknown")
+    });
+    if has_explicit_provider {
+        return provider_for_order;
+    }
+
+    native_provider_for_harness(harness).or(provider_for_order)
+}
+
+fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
     match harness {
         "claude" => Some("anthropic"),
         "codex" => Some("openai"),
@@ -607,6 +624,31 @@ mod tests {
 
         assert!(message.contains("cli harness `claude` is not installed"));
         assert!(message.contains("installed harnesses: codex, opencode"));
+    }
+
+    #[test]
+    fn fixed_native_harness_rejects_incompatible_provider_constraint() {
+        let installed = installed(&["codex"]);
+        let profile = profile(None);
+        let input = policy_input(&profile, None, Some("codex"));
+        let evidence = HarnessEvidence {
+            model_id: "gpt-5",
+            provider_for_order: Some("openai"),
+            provider_constraint: Some("anthropic"),
+            provider_order: None,
+            config_default_harness: None,
+            harness_order: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: None,
+        };
+
+        let error = resolve_harness(&input, None, None, None, evidence)
+            .expect_err("incompatible provider constraint should fail");
+        let message = error.to_string();
+        assert!(message.contains("cli harness `codex` cannot run requested model"));
+        assert!(message.contains("provider_constraint_unsatisfied"));
     }
 
     #[test]

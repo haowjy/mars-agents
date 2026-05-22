@@ -368,6 +368,21 @@ where
         };
     }
 
+    if is_native_harness(harness)
+        && provider_constraint_excludes_native_harness(input.provider_constraint, harness)
+    {
+        return CandidateAssessment {
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
+            confidence: None,
+            skip_reason: Some("provider_constraint_unsatisfied"),
+        };
+    }
+
     if is_native_match(input.provider_for_order, harness) {
         if auth_check(harness) {
             return CandidateAssessment {
@@ -565,6 +580,27 @@ fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
     matches!(
         (provider.map(str::to_ascii_lowercase).as_deref(), harness),
         (Some("anthropic"), "claude") | (Some("openai"), "codex")
+    )
+}
+
+fn is_native_harness(harness: &str) -> bool {
+    matches!(harness, "claude" | "codex")
+}
+
+fn provider_constraint_excludes_native_harness(
+    provider_constraint: Option<&str>,
+    harness: &str,
+) -> bool {
+    let Some(provider_constraint) = provider_constraint else {
+        return false;
+    };
+
+    !matches!(
+        (
+            provider_constraint.trim().to_ascii_lowercase().as_str(),
+            harness
+        ),
+        ("anthropic", "claude") | ("openai", "codex")
     )
 }
 
@@ -1241,5 +1277,32 @@ mod tests {
         assert!(!assessment.installed);
         assert_eq!(assessment.confidence, None);
         assert_eq!(assessment.skip_reason, Some("not_installed"));
+    }
+
+    #[test]
+    fn fixed_native_harness_enforces_provider_constraint() {
+        let installed = installed(&["codex"]);
+        let input = RoutingInput {
+            model_id: "gpt-5",
+            provider_for_order: Some("openai"),
+            provider_constraint: Some("anthropic"),
+            settings_provider_order: None,
+            settings_harness_order: None,
+            config_default_harness: None,
+            installed_harnesses: &installed,
+            linked_harnesses: None,
+            opencode_probe_result: None,
+            pi_probe_result: None,
+        };
+
+        let assessment = evaluate_fixed_harness_with_auth(&input, "codex", always_authed);
+
+        assert_eq!(assessment.harness, "codex");
+        assert!(assessment.installed);
+        assert_eq!(assessment.confidence, None);
+        assert_eq!(
+            assessment.skip_reason,
+            Some("provider_constraint_unsatisfied")
+        );
     }
 }

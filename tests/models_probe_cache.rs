@@ -40,7 +40,7 @@ fn probe_cache_path(cache_dir: &Path) -> PathBuf {
 fn models_cache_json() -> String {
     serde_json::to_string_pretty(&json!({
         "models": [{
-            "id": "openai/gpt-5",
+            "id": "gpt-5",
             "provider": "OpenAI",
             "release_date": "2026-01-01"
         }],
@@ -71,7 +71,7 @@ fn setup_project(project_root: &Path) {
 
 [models.fast]
 harness = "opencode"
-model = "openai/gpt-5"
+model = "gpt-5"
 "#,
     );
     write_models_cache(project_root, &models_cache_json());
@@ -134,7 +134,7 @@ fn resolve_reads_prepopulated_probe_cache_hit() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("hit"));
 }
 
@@ -162,7 +162,7 @@ fn resolve_reports_stale_probe_cache_status_when_reusing_stale_cache() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
 }
 

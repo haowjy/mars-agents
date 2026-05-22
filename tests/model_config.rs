@@ -21,6 +21,7 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
     });
 
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let source_root = write_local_source_with_model_alias(
         temp.path(),
         "alias-source-force-sync",
@@ -38,6 +39,7 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
 
     let mut resolve_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     resolve_cmd.args(["--json", "models", "resolve", "test-alias"]);
+    resolve_cmd.env("PATH", replace_path_with(&bin_dir));
     let resolve_output = resolve_cmd.assert().success().get_output().clone();
     let resolve_json: Value =
         serde_json::from_slice(&resolve_output.stdout).expect("resolve --json should return JSON");
@@ -90,6 +92,7 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
     });
 
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let source_root = write_local_source_with_model_alias(
         temp.path(),
         "alias-source-immediate",
@@ -103,6 +106,7 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
 
     let mut resolve_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     resolve_cmd.args(["models", "resolve", "test-alias-immediate"]);
+    resolve_cmd.env("PATH", replace_path_with(&bin_dir));
     let resolve_output = resolve_cmd.assert().success().get_output().clone();
     let resolve_stdout =
         String::from_utf8(resolve_output.stdout).expect("resolve stdout should be utf-8");
@@ -511,6 +515,55 @@ model = "gpt-5.4-mini"
 
     assert_eq!(stdout["harness"].as_str(), Some("cursor"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
+}
+
+#[test]
+#[serial]
+fn resolve_exact_alias_fixed_native_harness_fails_when_provider_constraint_is_incompatible() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.badnative]
+harness = "codex"
+model = "gpt-5"
+provider = "anthropic"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "badnative"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().code(1).get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert!(
+        stdout["error"]
+            .as_str()
+            .expect("error should be present")
+            .contains("cannot run resolved model under model-first routing")
+    );
+    assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["route"]["confidence"].as_str(), Some("forced"));
+    assert_eq!(
+        stdout["route_trace"]["assessments"][0]["skip_reason"].as_str(),
+        Some("provider_constraint_unsatisfied")
+    );
 }
 
 #[test]

@@ -189,6 +189,12 @@ fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed
 }
 
 #[test]
+fn build_launch_bundle_opencode_uses_route_chosen_slug_with_provider_order_and_nested_slug_present()
+{
+    routing::build_launch_bundle_opencode_uses_route_chosen_slug_with_provider_order_and_nested_slug_present();
+}
+
+#[test]
 fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
     routing::build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness();
 }
@@ -206,6 +212,12 @@ fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
 #[test]
 fn build_launch_bundle_explicit_unknown_harness_model_path_passes_through_quietly() {
     routing::build_launch_bundle_explicit_unknown_harness_model_path_fails_closed();
+}
+
+#[test]
+fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint() {
+    routing::build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint(
+    );
 }
 
 #[test]

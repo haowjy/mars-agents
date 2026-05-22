@@ -41,10 +41,16 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .then_some(opencode_probe_result)
         .flatten();
     let mut runnable = resolve_runnable_path(&model, provider_for_runnable, &harness, cached_probe);
-    if let Some(chosen_slug) = selected_chosen_slug(&route_trace) {
+    if let Some((chosen_slug, chosen_confidence)) = selected_chosen_slug(&route_trace) {
         let use_chosen_slug = harness.eq_ignore_ascii_case("pi")
             || (harness.eq_ignore_ascii_case("opencode")
-                && runnable.source == crate::models::availability::RunnablePathSource::Passthrough);
+                && matches!(
+                    chosen_confidence,
+                    Some(
+                        crate::routing::RouteConfidence::Confirmed
+                            | crate::routing::RouteConfidence::Constrained
+                    )
+                ));
         if use_chosen_slug {
             runnable.harness_model_id = chosen_slug;
             runnable.source = crate::models::availability::RunnablePathSource::CachedProbe;
@@ -67,10 +73,17 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     }
 }
 
-fn selected_chosen_slug(trace: &RoutingTrace) -> Option<String> {
+fn selected_chosen_slug(
+    trace: &RoutingTrace,
+) -> Option<(String, Option<crate::routing::RouteConfidence>)> {
     trace
         .assessments
         .iter()
         .find(|assessment| assessment.harness == trace.harness)
-        .and_then(|assessment| assessment.chosen_slug.clone())
+        .and_then(|assessment| {
+            assessment
+                .chosen_slug
+                .as_ref()
+                .map(|slug| (slug.clone(), assessment.confidence))
+        })
 }

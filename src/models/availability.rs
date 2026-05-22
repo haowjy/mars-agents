@@ -92,37 +92,21 @@ pub struct ResolvedRunnablePath {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposedSlug {
-    pub oc_provider: String,
-    pub upstream_provider: Option<String>,
+    pub provider: String,
     pub model_part: String,
     pub full_slug: String,
 }
 
 pub fn decompose_slug(slug: &str) -> Option<DecomposedSlug> {
-    let parts: Vec<&str> = slug.split('/').collect();
-    match parts.as_slice() {
-        [oc_provider, model_part] if !oc_provider.is_empty() && !model_part.is_empty() => {
-            Some(DecomposedSlug {
-                oc_provider: (*oc_provider).to_string(),
-                upstream_provider: None,
-                model_part: (*model_part).to_string(),
-                full_slug: slug.to_string(),
-            })
-        }
-        [oc_provider, upstream_provider, model_part]
-            if !oc_provider.is_empty()
-                && !upstream_provider.is_empty()
-                && !model_part.is_empty() =>
-        {
-            Some(DecomposedSlug {
-                oc_provider: (*oc_provider).to_string(),
-                upstream_provider: Some((*upstream_provider).to_string()),
-                model_part: (*model_part).to_string(),
-                full_slug: slug.to_string(),
-            })
-        }
-        _ => None,
+    let (provider, model_part) = slug.split_once('/')?;
+    if provider.is_empty() || model_part.is_empty() {
+        return None;
     }
+    Some(DecomposedSlug {
+        provider: provider.to_string(),
+        model_part: model_part.to_string(),
+        full_slug: slug.to_string(),
+    })
 }
 
 pub fn normalize_model_id(id: &str) -> String {
@@ -315,12 +299,7 @@ fn find_matching_slug(
         let Some(decomposed) = decompose_slug(slug) else {
             continue;
         };
-        let effective_provider = decomposed
-            .upstream_provider
-            .as_deref()
-            .unwrap_or(&decomposed.oc_provider);
-
-        if provider_matches(mars_provider, effective_provider)
+        if provider_matches(mars_provider, &decomposed.provider)
             && model_id_matches(mars_model_id, &decomposed.model_part)
         {
             return Some(slug.clone());
@@ -513,8 +492,7 @@ mod tests {
     #[test]
     fn test_decompose_slug_two_segments() {
         let slug = decompose_slug("openai/gpt-5.4").unwrap();
-        assert_eq!(slug.oc_provider, "openai");
-        assert_eq!(slug.upstream_provider, None);
+        assert_eq!(slug.provider, "openai");
         assert_eq!(slug.model_part, "gpt-5.4");
         assert_eq!(slug.full_slug, "openai/gpt-5.4");
     }
@@ -522,9 +500,8 @@ mod tests {
     #[test]
     fn test_decompose_slug_three_segments() {
         let slug = decompose_slug("openrouter/anthropic/claude-opus-4.7").unwrap();
-        assert_eq!(slug.oc_provider, "openrouter");
-        assert_eq!(slug.upstream_provider.as_deref(), Some("anthropic"));
-        assert_eq!(slug.model_part, "claude-opus-4.7");
+        assert_eq!(slug.provider, "openrouter");
+        assert_eq!(slug.model_part, "anthropic/claude-opus-4.7");
         assert_eq!(slug.full_slug, "openrouter/anthropic/claude-opus-4.7");
     }
 
@@ -532,7 +509,7 @@ mod tests {
     fn test_decompose_slug_invalid() {
         assert!(decompose_slug("gpt-5").is_none());
         assert!(decompose_slug("openai/").is_none());
-        assert!(decompose_slug("a/b/c/d").is_none());
+        assert!(decompose_slug("/gpt-5").is_none());
     }
 
     #[test]
@@ -810,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_opencode_openrouter_slug() {
+    fn test_classify_opencode_nested_provider_slug_is_not_flattened() {
         let probe = OpenCodeProbeResult {
             model_slugs: vec!["openrouter/anthropic/claude-opus-4.7".to_string()],
             model_probe_success: true,
@@ -826,12 +803,9 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.status, AvailabilityStatus::Runnable);
-        assert_eq!(result.source, AvailabilitySource::OpenCodeProbe);
-        assert_eq!(
-            result.runnable_paths[0].harness_model_id,
-            "openrouter/anthropic/claude-opus-4.7"
-        );
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::OpenCodeProbeNegative);
+        assert!(result.runnable_paths.is_empty());
     }
 
     #[test]

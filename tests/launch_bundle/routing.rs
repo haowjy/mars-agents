@@ -558,9 +558,96 @@ default_harness = "claude""#;
         bundle["routing"]["route_trace"]["harness"].as_str(),
         Some("opencode")
     );
+    let assessments = bundle["routing"]["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let opencode_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("opencode"))
+        .expect("opencode assessment should exist");
     assert_eq!(
-        bundle["routing"]["route_trace"]["assessments"][1]["chosen_slug"].as_str(),
+        opencode_assessment["chosen_slug"].as_str(),
         Some("openai/gpt-5")
+    );
+}
+
+pub(crate) fn build_launch_bundle_opencode_uses_route_chosen_slug_with_provider_order_and_nested_slug_present()
+ {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: gptmini
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+provider_order = ["openai"]
+
+[models.gptmini]
+model = "gpt-5.4-mini""#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        json!({
+            "model_slugs": [
+                "openai-codex/gpt-5.4-mini",
+                "openrouter/openai/gpt-5.4-mini",
+                "openai/gpt-5.4-mini"
+            ],
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["route_confidence"].as_str(),
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai-codex/gpt-5.4-mini")
+    );
+
+    let assessments = bundle["routing"]["route_trace"]["assessments"]
+        .as_array()
+        .expect("route_trace.assessments should be array");
+    let opencode_assessment = assessments
+        .iter()
+        .find(|assessment| assessment["harness"].as_str() == Some("opencode"))
+        .expect("opencode assessment should exist");
+    let candidate_slugs = opencode_assessment["candidate_slugs"]
+        .as_array()
+        .expect("candidate_slugs should be array");
+    assert!(
+        candidate_slugs
+            .iter()
+            .any(|slug| slug.as_str() == Some("openai-codex/gpt-5.4-mini"))
+    );
+    assert!(
+        !candidate_slugs
+            .iter()
+            .any(|slug| slug.as_str() == Some("openrouter/openai/gpt-5.4-mini")),
+        "nested slug model id should not match bare gpt-5.4-mini"
+    );
+    assert_eq!(
+        opencode_assessment["chosen_slug"].as_str(),
+        Some("openai-codex/gpt-5.4-mini")
     );
 }
 
@@ -1842,6 +1929,34 @@ Review code changes."#;
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("cli harness `opencode` cannot run requested model"));
     assert!(stderr.contains("no_model_match"));
+}
+
+pub(crate) fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint()
+ {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: badnative
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.badnative]
+model = "gpt-5"
+provider = "anthropic"
+harness = "codex""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("alias harness `codex` cannot run requested model"));
+    assert!(stderr.contains("provider_constraint_unsatisfied"));
 }
 
 pub(crate) fn build_launch_bundle_overlay_model_overrides_profile_model() {

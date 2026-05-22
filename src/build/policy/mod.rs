@@ -218,7 +218,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     );
     provenance.insert(
         "route_confidence".to_string(),
-        harness_resolution.route_confidence.label().to_string(),
+        harness_resolution.match_evidence.label().to_string(),
     );
     provenance.insert(
         "candidates_tried".to_string(),
@@ -299,7 +299,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         model: resolved_model.model,
         model_token: resolved_model.model_token,
         harness: harness_resolution.harness.value,
-        route_confidence: harness_resolution.route_confidence.label().to_string(),
+        route_confidence: harness_resolution.match_evidence.label().to_string(),
         provider: resolved_model.provider_for_order.as_deref(),
         opencode_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,

@@ -567,7 +567,10 @@ provider = "anthropic"
             .contains("cannot run resolved model under model-first routing")
     );
     assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
-    assert_eq!(stdout["route"]["confidence"].as_str(), Some("forced"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(stdout["route"]["match_evidence"].as_str(), Some("none"));
+    assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
+    assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");

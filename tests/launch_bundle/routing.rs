@@ -803,11 +803,19 @@ harness_order = ["pi", "opencode"]"#;
     assert_eq!(bundle["provenance"]["harness_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        Some("fixed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
@@ -856,11 +864,27 @@ harness_order = ["codex", "opencode"]"#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        Some("fixed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["candidates_tried"],
+        json!(["claude"])
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("claude")
     );
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }
@@ -1041,11 +1065,27 @@ harness = "codex""#;
     );
     assert_eq!(
         bundle["routing"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["route_confidence"].as_str(),
-        Some("forced")
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        Some("fixed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["candidates_tried"],
+        json!(["codex"])
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("codex")
     );
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }

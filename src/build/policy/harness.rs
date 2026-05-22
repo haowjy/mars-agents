@@ -11,13 +11,13 @@ use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
-use crate::routing::{self, RouteConfidence, RoutingInput};
+use crate::routing::{self, MatchEvidence, RoutingInput};
 
 #[derive(Debug)]
 pub(super) struct HarnessResolution {
     pub(super) harness: ResolvedField<String>,
     pub(super) harness_order_position: Option<usize>,
-    pub(super) route_confidence: RouteConfidence,
+    pub(super) match_evidence: MatchEvidence,
     pub(super) candidates_tried: Vec<String>,
     pub(super) route_trace: routing::RoutingTrace,
     pub(super) is_experimental: bool,
@@ -80,7 +80,7 @@ pub(super) fn resolve_harness(
         settings_policy_harness,
         alias_harness,
     );
-    let (harness, route_confidence, candidates_tried, route_trace, unavailable_profile_harness) =
+    let (harness, match_evidence, candidates_tried, route_trace, unavailable_profile_harness) =
         if let Some(selection) = fixed_harness_selection.clone() {
             if selection.source == PolicySource::Profile
                 && !evidence
@@ -104,7 +104,7 @@ pub(super) fn resolve_harness(
                         source: trace.source.into(),
                         matched_rule: None,
                     },
-                    trace.confidence,
+                    trace.match_evidence,
                     candidates_tried,
                     trace,
                     unavailable,
@@ -129,7 +129,7 @@ pub(super) fn resolve_harness(
                     },
                     &selection.value,
                 );
-                if fixed_assessment.confidence.is_none() {
+                if fixed_assessment.match_evidence.is_none() {
                     if fixed_assessment.skip_reason == Some("not_installed") {
                         return Err(unavailable_fixed_harness_error(
                             selection.source.label(),
@@ -143,22 +143,21 @@ pub(super) fn resolve_harness(
                         fixed_assessment.skip_reason,
                     ));
                 }
-                let candidates_tried = if selection.source == PolicySource::Cli {
-                    vec![selection.value.clone()]
-                } else {
-                    Vec::new()
-                };
-                let confidence = RouteConfidence::Forced;
-                let route_trace = routing::RoutingTrace {
-                    source: route_source_for_policy_source(selection.source),
-                    confidence,
-                    harness: selection.value.clone(),
-                    harness_order_position: None,
-                    candidates_tried: candidates_tried.clone(),
-                    assessments: vec![fixed_assessment],
-                    diagnostics: Vec::new(),
-                };
-                (selection, confidence, candidates_tried, route_trace, None)
+                let route_trace = routing::trace_for_fixed_harness(
+                    route_source_for_policy_source(selection.source),
+                    &selection.value,
+                    fixed_assessment,
+                    Vec::new(),
+                );
+                let match_evidence = route_trace.match_evidence;
+                let candidates_tried = route_trace.candidates_tried.clone();
+                (
+                    selection,
+                    match_evidence,
+                    candidates_tried,
+                    route_trace,
+                    None,
+                )
             }
         } else {
             let trace =
@@ -172,7 +171,7 @@ pub(super) fn resolve_harness(
                     source: trace.source.into(),
                     matched_rule: None,
                 },
-                trace.confidence,
+                trace.match_evidence,
                 candidates_tried,
                 trace,
                 None,
@@ -214,7 +213,7 @@ pub(super) fn resolve_harness(
         resolved_harness,
         harness,
         harness_order_position: selected_harness_order_position,
-        route_confidence,
+        match_evidence,
         candidates_tried,
         route_trace,
         warnings,
@@ -514,7 +513,11 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "pi");
         assert_eq!(resolution.harness.source, PolicySource::Cli);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
+        assert_eq!(resolution.match_evidence, MatchEvidence::Passthrough);
+        assert_eq!(
+            resolution.route_trace.selection_kind,
+            routing::SelectionKind::Fixed
+        );
         assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
         assert_eq!(resolution.harness_order_position, None);
     }
@@ -536,8 +539,12 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Alias);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
-        assert!(resolution.candidates_tried.is_empty());
+        assert_eq!(resolution.match_evidence, MatchEvidence::Passthrough);
+        assert_eq!(
+            resolution.route_trace.selection_kind,
+            routing::SelectionKind::Fixed
+        );
+        assert_eq!(resolution.candidates_tried, vec!["opencode".to_string()]);
     }
 
     #[test]
@@ -557,8 +564,12 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "pi");
         assert_eq!(resolution.harness.source, PolicySource::Profile);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Forced);
-        assert!(resolution.candidates_tried.is_empty());
+        assert_eq!(resolution.match_evidence, MatchEvidence::Passthrough);
+        assert_eq!(
+            resolution.route_trace.selection_kind,
+            routing::SelectionKind::Fixed
+        );
+        assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
     }
 
     #[test]
@@ -585,7 +596,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Confirmed);
+        assert_eq!(resolution.match_evidence, MatchEvidence::Confirmed);
         assert_eq!(resolution.candidates_tried, vec!["codex", "pi", "opencode"]);
         assert!(resolution.warnings.iter().any(|warning| {
             warning == "profile harness 'claude' not installed; pivoting via model-policies"
@@ -603,7 +614,7 @@ mod tests {
                 .expect("profile harness should pivot to available candidates");
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert_eq!(resolution.match_evidence, MatchEvidence::Passthrough);
     }
 
     #[test]
@@ -669,7 +680,7 @@ mod tests {
 
         assert_eq!(resolution.harness.value, "pi");
         assert_eq!(resolution.harness.source, PolicySource::ConfigOrder);
-        assert_eq!(resolution.route_confidence, RouteConfidence::Passthrough);
+        assert_eq!(resolution.match_evidence, MatchEvidence::Passthrough);
         assert_eq!(resolution.harness_order_position, Some(0));
         assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
     }

@@ -17,6 +17,7 @@ use crate::models::probes::PiProbeResult;
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
 use crate::models::probes::pi_cache;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
+use crate::routing::report::RouteDecisionReport;
 use crate::types::MarsContext;
 
 /// Manage model aliases and the models cache.
@@ -844,15 +845,7 @@ fn route_trace_for_fixed_harness(
         pi_probe_result: input.pi_probe_result,
     };
     let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
-    crate::routing::RoutingTrace {
-        source,
-        confidence: crate::routing::RouteConfidence::Forced,
-        harness: fixed_harness.to_string(),
-        harness_order_position: None,
-        candidates_tried: vec![fixed_harness.to_string()],
-        assessments: vec![assessment],
-        diagnostics: Vec::new(),
-    }
+    crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
 }
 
 fn provider_for_order_for_fixed_harness<'a>(
@@ -1084,25 +1077,24 @@ fn print_availability_text(availability: Option<&ModelAvailability>) {
     }
 }
 
-fn route_confidence_label(confidence: crate::routing::RouteConfidence) -> &'static str {
-    confidence.label()
-}
-
 fn add_route_json_fields(out: &mut serde_json::Value, trace: &crate::routing::RoutingTrace) {
+    let report = RouteDecisionReport::from_trace(trace);
     out["route"] = serde_json::json!({
-        "harness": trace.harness,
-        "source": trace.source.label(),
-        "confidence": route_confidence_label(trace.confidence),
+        "harness": report.harness,
+        "source": report.source,
+        "selection_kind": report.selection_kind,
+        "match_evidence": report.match_evidence,
     });
-    out["route_trace"] = serde_json::json!(trace);
+    out["route_trace"] = serde_json::json!(report);
 }
 
 fn print_route_text(trace: &crate::routing::RoutingTrace) {
     println!(
-        "Route:    {} ({}, {})",
+        "Route:    {} ({}, {}, {})",
         trace.harness,
         trace.source.label(),
-        trace.confidence.label()
+        trace.selection_kind.label(),
+        trace.match_evidence.label()
     );
     if !trace.candidates_tried.is_empty() {
         println!("Tried:    {}", trace.candidates_tried.join(", "));
@@ -1361,7 +1353,7 @@ fn run_resolve_exact_alias(
             let failed_assessment = fixed_trace
                 .assessments
                 .first()
-                .is_some_and(|assessment| assessment.confidence.is_none());
+                .is_some_and(|assessment| assessment.match_evidence.is_none());
             if failed_assessment {
                 let skip_reason = fixed_trace
                     .assessments
@@ -1725,8 +1717,8 @@ fn run_output_passthrough(
         pi_probe_result: pi_probe_result.as_ref(),
     });
     let routed_from_model_list = matches!(
-        trace.confidence,
-        crate::routing::RouteConfidence::Confirmed | crate::routing::RouteConfidence::Constrained
+        trace.match_evidence,
+        crate::routing::MatchEvidence::Confirmed | crate::routing::MatchEvidence::Constrained
     );
     if !routed_from_model_list {
         let message = format!(

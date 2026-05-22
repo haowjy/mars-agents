@@ -1,7 +1,7 @@
 use crate::build::bundle::Routing;
 use crate::models::availability::resolve_runnable_path;
 use crate::models::probes::OpenCodeProbeResult;
-use crate::routing::RoutingTrace;
+use crate::routing::{MatchEvidence, RoutingTrace, report::RouteDecisionReport};
 
 pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
@@ -46,10 +46,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             || (harness.eq_ignore_ascii_case("opencode")
                 && matches!(
                     chosen_confidence,
-                    Some(
-                        crate::routing::RouteConfidence::Confirmed
-                            | crate::routing::RouteConfidence::Constrained
-                    )
+                    Some(MatchEvidence::Confirmed | MatchEvidence::Constrained)
                 ));
         if use_chosen_slug {
             runnable.harness_model_id = chosen_slug;
@@ -67,15 +64,13 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             harness_model: runnable.harness_model_id,
             harness_model_source: runnable.source.label().to_string(),
             harness_model_confidence: runnable.confidence.label().to_string(),
-            route_trace,
+            route_trace: RouteDecisionReport::from_trace(&route_trace),
         },
         warnings: Vec::new(),
     }
 }
 
-fn selected_chosen_slug(
-    trace: &RoutingTrace,
-) -> Option<(String, Option<crate::routing::RouteConfidence>)> {
+fn selected_chosen_slug(trace: &RoutingTrace) -> Option<(String, Option<MatchEvidence>)> {
     trace
         .assessments
         .iter()
@@ -84,6 +79,68 @@ fn selected_chosen_slug(
             assessment
                 .chosen_slug
                 .as_ref()
-                .map(|slug| (slug.clone(), assessment.confidence))
+                .map(|slug| (slug.clone(), assessment.match_evidence))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn trace_with_assessment(evidence: MatchEvidence) -> RoutingTrace {
+        RoutingTrace {
+            source: crate::routing::RouteSource::Provider,
+            selection_kind: crate::routing::SelectionKind::Auto,
+            match_evidence: evidence,
+            harness: "opencode".to_string(),
+            harness_order_position: None,
+            candidates_tried: vec!["opencode".to_string()],
+            assessments: vec![crate::routing::CandidateAssessment {
+                harness: "opencode".to_string(),
+                installed: true,
+                candidate_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                filtered_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+                chosen_slug: Some("openai/gpt-5.4-mini".to_string()),
+                chosen_model: Some("gpt-5.4-mini".to_string()),
+                match_evidence: Some(evidence),
+                skip_reason: None,
+            }],
+            diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn opencode_uses_chosen_slug_when_assessment_evidence_is_confirmed() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.4-mini".to_string(),
+            model_token: "gptmini".to_string(),
+            harness: "opencode".to_string(),
+            route_confidence: "confirmed".to_string(),
+            provider: None,
+            opencode_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        });
+
+        assert_eq!(
+            resolution.routing.harness_model,
+            "openai/gpt-5.4-mini".to_string()
+        );
+    }
+
+    #[test]
+    fn opencode_keeps_passthrough_model_when_assessment_evidence_is_passthrough() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.4-mini".to_string(),
+            model_token: "gptmini".to_string(),
+            harness: "opencode".to_string(),
+            route_confidence: "passthrough".to_string(),
+            provider: None,
+            opencode_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Passthrough),
+        });
+
+        assert_eq!(resolution.routing.harness_model, "gpt-5.4-mini".to_string());
+    }
 }

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use serde::Serialize;
-
+pub mod report;
 pub mod slug;
 
 use crate::models;
@@ -9,30 +8,50 @@ use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
 
-/// Confidence in a harness selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RouteConfidence {
-    Confirmed,
-    Constrained,
-    Forced,
-    Passthrough,
+/// How the harness was selected — orthogonal to slug evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionKind {
+    Auto,
+    Fixed,
+    ConfigDefault,
+    LinkedFallback,
+    HardcodedDefault,
 }
 
-impl RouteConfidence {
+impl SelectionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Fixed => "fixed",
+            Self::ConfigDefault => "config_default",
+            Self::LinkedFallback => "linked_fallback",
+            Self::HardcodedDefault => "hardcoded_default",
+        }
+    }
+}
+
+/// Slug evidence the evaluator found for this harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchEvidence {
+    Confirmed,
+    Constrained,
+    Passthrough,
+    None,
+}
+
+impl MatchEvidence {
     pub fn label(self) -> &'static str {
         match self {
             Self::Confirmed => "confirmed",
             Self::Constrained => "constrained",
-            Self::Forced => "forced",
             Self::Passthrough => "passthrough",
+            Self::None => "none",
         }
     }
 }
 
 /// How the harness was selected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteSource {
     Cli,
     Profile,
@@ -58,27 +77,24 @@ impl RouteSource {
 }
 
 /// Assessment of one candidate harness.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct CandidateAssessment {
     pub harness: String,
     pub installed: bool,
     pub candidate_slugs: Vec<String>,
     pub filtered_slugs: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_slug: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<RouteConfidence>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_evidence: Option<MatchEvidence>,
     pub skip_reason: Option<&'static str>,
 }
 
 /// Full routing trace for diagnostics/provenance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct RoutingTrace {
     pub source: RouteSource,
-    pub confidence: RouteConfidence,
+    pub selection_kind: SelectionKind,
+    pub match_evidence: MatchEvidence,
     pub harness: String,
     pub harness_order_position: Option<usize>,
     pub candidates_tried: Vec<String>,
@@ -124,7 +140,27 @@ pub fn evaluate_fixed_harness_with_auth<F>(
 where
     F: Fn(&str) -> bool,
 {
-    candidate_route_confidence_with_auth(input, harness, input.settings_provider_order, &auth_check)
+    candidate_match_evidence_with_auth(input, harness, input.settings_provider_order, &auth_check)
+}
+
+/// Build a fixed-selection routing trace from one fixed harness assessment.
+pub fn trace_for_fixed_harness(
+    source: RouteSource,
+    harness: &str,
+    assessment: CandidateAssessment,
+    diagnostics: Vec<String>,
+) -> RoutingTrace {
+    let match_evidence = assessment.match_evidence.unwrap_or(MatchEvidence::None);
+    RoutingTrace {
+        source,
+        selection_kind: SelectionKind::Fixed,
+        match_evidence,
+        harness: harness.to_string(),
+        harness_order_position: None,
+        candidates_tried: vec![harness.to_string()],
+        assessments: vec![assessment],
+        diagnostics,
+    }
 }
 
 pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
@@ -224,7 +260,7 @@ where
     let mut assessments = Vec::new();
 
     for (harness, harness_order_position) in candidates {
-        let assessment = candidate_route_confidence_with_auth(
+        let assessment = candidate_match_evidence_with_auth(
             input,
             &harness,
             Some(parsed_provider_order.as_slice()),
@@ -232,13 +268,14 @@ where
         );
 
         candidates_tried.push(harness.clone());
-        let confidence = assessment.confidence;
+        let match_evidence = assessment.match_evidence;
         assessments.push(assessment);
 
-        if let Some(confidence) = confidence {
+        if let Some(match_evidence) = match_evidence {
             return RoutingTrace {
                 source: candidate_source,
-                confidence,
+                selection_kind: SelectionKind::Auto,
+                match_evidence,
                 harness,
                 harness_order_position,
                 candidates_tried,
@@ -261,7 +298,8 @@ where
     if let Some(harness) = effective_config_default_harness {
         return RoutingTrace {
             source: RouteSource::ConfigDefault,
-            confidence: RouteConfidence::Passthrough,
+            selection_kind: SelectionKind::ConfigDefault,
+            match_evidence: MatchEvidence::Passthrough,
             harness,
             harness_order_position: None,
             candidates_tried,
@@ -282,7 +320,8 @@ where
 
         return RoutingTrace {
             source: candidate_source,
-            confidence: RouteConfidence::Passthrough,
+            selection_kind: SelectionKind::LinkedFallback,
+            match_evidence: MatchEvidence::Passthrough,
             harness,
             harness_order_position: None,
             candidates_tried,
@@ -296,7 +335,8 @@ where
 
     RoutingTrace {
         source: RouteSource::HardcodedDefault,
-        confidence: RouteConfidence::Passthrough,
+        selection_kind: SelectionKind::HardcodedDefault,
+        match_evidence: MatchEvidence::Passthrough,
         harness: "pi".to_string(),
         harness_order_position: None,
         candidates_tried,
@@ -348,7 +388,7 @@ fn filter_candidates_by_links(
         .collect()
 }
 
-fn candidate_route_confidence_with_auth<F>(
+fn candidate_match_evidence_with_auth<F>(
     input: &RoutingInput<'_>,
     harness: &str,
     provider_order: Option<&[String]>,
@@ -365,7 +405,7 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            confidence: None,
+            match_evidence: None,
             skip_reason: Some("not_installed"),
         };
     }
@@ -380,7 +420,7 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            confidence: None,
+            match_evidence: None,
             skip_reason: Some("provider_constraint_unsatisfied"),
         };
     }
@@ -394,7 +434,7 @@ where
                 filtered_slugs: Vec::new(),
                 chosen_slug: None,
                 chosen_model: Some(input.model_id.to_string()),
-                confidence: Some(confidence_for_match(input.provider_constraint)),
+                match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
                 skip_reason: None,
             };
         }
@@ -406,7 +446,7 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            confidence: None,
+            match_evidence: None,
             skip_reason: Some("native_auth_unavailable"),
         };
     }
@@ -420,7 +460,7 @@ where
                 filtered_slugs: Vec::new(),
                 chosen_slug: None,
                 chosen_model: None,
-                confidence: Some(RouteConfidence::Passthrough),
+                match_evidence: Some(MatchEvidence::Passthrough),
                 skip_reason: None,
             };
         };
@@ -432,7 +472,7 @@ where
                 filtered_slugs: Vec::new(),
                 chosen_slug: None,
                 chosen_model: None,
-                confidence: Some(RouteConfidence::Passthrough),
+                match_evidence: Some(MatchEvidence::Passthrough),
                 skip_reason: None,
             };
         }
@@ -452,7 +492,7 @@ where
                 filtered_slugs: selection.filtered_slugs,
                 chosen_model: slug::parse(&chosen_slug).map(|parts| parts.model_id.to_string()),
                 chosen_slug: Some(chosen_slug),
-                confidence: Some(confidence_for_match(input.provider_constraint)),
+                match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
                 skip_reason: None,
             };
         }
@@ -465,7 +505,7 @@ where
                 filtered_slugs: selection.filtered_slugs,
                 chosen_slug: None,
                 chosen_model: None,
-                confidence: None,
+                match_evidence: None,
                 skip_reason: Some("provider_constraint_unsatisfied"),
             };
         }
@@ -477,7 +517,7 @@ where
             filtered_slugs: selection.filtered_slugs,
             chosen_slug: None,
             chosen_model: None,
-            confidence: None,
+            match_evidence: None,
             skip_reason: Some("no_model_match"),
         };
     }
@@ -501,7 +541,7 @@ where
                         chosen_model: slug::parse(&chosen_slug)
                             .map(|parts| parts.model_id.to_string()),
                         chosen_slug: Some(chosen_slug),
-                        confidence: Some(confidence_for_match(input.provider_constraint)),
+                        match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
                         skip_reason: None,
                     };
                 }
@@ -514,7 +554,7 @@ where
                         filtered_slugs: selection.filtered_slugs,
                         chosen_slug: None,
                         chosen_model: None,
-                        confidence: None,
+                        match_evidence: None,
                         skip_reason: Some("provider_constraint_unsatisfied"),
                     };
                 }
@@ -526,7 +566,7 @@ where
                     filtered_slugs: selection.filtered_slugs,
                     chosen_slug: None,
                     chosen_model: None,
-                    confidence: None,
+                    match_evidence: None,
                     skip_reason: Some("no_model_match"),
                 };
             }
@@ -537,7 +577,7 @@ where
                 filtered_slugs: Vec::new(),
                 chosen_slug: None,
                 chosen_model: None,
-                confidence: None,
+                match_evidence: None,
                 skip_reason: Some("pi_incompatible"),
             };
         }
@@ -549,7 +589,7 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            confidence: Some(RouteConfidence::Passthrough),
+            match_evidence: Some(MatchEvidence::Passthrough),
             skip_reason: None,
         };
     }
@@ -562,7 +602,7 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            confidence: Some(RouteConfidence::Passthrough),
+            match_evidence: Some(MatchEvidence::Passthrough),
             skip_reason: None,
         };
     }
@@ -574,7 +614,7 @@ where
         filtered_slugs: Vec::new(),
         chosen_slug: None,
         chosen_model: None,
-        confidence: None,
+        match_evidence: None,
         skip_reason: Some("unsupported_candidate"),
     }
 }
@@ -607,11 +647,11 @@ fn provider_constraint_excludes_native_harness(
     )
 }
 
-fn confidence_for_match(provider_constraint: Option<&str>) -> RouteConfidence {
+fn match_evidence_for_match(provider_constraint: Option<&str>) -> MatchEvidence {
     if provider_constraint.is_some() {
-        RouteConfidence::Constrained
+        MatchEvidence::Constrained
     } else {
-        RouteConfidence::Confirmed
+        MatchEvidence::Confirmed
     }
 }
 
@@ -809,8 +849,9 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, always_authed);
 
         assert_eq!(trace.source, RouteSource::Provider);
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
         assert_eq!(trace.harness, "claude");
-        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
         assert_eq!(trace.candidates_tried, vec!["claude".to_string()]);
     }
 
@@ -830,7 +871,8 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.confidence, RouteConfidence::Passthrough);
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
         assert_eq!(trace.candidates_tried, vec!["claude", "pi"]);
         assert_eq!(
             trace
@@ -857,7 +899,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "cursor");
-        assert_eq!(trace.confidence, RouteConfidence::Passthrough);
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
     }
 
     #[test]
@@ -881,7 +923,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
     }
 
     #[test]
@@ -913,7 +955,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.confidence, RouteConfidence::Constrained);
+        assert_eq!(trace.match_evidence, MatchEvidence::Constrained);
         assert_eq!(
             trace
                 .assessments
@@ -948,7 +990,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, always_authed);
 
         assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
         assert_eq!(trace.candidates_tried, vec!["pi".to_string()]);
         assert_eq!(
             trace
@@ -996,7 +1038,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "opencode");
-        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
         assert!(trace.diagnostics.iter().any(|diagnostic| {
             diagnostic
                 .contains("settings.provider_order contains unknown provider `future-provider`")
@@ -1054,7 +1096,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "opencode");
-        assert_eq!(trace.confidence, RouteConfidence::Confirmed);
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
     }
 
     #[test]
@@ -1078,7 +1120,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "cursor");
-        assert_eq!(trace.confidence, RouteConfidence::Passthrough);
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
         assert_eq!(
             trace
                 .assessments
@@ -1172,8 +1214,9 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.source, RouteSource::ConfigDefault);
+        assert_eq!(trace.selection_kind, SelectionKind::ConfigDefault);
         assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.confidence, RouteConfidence::Passthrough);
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
     }
 
     #[test]
@@ -1184,6 +1227,7 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.source, RouteSource::HardcodedDefault);
+        assert_eq!(trace.selection_kind, SelectionKind::HardcodedDefault);
         assert_eq!(trace.harness, "pi");
         assert!(
             trace
@@ -1209,6 +1253,10 @@ mod tests {
         );
         let with_default_trace = evaluate_candidates_with_auth(&with_config_default, never_authed);
         assert_eq!(with_default_trace.source, RouteSource::Provider);
+        assert_eq!(
+            with_default_trace.selection_kind,
+            SelectionKind::LinkedFallback
+        );
         assert_eq!(with_default_trace.harness, "claude");
         assert_eq!(with_default_trace.candidates_tried, vec!["claude"]);
         assert!(with_default_trace.diagnostics.iter().any(|diagnostic| {
@@ -1228,6 +1276,10 @@ mod tests {
         );
         let hardcoded_trace = evaluate_candidates_with_auth(&without_config_default, never_authed);
         assert_eq!(hardcoded_trace.source, RouteSource::Provider);
+        assert_eq!(
+            hardcoded_trace.selection_kind,
+            SelectionKind::LinkedFallback
+        );
         assert_eq!(hardcoded_trace.harness, "claude");
         assert!(
             hardcoded_trace
@@ -1274,7 +1326,7 @@ mod tests {
 
         assert_eq!(assessment.harness, "codex");
         assert!(!assessment.installed);
-        assert_eq!(assessment.confidence, None);
+        assert_eq!(assessment.match_evidence, None);
         assert_eq!(assessment.skip_reason, Some("not_installed"));
     }
 
@@ -1298,7 +1350,7 @@ mod tests {
 
         assert_eq!(assessment.harness, "codex");
         assert!(assessment.installed);
-        assert_eq!(assessment.confidence, None);
+        assert_eq!(assessment.match_evidence, None);
         assert_eq!(
             assessment.skip_reason,
             Some("provider_constraint_unsatisfied")

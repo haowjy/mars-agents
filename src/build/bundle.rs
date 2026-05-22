@@ -29,7 +29,7 @@ pub struct Routing {
     pub harness_model: String,
     pub harness_model_source: String,
     pub harness_model_confidence: String,
-    pub route_trace: crate::routing::RoutingTrace,
+    pub route_trace: crate::routing::report::RouteDecisionReport,
 }
 
 #[derive(Debug, Clone, Serialize)]

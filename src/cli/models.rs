@@ -785,10 +785,13 @@ fn resolve_harness_with_routing(
         pi_probe_result,
     });
 
-    if installed.contains(&trace.harness) {
-        (Some(trace.harness), HarnessSource::AutoDetected)
-    } else {
-        (None, HarnessSource::Unavailable)
+    match crate::routing::acceptance::accept_route(
+        &trace,
+        installed,
+        crate::routing::acceptance::MatchPolicy::InstalledOnly,
+    ) {
+        Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
+        Err(_) => (None, HarnessSource::Unavailable),
     }
 }
 
@@ -1350,11 +1353,11 @@ fn run_resolve_exact_alias(
                 fixed_harness,
                 crate::routing::RouteSource::Alias,
             );
-            let failed_assessment = fixed_trace
-                .assessments
-                .first()
-                .is_some_and(|assessment| assessment.match_evidence.is_none());
-            if failed_assessment {
+            let fixed_assessment_failed =
+                fixed_trace.assessments.first().is_none_or(|assessment| {
+                    crate::routing::acceptance::accept_assessment(assessment).is_err()
+                });
+            if fixed_assessment_failed {
                 let skip_reason = fixed_trace
                     .assessments
                     .first()
@@ -1716,11 +1719,13 @@ fn run_output_passthrough(
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
     });
-    let routed_from_model_list = matches!(
-        trace.match_evidence,
-        crate::routing::MatchEvidence::Confirmed | crate::routing::MatchEvidence::Constrained
-    );
-    if !routed_from_model_list {
+    if crate::routing::acceptance::accept_route(
+        &trace,
+        installed,
+        crate::routing::acceptance::MatchPolicy::RequireSlugEvidence,
+    )
+    .is_err()
+    {
         let message = format!(
             "model '{}' did not match any harness-reported model slug under model-first routing",
             name

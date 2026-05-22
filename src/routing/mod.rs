@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+pub mod acceptance;
 pub mod report;
 pub mod slug;
 

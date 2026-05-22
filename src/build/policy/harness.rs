@@ -82,10 +82,36 @@ pub(super) fn resolve_harness(
     );
     let (harness, match_evidence, candidates_tried, route_trace, unavailable_profile_harness) =
         if let Some(selection) = fixed_harness_selection.clone() {
+            let fixed_provider_for_order =
+                provider_for_order_for_fixed_harness(evidence.provider_for_order, &selection.value);
+            let fixed_assessment = routing::evaluate_fixed_harness(
+                &RoutingInput {
+                    model_id: evidence.model_id,
+                    provider_for_order: fixed_provider_for_order,
+                    provider_constraint: evidence.provider_constraint,
+                    settings_provider_order: evidence.provider_order,
+                    settings_harness_order: evidence.harness_order,
+                    config_default_harness: normalized_config_default_harness.as_deref(),
+                    installed_harnesses: evidence.installed_harnesses,
+                    linked_harnesses: evidence.linked_harnesses,
+                    opencode_probe_result: evidence.opencode_probe_result,
+                    pi_probe_result: evidence.pi_probe_result,
+                },
+                &selection.value,
+            );
+            let fixed_route_trace = routing::trace_for_fixed_harness(
+                route_source_for_policy_source(selection.source),
+                &selection.value,
+                fixed_assessment.clone(),
+                Vec::new(),
+            );
             if selection.source == PolicySource::Profile
-                && !evidence
-                    .installed_harnesses
-                    .contains(selection.value.as_str())
+                && routing::acceptance::accept_route(
+                    &fixed_route_trace,
+                    evidence.installed_harnesses,
+                    routing::acceptance::MatchPolicy::InstalledOnly,
+                )
+                .is_err()
             {
                 warnings.push(format!(
                     "profile harness '{}' not installed; pivoting via model-policies",
@@ -95,8 +121,13 @@ pub(super) fn resolve_harness(
                     evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
                 selected_harness_order_position = trace.harness_order_position;
                 warnings.extend(trace.diagnostics.clone());
-                let unavailable = (!evidence.installed_harnesses.contains(&trace.harness))
-                    .then_some(selection.value.clone());
+                let unavailable = routing::acceptance::accept_route(
+                    &trace,
+                    evidence.installed_harnesses,
+                    routing::acceptance::MatchPolicy::InstalledOnly,
+                )
+                .err()
+                .map(|_| selection.value.clone());
                 let candidates_tried = trace.candidates_tried.clone();
                 (
                     ResolvedField {
@@ -110,45 +141,29 @@ pub(super) fn resolve_harness(
                     unavailable,
                 )
             } else {
-                let fixed_provider_for_order = provider_for_order_for_fixed_harness(
-                    evidence.provider_for_order,
-                    &selection.value,
-                );
-                let fixed_assessment = routing::evaluate_fixed_harness(
-                    &RoutingInput {
-                        model_id: evidence.model_id,
-                        provider_for_order: fixed_provider_for_order,
-                        provider_constraint: evidence.provider_constraint,
-                        settings_provider_order: evidence.provider_order,
-                        settings_harness_order: evidence.harness_order,
-                        config_default_harness: normalized_config_default_harness.as_deref(),
-                        installed_harnesses: evidence.installed_harnesses,
-                        linked_harnesses: evidence.linked_harnesses,
-                        opencode_probe_result: evidence.opencode_probe_result,
-                        pi_probe_result: evidence.pi_probe_result,
-                    },
-                    &selection.value,
-                );
-                if fixed_assessment.match_evidence.is_none() {
-                    if fixed_assessment.skip_reason == Some("not_installed") {
-                        return Err(unavailable_fixed_harness_error(
+                routing::acceptance::accept_assessment(&fixed_assessment).map_err(|rejection| {
+                    if rejection.is_not_installed() {
+                        unavailable_fixed_harness_error(
                             selection.source.label(),
                             &selection.value,
                             evidence.installed_harnesses,
-                        ));
+                        )
+                    } else {
+                        let skip_reason = match rejection {
+                            routing::acceptance::RejectionReason::AssessmentFailed {
+                                ref skip_reason,
+                                ..
+                            } => skip_reason.as_deref(),
+                            _ => None,
+                        };
+                        fixed_harness_constraint_error(
+                            selection.source.label(),
+                            &selection.value,
+                            skip_reason,
+                        )
                     }
-                    return Err(fixed_harness_constraint_error(
-                        selection.source.label(),
-                        &selection.value,
-                        fixed_assessment.skip_reason,
-                    ));
-                }
-                let route_trace = routing::trace_for_fixed_harness(
-                    route_source_for_policy_source(selection.source),
-                    &selection.value,
-                    fixed_assessment,
-                    Vec::new(),
-                );
+                })?;
+                let route_trace = fixed_route_trace;
                 let match_evidence = route_trace.match_evidence;
                 let candidates_tried = route_trace.candidates_tried.clone();
                 (
@@ -194,19 +209,6 @@ pub(super) fn resolve_harness(
             ),
         })
     })?;
-
-    if let Some(selection) = fixed_harness_selection
-        && selection.source != PolicySource::Profile
-        && !evidence
-            .installed_harnesses
-            .contains(selection.value.as_str())
-    {
-        return Err(unavailable_fixed_harness_error(
-            selection.source.label(),
-            &selection.value,
-            evidence.installed_harnesses,
-        ));
-    }
 
     Ok(HarnessResolution {
         is_experimental: harness.value == "cursor",

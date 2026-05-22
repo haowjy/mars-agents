@@ -976,10 +976,13 @@ pub fn resolve_with_alias_prefix_with_probe(
         opencode_probe_result: opencode_probe,
         pi_probe_result: pi_probe,
     });
-    let (harness, harness_source) = if installed.contains(&trace.harness) {
-        (Some(trace.harness), HarnessSource::AutoDetected)
-    } else {
-        (None, HarnessSource::Unavailable)
+    let (harness, harness_source) = match crate::routing::acceptance::accept_route(
+        &trace,
+        &installed,
+        crate::routing::acceptance::MatchPolicy::InstalledOnly,
+    ) {
+        Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
+        Err(_) => (None, HarnessSource::Unavailable),
     };
 
     Some(ResolvedAlias {
@@ -1567,10 +1570,13 @@ fn resolve_harness(
             opencode_probe_result,
             pi_probe_result,
         });
-        if installed.contains(&trace.harness) {
-            (Some(trace.harness), HarnessSource::AutoDetected)
-        } else {
-            (None, HarnessSource::Unavailable)
+        match crate::routing::acceptance::accept_route(
+            &trace,
+            installed,
+            crate::routing::acceptance::MatchPolicy::InstalledOnly,
+        ) {
+            Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
+            Err(_) => (None, HarnessSource::Unavailable),
         }
     }
 }

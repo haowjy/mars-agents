@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{LockFile, LockIndex, LockedItem};
+use crate::lock::{CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItem};
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::ContentHash;
 
@@ -61,7 +61,9 @@ pub fn compute(
 
     // Process each target item
     for (_dest_key, target_item) in &target.items {
-        if let Some(locked_item) = lock_index.find_by_dest_path(&target_item.dest_path) {
+        if let Some(locked_item) =
+            lock_index.find_output(CANONICAL_TARGET_ROOT, &target_item.dest_path)
+        {
             // Item exists in lock — compare checksums
             let source_changed = target_item.source_hash != locked_item.source_checksum
                 || rewritten_installed_checksum(target_item)
@@ -140,7 +142,7 @@ pub fn compute(
     }
 
     // Find orphans: items in lock but not in target
-    for (dest_path, locked_item) in lock.flat_items() {
+    for (dest_path, locked_item) in lock.canonical_flat_items() {
         if !target.items.contains_key(&dest_path) {
             items.push(DiffEntry::Orphan {
                 locked: locked_item,
@@ -628,6 +630,69 @@ mod tests {
 
         let forced = compute(root.path(), &lock, &target, true).unwrap();
         assert!(matches!(&forced.items[0], DiffEntry::LocalModified { .. }));
+    }
+
+    #[test]
+    fn canonical_diff_ignores_non_canonical_output_checksum() {
+        let root = TempDir::new().unwrap();
+        let canonical_content = b"# canonical";
+        let canonical_hash = hash::hash_bytes(canonical_content);
+        let pi_hash = hash::hash_bytes(b"# pi rewrite");
+
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("coder.md"), canonical_content).unwrap();
+
+        let mut target_items = IndexMap::new();
+        target_items.insert(
+            "agents/coder.md".into(),
+            make_target_item(
+                "coder",
+                ItemKind::Agent,
+                &canonical_hash,
+                PathBuf::from("/tmp/source/agents/coder.md"),
+            ),
+        );
+        let target = TargetState {
+            items: target_items,
+        };
+
+        let mut lock_items = IndexMap::new();
+        lock_items.insert(
+            "agent/coder".to_string(),
+            LockedItemV2 {
+                source: SourceName::from("test-source"),
+                kind: ItemKind::Agent,
+                version: None,
+                source_checksum: canonical_hash.clone().into(),
+                outputs: vec![
+                    OutputRecord {
+                        target_root: ".mars".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: canonical_hash.clone().into(),
+                    },
+                    OutputRecord {
+                        target_root: ".pi".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: pi_hash.into(),
+                    },
+                ],
+            },
+        );
+        let lock = LockFile {
+            version: 2,
+            dependencies: IndexMap::new(),
+            items: lock_items,
+            config_entries: std::collections::BTreeMap::new(),
+        };
+
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
+        assert_eq!(diff.items.len(), 1);
+        assert!(
+            matches!(&diff.items[0], DiffEntry::Unchanged { .. }),
+            "expected Unchanged, got {:?}",
+            diff.items[0]
+        );
     }
 
     #[test]

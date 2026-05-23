@@ -180,25 +180,33 @@ impl LockFile {
 /// at hot call sites that need repeated output-path lookups.
 pub struct LockIndex<'a> {
     lock: &'a LockFile,
+    by_output: HashMap<(String, String), (&'a str, usize)>,
     by_dest_path: HashMap<String, (&'a str, usize)>,
 }
 
 impl<'a> LockIndex<'a> {
     pub fn new(lock: &'a LockFile) -> Self {
-        let by_dest_path = lock
-            .items
-            .iter()
-            .flat_map(|(key, item)| {
-                item.outputs.iter().enumerate().map(move |(idx, output)| {
-                    (
-                        normalize_dest_path(output.dest_path.as_str()),
-                        (key.as_str(), idx),
-                    )
-                })
-            })
-            .collect();
+        let mut by_output = HashMap::new();
+        let mut by_dest_path = HashMap::new();
 
-        Self { lock, by_dest_path }
+        for (key, item) in &lock.items {
+            for (idx, output) in item.outputs.iter().enumerate() {
+                let normalized_dest = normalize_dest_path(output.dest_path.as_str());
+                by_dest_path
+                    .entry(normalized_dest.clone())
+                    .or_insert((key.as_str(), idx));
+                by_output.insert(
+                    (output.target_root.clone(), normalized_dest),
+                    (key.as_str(), idx),
+                );
+            }
+        }
+
+        Self {
+            lock,
+            by_output,
+            by_dest_path,
+        }
     }
 
     /// Look up a locked item by output dest_path, returning a flat [`LockedItem`] view.
@@ -206,6 +214,27 @@ impl<'a> LockIndex<'a> {
         let (item_key, output_idx) = *self
             .by_dest_path
             .get(&normalize_dest_path(dest_path.as_str()))?;
+        self.locked_item_for(item_key, output_idx)
+    }
+
+    /// Look up a locked output by target root + dest_path, returning a flat [`LockedItem`] view.
+    pub fn find_output(&self, target_root: &str, dest_path: &DestPath) -> Option<LockedItem> {
+        let (item_key, output_idx) = *self.by_output.get(&(
+            target_root.to_string(),
+            normalize_dest_path(dest_path.as_str()),
+        ))?;
+        self.locked_item_for(item_key, output_idx)
+    }
+
+    /// Whether any output is recorded for `target_root + dest_path`.
+    pub fn contains_output(&self, target_root: &str, dest_path: &DestPath) -> bool {
+        self.by_output.contains_key(&(
+            target_root.to_string(),
+            normalize_dest_path(dest_path.as_str()),
+        ))
+    }
+
+    fn locked_item_for(&self, item_key: &str, output_idx: usize) -> Option<LockedItem> {
         let item_v2 = self.lock.items.get(item_key)?;
         let output = item_v2.outputs.get(output_idx)?;
         Some(LockedItem {
@@ -547,7 +576,9 @@ pub fn build(
                     } else {
                         // Fall back: search old lock by dest_path (handles v1→v2 migrations
                         // where item_key may not match yet)
-                        if let Some(flat) = old_lock_index.find_by_dest_path(&outcome.dest_path) {
+                        if let Some(flat) =
+                            old_lock_index.find_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                        {
                             let key =
                                 format!("{}/{}", flat.kind, outcome.dest_path.item_name(flat.kind));
                             items.entry(key).or_insert_with(|| LockedItemV2 {
@@ -571,7 +602,9 @@ pub fn build(
                 let item_key = item_key(&outcome.item_id);
                 if let Some(old_item) = old_lock.items.get(&item_key) {
                     items.insert(item_key, old_item.clone());
-                } else if let Some(flat) = old_lock_index.find_by_dest_path(&outcome.dest_path) {
+                } else if let Some(flat) =
+                    old_lock_index.find_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                {
                     let key = format!("{}/{}", flat.kind, outcome.dest_path.item_name(flat.kind));
                     items.entry(key).or_insert_with(|| LockedItemV2 {
                         source: flat.source,
@@ -1140,6 +1173,36 @@ installed_checksum = "sha256:222"
 
         assert!(index.contains_dest_path(&DestPath::from("agents/coder.md")));
         assert!(!index.contains_dest_path(&DestPath::from("agents/nobody.md")));
+    }
+
+    #[test]
+    fn lock_index_target_scoped_lookup_distinguishes_same_dest_path() {
+        let mut lock = sample_lock();
+        lock.items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".pi".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:pi".into(),
+            });
+
+        let index = LockIndex::new(&lock);
+        let dest = DestPath::from("agents/coder.md");
+
+        let mars = index
+            .find_output(".mars", &dest)
+            .expect("expected canonical .mars output");
+        let pi = index
+            .find_output(".pi", &dest)
+            .expect("expected .pi output");
+
+        assert_eq!(mars.installed_checksum, "sha256:bbb");
+        assert_eq!(pi.installed_checksum, "sha256:pi");
+        assert!(index.contains_output(".mars", &dest));
+        assert!(index.contains_output(".pi", &dest));
+        assert!(!index.contains_output(".cursor", &dest));
     }
 
     #[test]

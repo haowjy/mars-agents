@@ -6,21 +6,23 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 use crate::harness::registry::{self, HarnessId};
+use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cursor_cache::{self, CachedCursorProbeOutcome};
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
 use crate::models::probes::pi_cache::{self, CachedPiProbeOutcome};
 
 #[derive(Debug, Clone)]
 pub struct CapabilityCollectionOptions {
+    /// `MARS_OFFLINE` — skip network/catalog assumptions; probes treat env as offline.
     pub offline: bool,
-    pub allow_probe_refresh: bool,
+    pub probe_refresh: ProbeRefreshMode,
 }
 
 impl Default for CapabilityCollectionOptions {
     fn default() -> Self {
         Self {
             offline: false,
-            allow_probe_refresh: true,
+            probe_refresh: ProbeRefreshMode::Background,
         }
     }
 }
@@ -113,16 +115,14 @@ pub fn collect_capability_snapshot_with_resolver(
         .map(|id| id.as_str().to_string())
         .collect::<HashSet<_>>();
 
-    let opencode_offline = options.offline || !options.allow_probe_refresh;
-    let pi_offline = options.offline || !options.allow_probe_refresh;
-    let cursor_offline = options.offline || !options.allow_probe_refresh;
+    let mars_offline = options.offline;
 
     CapabilitySnapshot {
         executable,
         auth,
-        opencode: opencode_cache::probe_cached(&installed, opencode_offline),
-        pi: pi_cache::probe_cached(&installed, pi_offline),
-        cursor: cursor_cache::probe_cached(&installed, cursor_offline),
+        opencode: opencode_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
+        pi: pi_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
+        cursor: cursor_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
         offline: options.offline,
     }
 }
@@ -247,7 +247,7 @@ mod tests {
 
         let options = CapabilityCollectionOptions {
             offline: true,
-            allow_probe_refresh: false,
+            probe_refresh: ProbeRefreshMode::Skip,
         };
         let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
 

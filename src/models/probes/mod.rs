@@ -6,6 +6,9 @@ pub mod opencode;
 pub mod opencode_cache;
 pub mod pi;
 pub mod pi_cache;
+pub mod probe_refresh;
+
+pub use probe_refresh::ProbeRefreshMode;
 
 pub use cursor::{
     CursorProbeResult, probe as probe_cursor, probe_with_timeout as probe_cursor_with_timeout,

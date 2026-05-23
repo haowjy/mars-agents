@@ -5,6 +5,7 @@ use std::process::Stdio;
 use serde::{Deserialize, Serialize};
 
 use super::opencode::OpenCodeProbeResult;
+use super::probe_refresh::ProbeCacheBranch;
 use crate::error::MarsError;
 
 const SCHEMA_VERSION: u32 = 1;
@@ -190,13 +191,18 @@ fn lock_at(path: &Path, nonblocking: bool) -> Option<FileLock> {
     Some(FileLock { _file: file })
 }
 
-pub fn probe_cached(installed: &HashSet<String>, is_offline: bool) -> CachedProbeOutcome {
-    if !super::should_probe_opencode(installed, is_offline) {
+pub fn probe_cached(
+    installed: &HashSet<String>,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+) -> CachedProbeOutcome {
+    if !super::should_probe_opencode(installed, mars_offline) {
         return CachedProbeOutcome::Unavailable;
     }
 
     probe_cached_impl(
-        is_offline,
+        mars_offline,
+        probe_refresh,
         &cache_path().ok(),
         super::opencode::probe,
         || spawn_detached_refresh().map_err(|_| ()),
@@ -204,7 +210,8 @@ pub fn probe_cached(installed: &HashSet<String>, is_offline: bool) -> CachedProb
 }
 
 fn probe_cached_impl<F, S>(
-    is_offline: bool,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
     path: &Option<PathBuf>,
     probe: F,
     spawn_refresh: S,
@@ -214,20 +221,18 @@ where
     S: Fn() -> Result<(), ()>,
 {
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
-
-    match cached {
-        Some(entry) if is_fresh(&entry) && is_usable(&entry) => {
-            CachedProbeOutcome::Hit(entry.result.unwrap())
-        }
-        Some(entry) if is_usable(&entry) => {
-            let result = entry.result.clone().unwrap();
-            if !is_offline {
-                trigger_background_refresh_with(spawn_refresh);
-            }
-            CachedProbeOutcome::Stale(result)
-        }
-        _ if is_offline => CachedProbeOutcome::Unavailable,
-        _ => synchronous_probe_with(path, probe),
+    match super::probe_refresh::resolve_probe_cache_branch(
+        cached,
+        mars_offline,
+        probe_refresh,
+        |entry| entry.result.as_ref().filter(|_| is_usable(entry)),
+        is_fresh,
+        || trigger_background_refresh_with(spawn_refresh),
+    ) {
+        ProbeCacheBranch::Hit(result) => CachedProbeOutcome::Hit(result),
+        ProbeCacheBranch::Stale(result) => CachedProbeOutcome::Stale(result),
+        ProbeCacheBranch::Unavailable => CachedProbeOutcome::Unavailable,
+        ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
     }
 }
 
@@ -435,9 +440,46 @@ mod tests {
         let path = cache_file(&temp);
         write_entry(&path, &entry(now_unix_secs(), Some(ok_result())));
 
-        let outcome = probe_cached_impl(false, &Some(path), fail_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            fail_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedProbeOutcome::Hit(_)));
         assert_eq!(outcome.result().unwrap().model_slugs[0], "openai/gpt-5.4");
+    }
+
+    #[test]
+    fn stale_entry_with_synchronous_refresh_runs_probe_without_spawn() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(ok_result())));
+
+        let spawn_called = Cell::new(false);
+        let probe_called = Cell::new(false);
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path.clone()),
+            || {
+                probe_called.set(true);
+                OpenCodeProbeResult {
+                    model_slugs: vec!["openai/gpt-5.5".to_string()],
+                    model_probe_success: true,
+                    error: None,
+                }
+            },
+            || {
+                spawn_called.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(probe_called.get());
+        assert!(!spawn_called.get());
+        assert!(matches!(outcome, CachedProbeOutcome::Miss(_)));
     }
 
     #[test]
@@ -446,7 +488,13 @@ mod tests {
         let path = cache_file(&temp);
         write_entry(&path, &entry(1, Some(ok_result())));
 
-        let outcome = probe_cached_impl(false, &Some(path), fail_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            fail_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
     }
 
@@ -456,7 +504,13 @@ mod tests {
         let path = cache_file(&temp);
         write_entry(&path, &entry(1, Some(ok_result())));
 
-        let outcome = probe_cached_impl(false, &Some(path.clone()), fail_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path.clone()),
+            fail_result,
+            || Ok(()),
+        );
 
         assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
 
@@ -472,6 +526,7 @@ mod tests {
         let called = Cell::new(false);
         let outcome = probe_cached_impl(
             false,
+            crate::models::probes::ProbeRefreshMode::Background,
             &Some(path.clone()),
             || {
                 called.set(true);
@@ -492,7 +547,13 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "not json").unwrap();
 
-        let outcome = probe_cached_impl(false, &Some(path), ok_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            ok_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedProbeOutcome::Miss(_)));
     }
 
@@ -504,7 +565,13 @@ mod tests {
         old.schema_version = 999;
         write_entry(&path, &old);
 
-        let outcome = probe_cached_impl(false, &Some(path), ok_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            ok_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedProbeOutcome::Miss(_)));
     }
 
@@ -528,7 +595,13 @@ mod tests {
         std::fs::write(&path, "file blocks directory").unwrap();
         let blocked = path.join("opencode-probe.json");
 
-        let outcome = probe_cached_impl(false, &Some(blocked), ok_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(blocked),
+            ok_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedProbeOutcome::Miss(_)));
     }
 

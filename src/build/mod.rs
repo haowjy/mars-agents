@@ -24,6 +24,7 @@ pub struct LaunchBundleRequest {
     pub approval: Option<String>,
     pub sandbox: Option<String>,
     pub extra_skills: Vec<String>,
+    pub models_refresh: crate::models::ModelsRefreshControl,
 }
 
 pub fn build_launch_bundle(
@@ -86,6 +87,7 @@ pub fn build_launch_bundle(
         effort_override: request.effort.as_deref(),
         approval_override: request.approval.as_deref(),
         sandbox_override: request.sandbox.as_deref(),
+        models_refresh: request.models_refresh,
     })?;
 
     warnings.extend(policy.warnings);

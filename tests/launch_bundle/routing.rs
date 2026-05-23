@@ -1890,6 +1890,118 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("refresh-probe-spawned");
+    let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.4-mini
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs().saturating_sub(120),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.4-mini"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--no-refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert!(
+        !marker_path.exists(),
+        "--no-refresh-models should not spawn __refresh-probe or run the harness probe"
+    );
+}
+
+pub(crate) fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("sync-probe-ran");
+    let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.5
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs().saturating_sub(120),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.4-mini"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5.5")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert!(
+        marker_path.exists(),
+        "--refresh-models should run the stale probe refresh synchronously"
+    );
+}
+
 pub(crate) fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
@@ -2582,6 +2694,45 @@ fn install_fake_harnesses_with_auth_failures(
 
 fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
+}
+
+fn install_opencode_probe_harness(
+    temp: &TempDir,
+    model_slug: &str,
+    marker_path: Option<&Path>,
+) -> PathBuf {
+    let bin_dir = temp.path().join("harness-bin-probe");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+        let marker_command = marker_path
+            .map(|path| format!("echo ran>\"{}\"\r\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "@echo off\r\nif \"%~1\"==\"models\" (\r\n  {marker_command}  echo {model_slug}\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+        );
+        fs::write(bin_dir.join("opencode.bat"), script).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let marker_command = marker_path
+            .map(|path| format!("printf ran > '{}'\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  {marker_command}  printf '%s\\n' '{model_slug}'\n  exit 0\nfi\nexit 0\n"
+        );
+        let path = bin_dir.join("opencode");
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    bin_dir
 }
 
 fn write_cursor_probe_cache(cache_root: &Path, fetched_at: u64, slugs: &[&str]) {

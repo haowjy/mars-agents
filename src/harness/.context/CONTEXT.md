@@ -28,7 +28,7 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
 
 - `collect_capability_snapshot(options)` — collects for all known harnesses
 - `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
-- `CapabilityCollectionOptions { offline, allow_probe_refresh }` — caller controls probe refresh
+- `CapabilityCollectionOptions { offline, probe_refresh }` — `MARS_OFFLINE` and `ProbeRefreshMode` (background / synchronous / skip)
 - `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl
 - `AuthState`: `NotApplicable` (Pi/OpenCode/Cursor), `Authenticated`, `Unauthenticated`, `Unknown`
 
@@ -79,7 +79,10 @@ let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
 **Offline/test options:**
 
 ```rust
-let options = CapabilityCollectionOptions { offline: true, allow_probe_refresh: false };
+let options = CapabilityCollectionOptions {
+    offline: true,
+    probe_refresh: ProbeRefreshMode::Skip,
+};
 ```
 
 This prevents probe refresh and uses stale cache (or returns empty probe result).

@@ -143,6 +143,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            models_refresh: crate::models::ModelsRefreshControl::auto(),
         };
         let aliases = IndexMap::new();
         let cache = ModelsCache {
@@ -170,6 +171,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            models_refresh: crate::models::ModelsRefreshControl::auto(),
         };
         let aliases = IndexMap::new();
         let cache = ModelsCache {

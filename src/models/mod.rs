@@ -398,11 +398,53 @@ pub fn is_mars_offline() -> bool {
 }
 
 pub fn resolve_refresh_mode(no_refresh_flag: bool) -> RefreshMode {
-    if no_refresh_flag {
-        RefreshMode::Offline
-    } else {
-        RefreshMode::Auto
+    resolve_models_refresh_control(false, no_refresh_flag)
+        .expect("refresh and no-refresh are mutually exclusive")
+        .catalog_mode
+}
+
+/// Catalog + harness probe refresh intent from CLI flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelsRefreshControl {
+    pub catalog_mode: RefreshMode,
+    pub probe_refresh: crate::models::probes::ProbeRefreshMode,
+}
+
+impl ModelsRefreshControl {
+    pub fn auto() -> Self {
+        Self {
+            catalog_mode: RefreshMode::Auto,
+            probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
+        }
     }
+}
+
+pub fn resolve_models_refresh_control(
+    refresh_models: bool,
+    no_refresh_models: bool,
+) -> Result<ModelsRefreshControl, crate::error::MarsError> {
+    use crate::error::ConfigError;
+    use crate::models::probes::ProbeRefreshMode;
+
+    if refresh_models && no_refresh_models {
+        return Err(crate::error::MarsError::Config(ConfigError::Invalid {
+            message: "--refresh-models and --no-refresh-models cannot be used together".to_string(),
+        }));
+    }
+
+    Ok(if no_refresh_models {
+        ModelsRefreshControl {
+            catalog_mode: RefreshMode::Offline,
+            probe_refresh: ProbeRefreshMode::Skip,
+        }
+    } else if refresh_models {
+        ModelsRefreshControl {
+            catalog_mode: RefreshMode::Force,
+            probe_refresh: ProbeRefreshMode::Synchronous,
+        }
+    } else {
+        ModelsRefreshControl::auto()
+    })
 }
 
 pub fn load_models_cache_ttl(ctx: &MarsContext) -> u32 {
@@ -4242,6 +4284,41 @@ harness = "claude"
         let _offline = EnvVarGuard::set("MARS_OFFLINE", "0");
         assert!(!is_mars_offline());
         assert_eq!(resolve_refresh_mode(false), RefreshMode::Auto);
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_defaults_to_auto_background() {
+        let control = resolve_models_refresh_control(false, false).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Auto);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Background
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_no_refresh_is_offline_skip() {
+        let control = resolve_models_refresh_control(false, true).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Offline);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Skip
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_refresh_is_force_sync() {
+        let control = resolve_models_refresh_control(true, false).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Force);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Synchronous
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_rejects_both_flags() {
+        assert!(resolve_models_refresh_control(true, true).is_err());
     }
 
     #[test]

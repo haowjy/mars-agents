@@ -15,6 +15,7 @@ use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
+use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cursor_cache;
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
 use crate::models::probes::pi_cache;
@@ -47,8 +48,11 @@ pub struct ListArgs {
     /// Show all alias candidates with availability info. Does NOT show raw catalog - use --catalog for that.
     #[arg(long, conflicts_with = "catalog", conflicts_with = "unavailable")]
     all: bool,
+    /// Refresh models.dev catalog and harness probes synchronously before running (blocks until complete).
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    refresh_models: bool,
     /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "refresh_models")]
     no_refresh_models: bool,
     /// Only show aliases matching these patterns (overrides config).
     #[arg(long, value_delimiter = ',')]
@@ -68,8 +72,11 @@ pub struct ListArgs {
 pub struct ResolveAliasArgs {
     /// Alias name to resolve.
     pub name: String,
+    /// Refresh models.dev catalog and harness probes synchronously before running (blocks until complete).
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    refresh_models: bool,
     /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "refresh_models")]
     no_refresh_models: bool,
 }
 
@@ -107,11 +114,12 @@ fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
     ctx.project_root.join(".mars")
 }
 
-fn collect_models_capability_snapshot(no_refresh_models: bool) -> CapabilitySnapshot {
-    let offline = models::is_mars_offline() || no_refresh_models;
+fn collect_models_capability_snapshot(
+    refresh: &models::ModelsRefreshControl,
+) -> CapabilitySnapshot {
     collect_capability_snapshot(&CapabilityCollectionOptions {
-        offline,
-        allow_probe_refresh: !no_refresh_models,
+        offline: models::is_mars_offline(),
+        probe_refresh: refresh.probe_refresh,
     })
 }
 
@@ -158,7 +166,9 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
 fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
     let ttl = models::load_models_cache_ttl(ctx);
-    let mode = models::resolve_refresh_mode(args.no_refresh_models);
+    let refresh =
+        models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
+    let mode = refresh.catalog_mode;
     let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
@@ -175,7 +185,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             return Ok(1);
         }
     };
-    let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
+    let capability_snapshot = collect_models_capability_snapshot(&refresh);
 
     if args.catalog {
         return run_list_catalog(ListCatalogInput {
@@ -373,6 +383,7 @@ struct ResolveRuntime<'a> {
     pi_probe_result: Option<&'a PiProbeResult>,
     cursor_probe_result: Option<&'a CursorProbeResult>,
     routing_settings: &'a ResolvedRoutingSettings,
+    probe_refresh: ProbeRefreshMode,
 }
 
 struct RouteTraceInput<'a> {
@@ -405,6 +416,7 @@ struct OutputResolvedInput<'a> {
     route_trace: &'a crate::routing::RoutingTrace,
     outcome: &'a models::RefreshOutcome,
     cache_outcome: &'a CachedProbeOutcome,
+    probe_refresh: ProbeRefreshMode,
     routing_diagnostics: &'a [String],
     json: bool,
 }
@@ -414,6 +426,7 @@ struct OutputPassthroughInput<'a> {
     outcome: &'a models::RefreshOutcome,
     is_offline: bool,
     installed: &'a HashSet<String>,
+    capability_snapshot: &'a CapabilitySnapshot,
     catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
     cache_error: Option<&'a str>,
@@ -1159,7 +1172,9 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     let merged = load_merged_aliases(ctx)?;
     let mars = mars_dir(ctx);
     let ttl = models::load_models_cache_ttl(ctx);
-    let mode = models::resolve_refresh_mode(args.no_refresh_models);
+    let refresh =
+        models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
+    let mode = refresh.catalog_mode;
     let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
@@ -1175,7 +1190,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             None
         }
     };
-    let capability_snapshot = collect_models_capability_snapshot(args.no_refresh_models);
+    let capability_snapshot = collect_models_capability_snapshot(&refresh);
     let installed = capability_snapshot.installed_harnesses();
     let cache_outcome = capability_snapshot.opencode.clone();
     let probe_result = cache_outcome.result().cloned();
@@ -1223,6 +1238,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             pi_probe_result: pi_probe_result.as_ref(),
             cursor_probe_result: cursor_probe_result.as_ref(),
             routing_settings: &routing_settings,
+            probe_refresh: refresh.probe_refresh,
         };
         return run_resolve_exact_alias(
             args,
@@ -1285,6 +1301,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             route_trace: &route_trace,
             outcome,
             cache_outcome: &cache_outcome,
+            probe_refresh: refresh.probe_refresh,
             routing_diagnostics: &routing_diagnostics,
             json,
         });
@@ -1304,6 +1321,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         outcome: &outcome,
         is_offline,
         installed: &installed,
+        capability_snapshot: &capability_snapshot,
         catalog_model_slugs: passthrough_catalog_slugs.as_deref(),
         routing_settings: &routing_settings,
         cache_error: cache_error.as_deref(),
@@ -1553,7 +1571,9 @@ fn run_resolve_exact_alias(
             return Ok(1);
         }
     } else {
-        if matches!(runtime.probe_outcome, CachedProbeOutcome::Stale(_)) {
+        if runtime.probe_refresh == ProbeRefreshMode::Background
+            && matches!(runtime.probe_outcome, CachedProbeOutcome::Stale(_))
+        {
             eprintln!("note: using cached opencode probe (stale, background refresh triggered)");
         }
         let Some(r) = resolved_entry.as_ref() else {
@@ -1732,6 +1752,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         route_trace,
         outcome,
         cache_outcome,
+        probe_refresh,
         routing_diagnostics,
         json,
     } = input;
@@ -1775,7 +1796,9 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         add_route_json_fields(&mut out, route_trace);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
-        if matches!(cache_outcome, CachedProbeOutcome::Stale(_)) {
+        if probe_refresh == ProbeRefreshMode::Background
+            && matches!(cache_outcome, CachedProbeOutcome::Stale(_))
+        {
             eprintln!("note: using cached opencode probe (stale, background refresh triggered)");
         }
         let harness = resolved.harness.as_deref().unwrap_or("—");
@@ -1807,6 +1830,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         outcome,
         is_offline,
         installed,
+        capability_snapshot,
         catalog_model_slugs,
         routing_settings,
         cache_error,
@@ -1845,14 +1869,10 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         .as_deref()
         .or(provider_constraint.as_deref())
         .unwrap_or("unknown");
-    let cache_outcome = opencode_cache::probe_cached(installed, is_offline);
+    let cache_outcome = capability_snapshot.opencode.clone();
     let probe_result = cache_outcome.result().cloned();
-    let pi_probe_result = pi_cache::probe_cached(installed, is_offline)
-        .result()
-        .cloned();
-    let cursor_probe_result = cursor_cache::probe_cached(installed, is_offline)
-        .result()
-        .cloned();
+    let pi_probe_result = capability_snapshot.pi.result().cloned();
+    let cursor_probe_result = capability_snapshot.cursor.result().cloned();
     let routing_evidence = crate::routing::RoutingSettingsEvidence::new(
         &passthrough_model_id,
         Some(provider_for_order),
@@ -2237,6 +2257,19 @@ mod tests {
     fn list_args_parses_no_refresh_models() {
         let args = ListArgs::try_parse_from(["mars", "--no-refresh-models"]).unwrap();
         assert!(args.no_refresh_models);
+    }
+
+    #[test]
+    fn list_args_parses_refresh_models() {
+        let args = ListArgs::try_parse_from(["mars", "--refresh-models"]).unwrap();
+        assert!(args.refresh_models);
+    }
+
+    #[test]
+    fn list_refresh_and_no_refresh_conflict() {
+        assert!(
+            ListArgs::try_parse_from(["mars", "--refresh-models", "--no-refresh-models"]).is_err()
+        );
     }
 
     #[test]

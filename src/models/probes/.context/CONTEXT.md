@@ -1,16 +1,19 @@
 # src/models/probes/
 
-Capability probing for OpenCode and Pi harnesses, with disk-backed caching.
+Capability probing for OpenCode, Pi, and Cursor harnesses, with disk-backed caching.
 
 ## Module layout
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | Re-exports; `should_probe_opencode()` guard |
+| `mod.rs` | Re-exports; `should_probe_opencode()` / `should_probe_cursor()` guards |
+| `probe_refresh.rs` | Shared `ProbeRefreshMode` (background / synchronous / skip) |
 | `opencode.rs` | OpenCode probe: provider/model availability via `opencode models ls` |
-| `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode.json` |
-| `pi.rs` | Pi probe: binary present + `--version` / `--help` / `--list-models` (stdout, stderr fallback) |
-| `pi_cache.rs` | Pi probe cache at `~/.mars/cache/availability/pi.json` |
+| `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode-probe.json` |
+| `pi.rs` | Pi probe: binary present + `--version` / `--help` / `--list-models` |
+| `pi_cache.rs` | Pi probe cache at `~/.mars/cache/availability/pi-probe.json` |
+| `cursor.rs` | Cursor probe + effort slug resolution (`resolve_cursor_effort_slug`) |
+| `cursor_cache.rs` | Cursor probe cache at `~/.mars/cache/availability/cursor-probe.json` |
 
 ## Contracts
 
@@ -43,16 +46,35 @@ may still work, but we cannot confirm compatibility.
 `OpenCodeProbeResult` records provider presence and model slugs available in the
 OpenCode installation. `Likely` confidence requires positive provider + model match.
 
+### Cursor effort resolution
+
+Cursor often exposes the default effort tier as an **unsuffixed** slug (e.g. `gpt-5.5`), not
+`gpt-5.5-medium`. Mars maps `medium`, `none`, `auto`, and `default` to that base slug when it
+exists in the probe catalog; otherwise effort resolution fails closed (`NoEffortMatch`).
+
+Launch-bundle applies the resolved slug to `routing.harness_model` and clears
+`execution_policy.effort` when resolution succeeds. Claude slugs prefer `-thinking-` variants when
+multiple matches exist at the same effort tier.
+
 ### Cache
 
-Both probes cache to `~/.mars/cache/availability/{pi,opencode}.json`.
+Probes cache under `~/.mars/cache/availability/{pi,opencode,cursor}-probe.json`.
 TTL: `MARS_PROBE_CACHE_TTL_SECS` env var (default 60s).
 Probe timeout: `MARS_PROBE_TIMEOUT_SECS` (default 5s).
 
-Cache is read at `collect_capability_snapshot()` time. If cache is stale
-and `allow_probe_refresh: true` (default), the probe runs and refreshes the cache.
-If `offline: true` or `allow_probe_refresh: false`, stale cache is used as-is;
-no cache → empty result → routing uses Passthrough.
+Cache is read at `collect_capability_snapshot()` time. Refresh behavior is controlled by
+`ProbeRefreshMode` on `CapabilityCollectionOptions`:
+
+| Mode | Stale usable | Miss / unusable |
+|---|---|---|
+| `Background` (default) | Return stale + spawn `mars models __refresh-probe` | Sync probe in-process |
+| `Synchronous` (`--refresh-models`) | Sync probe in-process (no spawn) | Sync probe in-process |
+| `Skip` (`--no-refresh-models`) | Return stale, no spawn | Unavailable |
+
+`MARS_OFFLINE` disables probe subprocesses entirely (`should_probe_*` returns false).
+
+Stale usable cache is still returned under `Skip` when the harness is installed — only refresh is
+suppressed.
 
 ### Windows/test cache isolation
 
@@ -105,7 +127,10 @@ let pi_probe = PiProbeResult {
 **Skip probes in offline test scenarios:**
 
 ```rust
-let options = CapabilityCollectionOptions { offline: true, allow_probe_refresh: false };
+let options = CapabilityCollectionOptions {
+    offline: true,
+    probe_refresh: ProbeRefreshMode::Skip,
+};
 let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
-// snapshot.pi will be CachedPiProbeOutcome with no result → Passthrough in routing
+// snapshot.pi will be Unavailable → Passthrough in routing
 ```

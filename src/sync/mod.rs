@@ -598,8 +598,11 @@ pub(crate) fn finalize(
         // failure — warn and continue.
         let mars_path = ctx.project_root.join(".mars");
         let ttl = crate::models::load_models_cache_ttl(ctx);
-        let mode = crate::models::resolve_refresh_mode(request.options.no_refresh_models);
-        match crate::models::ensure_fresh(&mars_path, ttl, mode) {
+        let refresh = crate::models::resolve_models_refresh_control(
+            request.options.refresh_models,
+            request.options.no_refresh_models,
+        )?;
+        match crate::models::ensure_fresh(&mars_path, ttl, refresh.catalog_mode) {
             Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
                 diag.warn(
                     "models-cache-refresh",
@@ -1394,6 +1397,7 @@ mod tests {
                 force: false,
                 dry_run: false,
                 frozen: true,
+                refresh_models: false,
                 no_refresh_models: false,
             },
         };
@@ -1414,6 +1418,7 @@ mod tests {
                 force: false,
                 dry_run: false,
                 frozen: true,
+                refresh_models: false,
                 no_refresh_models: false,
             },
         };
@@ -1621,6 +1626,7 @@ mod tests {
                 force: false,
                 dry_run: true,
                 frozen: false,
+                refresh_models: false,
                 no_refresh_models: false,
             },
         };
@@ -1668,6 +1674,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -1715,6 +1722,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -1872,6 +1880,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -1913,6 +1922,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -1964,6 +1974,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -1992,6 +2003,7 @@ mod tests {
             force: true,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
@@ -2036,6 +2048,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -2096,6 +2109,7 @@ mod tests {
             force: false,
             dry_run: true,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
 
@@ -2127,6 +2141,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
@@ -2173,6 +2188,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);

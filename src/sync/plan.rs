@@ -228,6 +228,7 @@ mod tests {
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         }
     }
@@ -237,6 +238,7 @@ mod tests {
             force: true,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         }
     }

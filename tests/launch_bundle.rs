@@ -194,6 +194,16 @@ fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
 }
 
 #[test]
+fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
+    routing::build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh();
+}
+
+#[test]
+fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
+    routing::build_launch_bundle_refresh_models_sync_probe_updates_stale_routing();
+}
+
+#[test]
 fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
     routing::build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed();
 }

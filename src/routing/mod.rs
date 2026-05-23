@@ -339,6 +339,7 @@ where
 
     let mut candidates_tried = Vec::new();
     let mut assessments = Vec::new();
+    let mut passthrough_selection: Option<(String, Option<usize>, MatchEvidence)> = None;
 
     for (harness, harness_order_position) in candidates {
         let assessment = candidate_match_evidence_with_auth(
@@ -353,17 +354,41 @@ where
         assessments.push(assessment);
 
         if let Some(match_evidence) = match_evidence {
-            return RoutingTrace {
-                source: candidate_source,
-                selection_kind: SelectionKind::Auto,
-                match_evidence,
-                harness,
-                harness_order_position,
-                candidates_tried,
-                assessments,
-                diagnostics,
-            };
+            match match_evidence {
+                MatchEvidence::Confirmed | MatchEvidence::Constrained => {
+                    return RoutingTrace {
+                        source: candidate_source,
+                        selection_kind: SelectionKind::Auto,
+                        match_evidence,
+                        harness,
+                        harness_order_position,
+                        candidates_tried,
+                        assessments,
+                        diagnostics,
+                    };
+                }
+                MatchEvidence::Passthrough => {
+                    if passthrough_selection.is_none() {
+                        passthrough_selection =
+                            Some((harness, harness_order_position, match_evidence));
+                    }
+                }
+                MatchEvidence::None => {}
+            }
         }
+    }
+
+    if let Some((harness, harness_order_position, match_evidence)) = passthrough_selection {
+        return RoutingTrace {
+            source: candidate_source,
+            selection_kind: SelectionKind::Auto,
+            match_evidence,
+            harness,
+            harness_order_position,
+            candidates_tried,
+            assessments,
+            diagnostics,
+        };
     }
 
     if input.settings_harness_order.is_some()
@@ -1353,7 +1378,8 @@ mod tests {
         assert_eq!(trace.harness, "pi");
         assert_eq!(trace.selection_kind, SelectionKind::Auto);
         assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
-        assert_eq!(trace.candidates_tried, vec!["claude", "pi"]);
+        assert_eq!(trace.candidates_tried[0], "claude");
+        assert_eq!(trace.candidates_tried[1], "pi");
         assert_eq!(
             trace
                 .assessments
@@ -1769,8 +1795,9 @@ mod tests {
         let trace = evaluate_candidates_with_auth(&input, always_authed);
 
         assert_eq!(trace.source, RouteSource::ConfigOrder);
-        assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.harness_order_position, Some(0));
+        assert_eq!(trace.harness, "codex");
+        assert_eq!(trace.harness_order_position, Some(1));
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
     }
 
     #[test]

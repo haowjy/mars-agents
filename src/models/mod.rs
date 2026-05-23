@@ -988,19 +988,21 @@ pub fn resolve_with_alias_prefix_with_probe(
         _ => (None, None, None),
     };
     let installed = harness::detect_installed_harnesses();
+    let catalog_slugs = catalog_model_slugs(cache);
+    let default_harness_order = crate::harness::registry::default_harness_order_names();
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id: &winner.id,
         provider_for_order: Some(&provider),
         provider_constraint: None,
         settings_provider_order: None,
-        settings_harness_order: None,
+        settings_harness_order: Some(default_harness_order.as_slice()),
         config_default_harness: None,
         installed_harnesses: &installed,
         linked_harnesses: None,
         opencode_probe_result: opencode_probe,
         pi_probe_result: pi_probe,
         cursor_probe_result: cursor_probe,
-        catalog_model_slugs: None,
+        catalog_model_slugs: Some(catalog_slugs.as_slice()),
     });
     let (harness, harness_source) = match crate::routing::acceptance::accept_route(
         &trace,

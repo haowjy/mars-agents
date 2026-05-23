@@ -942,19 +942,29 @@ fn apply_routing_settings_to_resolved_alias(
     catalog_model_slugs: Option<&[String]>,
     routing_settings: &ResolvedRoutingSettings,
 ) {
-    let availability_ctx = AvailabilityContext {
+    let provider_for_order =
+        models::infer_provider_from_model_id(&alias.model_id).unwrap_or(alias.provider.as_str());
+    let route_input = RouteTraceInput {
+        model_id: &alias.model_id,
+        provider_for_order,
+        provider_constraint: None,
         installed,
         opencode_probe_result,
         pi_probe_result,
         cursor_probe_result,
         catalog_model_slugs,
-        is_offline: false,
         routing_settings,
     };
-    let (harness, harness_source) =
-        resolve_harness_with_routing(&alias.provider, &alias.model_id, availability_ctx);
-    alias.harness = harness;
-    alias.harness_source = harness_source;
+    let trace = route_trace_for_resolved_model(&route_input);
+    alias.harness = Some(trace.harness.clone());
+    alias.harness_source = match crate::routing::acceptance::accept_route(
+        &trace,
+        installed,
+        crate::routing::acceptance::MatchPolicy::InstalledOnly,
+    ) {
+        Ok(()) => HarnessSource::AutoDetected,
+        Err(_) => HarnessSource::Unavailable,
+    };
 }
 
 fn annotate_resolved_availability(
@@ -1254,9 +1264,11 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             pi_probe_result.as_ref(),
             cursor_probe_result.as_ref(),
         );
+        let provider_for_order = models::infer_provider_from_model_id(&resolved.model_id)
+            .unwrap_or(resolved.provider.as_str());
         let route_input = RouteTraceInput {
             model_id: &resolved.model_id,
-            provider_for_order: &resolved.provider,
+            provider_for_order,
             provider_constraint: None,
             installed: &installed,
             opencode_probe_result: probe_result.as_ref(),

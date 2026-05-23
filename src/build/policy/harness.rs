@@ -655,7 +655,7 @@ mod tests {
             MatchEvidence::Passthrough
         );
         assert_eq!(resolution.harness_order_position, Some(0));
-        assert_eq!(resolution.candidates_tried, vec!["pi".to_string()]);
+        assert_eq!(resolution.candidates_tried, vec!["pi", "codex"]);
     }
 
     #[test]

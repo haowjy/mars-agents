@@ -742,8 +742,23 @@ fn model_entry_for_cached(
     model: &models::CachedModel,
     availability_ctx: AvailabilityContext<'_>,
 ) -> ListModelEntry {
+    model_entry_for_cached_with_auth(
+        model,
+        availability_ctx,
+        models::harness::native_harness_authenticated,
+    )
+}
+
+fn model_entry_for_cached_with_auth<F>(
+    model: &models::CachedModel,
+    availability_ctx: AvailabilityContext<'_>,
+    auth_check: F,
+) -> ListModelEntry
+where
+    F: Fn(&str) -> bool,
+{
     let (harness, harness_source) =
-        resolve_harness_with_routing(&model.provider, &model.id, availability_ctx);
+        resolve_harness_with_routing_auth(&model.provider, &model.id, availability_ctx, auth_check);
 
     ListModelEntry {
         id: model.id.clone(),
@@ -846,6 +861,23 @@ fn resolve_harness_with_routing(
     model_id: &str,
     availability_ctx: AvailabilityContext<'_>,
 ) -> (Option<String>, HarnessSource) {
+    resolve_harness_with_routing_auth(
+        provider,
+        model_id,
+        availability_ctx,
+        models::harness::native_harness_authenticated,
+    )
+}
+
+fn resolve_harness_with_routing_auth<F>(
+    provider: &str,
+    model_id: &str,
+    availability_ctx: AvailabilityContext<'_>,
+    auth_check: F,
+) -> (Option<String>, HarnessSource)
+where
+    F: Fn(&str) -> bool,
+{
     let route_input = RouteTraceInput {
         model_id,
         provider_for_order: provider,
@@ -858,7 +890,10 @@ fn resolve_harness_with_routing(
         routing_settings: availability_ctx.routing_settings,
     };
     let routing_evidence = routing_settings_evidence(&route_input);
-    let trace = crate::routing::evaluate_candidates(&routing_evidence.routing_input());
+    let trace = crate::routing::evaluate_candidates_with_auth(
+        &routing_evidence.routing_input(),
+        auth_check,
+    );
 
     match crate::routing::acceptance::accept_route(
         &trace,
@@ -2549,19 +2584,50 @@ description = "Old alias"
         is_offline: bool,
         routing_settings: &ResolvedRoutingSettings,
     ) -> Vec<ListModelEntry> {
-        let catalog_slugs = models::catalog_model_slugs(cache);
-        super::collect_catalog_model_entries(
+        collect_catalog_model_entries_with_auth(
             cache,
-            AvailabilityContext {
-                installed,
-                opencode_probe_result,
-                pi_probe_result,
-                cursor_probe_result,
-                catalog_model_slugs: Some(catalog_slugs.as_slice()),
-                is_offline,
-                routing_settings,
-            },
+            installed,
+            opencode_probe_result,
+            pi_probe_result,
+            cursor_probe_result,
+            is_offline,
+            routing_settings,
+            models::harness::native_harness_authenticated,
         )
+    }
+
+    fn collect_catalog_model_entries_with_auth<F>(
+        cache: &models::ModelsCache,
+        installed: &HashSet<String>,
+        opencode_probe_result: Option<&OpenCodeProbeResult>,
+        pi_probe_result: Option<&PiProbeResult>,
+        cursor_probe_result: Option<&CursorProbeResult>,
+        is_offline: bool,
+        routing_settings: &ResolvedRoutingSettings,
+        auth_check: F,
+    ) -> Vec<ListModelEntry>
+    where
+        F: Fn(&str) -> bool + Copy,
+    {
+        let catalog_slugs = models::catalog_model_slugs(cache);
+        let availability_ctx = AvailabilityContext {
+            installed,
+            opencode_probe_result,
+            pi_probe_result,
+            cursor_probe_result,
+            catalog_model_slugs: Some(catalog_slugs.as_slice()),
+            is_offline,
+            routing_settings,
+        };
+        let mut out: Vec<ListModelEntry> = cache
+            .models
+            .iter()
+            .map(|model| {
+                super::model_entry_for_cached_with_auth(model, availability_ctx, auth_check)
+            })
+            .collect();
+        super::sort_list_model_entries(&mut out);
+        out
     }
 
     #[test]
@@ -2760,7 +2826,7 @@ description = "Old alias"
         )]);
 
         let installed = installed(&["claude"]);
-        let rows = collect_catalog_model_entries(
+        let rows = collect_catalog_model_entries_with_auth(
             &models_cache,
             &installed,
             None,
@@ -2768,6 +2834,7 @@ description = "Old alias"
             None,
             false,
             &default_routing_settings(),
+            |_| true,
         );
 
         assert_eq!(rows.len(), 1);

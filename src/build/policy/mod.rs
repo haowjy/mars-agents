@@ -190,6 +190,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let installed_harnesses = capability_snapshot.installed_harnesses();
     let opencode_probe_result = capability_snapshot.opencode.result();
     let pi_probe_result = capability_snapshot.pi.result();
+    let cursor_probe_result = capability_snapshot.cursor.result();
 
     let harness_resolution = harness::resolve_harness(
         &model_input,
@@ -208,6 +209,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
                 .then_some(resolution_config.linked_harnesses.as_slice()),
             opencode_probe_result,
             pi_probe_result,
+            cursor_probe_result,
         },
     )?;
 

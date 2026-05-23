@@ -6,6 +6,7 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 use crate::harness::registry::{self, HarnessId};
+use crate::models::probes::cursor_cache::{self, CachedCursorProbeOutcome};
 use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
 use crate::models::probes::pi_cache::{self, CachedPiProbeOutcome};
 
@@ -30,6 +31,7 @@ pub struct CapabilitySnapshot {
     pub auth: BTreeMap<HarnessId, AuthState>,
     pub opencode: CachedProbeOutcome,
     pub pi: CachedPiProbeOutcome,
+    pub cursor: CachedCursorProbeOutcome,
     pub offline: bool,
 }
 
@@ -113,12 +115,14 @@ pub fn collect_capability_snapshot_with_resolver(
 
     let opencode_offline = options.offline || !options.allow_probe_refresh;
     let pi_offline = options.offline || !options.allow_probe_refresh;
+    let cursor_offline = options.offline || !options.allow_probe_refresh;
 
     CapabilitySnapshot {
         executable,
         auth,
         opencode: opencode_cache::probe_cached(&installed, opencode_offline),
         pi: pi_cache::probe_cached(&installed, pi_offline),
+        cursor: cursor_cache::probe_cached(&installed, cursor_offline),
         offline: options.offline,
     }
 }

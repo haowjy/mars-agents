@@ -9,8 +9,7 @@ use crate::compiler::agents::HarnessKind;
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
-use crate::models::probes::OpenCodeProbeResult;
-use crate::models::probes::PiProbeResult;
+use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 use crate::routing::{self, RoutingInput};
 
 #[derive(Debug)]
@@ -35,6 +34,7 @@ pub(super) struct HarnessEvidence<'a> {
     pub(super) linked_harnesses: Option<&'a [String]>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub(super) pi_probe_result: Option<&'a PiProbeResult>,
+    pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
 }
 
 pub(super) fn resolve_harness(
@@ -97,6 +97,7 @@ pub(super) fn resolve_harness(
                     linked_harnesses: evidence.linked_harnesses,
                     opencode_probe_result: evidence.opencode_probe_result,
                     pi_probe_result: evidence.pi_probe_result,
+                    cursor_probe_result: evidence.cursor_probe_result,
                 },
                 &selection.value,
             );
@@ -290,6 +291,7 @@ fn evaluate_candidates(
         linked_harnesses: evidence.linked_harnesses,
         opencode_probe_result: evidence.opencode_probe_result,
         pi_probe_result: evidence.pi_probe_result,
+        cursor_probe_result: evidence.cursor_probe_result,
     })
 }
 
@@ -456,6 +458,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         }
     }
 
@@ -569,6 +572,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: Some(&opencode_probe),
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let resolution = resolve_harness(&input, None, None, None, evidence)
@@ -639,6 +643,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let error = resolve_harness(&input, None, None, None, evidence)

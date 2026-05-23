@@ -89,7 +89,7 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         binary: "cursor",
         default_target: ".cursor",
         experimental: true,
-        class: HarnessClass::UniversalPassthrough,
+        class: HarnessClass::ProbeBacked,
     },
 ];
 

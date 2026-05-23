@@ -6,6 +6,7 @@ pub mod slug;
 
 use crate::models;
 use crate::models::harness::HarnessOrderFailure;
+use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
 
@@ -162,6 +163,7 @@ pub struct RoutingInput<'a> {
     pub linked_harnesses: Option<&'a [String]>,
     pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub pi_probe_result: Option<&'a PiProbeResult>,
+    pub cursor_probe_result: Option<&'a CursorProbeResult>,
 }
 
 /// Evaluate all candidates and return a routing trace.
@@ -684,6 +686,53 @@ where
     }
 
     if harness == "cursor" {
+        let Some(cursor_probe) = input.cursor_probe_result else {
+            return passthrough_assessment(harness);
+        };
+        if !cursor_probe.model_probe_success {
+            return passthrough_assessment(harness);
+        }
+        if cursor_probe.slugs.is_empty() {
+            return passthrough_assessment(harness);
+        }
+
+        let normalized_model = crate::models::probes::cursor::normalize_slug(input.model_id);
+        if cursor_probe
+            .slugs
+            .iter()
+            .any(|slug| crate::models::probes::cursor::normalize_slug(slug) == normalized_model)
+        {
+            return CandidateAssessment {
+                harness: harness.to_string(),
+                installed: true,
+                candidate_slugs: vec![input.model_id.to_string()],
+                filtered_slugs: vec![input.model_id.to_string()],
+                chosen_slug: Some(input.model_id.to_string()),
+                chosen_model: Some(input.model_id.to_string()),
+                match_evidence: Some(MatchEvidence::Confirmed),
+                skip_reason: None,
+            };
+        }
+
+        let matches = crate::models::probes::cursor::find_cursor_prefix_matches(
+            input.model_id,
+            &cursor_probe.slugs,
+        );
+        if !matches.is_empty() {
+            let candidate_slugs: Vec<String> =
+                matches.iter().map(|slug| (*slug).to_string()).collect();
+            return CandidateAssessment {
+                harness: harness.to_string(),
+                installed: true,
+                candidate_slugs: candidate_slugs.clone(),
+                filtered_slugs: candidate_slugs,
+                chosen_slug: Some(input.model_id.to_string()),
+                chosen_model: Some(input.model_id.to_string()),
+                match_evidence: Some(MatchEvidence::Confirmed),
+                skip_reason: None,
+            };
+        }
+
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,
@@ -691,8 +740,8 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            match_evidence: Some(MatchEvidence::Passthrough),
-            skip_reason: None,
+            match_evidence: None,
+            skip_reason: Some("no_model_match"),
         };
     }
 
@@ -705,6 +754,19 @@ where
         chosen_model: None,
         match_evidence: None,
         skip_reason: Some("unsupported_candidate"),
+    }
+}
+
+fn passthrough_assessment(harness: &str) -> CandidateAssessment {
+    CandidateAssessment {
+        harness: harness.to_string(),
+        installed: true,
+        candidate_slugs: Vec::new(),
+        filtered_slugs: Vec::new(),
+        chosen_slug: None,
+        chosen_model: None,
+        match_evidence: Some(MatchEvidence::Passthrough),
+        skip_reason: None,
     }
 }
 
@@ -954,7 +1016,11 @@ mod tests {
         false
     }
 
-    type ProbeInputs<'a> = (Option<&'a OpenCodeProbeResult>, Option<&'a PiProbeResult>);
+    type ProbeInputs<'a> = (
+        Option<&'a OpenCodeProbeResult>,
+        Option<&'a PiProbeResult>,
+        Option<&'a CursorProbeResult>,
+    );
 
     fn routing_input<'a>(
         model_id: &'a str,
@@ -965,7 +1031,7 @@ mod tests {
         linked_harnesses: Option<&'a [String]>,
         probe_inputs: ProbeInputs<'a>,
     ) -> RoutingInput<'a> {
-        let (opencode_probe_result, pi_probe_result) = probe_inputs;
+        let (opencode_probe_result, pi_probe_result, cursor_probe_result) = probe_inputs;
         RoutingInput {
             model_id,
             provider_for_order,
@@ -977,6 +1043,7 @@ mod tests {
             linked_harnesses,
             opencode_probe_result,
             pi_probe_result,
+            cursor_probe_result,
         }
     }
 
@@ -990,7 +1057,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1012,7 +1079,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1040,13 +1107,128 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
         assert_eq!(trace.harness, "cursor");
         assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
+    }
+
+    #[test]
+    fn cursor_with_no_probe_falls_back_to_passthrough() {
+        let installed = installed(&["cursor"]);
+        let input = routing_input(
+            "gpt-5.5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, None),
+        );
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+        assert_eq!(trace.harness, "cursor");
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
+    }
+
+    #[test]
+    fn cursor_prefix_match_returns_confirmed_with_candidate_slugs() {
+        let installed = installed(&["cursor"]);
+        let cursor_probe = CursorProbeResult {
+            slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let input = routing_input(
+            "gpt-5.5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, Some(&cursor_probe)),
+        );
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+        assert_eq!(trace.harness, "cursor");
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
+        let cursor_assessment = trace
+            .assessments
+            .iter()
+            .find(|assessment| assessment.harness == "cursor")
+            .expect("cursor assessment should exist");
+        assert_eq!(
+            cursor_assessment.candidate_slugs,
+            vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()]
+        );
+        assert_eq!(cursor_assessment.chosen_slug.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn cursor_exact_match_returns_confirmed() {
+        let installed = installed(&["cursor"]);
+        let cursor_probe = CursorProbeResult {
+            slugs: vec!["gpt-5.5".to_string(), "gpt-5.5-high".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let input = routing_input(
+            "gpt-5.5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, Some(&cursor_probe)),
+        );
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+        assert_eq!(trace.harness, "cursor");
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
+        let cursor_assessment = trace
+            .assessments
+            .iter()
+            .find(|assessment| assessment.harness == "cursor")
+            .expect("cursor assessment should exist");
+        assert_eq!(
+            cursor_assessment.candidate_slugs,
+            vec!["gpt-5.5".to_string()]
+        );
+        assert_eq!(cursor_assessment.chosen_slug.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn cursor_no_match_falls_through() {
+        let installed = installed(&["cursor"]);
+        let cursor_probe = CursorProbeResult {
+            slugs: vec!["claude-opus-4-7-high".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let input = routing_input(
+            "gpt-5.5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, Some(&cursor_probe)),
+        );
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+        assert_eq!(trace.harness, "pi");
+        assert_eq!(trace.selection_kind, SelectionKind::HardcodedDefault);
+        assert_eq!(
+            trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == "cursor")
+                .and_then(|assessment| assessment.skip_reason),
+            Some("no_model_match")
+        );
     }
 
     #[test]
@@ -1064,7 +1246,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, Some(&pi_probe)),
+            (None, Some(&pi_probe), None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1097,6 +1279,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: Some(&opencode_probe),
             pi_probe_result: Some(&pi_probe),
+            cursor_probe_result: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1132,6 +1315,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
+            cursor_probe_result: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1180,6 +1364,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: Some(&probe),
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1206,7 +1391,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, Some(&pi_probe)),
+            (None, Some(&pi_probe), None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1237,7 +1422,7 @@ mod tests {
             None,
             &installed,
             None,
-            (Some(&probe), None),
+            (Some(&probe), None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1261,7 +1446,7 @@ mod tests {
             None,
             &installed,
             None,
-            (Some(&probe), None),
+            (Some(&probe), None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1289,7 +1474,7 @@ mod tests {
             None,
             &installed,
             Some(&linked_harnesses),
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1309,7 +1494,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1330,7 +1515,7 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1355,7 +1540,7 @@ mod tests {
             Some("Pi"),
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1369,7 +1554,15 @@ mod tests {
     #[test]
     fn uses_hardcoded_pi_fallback_with_warning() {
         let installed = installed(&[]);
-        let input = routing_input("model", None, None, None, &installed, None, (None, None));
+        let input = routing_input(
+            "model",
+            None,
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, None),
+        );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
@@ -1396,7 +1589,7 @@ mod tests {
             Some("pi"),
             &installed,
             Some(&linked_harnesses),
-            (None, None),
+            (None, None, None),
         );
         let with_default_trace = evaluate_candidates_with_auth(&with_config_default, never_authed);
         assert_eq!(with_default_trace.source, RouteSource::Provider);
@@ -1419,7 +1612,7 @@ mod tests {
             None,
             &installed,
             Some(&linked_harnesses),
-            (None, None),
+            (None, None, None),
         );
         let hardcoded_trace = evaluate_candidates_with_auth(&without_config_default, never_authed);
         assert_eq!(hardcoded_trace.source, RouteSource::Provider);
@@ -1448,7 +1641,7 @@ mod tests {
                 Some("pi"),
                 &installed,
                 Some(&linked_harnesses),
-                (None, None),
+                (None, None, None),
             ),
             never_authed,
         );
@@ -1467,7 +1660,7 @@ mod tests {
             Some("pi"),
             &installed,
             None,
-            (None, None),
+            (None, None, None),
         );
         let assessment = evaluate_fixed_harness_with_auth(&input, "codex", never_authed);
 
@@ -1491,6 +1684,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let assessment = evaluate_fixed_harness_with_auth(&input, "codex", always_authed);
@@ -1518,6 +1712,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let assessment = evaluate_fixed_harness_with_auth(&input, "codex", always_authed);
@@ -1542,6 +1737,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         };
 
         let assessment = evaluate_fixed_harness_with_auth(&input, "claude", always_authed);
@@ -1619,6 +1815,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
+            cursor_probe_result: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1654,6 +1851,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
+            cursor_probe_result: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);

@@ -1768,6 +1768,49 @@ pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() 
     );
 }
 
+pub(crate) fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+    let cache_root = temp.path().join("mars-cache");
+    write_cursor_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        &["gpt-5.5", "gpt-5.5-high", "gpt-5.5-low"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-medium-effort-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "medium",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5.5"));
+    assert!(bundle["execution_policy"]["effort"].is_null());
+}
+
 pub(crate) fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["cursor"]);

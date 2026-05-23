@@ -179,6 +179,11 @@ fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
 }
 
 #[test]
+fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
+    routing::build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug();
+}
+
+#[test]
 fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     routing::build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed();
 }

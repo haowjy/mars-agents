@@ -192,6 +192,33 @@ pub fn resolve_cursor_effort_slug(
 
     let normalized_model = normalize_slug(model_id);
     let normalized_effort = normalize_slug(effort);
+
+    if cursor_effort_is_default_tier(&normalized_effort) {
+        if let Some(bare_slug) = prefix_matches
+            .iter()
+            .find(|slug| normalize_slug(slug) == normalized_model)
+        {
+            let candidate_slugs = slugs
+                .iter()
+                .filter(|slug| {
+                    let normalized_slug = normalize_slug(slug);
+                    normalized_slug == normalized_model
+                        || normalized_slug.starts_with(&format!("{normalized_model}-"))
+                })
+                .cloned()
+                .collect();
+            return Ok(CursorEffortResolution {
+                slug: (*bare_slug).to_string(),
+                candidate_slugs,
+            });
+        }
+
+        return Err(CursorEffortResolutionError::NoEffortMatch {
+            model_id: model_id.to_string(),
+            effort: effort.to_string(),
+        });
+    }
+
     let effort_matches: Vec<&str> = prefix_matches
         .into_iter()
         .filter(|slug| {
@@ -223,13 +250,19 @@ pub fn resolve_cursor_effort_slug(
     })
 }
 
+/// Cursor often exposes the default effort tier as an unsuffixed slug (e.g. `gpt-5.5`),
+/// not `gpt-5.5-medium`. Treat medium/none/auto as that default tier.
+fn cursor_effort_is_default_tier(normalized_effort: &str) -> bool {
+    matches!(normalized_effort, "auto" | "default" | "medium" | "none")
+}
+
 fn slug_matches_effort(
     normalized_model: &str,
     normalized_slug: &str,
     normalized_effort: &str,
 ) -> bool {
     if normalized_slug == normalized_model {
-        return normalized_effort == "auto";
+        return cursor_effort_is_default_tier(normalized_effort);
     }
 
     let Some(suffix) = normalized_slug
@@ -358,6 +391,35 @@ Tip: use --model <id> to select"#;
         ];
         let resolution = resolve_cursor_effort_slug("claude-opus-4-7", "high", &slugs).unwrap();
         assert_eq!(resolution.slug, "claude-opus-4-7-thinking-high");
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_medium_uses_unsuffixed_base_slug() {
+        let slugs = vec![
+            "gpt-5.5".to_string(),
+            "gpt-5.5-high".to_string(),
+            "gpt-5.5-low".to_string(),
+        ];
+        for effort in ["medium", "none", "auto"] {
+            let resolution = resolve_cursor_effort_slug("gpt-5.5", effort, &slugs).unwrap();
+            assert_eq!(
+                resolution.slug, "gpt-5.5",
+                "effort {effort} should resolve to base slug"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_medium_requires_base_slug_in_catalog() {
+        let slugs = vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()];
+        let err = resolve_cursor_effort_slug("gpt-5.5", "medium", &slugs).unwrap_err();
+        assert_eq!(
+            err,
+            CursorEffortResolutionError::NoEffortMatch {
+                model_id: "gpt-5.5".to_string(),
+                effort: "medium".to_string(),
+            }
+        );
     }
 
     #[test]

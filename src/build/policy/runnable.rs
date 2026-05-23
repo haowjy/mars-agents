@@ -235,6 +235,34 @@ mod tests {
     }
 
     #[test]
+    fn cursor_applies_medium_effort_to_unsuffixed_harness_model() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider: None,
+            effort: Some("medium".to_string()),
+            opencode_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec![
+                    "gpt-5.5".to_string(),
+                    "gpt-5.5-high".to_string(),
+                    "gpt-5.5-low".to_string(),
+                ],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        });
+
+        assert!(resolution.effort_consumed);
+        assert_eq!(resolution.routing.harness_model, "gpt-5.5");
+    }
+
+    #[test]
     fn empty_model_keeps_empty_harness_model_for_harness_default() {
         let resolution = resolve_routing(RoutingInput {
             model: String::new(),

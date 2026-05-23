@@ -11,7 +11,7 @@ Capability probing for OpenCode, Pi, and Cursor harnesses, with disk-backed cach
 | `opencode.rs` | OpenCode probe: provider/model availability via `opencode models ls` |
 | `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode-probe.json` |
 | `pi.rs` | Pi probe: binary present + `--version` / `--help` / `--list-models` |
-| `pi_cache.rs` | Pi probe cache at `~/.mars/cache/availability/pi-probe.json` |
+| `pi_cache.rs` | Pi probe cache at `{cache_root}/availability/pi.json` |
 | `cursor.rs` | Cursor probe + effort slug resolution (`resolve_cursor_effort_slug`) |
 | `cursor_cache.rs` | Cursor probe cache at `~/.mars/cache/availability/cursor-probe.json` |
 

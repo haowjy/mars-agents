@@ -2596,6 +2596,7 @@ description = "Old alias"
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_catalog_model_entries_with_auth<F>(
         cache: &models::ModelsCache,
         installed: &HashSet<String>,

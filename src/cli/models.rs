@@ -841,6 +841,7 @@ fn resolve_harness_with_routing(
         opencode_probe_result,
         pi_probe_result,
         cursor_probe_result,
+        catalog_model_slugs: None,
     });
 
     match crate::routing::acceptance::accept_route(
@@ -883,6 +884,7 @@ fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing
         opencode_probe_result: input.opencode_probe_result,
         pi_probe_result: input.pi_probe_result,
         cursor_probe_result: input.cursor_probe_result,
+        catalog_model_slugs: None,
     })
 }
 
@@ -911,6 +913,7 @@ fn route_trace_for_fixed_harness(
         opencode_probe_result: input.opencode_probe_result,
         pi_probe_result: input.pi_probe_result,
         cursor_probe_result: input.cursor_probe_result,
+        catalog_model_slugs: None,
     };
     let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
     crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
@@ -1859,6 +1862,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
+        catalog_model_slugs: None,
     });
     if let Err(rejection_reason) = crate::routing::acceptance::accept_route(
         &trace,

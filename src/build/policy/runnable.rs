@@ -45,7 +45,9 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     let mut runnable = resolve_runnable_path(&model, provider_for_runnable, &harness, cached_probe);
     if let Some(chosen_slug) = route_trace.selected_chosen_slug_evidence() {
         let use_chosen_slug = harness.eq_ignore_ascii_case("pi")
-            || (harness.eq_ignore_ascii_case("opencode")
+            || ((harness.eq_ignore_ascii_case("opencode")
+                || harness.eq_ignore_ascii_case("claude")
+                || harness.eq_ignore_ascii_case("codex"))
                 && matches!(
                     chosen_slug.match_evidence,
                     Some(MatchEvidence::Confirmed | MatchEvidence::Constrained)

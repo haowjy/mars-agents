@@ -71,6 +71,7 @@ pub(super) fn resolve_model<'a>(
             .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string))
     } else {
         token_provider_constraint
+            .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string))
     };
 
     Ok(ResolvedModel {
@@ -127,6 +128,33 @@ mod tests {
             model_policies: Vec::new(),
             fanout: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_model_infers_provider_for_bare_model_id() {
+        let profile = empty_profile();
+        let input = PolicyInput {
+            project_root: Path::new("."),
+            agent: None,
+            profile: &profile,
+            model_override: Some("claude-opus-4-6"),
+            config_default_model: None,
+            harness_override: None,
+            effort_override: None,
+            approval_override: None,
+            sandbox_override: None,
+        };
+        let aliases = IndexMap::new();
+        let cache = ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        };
+
+        let resolved =
+            resolve_model(&input, None, &aliases, &cache).expect("bare model id should resolve");
+
+        assert_eq!(resolved.model, "claude-opus-4-6");
+        assert_eq!(resolved.provider_for_order.as_deref(), Some("anthropic"));
     }
 
     #[test]

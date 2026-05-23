@@ -340,6 +340,21 @@ pub struct CachedModel {
     pub cost_reasoning: Option<f64>,
 }
 
+/// Provider/model slugs from the models.dev catalog for harness routing comparisons.
+pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
+    cache
+        .models
+        .iter()
+        .map(|model| {
+            format!(
+                "{}/{}",
+                crate::routing::slug::normalize_provider(&model.provider),
+                model.id
+            )
+        })
+        .collect()
+}
+
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
 const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
@@ -985,6 +1000,7 @@ pub fn resolve_with_alias_prefix_with_probe(
         opencode_probe_result: opencode_probe,
         pi_probe_result: pi_probe,
         cursor_probe_result: cursor_probe,
+        catalog_model_slugs: None,
     });
     let (harness, harness_source) = match crate::routing::acceptance::accept_route(
         &trace,
@@ -1602,6 +1618,7 @@ fn resolve_harness(
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
+            catalog_model_slugs: None,
         });
         match crate::routing::acceptance::accept_route(
             &trace,
@@ -2030,6 +2047,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
+            catalog_model_slugs: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2607,6 +2625,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
+            catalog_model_slugs: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)

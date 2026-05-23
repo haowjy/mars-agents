@@ -6,6 +6,7 @@ use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
+use crate::models;
 
 mod config;
 mod execution;
@@ -154,6 +155,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         .agent
         .and_then(|name| resolution_config.agents.get(name));
     let cache = model::load_models_cache(input.project_root)?;
+    let catalog_slugs = models::catalog_model_slugs(&cache);
     let model_input = PolicyInput {
         project_root: input.project_root,
         agent: input.agent,
@@ -210,6 +212,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
+            catalog_model_slugs: Some(catalog_slugs.as_slice()),
         },
     )?;
 

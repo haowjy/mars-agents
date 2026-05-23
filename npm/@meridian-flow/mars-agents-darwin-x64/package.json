@@ -1,6 +1,6 @@
 {
   "name": "@meridian-flow/mars-agents-darwin-x64",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "mars binary for macOS x64 (Intel)",
   "license": "MIT",
   "repository": {

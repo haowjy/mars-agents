@@ -4,8 +4,10 @@ mod common;
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
 
@@ -758,6 +760,8 @@ path = "{}"
 #[test]
 fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
     let dir = TempDir::new().unwrap();
+    let cache_root = dir.child("mars-cache");
+    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-low"]);
     let cursor_agent = r#"---
 name: cursor-worker
 description: Cursor worker
@@ -800,6 +804,7 @@ path = "{}"
 
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
+        .env("MARS_CACHE_DIR", cache_root.path())
         .assert()
         .success();
 
@@ -813,6 +818,29 @@ path = "{}"
         !cursor_native.contains("model: gpt55"),
         "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
     );
+}
+
+fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
+    let cache_path = cache_root.join("availability").join("cursor-probe.json");
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_secs();
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": now,
+        "last_attempt_at": now,
+        "last_error": null,
+        "result": {
+            "slugs": slugs,
+            "model_probe_success": true,
+            "error": null
+        }
+    });
+    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 #[test]

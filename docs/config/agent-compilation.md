@@ -171,7 +171,7 @@ YAML frontmatter + markdown body.
 |---|---|---|
 | `name` | `name:` | exact |
 | `description` | one physical line (`description:` with collapsed whitespace) | exact |
-| `model` | `model:` (uses `[models.<alias>.native.cursor]` when present) | exact |
+| `model` | `model:` (internally adapted when deterministic mapping exists) | exact |
 | `skills` | `skills:` | exact |
 | `mode` | `mode:` | approximate |
 | body | body | exact |
@@ -189,7 +189,7 @@ YAML frontmatter + markdown body.
 
 Cursor requires a one-line frontmatter description for stable native parsing. Mars normalizes multiline/block descriptions by trimming and collapsing all whitespace to single spaces before emitting `.cursor/agents/*.md`.
 
-When `model:` is an alias and `[models.<alias>.native.cursor]` is configured, Mars emits that cursor-native model string in `.cursor/agents/*.md`. If no cursor override exists, Mars preserves the original `model` token.
+Cursor model adaptation is internal to Mars. For common aliases/model IDs, Mars emits deterministic Cursor-native slugs (for example `claude-opus-4-6` → `claude-4.6-opus-high-thinking`, `gpt-5.5` + high effort → `gpt-5.5-high`). If no deterministic mapping exists, Mars preserves the original `model` token.
 
 ### `.pi/agents/<name>.md`
 
@@ -237,7 +237,7 @@ Compact per-field, per-target classification:
 |---|---|---|---|---|---|---|
 | `name` | preserved | exact | exact | exact | exact | exact |
 | `description` | preserved | exact | exact | exact | exact (one-line normalized) | exact |
-| `model` | preserved | exact | exact | exact | exact (`native.cursor` override when set) | exact |
+| `model` | preserved | exact | exact | exact | exact (internal deterministic adaptation when available) | exact |
 | `harness` | preserved | dropped | dropped | dropped | dropped | dropped |
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | dropped | dropped |

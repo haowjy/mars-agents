@@ -756,7 +756,7 @@ path = "{}"
 }
 
 #[test]
-fn sync_cursor_native_agent_uses_explicit_cursor_model_override_from_alias() {
+fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
     let dir = TempDir::new().unwrap();
     let cursor_agent = r#"---
 name: cursor-worker
@@ -777,9 +777,7 @@ version = "0.1.0"
 [models.gpt55]
 harness = "codex"
 model = "gpt-5.5"
-
-[models.gpt55.native]
-cursor = "gpt-5.4-medium"
+default_effort = "high"
 "#,
     )
     .unwrap();
@@ -808,12 +806,12 @@ path = "{}"
     let cursor_native =
         fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
     assert!(
-        cursor_native.contains("model: gpt-5.4-medium"),
-        "cursor model override should be emitted: {cursor_native}"
+        cursor_native.contains("model: gpt-5.5-high"),
+        "cursor model should be internally adapted: {cursor_native}"
     );
     assert!(
         !cursor_native.contains("model: gpt55"),
-        "alias token should not leak into cursor native file when override exists: {cursor_native}"
+        "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
     );
 }
 

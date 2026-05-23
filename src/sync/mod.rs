@@ -1201,7 +1201,6 @@ mod tests {
         crate::models::ModelAlias {
             harness: None,
             description: None,
-            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

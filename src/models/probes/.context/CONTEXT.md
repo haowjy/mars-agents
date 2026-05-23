@@ -9,17 +9,23 @@ Capability probing for OpenCode and Pi harnesses, with disk-backed caching.
 | `mod.rs` | Re-exports; `should_probe_opencode()` guard |
 | `opencode.rs` | OpenCode probe: provider/model availability via `opencode models ls` |
 | `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode.json` |
-| `pi.rs` | Pi probe: binary present + `--version` exits 0 + `--help` has required tokens |
+| `pi.rs` | Pi probe: binary present + `--version` / `--help` / `--list-models` (stdout, stderr fallback) |
 | `pi_cache.rs` | Pi probe cache at `~/.mars/cache/availability/pi.json` |
 
 ## Contracts
 
 ### Pi probe semantics
 
-`PiProbeResult.compatible == true` means **all three** conditions passed:
-1. `pi` binary found on PATH
-2. `pi --version` exits 0
-3. All token groups in `PI_REQUIRED_HELP_TOKEN_GROUPS` are present in `pi --help` output
+`PiProbeResult.compatible == true` means probe subprocesses succeeded and **all** token groups in
+`PI_REQUIRED_HELP_TOKEN_GROUPS` appear in `pi --help` output (after stream merge below).
+
+Prerequisites: `pi` on PATH; `pi --version` and `pi --help` exit 0. `pi --list-models` must exit 0
+for a full probe; its output fills `model_slugs` (routing / `mars models list` Pi paths) but does
+**not** set `compatible` — empty slugs with `compatible: true` still yield no Pi runnable paths.
+
+**Stream merging:** probe subprocesses use stdout when non-empty after trim; otherwise stderr.
+Pi 0.75.x experimental builds emit `--help`, `--version`, and `--list-models` on stderr only.
+Older Pi builds that print to stdout are unchanged.
 
 A single missing token group → `compatible: false` → routing engine skips Pi
 (records `skip_reason: "pi_incompatible"`).

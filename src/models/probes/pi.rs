@@ -131,14 +131,12 @@ fn run_command(
         .stdout
         .take()
         .ok_or_else(|| "stdout capture unavailable".to_string())?;
-    let stdout_reader = thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut output = Vec::new();
-        stdout
-            .read_to_end(&mut output)
-            .map(|_| output)
-            .map_err(|error| format!("stdout read failed: {error}"))
-    });
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "stderr capture unavailable".to_string())?;
+    let stdout_reader = thread::spawn(move || read_stream_to_end(stdout, "stdout"));
+    let stderr_reader = thread::spawn(move || read_stream_to_end(stderr, "stderr"));
 
     match child
         .wait_timeout(timeout)
@@ -148,19 +146,45 @@ fn run_command(
             let stdout = stdout_reader
                 .join()
                 .map_err(|_| "stdout reader panicked".to_string())??;
-            String::from_utf8(stdout).map_err(|error| format!("invalid utf8: {error}"))
+            let stderr = stderr_reader
+                .join()
+                .map_err(|_| "stderr reader panicked".to_string())??;
+            effective_probe_output(stdout, stderr)
         }
         Some(status) => {
             let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             Err(format!("exit code {}", status.code().unwrap_or(-1)))
         }
         None => {
             let _ = child.kill();
             let _ = child.wait();
             let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             Err("timeout".to_string())
         }
     }
+}
+
+fn read_stream_to_end(mut stream: impl Read, label: &'static str) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    stream
+        .read_to_end(&mut output)
+        .map(|_| output)
+        .map_err(|error| format!("{label} read failed: {error}"))
+}
+
+/// Pi 0.75+ may print CLI text to stderr only; prefer stdout when non-empty.
+fn effective_probe_output(stdout: Vec<u8>, stderr: Vec<u8>) -> Result<String, String> {
+    let stdout =
+        String::from_utf8(stdout).map_err(|error| format!("invalid utf8 stdout: {error}"))?;
+    let stderr =
+        String::from_utf8(stderr).map_err(|error| format!("invalid utf8 stderr: {error}"))?;
+    Ok(if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    })
 }
 
 fn first_non_empty_line(output: &str) -> Option<String> {
@@ -230,9 +254,6 @@ fn parse_table_row(line: &str) -> Option<(String, String)> {
     };
 
     if columns.len() < 2 {
-        return None;
-    }
-    if !has_table_separators && columns.len() != 2 {
         return None;
     }
 
@@ -391,6 +412,51 @@ mod tests {
         let model_slugs = parse_models_output(output);
         assert!(model_slugs.contains("openai/gpt-5.4"));
         assert!(model_slugs.contains("anthropic/claude-sonnet-4.7"));
+    }
+
+    #[test]
+    fn effective_probe_output_uses_stderr_when_stdout_empty() {
+        let merged = effective_probe_output(Vec::new(), b"0.75.4\n".to_vec()).unwrap();
+        assert_eq!(merged.trim(), "0.75.4");
+    }
+
+    #[test]
+    fn effective_probe_output_prefers_stdout_when_nonempty() {
+        let merged = effective_probe_output(b"0.4.2\n".to_vec(), b"0.75.4\n".to_vec()).unwrap();
+        assert_eq!(merged.trim(), "0.4.2");
+    }
+
+    #[test]
+    fn classify_help_tokens_accepts_stderr_only_help_surface() {
+        let help = "--mode rpc --model --append-system-prompt --session --fork --session-dir --no-extensions --no-skills --no-context-files --no-prompt-templates -e --extension";
+        let stderr_only = effective_probe_output(Vec::new(), help.as_bytes().to_vec()).unwrap();
+        let (present, missing) = classify_help_tokens(&stderr_only);
+        assert_eq!(missing, Vec::<String>::new());
+        assert!(present.contains(&"--mode".to_string()));
+    }
+
+    #[test]
+    fn parse_models_output_parses_space_separated_multi_column_table() {
+        let output = "\
+provider      model                context  max-out\n\
+openai-codex  gpt-5.4-mini         272K     128K\n\
+openai-codex  gpt-5.4              272K     128K\n";
+
+        let model_slugs = parse_models_output(output);
+        assert!(model_slugs.contains("openai-codex/gpt-5.4-mini"));
+        assert!(model_slugs.contains("openai-codex/gpt-5.4"));
+    }
+
+    #[test]
+    fn parse_models_output_accepts_stderr_only_list_models_table() {
+        let table = r#"
+| Provider | Model |
+| --- | --- |
+| openai-codex | gpt-5.4-mini |
+"#;
+        let stderr_only = effective_probe_output(Vec::new(), table.as_bytes().to_vec()).unwrap();
+        let model_slugs = parse_models_output(&stderr_only);
+        assert!(model_slugs.contains("openai-codex/gpt-5.4-mini"));
     }
 
     #[test]

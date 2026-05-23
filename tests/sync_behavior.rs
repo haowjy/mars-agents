@@ -756,6 +756,68 @@ path = "{}"
 }
 
 #[test]
+fn sync_cursor_native_agent_uses_explicit_cursor_model_override_from_alias() {
+    let dir = TempDir::new().unwrap();
+    let cursor_agent = r#"---
+name: cursor-worker
+description: Cursor worker
+harness: cursor
+model: gpt55
+---
+# Cursor body
+Use Cursor-native markdown.
+"#;
+    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+    fs::write(
+        source.join("mars.toml"),
+        r#"[package]
+name = "base"
+version = "0.1.0"
+
+[models.gpt55]
+harness = "codex"
+model = "gpt-5.5"
+
+[models.gpt55.native]
+cursor = "gpt-5.4-medium"
+"#,
+    )
+    .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let cursor_native =
+        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
+    assert!(
+        cursor_native.contains("model: gpt-5.4-medium"),
+        "cursor model override should be emitted: {cursor_native}"
+    );
+    assert!(
+        !cursor_native.contains("model: gpt55"),
+        "alias token should not leak into cursor native file when override exists: {cursor_native}"
+    );
+}
+
+#[test]
 fn sync_preserves_selected_variant_raw_bytes_when_variant_frontmatter_is_malformed() {
     let dir = TempDir::new().unwrap();
     let base_skill =

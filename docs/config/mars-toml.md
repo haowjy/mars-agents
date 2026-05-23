@@ -246,6 +246,8 @@ Model aliases map short names (e.g. `opus`, `sonnet`) to concrete model IDs or r
 [models.opus]
 harness = "claude"
 model = "claude-opus-4-6"
+[models.opus.native]
+cursor = "claude-4.6-opus-high-thinking"
 
 # Auto-resolve — pattern matching against cached model catalog
 [models.sonnet]
@@ -263,10 +265,13 @@ exclude = ["thinking"]
 | `description` | string | no | Human-readable description shown in `mars models list` |
 | `match` | string[] | no | Glob patterns matched against the model catalog |
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
+| `native` | table | no | Per-harness native model overrides keyed by harness (`cursor`, `codex`, etc.) |
 | `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
 | `autocompact_pct` | u8 | no | Context fill percentage (1–100) that triggers compaction; alternative to `autocompact` |
 
 When `model` is omitted, Mars auto-resolves by querying the cached model catalog with `match`/`exclude` patterns and selecting the best match.
+
+`native` overrides are conservative: they apply only when a harness-native artifact is emitted for that harness. If an alias has no override for the target harness, Mars keeps the original alias/model token unchanged.
 
 ### Merge Precedence
 

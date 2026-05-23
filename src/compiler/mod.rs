@@ -21,6 +21,8 @@ pub mod visibility;
 
 use std::path::Path;
 
+use indexmap::IndexMap;
+
 use crate::config::AgentEmission;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
@@ -79,13 +81,18 @@ pub fn compile(
         diag,
     );
     let compiled_native_outputs = if matches!(agent_surface_policy, AgentSurfacePolicy::EmitAll) {
+        let model_aliases =
+            merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
         dual_surface_compile(
             &ctx.project_root,
             &mars_dir,
+            &model_aliases,
             &applied.planned.targeted.resolved.loaded.old_lock,
-            request.options.force,
-            crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            request.options.dry_run,
+            NativeAgentSurfaceCompileOptions {
+                force: request.options.force,
+                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                dry_run: request.options.dry_run,
+            },
             diag,
         )
     } else {
@@ -277,18 +284,25 @@ fn remove_native_agent_shapes(
 ///
 /// Errors are non-fatal — they are emitted as diagnostics and the sync continues.
 /// This preserves the "target sync is non-fatal" principle (D9).
-fn dual_surface_compile(
-    project_root: &Path,
-    mars_dir: &Path,
-    old_lock: &crate::lock::LockFile,
+struct NativeAgentSurfaceCompileOptions {
     force: bool,
     collision_hint: crate::surface_ownership::CollisionAdoptHint,
     dry_run: bool,
+}
+
+fn dual_surface_compile(
+    project_root: &Path,
+    mars_dir: &Path,
+    model_aliases: &IndexMap<String, crate::models::ModelAlias>,
+    old_lock: &crate::lock::LockFile,
+    options: NativeAgentSurfaceCompileOptions,
     diag: &mut DiagnosticCollector,
 ) -> Vec<(String, String, crate::types::ContentHash)> {
-    use crate::compiler::agents::HarnessKind;
-    use crate::compiler::agents::lower::lower_for_harness;
-    use crate::compiler::agents::parse_agent_content;
+    use crate::compiler::agents::{
+        HarnessKind,
+        lower::{lower_for_harness, lower_for_harness_with_model},
+        parse_agent_content,
+    };
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
     let agents_dir = mars_dir.join("agents");
@@ -356,7 +370,11 @@ fn dual_surface_compile(
 
         // Lower to native format.
         let body = fm.body().to_string();
-        let lowered = lower_for_harness(harness, &profile, &fm, &body);
+        let model_override = native_model_override_for_harness(harness, &profile, model_aliases);
+        let lowered = match model_override.as_deref() {
+            Some(model) => lower_for_harness_with_model(harness, &profile, &fm, &body, Some(model)),
+            None => lower_for_harness(harness, &profile, &fm, &body),
+        };
 
         // Emit lossiness diagnostics.
         for lf in &lowered.lossy_fields {
@@ -387,23 +405,29 @@ fn dual_surface_compile(
         let dest_rel = format!("agents/{file_name}");
         let target_dir = harness.target_dir();
         let dest_exists = surface_ownership::target_dest_exists(&native_path);
-        match surface_ownership::copy_decision(old_lock, target_dir, &dest_rel, dest_exists, force)
-        {
+        match surface_ownership::copy_decision(
+            old_lock,
+            target_dir,
+            &dest_rel,
+            dest_exists,
+            options.force,
+        ) {
             SurfaceCopyDecision::SkipUnmanagedCollision => {
                 surface_ownership::warn_unmanaged_collision(
                     target_dir,
                     &dest_rel,
-                    collision_hint,
+                    options.collision_hint,
                     diag,
                 );
                 continue;
             }
             SurfaceCopyDecision::Proceed => {
-                if dest_exists && force && !old_lock.contains_output(target_dir, &dest_rel) {
+                if dest_exists && options.force && !old_lock.contains_output(target_dir, &dest_rel)
+                {
                     surface_ownership::warn_unmanaged_adopted(
                         target_dir,
                         &dest_rel,
-                        collision_hint,
+                        options.collision_hint,
                         diag,
                     );
                 }
@@ -411,7 +435,7 @@ fn dual_surface_compile(
         }
 
         // Write native artifact (atomic tmp+rename) — skipped on dry runs.
-        if !dry_run {
+        if !options.dry_run {
             if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {
                 diag.warn(
                     "dual-surface-mkdir",
@@ -433,6 +457,32 @@ fn dual_surface_compile(
         }
     }
     records
+}
+
+fn merged_model_aliases_for_native_agents(
+    resolved: &crate::sync::ResolvedState,
+) -> IndexMap<String, crate::models::ModelAlias> {
+    let dep_models =
+        crate::sync::declaration_ordered_dep_models(&resolved.graph, &resolved.loaded.effective);
+    let mut local_diag = DiagnosticCollector::new();
+    crate::models::merge_model_config(
+        &resolved.loaded.config.models,
+        &dep_models,
+        &mut local_diag,
+        None,
+    )
+}
+
+fn native_model_override_for_harness(
+    harness: &crate::compiler::agents::HarnessKind,
+    profile: &crate::compiler::agents::AgentProfile,
+    aliases: &IndexMap<String, crate::models::ModelAlias>,
+) -> Option<String> {
+    let token = profile.model.as_deref()?;
+    let alias = aliases.get(token)?;
+    alias
+        .native_model_override(harness.to_harness_id().as_str())
+        .map(str::to_owned)
 }
 
 #[cfg(test)]

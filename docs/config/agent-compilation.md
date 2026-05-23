@@ -163,6 +163,34 @@ YAML frontmatter + markdown body.
 
 `effort` on OpenCode subprocess maps to `--variant`; on streaming/TUI launches it's dropped.
 
+### `.cursor/agents/<name>.md`
+
+YAML frontmatter + markdown body.
+
+| Source field | Cursor native | Classification |
+|---|---|---|
+| `name` | `name:` | exact |
+| `description` | one physical line (`description:` with collapsed whitespace) | exact |
+| `model` | `model:` (uses `[models.<alias>.native.cursor]` when present) | exact |
+| `skills` | `skills:` | exact |
+| `mode` | `mode:` | approximate |
+| body | body | exact |
+| `approval` | dropped | dropped |
+| `sandbox` | dropped | dropped |
+| `tools` | dropped | dropped |
+| `disallowed-tools` | dropped | dropped |
+| `effort` | dropped from frontmatter | approximate |
+| `mcp-tools` | session payload or error | approximate |
+| `autocompact` | dropped | meridian-only |
+| `autocompact_pct` | dropped | meridian-only |
+| `model-policies` | dropped | meridian-only |
+| `fanout` | dropped | meridian-only |
+| `harness-overrides.cursor.native-config` | dropped | meridian-only |
+
+Cursor requires a one-line frontmatter description for stable native parsing. Mars normalizes multiline/block descriptions by trimming and collapsing all whitespace to single spaces before emitting `.cursor/agents/*.md`.
+
+When `model:` is an alias and `[models.<alias>.native.cursor]` is configured, Mars emits that cursor-native model string in `.cursor/agents/*.md`. If no cursor override exists, Mars preserves the original `model` token.
+
 ### `.pi/agents/<name>.md`
 
 YAML frontmatter + markdown body.
@@ -205,27 +233,27 @@ Under `mars validate --strict`, dropped fields with non-default values promote t
 
 Compact per-field, per-target classification:
 
-| Field | `.mars/` | Claude | Codex | OpenCode | Pi |
-|---|---|---|---|---|---|
-| `name` | preserved | exact | exact | exact | exact |
-| `description` | preserved | exact | exact | exact | exact |
-| `model` | preserved | exact | exact | exact | exact |
-| `harness` | preserved | dropped | dropped | dropped | dropped |
-| `mode` | preserved | dropped | dropped | approximate | approximate |
-| `approval` | preserved | dropped | exact | dropped | dropped |
-| `sandbox` | preserved | dropped | exact | dropped | dropped |
-| `tools` | preserved | exact | dropped | dropped | dropped |
-| `disallowed-tools` | preserved | exact | dropped | dropped | dropped |
-| `mcp-tools` | preserved | exact | approximate | approximate | n/a |
-| `effort` | preserved | exact | exact | approximate | approximate |
-| `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
-| `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
-| `skills` | preserved | exact | dropped | dropped | dropped |
-| `native-config` (matched `harness-overrides.<target>`) | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
-| `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
-| `harness-overrides` | preserved | merged | merged | merged | merged |
-| `fanout` | preserved | meridian-only | meridian-only | meridian-only | meridian-only |
-| body | preserved | exact | approximate | exact | exact |
+| Field | `.mars/` | Claude | Codex | OpenCode | Cursor | Pi |
+|---|---|---|---|---|---|---|
+| `name` | preserved | exact | exact | exact | exact | exact |
+| `description` | preserved | exact | exact | exact | exact (one-line normalized) | exact |
+| `model` | preserved | exact | exact | exact | exact (`native.cursor` override when set) | exact |
+| `harness` | preserved | dropped | dropped | dropped | dropped | dropped |
+| `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
+| `approval` | preserved | dropped | exact | dropped | dropped | dropped |
+| `sandbox` | preserved | dropped | exact | dropped | dropped | dropped |
+| `tools` | preserved | exact | dropped | dropped | dropped | dropped |
+| `disallowed-tools` | preserved | exact | dropped | dropped | dropped | dropped |
+| `mcp-tools` | preserved | exact | approximate | approximate | approximate | n/a |
+| `effort` | preserved | exact | exact | approximate | approximate | approximate |
+| `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `skills` | preserved | exact | dropped | dropped | exact | dropped |
+| `native-config` (matched `harness-overrides.<target>`) | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `harness-overrides` | preserved | merged | merged | merged | merged | merged |
+| `fanout` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| body | preserved | exact | approximate | exact | exact | exact |
 
 ## Stale Artifact Cleanup
 

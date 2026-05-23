@@ -49,6 +49,8 @@ pub struct ModelAlias {
     pub harness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub native: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,6 +82,13 @@ pub enum ModelSpec {
         match_patterns: Vec<String>,
         exclude_patterns: Vec<String>,
     },
+}
+
+impl ModelAlias {
+    pub fn native_model_override(&self, harness: &str) -> Option<&str> {
+        let normalized = harness::normalize_harness_name(harness)?;
+        self.native.get(&normalized).map(String::as_str)
+    }
 }
 
 /// How the harness was determined.
@@ -181,6 +190,8 @@ struct RawModelAlias {
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
+    native: IndexMap<String, String>,
+    #[serde(default)]
     default_effort: Option<String>,
     #[serde(default)]
     autocompact: Option<toml::Value>,
@@ -213,6 +224,29 @@ impl<'de> Deserialize<'de> for ModelAlias {
         } else {
             None
         };
+        let mut native = IndexMap::new();
+        for (harness_name, model_value) in raw.native {
+            let normalized = harness::normalize_harness_name(&harness_name).ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "invalid native model override harness '{harness_name}'; valid harnesses: {}",
+                    harness::VALID_HARNESSES.join(", ")
+                ))
+            })?;
+            let trimmed = model_value.trim();
+            if trimmed.is_empty() {
+                return Err(serde::de::Error::custom(format!(
+                    "native.{normalized} must be a non-empty string"
+                )));
+            }
+            if native
+                .insert(normalized.clone(), trimmed.to_string())
+                .is_some()
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate native override for harness '{normalized}'"
+                )));
+            }
+        }
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
             const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
@@ -295,6 +329,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
         Ok(ModelAlias {
             harness: normalized_harness,
             description: raw.description,
+            native,
             default_effort,
             autocompact,
             autocompact_pct,
@@ -1223,6 +1258,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
             ModelAlias {
                 harness: None,
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2014,6 +2050,7 @@ mod tests {
         ModelAlias {
             harness: harness.map(|h| h.to_string()),
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2032,6 +2069,7 @@ mod tests {
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2052,6 +2090,7 @@ mod tests {
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2601,6 +2640,7 @@ mod tests {
             ModelAlias {
                 harness: None,
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2635,6 +2675,7 @@ mod tests {
             ModelAlias {
                 harness: None,
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2689,6 +2730,7 @@ mod tests {
             ModelAlias {
                 harness: None,
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2725,6 +2767,7 @@ mod tests {
             ModelAlias {
                 harness: Some("missing-harness-xyz".to_string()),
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2757,6 +2800,7 @@ mod tests {
             ModelAlias {
                 harness: Some("claude".to_string()),
                 description: None,
+                native: Default::default(),
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2970,6 +3014,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2995,6 +3040,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3020,6 +3066,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3045,6 +3092,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3068,6 +3116,7 @@ mod tests {
         let alias = ModelAlias {
             harness: Some("claude".to_string()),
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3098,6 +3147,7 @@ mod tests {
         let alias = ModelAlias {
             harness: Some("claude".to_string()),
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3128,6 +3178,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3161,6 +3212,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3188,6 +3240,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3261,6 +3314,59 @@ description = "Fast and cheap"
         let json = serde_json::to_string(alias).unwrap();
         let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
         assert_eq!(roundtripped, *alias);
+    }
+
+    #[test]
+    fn model_alias_native_overrides_parse_and_normalize_harness_keys() {
+        let toml_str = r#"
+[models.fast]
+model = "gpt-5.5"
+
+[models.fast.native]
+Cursor = "gpt-5.4-medium"
+codex = "gpt-5.5-codex"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
+        let alias = parsed.models.get("fast").unwrap();
+        assert_eq!(
+            alias.native.get("cursor").map(String::as_str),
+            Some("gpt-5.4-medium")
+        );
+        assert_eq!(
+            alias.native.get("codex").map(String::as_str),
+            Some("gpt-5.5-codex")
+        );
+        assert_eq!(
+            alias.native_model_override("CuRsOr"),
+            Some("gpt-5.4-medium")
+        );
+    }
+
+    #[test]
+    fn model_alias_native_overrides_invalid_harness_errors() {
+        let toml_str = r#"
+[models.fast]
+model = "gpt-5.5"
+
+[models.fast.native]
+gemini = "gemini-2.5-pro"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("invalid native model override harness"));
+        assert!(err.contains("valid harnesses"));
     }
 
     #[test]

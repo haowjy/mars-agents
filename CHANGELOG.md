@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Cursor native agent lowering now emits Cursor-specific markdown: one-line normalized `description`, `skills` passthrough, and policy-field lossiness preserved.
+- Cursor native agent `model` now honors explicit alias override `[models.<alias>.native.cursor]`; fallback keeps original token when no override exists.
+
 ## [0.6.5] - 2026-05-23
 
 ### Changed

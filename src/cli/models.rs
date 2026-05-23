@@ -1392,6 +1392,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
         ModelAlias {
             harness: Some(normalized_harness.clone()),
             description: args.description.clone(),
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2457,6 +2458,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2477,6 +2479,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2493,6 +2496,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2507,6 +2511,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            native: Default::default(),
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

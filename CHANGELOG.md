@@ -14,6 +14,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Cursor harness changes from `HarnessClass::UniversalPassthrough` to `HarnessClass::ProbeBacked` in registry.
 
+## [0.6.3] - 2026-05-23
+
+### Fixed
+- Pi probe reads CLI output from stderr when stdout is empty (Pi 0.75+), fixing false `pi_incompatible` and empty `model_slugs` in routing and `mars models list`.
+- Pi `--list-models` space-separated tables with extra columns (context, max-out, …) now parse provider/model from the first two columns.
+
 ## [0.6.2] - 2026-05-22
 
 ## [0.6.1] - 2026-05-22

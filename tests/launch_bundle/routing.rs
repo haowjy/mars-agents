@@ -2,8 +2,12 @@
 // qa-validated: capability-cache-resolver-routing-gaps
 
 use super::common::setup_bundle_project;
-use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, write_cache};
+use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;
+use assert_fs::fixture::PathChild;
+use assert_fs::prelude::*;
+use httpmock::MockServer;
+use httpmock::prelude::*;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1713,6 +1717,57 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+    let cache_root = temp.path().join("mars-cache");
+    write_cursor_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        &["gpt-5.5-high", "gpt-5.5-low"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-effort-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("gpt-5.5-high")
+    );
+    assert!(bundle["execution_policy"]["effort"].is_null());
+    assert_eq!(
+        bundle["provenance"]["effort_applied_to_harness_model"].as_str(),
+        Some("true")
+    );
+}
+
 pub(crate) fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
@@ -2484,6 +2539,25 @@ fn install_fake_harnesses_with_auth_failures(
 
 fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
+}
+
+fn write_cursor_probe_cache(cache_root: &Path, fetched_at: u64, slugs: &[&str]) {
+    let cache_path = cache_root.join("availability").join("cursor-probe.json");
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": fetched_at,
+        "last_attempt_at": fetched_at,
+        "last_error": null,
+        "result": {
+            "slugs": slugs,
+            "model_probe_success": true,
+            "error": null
+        }
+    });
+    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 fn write_opencode_probe_cache(cache_root: &Path, fetched_at: u64, result: Value) {

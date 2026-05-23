@@ -186,6 +186,7 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
 pub(crate) fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides()
 {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -217,6 +218,7 @@ Review code changes."#;
         "--sandbox",
         "workspace-write",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

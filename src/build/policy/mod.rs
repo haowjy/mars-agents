@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
 use crate::models;
 
@@ -313,9 +313,9 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     }
 
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
-        model: resolved_model.model,
-        model_token: resolved_model.model_token,
-        harness: harness_resolution.harness.value,
+        model: resolved_model.model.clone(),
+        model_token: resolved_model.model_token.clone(),
+        harness: harness_resolution.harness.value.clone(),
         selection_kind: harness_resolution
             .route_trace
             .selected_selection_kind()
@@ -327,17 +327,48 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             .label()
             .to_string(),
         provider: resolved_model.provider_for_order.as_deref(),
+        effort: execution_resolution.effort.value.clone(),
         opencode_probe_result,
+        cursor_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
     });
 
+    let cursor_effort_resolution_failed = routing_resolution
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("no cursor slug matched"));
     warnings.extend(routing_resolution.warnings);
+
+    let mut effort = execution_resolution.effort.value;
+    if routing_resolution.effort_consumed {
+        effort = None;
+        provenance.insert(
+            "effort_applied_to_harness_model".to_string(),
+            "true".to_string(),
+        );
+    } else if harness_resolution
+        .harness
+        .value
+        .eq_ignore_ascii_case("cursor")
+        && effort
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && cursor_effort_resolution_failed
+    {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "cursor harness cannot resolve model `{}` with effort `{}` from probe catalog",
+                resolved_model.model,
+                effort.as_deref().unwrap_or_default()
+            ),
+        }));
+    }
 
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
-            effort: execution_resolution.effort.value,
+            effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
             autocompact: execution_resolution.autocompact.value,

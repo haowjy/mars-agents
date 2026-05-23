@@ -1033,7 +1033,7 @@ fn select_linked_fallback_harness(
         let rejected = assessments
             .iter()
             .find(|assessment| assessment.harness == harness)
-            .and_then(|assessment| assessment.skip_reason.as_deref())
+            .and_then(|assessment| assessment.skip_reason)
             .is_some_and(|reason| is_hard_assessment_skip(Some(reason)));
         if !rejected {
             return Some(harness);
@@ -1238,6 +1238,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn routing_input_with_catalog<'a>(
         model_id: &'a str,
         provider_for_order: Option<&'a str>,

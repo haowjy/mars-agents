@@ -917,6 +917,7 @@ fn effective_visibility(ctx: &MarsContext, args: &ListArgs) -> crate::config::Mo
         .unwrap_or_default()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_routing_settings_to_resolved_aliases(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
     aliases: &IndexMap<String, ModelAlias>,

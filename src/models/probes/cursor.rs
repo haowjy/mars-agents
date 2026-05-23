@@ -282,15 +282,13 @@ fn choose_cursor_effort_slug<'a>(normalized_model: &str, matches: Vec<&'a str>) 
         return matches[0];
     }
 
-    let is_claude = normalized_model.starts_with("claude");
-    if is_claude {
-        if let Some(thinking) = matches
+    if normalized_model.starts_with("claude")
+        && let Some(thinking) = matches
             .iter()
             .copied()
             .find(|slug| normalize_slug(slug).contains("-thinking-"))
-        {
-            return thinking;
-        }
+    {
+        return thinking;
     }
 
     matches[0]

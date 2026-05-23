@@ -50,11 +50,28 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 
 ```
 config::load_policy_resolution_config()  → aliases, harness_order, linked targets
+models::ensure_fresh()                   → models.dev catalog (TTL-aware; not read-only)
 model::resolve_model()                   → alias → model_id + provider, or unset
-harness::resolve_harness()               → route selection, candidate eval
+harness::resolve_harness()               → route selection, candidate eval (shared evaluator)
 execution::resolve_execution_policy()    → effort, approval, sandbox, autocompact
 runnable::resolve_routing()              → populate Routing (warnings always empty)
 ```
+
+`resolve_policy` always runs `models::ensure_fresh` on `.mars/` (stale fallback may warn).
+CLI passes `ModelsRefreshControl` from `--refresh-models` / `--no-refresh-models` on
+`build launch-bundle` — flag matrix and probe modes: [`src/models/AGENTS.md`](../models/AGENTS.md),
+`models::resolve_models_refresh_control`.
+
+### Cursor `harness_model` contract
+
+For harness `cursor`, `runnable::resolve_routing` may bake CLI/profile **effort** into
+`routing.harness_model` via the Cursor probe slug list (`medium` / `none` / `auto` / `default`
+→ unsuffixed base slug; other tiers → suffixed slug). On success, `routing.effort` is cleared
+(`effort_consumed`). Downstream adapters must run **`harness_model` verbatim** — not re-derive
+effort from `routing.effort`.
+
+`routing.candidate_slugs` is **diagnostic only** (probe/catalog candidates for the selected
+harness). Consumers ignore it unless debugging.
 
 ## Anti-Patterns
 

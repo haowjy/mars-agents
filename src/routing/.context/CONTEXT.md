@@ -33,6 +33,27 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | `linked_harnesses` | Known harness names from `config::targets` link normalization |
 | `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
 | `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
+| `catalog_model_slugs` | Cached models.dev `provider/model` slugs; native harnesses match here before auth-only fallback |
+
+When `settings.harness_order` is unset, `config/routing_settings` and `build/policy/config`
+inject [`default_harness_order_names()`](../../harness/registry.rs) — see
+[`src/harness/registry.rs`](../../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`) for the
+canonical ordered list.
+
+### Deferred passthrough
+
+In the auto-routing loop, `MatchEvidence::Passthrough` (Pi without compatible probe, Cursor,
+OpenCode unknown-provider paths) is **held** in `passthrough_selection` while later candidates
+run. `Confirmed` / `Constrained` return immediately. If the order exhausts without stronger
+evidence, Mars returns the first deferred passthrough harness. Without deferral, Pi/Cursor
+would win at their config position and block stronger native/probe matches later in order.
+
+### Native catalog slug matching
+
+For native harnesses (Claude, Codex), when `catalog_model_slugs` is populated (from
+`models::ensure_fresh` + `catalog_model_slugs`), `candidate_match_evidence` uses
+`select_probe_slug` over catalog entries filtered to that harness's provider prefix.
+Empty catalog falls back to provider-native affinity + auth gate only.
 
 ### `SelectionKind` semantics
 
@@ -98,6 +119,9 @@ When known linked harnesses exist:
 - Auto-routing candidates are filtered to the linked set before evaluation
 - `settings.default_harness` outside the linked set is ignored (with diagnostic)
 - Hardcoded fallback is blocked (linked harnesses select themselves instead)
+- `select_linked_fallback_harness` walks `harness_order` (or link order), skipping harnesses
+  with hard `skip_reason` values (`is_hard_assessment_skip`) so a prior `pi_incompatible` or
+  `no_model_match` does not get selected again as linked fallback
 
 ## Architecture
 
@@ -204,6 +228,12 @@ accept_assessment(&assessment)?;
 let report = trace.to_report(); // or RouteDecisionReport::from_trace(&trace)
 let json = serde_json::to_string(&report)?;
 ```
+
+## Related docs
+
+- [src/models/AGENTS.md](../../models/AGENTS.md) — `ensure_fresh`, `ModelsRefreshControl`, catalog TTL
+- [src/harness/registry.rs](../../harness/registry.rs) — `DEFAULT_HARNESS_ORDER`, `default_harness_order_names`
+- [src/build/.context/CONTEXT.md](../../build/.context/CONTEXT.md) — launch-bundle `harness_model`, effort baking
 
 **Parity smoke test** (run in a temp project with known config):
 

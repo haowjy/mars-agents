@@ -81,6 +81,32 @@ routing.warnings      ← always empty (see runnable.rs contract)
 
 All warning vectors are `extend()`-ed into a single `LaunchBundle.warnings` field.
 
+### Catalog refresh (`ensure_fresh`)
+
+`resolve_policy` calls `models::ensure_fresh` on `.mars/` before harness evaluation — not a
+read-only cache read. TTL and stale fallback follow [`src/models/AGENTS.md`](../../models/AGENTS.md).
+`LaunchBundleRequest.models_refresh` carries `ModelsRefreshControl` from CLI
+(`--refresh-models` → force sync catalog + synchronous probes;
+`--no-refresh-models` → offline catalog + skip probe refresh; default → auto/background).
+
+Catalog slugs feed `RoutingInput.catalog_model_slugs` so native harness matching aligns with
+`mars models list|resolve` (same `evaluate_candidates` path).
+
+### `harness_model` vs `candidate_slugs`
+
+`LaunchBundle.routing.harness_model` is the **runtime model id** for the selected harness
+(including Cursor effort baking in `runnable.rs`). `routing.candidate_slugs` copies assessment
+probe/catalog candidates for debugging only — bundle doc comment: consumers run `harness_model`
+verbatim. `routing.candidate_slugs` on the trace/report is diagnostic; do not use it for launch.
+
+### Cursor effort → `harness_model`
+
+When harness is `cursor` and effort is set, `resolve_routing` calls
+`resolve_cursor_effort_slug` against probe slugs. Default-tier efforts (`medium`, `none`,
+`auto`, `default`) select the unsuffixed base slug when present; other tiers use suffixed
+slugs. Success sets `harness_model_source` / `confidence` to cached-probe confirmed and
+marks effort consumed (cleared from execution policy output).
+
 ## Architecture
 
 ```
@@ -91,6 +117,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
     │
     └─ resolve_policy()
            ├─ config::load_policy_resolution_config()  (aliases, harness_order, linked targets)
+           ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
            ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, autocompact)
@@ -134,11 +161,12 @@ to real warnings.
 
 ## Related docs
 
-- [src/routing/.context/CONTEXT.md](../routing/.context/CONTEXT.md) — harness candidate
+- [src/models/AGENTS.md](../../models/AGENTS.md) — catalog `ensure_fresh`, `ModelsRefreshControl`
+- [src/routing/.context/CONTEXT.md](../../routing/.context/CONTEXT.md) — harness candidate
   evaluation, selection-kind vs match-evidence semantics, and `RouteDecisionReport`
   serialization surface
-- [src/harness/.context/CONTEXT.md](../harness/.context/CONTEXT.md) — harness registry,
+- [src/harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — harness registry,
   capability snapshot, probe integration
-- [src/cli/build.rs](../cli/build.rs) — CLI arg definitions and entry points
-- [tests/smoke/manual/results-launch-bundle-resolver.md](../../tests/smoke/manual/results-launch-bundle-resolver.md) —
+- [src/cli/build.rs](../../cli/build.rs) — CLI arg definitions and entry points
+- [tests/smoke/manual/results-launch-bundle-resolver.md](../../../tests/smoke/manual/results-launch-bundle-resolver.md) —
   smoke evidence for routing and warning behavior

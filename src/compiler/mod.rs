@@ -83,10 +83,12 @@ pub fn compile(
     let compiled_native_outputs = if matches!(agent_surface_policy, AgentSurfacePolicy::EmitAll) {
         let model_aliases =
             merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
+        let cursor_probe_slugs = cached_cursor_probe_slugs_for_native_agents();
         dual_surface_compile(
             &ctx.project_root,
             &mars_dir,
             &model_aliases,
+            &cursor_probe_slugs,
             &applied.planned.targeted.resolved.loaded.old_lock,
             NativeAgentSurfaceCompileOptions {
                 force: request.options.force,
@@ -294,6 +296,7 @@ fn dual_surface_compile(
     project_root: &Path,
     mars_dir: &Path,
     model_aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
     old_lock: &crate::lock::LockFile,
     options: NativeAgentSurfaceCompileOptions,
     diag: &mut DiagnosticCollector,
@@ -370,7 +373,8 @@ fn dual_surface_compile(
 
         // Lower to native format.
         let body = fm.body().to_string();
-        let model_override = native_model_override_for_harness(harness, &profile, model_aliases);
+        let model_override =
+            native_model_override_for_harness(harness, &profile, model_aliases, cursor_probe_slugs);
         let lowered = match model_override.as_deref() {
             Some(model) => lower_for_harness_with_model(harness, &profile, &fm, &body, Some(model)),
             None => lower_for_harness(harness, &profile, &fm, &body),
@@ -473,20 +477,28 @@ fn merged_model_aliases_for_native_agents(
     )
 }
 
+fn cached_cursor_probe_slugs_for_native_agents() -> Vec<String> {
+    crate::models::probes::cursor_cache::read_cached_probe_result_usable()
+        .map(|probe| probe.slugs)
+        .unwrap_or_default()
+}
+
 fn native_model_override_for_harness(
     harness: &crate::compiler::agents::HarnessKind,
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
 ) -> Option<String> {
     if !matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
         return None;
     }
-    map_cursor_native_model(profile, aliases)
+    map_cursor_native_model(profile, aliases, cursor_probe_slugs)
 }
 
 fn map_cursor_native_model(
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
 ) -> Option<String> {
     let token = profile.model.as_deref()?;
     if token.contains('[') {
@@ -494,21 +506,23 @@ fn map_cursor_native_model(
     }
 
     let alias = aliases.get(token);
-    let candidate = alias
-        .and_then(pinned_model_id)
-        .unwrap_or(token)
-        .to_ascii_lowercase();
-
+    let model_id = alias.and_then(pinned_model_id).unwrap_or(token);
     let effort = cursor_effective_effort(profile, alias).unwrap_or("medium");
-
-    match candidate.as_str() {
-        "claude-opus-4-6" => Some("claude-4.6-opus-high-thinking".to_string()),
-        "claude-opus-4-7" => Some("claude-opus-4-7-thinking-high".to_string()),
-        "claude-sonnet-4-6" => Some("claude-4.6-sonnet-medium-thinking".to_string()),
-        "gpt-5.4" => Some(format!("gpt-5.4-{}", cursor_gpt54_effort_suffix(effort))),
-        "gpt-5.5" => Some(format!("gpt-5.5-{}", cursor_gpt55_effort_suffix(effort))),
-        _ => None,
+    if cursor_probe_slugs.is_empty() {
+        return None;
     }
+
+    for candidate in cursor_probe_lookup_model_ids(model_id) {
+        if let Ok(resolution) = crate::models::probes::cursor::resolve_cursor_effort_slug(
+            &candidate,
+            effort,
+            cursor_probe_slugs,
+        ) {
+            return Some(resolution.slug);
+        }
+    }
+
+    None
 }
 
 fn pinned_model_id(alias: &crate::models::ModelAlias) -> Option<&str> {
@@ -542,21 +556,19 @@ fn cursor_effective_effort<'a>(
         })
 }
 
-fn cursor_gpt54_effort_suffix(effort: &str) -> &'static str {
-    match effort {
-        "low" => "low",
-        "high" => "high",
-        "xhigh" | "max" => "xhigh",
-        _ => "medium",
+fn cursor_probe_lookup_model_ids(model_id: &str) -> Vec<String> {
+    let mut candidates = vec![model_id.to_string()];
+    if let Some(shimmed) = cursor_probe_model_id_shim(model_id) {
+        candidates.push(shimmed);
     }
+    candidates
 }
 
-fn cursor_gpt55_effort_suffix(effort: &str) -> &'static str {
-    match effort {
-        "low" => "low",
-        "high" => "high",
-        "xhigh" | "max" => "extra-high",
-        _ => "medium",
+fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
+    match model_id.to_ascii_lowercase().as_str() {
+        "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
+        "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
+        _ => None,
     }
 }
 
@@ -643,100 +655,59 @@ mod skill_surface_tests {
     }
 
     #[test]
-    fn cursor_native_model_mapping_uses_alias_model_id_and_default_effort() {
+    fn cursor_native_model_mapping_uses_shared_resolver_for_alias_and_effort() {
         let profile = profile_with_cursor_model("gpt55");
         let mut aliases = IndexMap::new();
         aliases.insert("gpt55".to_string(), pinned_alias("gpt-5.5", Some("high")));
+        let slugs = vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()];
         assert_eq!(
-            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases),
+            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases, &slugs),
             Some("gpt-5.5-high".to_string())
-        );
-    }
-
-    #[test]
-    fn cursor_native_model_mapping_respects_profile_effort() {
-        let mut profile = profile_with_cursor_model("gpt-5.4");
-        profile.effort = Some(crate::compiler::agents::EffortLevel::XHigh);
-        assert_eq!(
-            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &IndexMap::new()),
-            Some("gpt-5.4-xhigh".to_string())
         );
     }
 
     #[test]
     fn cursor_native_model_mapping_preserves_unknown_or_cursor_literal_tokens() {
         let profile = profile_with_cursor_model("composer-2.5[fast=false]");
+        let slugs = vec!["composer-2.5".to_string(), "composer-2.5-fast".to_string()];
         assert_eq!(
-            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &IndexMap::new()),
+            native_model_override_for_harness(
+                &HarnessKind::Cursor,
+                &profile,
+                &IndexMap::new(),
+                &slugs
+            ),
             None
         );
 
         let profile = profile_with_cursor_model("unmapped-model");
         assert_eq!(
-            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &IndexMap::new()),
+            native_model_override_for_harness(
+                &HarnessKind::Cursor,
+                &profile,
+                &IndexMap::new(),
+                &slugs
+            ),
             None
         );
     }
 
     #[test]
-    fn cursor_native_model_mapping_maps_claude_alias_defaults() {
+    fn cursor_native_model_mapping_uses_claude_shim_with_shared_resolver() {
         let profile = profile_with_cursor_model("opus");
         let mut aliases = IndexMap::new();
         aliases.insert(
             "opus".to_string(),
             pinned_alias("claude-opus-4-6", Some("high")),
         );
+        let slugs = vec![
+            "claude-4.6-opus-thinking-high".to_string(),
+            "claude-4.6-opus-thinking-medium".to_string(),
+        ];
 
         assert_eq!(
-            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases),
-            Some("claude-4.6-opus-high-thinking".to_string())
-        );
-    }
-
-    #[test]
-    fn cursor_native_model_mapping_covers_additional_common_patterns() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus47".to_string(),
-            pinned_alias("claude-opus-4-7", Some("high")),
-        );
-        aliases.insert(
-            "sonnet46".to_string(),
-            pinned_alias("claude-sonnet-4-6", Some("medium")),
-        );
-        aliases.insert("gpt55x".to_string(), pinned_alias("gpt-5.5", Some("xhigh")));
-
-        assert_eq!(
-            native_model_override_for_harness(
-                &HarnessKind::Cursor,
-                &profile_with_cursor_model("opus47"),
-                &aliases
-            ),
-            Some("claude-opus-4-7-thinking-high".to_string())
-        );
-        assert_eq!(
-            native_model_override_for_harness(
-                &HarnessKind::Cursor,
-                &profile_with_cursor_model("sonnet46"),
-                &aliases
-            ),
-            Some("claude-4.6-sonnet-medium-thinking".to_string())
-        );
-        assert_eq!(
-            native_model_override_for_harness(
-                &HarnessKind::Cursor,
-                &profile_with_cursor_model("gpt55x"),
-                &aliases
-            ),
-            Some("gpt-5.5-extra-high".to_string())
-        );
-        assert_eq!(
-            native_model_override_for_harness(
-                &HarnessKind::Cursor,
-                &profile_with_cursor_model("composer-2.5"),
-                &aliases
-            ),
-            None
+            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases, &slugs),
+            Some("claude-4.6-opus-thinking-high".to_string())
         );
     }
 

@@ -7,7 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Cursor native agent lowering now emits Cursor-specific markdown: one-line normalized `description`, `skills` passthrough, and policy-field lossiness preserved.
 - Removed user-facing `[models.<alias>.native]` model override config.
-- Cursor native agent `model` now uses internal Cursor-only deterministic mapping from alias/model+effort (with conservative fallback to original token when no mapping applies).
+- Cursor native agent `model` now uses the shared Cursor effort resolver against cached probe slugs (with conservative fallback to original token when no probe/candidate match applies).
 
 ## [0.6.5] - 2026-05-23
 

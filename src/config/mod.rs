@@ -475,7 +475,7 @@ pub struct Settings {
     ///
     /// When set, replaces built-in provider preference ordering for candidate
     /// selection. First installed candidate wins. When unset, Mars uses the
-    /// built-in default (`claude`, `codex`, `pi`, `opencode`, `cursor`).
+    /// built-in default (`claude`, `pi`, `codex`, `opencode`, `cursor`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_order: Option<Vec<String>>,
     /// Ordered provider preference for model-first routing tie-breaks.

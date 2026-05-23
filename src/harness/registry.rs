@@ -51,8 +51,8 @@ pub const UNKNOWN_PROVIDER_FALLBACK_ORDER: &[HarnessId] =
 /// Default launch-bundle harness try order when `settings.harness_order` is unset.
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
-    HarnessId::Codex,
     HarnessId::Pi,
+    HarnessId::Codex,
     HarnessId::OpenCode,
     HarnessId::Cursor,
 ];
@@ -124,7 +124,7 @@ pub fn all() -> &'static [HarnessId] {
 }
 
 pub fn names() -> &'static [&'static str] {
-    &["claude", "codex", "pi", "opencode", "cursor"]
+    &["claude", "pi", "codex", "opencode", "cursor"]
 }
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {

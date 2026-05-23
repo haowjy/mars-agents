@@ -256,8 +256,8 @@ mod tests {
         let order = resolved.harness_order.expect("default harness order");
         assert_eq!(order.candidates.len(), 5);
         assert_eq!(order.candidates[0].harness, HarnessId::Claude);
-        assert_eq!(order.candidates[1].harness, HarnessId::Codex);
-        assert_eq!(order.candidates[2].harness, HarnessId::Pi);
+        assert_eq!(order.candidates[1].harness, HarnessId::Pi);
+        assert_eq!(order.candidates[2].harness, HarnessId::Codex);
     }
 
     #[test]

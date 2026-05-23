@@ -58,6 +58,10 @@ pub(super) fn load_policy_resolution_config(
         Err(err) => return Err(err),
     }
 
+    let harness_order = harness_order.or_else(|| {
+        Some(crate::harness::registry::default_harness_order_names())
+    });
+
     Ok(PolicyResolutionConfig {
         aliases: merged,
         default_harness,

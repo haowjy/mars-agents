@@ -45,6 +45,8 @@ Review code changes.
         "reviewer",
         "--harness",
         "codex",
+        "--model",
+        "gpt-5",
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 

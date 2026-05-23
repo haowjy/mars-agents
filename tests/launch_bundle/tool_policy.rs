@@ -61,6 +61,8 @@ Review code changes."#;
         "reviewer",
         "--harness",
         "codex",
+        "--model",
+        "gpt-5",
     ]);
     override_cmd.env("PATH", replace_path_with(&bin_dir));
     let override_output = override_cmd.assert().success().get_output().clone();

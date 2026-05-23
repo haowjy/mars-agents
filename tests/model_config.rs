@@ -175,7 +175,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
     assert!(stdout["route_trace"].is_object());
     assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
@@ -276,7 +276,7 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -300,7 +300,7 @@ fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -324,7 +324,7 @@ fn resolve_passthrough_unrecognized_pattern_with_pi_installed_still_fails_closed
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -349,7 +349,7 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 

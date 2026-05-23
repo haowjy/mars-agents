@@ -153,7 +153,11 @@ pub fn find_cursor_prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Ve
     let normalized_model = normalize_slug(model_id);
     slugs
         .iter()
-        .filter(|slug| normalize_slug(slug).starts_with(&normalized_model))
+        .filter(|slug| {
+            let normalized_slug = normalize_slug(slug);
+            normalized_slug == normalized_model
+                || normalized_slug.starts_with(&format!("{normalized_model}-"))
+        })
         .map(String::as_str)
         .collect()
 }
@@ -214,6 +218,19 @@ Tip: use --model <id> to select"#;
         ];
         let matches = find_cursor_prefix_matches("gpt-5.5", &slugs);
         assert_eq!(matches, vec!["gpt-5.5-high", "gpt-5.5-low"]);
+    }
+
+    #[test]
+    fn test_find_prefix_matches_requires_boundary() {
+        let slugs = vec![
+            "gpt-5.5-high".to_string(),
+            "gpt-55-high".to_string(),
+            "gpt-5".to_string(),
+        ];
+
+        let matches = find_cursor_prefix_matches("gpt-5", &slugs);
+
+        assert_eq!(matches, vec!["gpt-5.5-high", "gpt-5"]);
     }
 
     #[test]

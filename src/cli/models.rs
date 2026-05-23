@@ -199,11 +199,13 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let cursor_probe_result = capability_snapshot.cursor.result().cloned();
     let visibility = effective_visibility(ctx, args);
     if args.all {
+        let catalog_slugs = models::catalog_model_slugs(&cache);
         let availability_ctx = AvailabilityContext {
             installed: &installed,
             opencode_probe_result: opencode_probe_result.as_ref(),
             pi_probe_result: pi_probe_result.as_ref(),
             cursor_probe_result: cursor_probe_result.as_ref(),
+            catalog_model_slugs: Some(catalog_slugs.as_slice()),
             is_offline,
             routing_settings: &routing_settings,
         };
@@ -220,6 +222,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
 
     let cache_warning = cache_warning(&outcome);
     let mut diag = DiagnosticCollector::new();
+    let catalog_slugs = models::catalog_model_slugs(&cache);
 
     let mut resolved = models::resolve_all_with_probe(
         &merged,
@@ -236,6 +239,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         opencode_probe_result.as_ref(),
         pi_probe_result.as_ref(),
         cursor_probe_result.as_ref(),
+        Some(catalog_slugs.as_slice()),
         &routing_settings,
     );
     annotate_resolved_availability(
@@ -355,12 +359,14 @@ struct AvailabilityContext<'a> {
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
     cursor_probe_result: Option<&'a CursorProbeResult>,
+    catalog_model_slugs: Option<&'a [String]>,
     is_offline: bool,
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
 struct ResolveRuntime<'a> {
     cache: &'a models::ModelsCache,
+    catalog_model_slugs: &'a [String],
     outcome: &'a models::RefreshOutcome,
     installed: &'a HashSet<String>,
     probe_outcome: CachedProbeOutcome,
@@ -377,6 +383,7 @@ struct RouteTraceInput<'a> {
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
     cursor_probe_result: Option<&'a CursorProbeResult>,
+    catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
@@ -407,6 +414,7 @@ struct OutputPassthroughInput<'a> {
     outcome: &'a models::RefreshOutcome,
     is_offline: bool,
     installed: &'a HashSet<String>,
+    catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
     cache_error: Option<&'a str>,
     routing_diagnostics: &'a [String],
@@ -508,11 +516,13 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
     let probe_result = capability_snapshot.opencode.result().cloned();
     let pi_probe_result = capability_snapshot.pi.result().cloned();
     let cursor_probe_result = capability_snapshot.cursor.result().cloned();
+    let catalog_slugs = models::catalog_model_slugs(cache);
     let availability_ctx = AvailabilityContext {
         installed: &installed,
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
+        catalog_model_slugs: Some(catalog_slugs.as_slice()),
         is_offline,
         routing_settings,
     };
@@ -719,15 +729,8 @@ fn model_entry_for_cached(
     model: &models::CachedModel,
     availability_ctx: AvailabilityContext<'_>,
 ) -> ListModelEntry {
-    let (harness, harness_source) = resolve_harness_with_routing(
-        &model.provider,
-        &model.id,
-        availability_ctx.installed,
-        availability_ctx.opencode_probe_result,
-        availability_ctx.pi_probe_result,
-        availability_ctx.cursor_probe_result,
-        availability_ctx.routing_settings,
-    );
+    let (harness, harness_source) =
+        resolve_harness_with_routing(&model.provider, &model.id, availability_ctx);
 
     ListModelEntry {
         id: model.id.clone(),
@@ -765,15 +768,8 @@ fn model_entry_for_pinned(
         .map(str::to_string)
         .or_else(|| models::infer_provider_from_model_id(model_id).map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
-    let (harness, harness_source) = resolve_harness_with_routing(
-        &provider,
-        model_id,
-        availability_ctx.installed,
-        availability_ctx.opencode_probe_result,
-        availability_ctx.pi_probe_result,
-        availability_ctx.cursor_probe_result,
-        availability_ctx.routing_settings,
-    );
+    let (harness, harness_source) =
+        resolve_harness_with_routing(&provider, model_id, availability_ctx);
 
     ListModelEntry {
         id: model_id.to_string(),
@@ -816,37 +812,44 @@ fn sort_list_model_entries(entries: &mut [ListModelEntry]) {
     });
 }
 
+fn routing_settings_evidence<'a>(
+    input: &'a RouteTraceInput<'a>,
+) -> crate::routing::RoutingSettingsEvidence<'a> {
+    crate::routing::RoutingSettingsEvidence::new(
+        input.model_id,
+        Some(input.provider_for_order),
+        input.provider_constraint,
+        input.installed,
+        input.opencode_probe_result,
+        input.pi_probe_result,
+        input.cursor_probe_result,
+        input.catalog_model_slugs,
+        input.routing_settings,
+    )
+}
+
 fn resolve_harness_with_routing(
     provider: &str,
     model_id: &str,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
-    routing_settings: &ResolvedRoutingSettings,
+    availability_ctx: AvailabilityContext<'_>,
 ) -> (Option<String>, HarnessSource) {
-    let provider_order = routing_settings.provider_order_names();
-    let harness_order = routing_settings.harness_order_names();
-    let default_harness = routing_settings.default_harness_name();
-    let linked_harnesses = routing_settings.linked_harness_names();
-    let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
+    let route_input = RouteTraceInput {
         model_id,
-        provider_for_order: Some(provider),
+        provider_for_order: provider,
         provider_constraint: None,
-        settings_provider_order: provider_order.as_deref(),
-        settings_harness_order: harness_order.as_deref(),
-        config_default_harness: default_harness.as_deref(),
-        installed_harnesses: installed,
-        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
-        catalog_model_slugs: None,
-    });
+        installed: availability_ctx.installed,
+        opencode_probe_result: availability_ctx.opencode_probe_result,
+        pi_probe_result: availability_ctx.pi_probe_result,
+        cursor_probe_result: availability_ctx.cursor_probe_result,
+        catalog_model_slugs: availability_ctx.catalog_model_slugs,
+        routing_settings: availability_ctx.routing_settings,
+    };
+    let routing_evidence = routing_settings_evidence(&route_input);
+    let trace = crate::routing::evaluate_candidates(&routing_evidence.routing_input());
 
     match crate::routing::acceptance::accept_route(
         &trace,
-        installed,
+        availability_ctx.installed,
         crate::routing::acceptance::MatchPolicy::InstalledOnly,
     ) {
         Ok(()) => (
@@ -868,24 +871,8 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 }
 
 fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing::RoutingTrace {
-    let provider_order = input.routing_settings.provider_order_names();
-    let harness_order = input.routing_settings.harness_order_names();
-    let default_harness = input.routing_settings.default_harness_name();
-    let linked_harnesses = input.routing_settings.linked_harness_names();
-    crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-        model_id: input.model_id,
-        provider_for_order: Some(input.provider_for_order),
-        provider_constraint: input.provider_constraint,
-        settings_provider_order: provider_order.as_deref(),
-        settings_harness_order: harness_order.as_deref(),
-        config_default_harness: default_harness.as_deref(),
-        installed_harnesses: input.installed,
-        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
-        opencode_probe_result: input.opencode_probe_result,
-        pi_probe_result: input.pi_probe_result,
-        cursor_probe_result: input.cursor_probe_result,
-        catalog_model_slugs: None,
-    })
+    let routing_evidence = routing_settings_evidence(input);
+    crate::routing::evaluate_candidates(&routing_evidence.routing_input())
 }
 
 fn route_trace_for_fixed_harness(
@@ -893,28 +880,13 @@ fn route_trace_for_fixed_harness(
     fixed_harness: &str,
     source: crate::routing::RouteSource,
 ) -> crate::routing::RoutingTrace {
-    let provider_order = input.routing_settings.provider_order_names();
-    let harness_order = input.routing_settings.harness_order_names();
-    let default_harness = input.routing_settings.default_harness_name();
-    let linked_harnesses = input.routing_settings.linked_harness_names();
     let provider_for_order = crate::routing::provider_for_order_for_fixed_harness(
         Some(input.provider_for_order),
         fixed_harness,
     );
-    let fixed_input = crate::routing::RoutingInput {
-        model_id: input.model_id,
-        provider_for_order,
-        provider_constraint: input.provider_constraint,
-        settings_provider_order: provider_order.as_deref(),
-        settings_harness_order: harness_order.as_deref(),
-        config_default_harness: default_harness.as_deref(),
-        installed_harnesses: input.installed,
-        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
-        opencode_probe_result: input.opencode_probe_result,
-        pi_probe_result: input.pi_probe_result,
-        cursor_probe_result: input.cursor_probe_result,
-        catalog_model_slugs: None,
-    };
+    let routing_evidence = routing_settings_evidence(input);
+    let mut fixed_input = routing_evidence.routing_input();
+    fixed_input.provider_for_order = provider_for_order;
     let assessment = crate::routing::evaluate_fixed_harness(&fixed_input, fixed_harness);
     crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
 }
@@ -939,6 +911,7 @@ fn apply_routing_settings_to_resolved_aliases(
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
     cursor_probe_result: Option<&CursorProbeResult>,
+    catalog_model_slugs: Option<&[String]>,
     routing_settings: &ResolvedRoutingSettings,
 ) {
     for alias in resolved.values_mut() {
@@ -954,6 +927,7 @@ fn apply_routing_settings_to_resolved_aliases(
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
+            catalog_model_slugs,
             routing_settings,
         );
     }
@@ -965,17 +939,20 @@ fn apply_routing_settings_to_resolved_alias(
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
     cursor_probe_result: Option<&CursorProbeResult>,
+    catalog_model_slugs: Option<&[String]>,
     routing_settings: &ResolvedRoutingSettings,
 ) {
-    let (harness, harness_source) = resolve_harness_with_routing(
-        &alias.provider,
-        &alias.model_id,
+    let availability_ctx = AvailabilityContext {
         installed,
         opencode_probe_result,
         pi_probe_result,
         cursor_probe_result,
+        catalog_model_slugs,
+        is_offline: false,
         routing_settings,
-    );
+    };
+    let (harness, harness_source) =
+        resolve_harness_with_routing(&alias.provider, &alias.model_id, availability_ctx);
     alias.harness = harness;
     alias.harness_source = harness_source;
 }
@@ -1215,13 +1192,21 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             fetched_at: None,
         };
         let fallback_outcome = models::RefreshOutcome::Offline;
+        let fallback_catalog_slugs = models::catalog_model_slugs(&fallback_cache);
+        let cache_catalog_slugs = cache_result
+            .as_ref()
+            .map(|(cache, _)| models::catalog_model_slugs(cache));
         let (cache, outcome) = cache_result
             .as_ref()
             .map(|(cache, outcome)| (cache, outcome))
             .unwrap_or((&fallback_cache, &fallback_outcome));
+        let catalog_model_slugs = cache_catalog_slugs
+            .as_deref()
+            .unwrap_or(fallback_catalog_slugs.as_slice());
 
         let runtime = ResolveRuntime {
             cache,
+            catalog_model_slugs,
             outcome,
             installed: &installed,
             probe_outcome: cache_outcome.clone(),
@@ -1251,12 +1236,14 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             cursor_probe_result.as_ref(),
         )
     {
+        let catalog_slugs = models::catalog_model_slugs(cache);
         apply_routing_settings_to_resolved_alias(
             &mut resolved,
             &installed,
             probe_result.as_ref(),
             pi_probe_result.as_ref(),
             cursor_probe_result.as_ref(),
+            Some(catalog_slugs.as_slice()),
             &routing_settings,
         );
         annotate_one_availability(
@@ -1275,6 +1262,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             opencode_probe_result: probe_result.as_ref(),
             pi_probe_result: pi_probe_result.as_ref(),
             cursor_probe_result: cursor_probe_result.as_ref(),
+            catalog_model_slugs: Some(catalog_slugs.as_slice()),
             routing_settings: &routing_settings,
         };
         let route_trace = route_trace_for_resolved_model(&route_input);
@@ -1296,11 +1284,15 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .map(|(_, o)| o.clone())
         .unwrap_or(models::RefreshOutcome::Offline);
     let is_offline = models::is_mars_offline() || args.no_refresh_models;
+    let passthrough_catalog_slugs = cache_result
+        .as_ref()
+        .map(|(cache, _)| models::catalog_model_slugs(cache));
     run_output_passthrough(OutputPassthroughInput {
         name: &args.name,
         outcome: &outcome,
         is_offline,
         installed: &installed,
+        catalog_model_slugs: passthrough_catalog_slugs.as_deref(),
         routing_settings: &routing_settings,
         cache_error: cache_error.as_deref(),
         routing_diagnostics: &routing_diagnostics,
@@ -1424,6 +1416,7 @@ fn run_resolve_exact_alias(
                 runtime.probe_outcome.result(),
                 runtime.pi_probe_result,
                 runtime.cursor_probe_result,
+                Some(runtime.catalog_model_slugs),
                 runtime.routing_settings,
             );
         }
@@ -1436,6 +1429,7 @@ fn run_resolve_exact_alias(
             opencode_probe_result: runtime.probe_outcome.result(),
             pi_probe_result: runtime.pi_probe_result,
             cursor_probe_result: runtime.cursor_probe_result,
+            catalog_model_slugs: Some(runtime.catalog_model_slugs),
             routing_settings: runtime.routing_settings,
         };
         route_trace = Some(if let Some(fixed_harness) = alias.harness.as_deref() {
@@ -1801,6 +1795,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         outcome,
         is_offline,
         installed,
+        catalog_model_slugs,
         routing_settings,
         cache_error,
         routing_diagnostics,
@@ -1846,24 +1841,18 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     let cursor_probe_result = cursor_cache::probe_cached(installed, is_offline)
         .result()
         .cloned();
-    let provider_order = routing_settings.provider_order_names();
-    let harness_order = routing_settings.harness_order_names();
-    let default_harness = routing_settings.default_harness_name();
-    let linked_harnesses = routing_settings.linked_harness_names();
-    let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-        model_id: &passthrough_model_id,
-        provider_for_order: Some(provider_for_order),
-        provider_constraint: provider_constraint.as_deref(),
-        settings_provider_order: provider_order.as_deref(),
-        settings_harness_order: harness_order.as_deref(),
-        config_default_harness: default_harness.as_deref(),
-        installed_harnesses: installed,
-        linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
-        opencode_probe_result: probe_result.as_ref(),
-        pi_probe_result: pi_probe_result.as_ref(),
-        cursor_probe_result: cursor_probe_result.as_ref(),
-        catalog_model_slugs: None,
-    });
+    let routing_evidence = crate::routing::RoutingSettingsEvidence::new(
+        &passthrough_model_id,
+        Some(provider_for_order),
+        provider_constraint.as_deref(),
+        installed,
+        probe_result.as_ref(),
+        pi_probe_result.as_ref(),
+        cursor_probe_result.as_ref(),
+        catalog_model_slugs,
+        routing_settings,
+    );
+    let trace = crate::routing::evaluate_candidates(&routing_evidence.routing_input());
     if let Err(rejection_reason) = crate::routing::acceptance::accept_route(
         &trace,
         installed,
@@ -2489,6 +2478,7 @@ description = "Old alias"
         is_offline: bool,
         routing_settings: &ResolvedRoutingSettings,
     ) -> Vec<ListModelEntry> {
+        let catalog_slugs = models::catalog_model_slugs(cache);
         super::collect_all_model_entries(
             merged,
             cache,
@@ -2497,6 +2487,7 @@ description = "Old alias"
                 opencode_probe_result,
                 pi_probe_result,
                 cursor_probe_result,
+                catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 is_offline,
                 routing_settings,
             },
@@ -2512,6 +2503,7 @@ description = "Old alias"
         is_offline: bool,
         routing_settings: &ResolvedRoutingSettings,
     ) -> Vec<ListModelEntry> {
+        let catalog_slugs = models::catalog_model_slugs(cache);
         super::collect_catalog_model_entries(
             cache,
             AvailabilityContext {
@@ -2519,6 +2511,7 @@ description = "Old alias"
                 opencode_probe_result,
                 pi_probe_result,
                 cursor_probe_result,
+                catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 is_offline,
                 routing_settings,
             },
@@ -2710,6 +2703,30 @@ description = "Old alias"
         assert_eq!(rows[0].id, "claude-opus-4-6");
         assert_eq!(rows[1].id, "claude-sonnet-4-5");
         assert_eq!(rows[2].id, "gpt-5");
+    }
+
+    #[test]
+    fn list_catalog_uses_catalog_slugs_for_native_harness_matching() {
+        let models_cache = cache(vec![cached_model(
+            "claude-opus-4-6",
+            "Anthropic",
+            Some("2026-02-05"),
+        )]);
+
+        let installed = installed(&["claude"]);
+        let rows = collect_catalog_model_entries(
+            &models_cache,
+            &installed,
+            None,
+            None,
+            None,
+            false,
+            &default_routing_settings(),
+        );
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].harness.as_deref(), Some("claude"));
+        assert_eq!(rows[0].harness_source, HarnessSource::AutoDetected);
     }
 
     #[test]

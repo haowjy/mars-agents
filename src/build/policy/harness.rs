@@ -9,7 +9,6 @@ use crate::compiler::agents::HarnessKind;
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 use crate::routing::{self, RoutingInput};
 
 #[derive(Debug)]
@@ -23,20 +22,7 @@ pub(super) struct HarnessResolution {
     pub(super) warnings: Vec<String>,
 }
 
-pub(super) struct HarnessEvidence<'a> {
-    pub(super) model_id: &'a str,
-    pub(super) provider_for_order: Option<&'a str>,
-    pub(super) provider_constraint: Option<&'a str>,
-    pub(super) provider_order: Option<&'a [String]>,
-    pub(super) config_default_harness: Option<&'a str>,
-    pub(super) harness_order: Option<&'a [String]>,
-    pub(super) installed_harnesses: &'a HashSet<String>,
-    pub(super) linked_harnesses: Option<&'a [String]>,
-    pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pub(super) pi_probe_result: Option<&'a PiProbeResult>,
-    pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
-    pub(super) catalog_model_slugs: Option<&'a [String]>,
-}
+pub(super) type HarnessEvidence<'a> = routing::RoutingEvidence<'a>;
 
 pub(super) fn resolve_harness(
     input: &PolicyInput<'_>,
@@ -86,23 +72,12 @@ pub(super) fn resolve_harness(
                 evidence.provider_for_order,
                 &selection.value,
             );
-            let fixed_assessment = routing::evaluate_fixed_harness(
-                &RoutingInput {
-                    model_id: evidence.model_id,
-                    provider_for_order: fixed_provider_for_order,
-                    provider_constraint: evidence.provider_constraint,
-                    settings_provider_order: evidence.provider_order,
-                    settings_harness_order: evidence.harness_order,
-                    config_default_harness: normalized_config_default_harness.as_deref(),
-                    installed_harnesses: evidence.installed_harnesses,
-                    linked_harnesses: evidence.linked_harnesses,
-                    opencode_probe_result: evidence.opencode_probe_result,
-                    pi_probe_result: evidence.pi_probe_result,
-                    cursor_probe_result: evidence.cursor_probe_result,
-                    catalog_model_slugs: evidence.catalog_model_slugs,
-                },
-                &selection.value,
+            let mut fixed_input = routing_input_from_evidence(
+                &evidence,
+                normalized_config_default_harness.as_deref(),
             );
+            fixed_input.provider_for_order = fixed_provider_for_order;
+            let fixed_assessment = routing::evaluate_fixed_harness(&fixed_input, &selection.value);
             let fixed_route_trace = routing::trace_for_fixed_harness(
                 route_source_for_policy_source(selection.source),
                 &selection.value,
@@ -278,24 +253,21 @@ fn resolve_fixed_harness_selection(
     })
 }
 
+fn routing_input_from_evidence<'a>(
+    evidence: &'a HarnessEvidence<'_>,
+    normalized_config_default_harness: Option<&'a str>,
+) -> RoutingInput<'a> {
+    evidence.routing_input_with_config_default_harness(normalized_config_default_harness)
+}
+
 fn evaluate_candidates(
     evidence: &HarnessEvidence<'_>,
     normalized_config_default_harness: Option<&str>,
 ) -> routing::RoutingTrace {
-    routing::evaluate_candidates(&RoutingInput {
-        model_id: evidence.model_id,
-        provider_for_order: evidence.provider_for_order,
-        provider_constraint: evidence.provider_constraint,
-        settings_provider_order: evidence.provider_order,
-        settings_harness_order: evidence.harness_order,
-        config_default_harness: normalized_config_default_harness,
-        installed_harnesses: evidence.installed_harnesses,
-        linked_harnesses: evidence.linked_harnesses,
-        opencode_probe_result: evidence.opencode_probe_result,
-        pi_probe_result: evidence.pi_probe_result,
-        cursor_probe_result: evidence.cursor_probe_result,
-        catalog_model_slugs: evidence.catalog_model_slugs,
-    })
+    routing::evaluate_candidates(&routing_input_from_evidence(
+        evidence,
+        normalized_config_default_harness,
+    ))
 }
 
 fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource {
@@ -383,6 +355,7 @@ mod tests {
     use crate::compiler::agents::AgentProfile;
     use crate::compiler::agents::HarnessOverrides;
     use crate::models::ModelSpec;
+    use crate::models::probes::OpenCodeProbeResult;
     use crate::routing::MatchEvidence;
 
     fn installed(names: &[&str]) -> HashSet<String> {
@@ -454,9 +427,9 @@ mod tests {
             model_id: "gpt-5",
             provider_for_order: Some("openai"),
             provider_constraint: None,
-            provider_order: None,
+            settings_provider_order: None,
             config_default_harness,
-            harness_order,
+            settings_harness_order: harness_order,
             installed_harnesses,
             linked_harnesses: None,
             opencode_probe_result: None,
@@ -569,9 +542,9 @@ mod tests {
             model_id: "gpt-5",
             provider_for_order: Some("openai"),
             provider_constraint: None,
-            provider_order: None,
+            settings_provider_order: None,
             config_default_harness: None,
-            harness_order: None,
+            settings_harness_order: None,
             installed_harnesses: &installed,
             linked_harnesses: None,
             opencode_probe_result: Some(&opencode_probe),
@@ -641,9 +614,9 @@ mod tests {
             model_id: "gpt-5",
             provider_for_order: Some("openai"),
             provider_constraint: Some("anthropic"),
-            provider_order: None,
+            settings_provider_order: None,
             config_default_harness: None,
-            harness_order: None,
+            settings_harness_order: None,
             installed_harnesses: &installed,
             linked_harnesses: None,
             opencode_probe_result: None,

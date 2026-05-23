@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 pub mod acceptance;
+pub mod evidence;
 pub mod report;
 pub mod slug;
 
@@ -9,6 +10,8 @@ use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
+
+pub use evidence::{RoutingEvidence, RoutingSettingsEvidence};
 
 /// How the harness was selected — orthogonal to slug evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1891,7 +1894,7 @@ mod tests {
             hardcoded_trace
                 .diagnostics
                 .iter()
-                .any(|diagnostic| { diagnostic.contains("without unrelated fallback") })
+                .any(|diagnostic| { diagnostic.contains("selecting linked harness `claude`") })
         );
     }
 

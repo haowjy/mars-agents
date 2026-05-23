@@ -33,6 +33,21 @@ Three bypass conditions:
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |
 
+## Catalog / probe refresh flags
+
+`--refresh-models` and `--no-refresh-models` are mutually exclusive. They map to
+`models::resolve_models_refresh_control` (catalog `ensure_fresh` mode + probe refresh mode).
+See [`src/models/AGENTS.md`](../models/AGENTS.md) for the full matrix.
+
+| Command | Flags on |
+|---|---|
+| `mars models list` | `ListArgs` |
+| `mars models resolve <alias>` | `ResolveAliasArgs` |
+| `mars build launch-bundle` | `LaunchBundleArgs` |
+| `mars sync` | `SyncArgs` (`cli/sync.rs`) |
+
+`mars models refresh` always fetches; `alias` / `refresh` subcommands have no refresh flags.
+
 ## Output
 
 - Human-readable by default, `--json` for machine consumption

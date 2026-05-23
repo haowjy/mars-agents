@@ -21,11 +21,38 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 
 ## Evaluation Flow
 
-1. Build candidate list from `settings_harness_order` or `provider_candidate_order`
+1. Build candidate list from `settings_harness_order` (when unset, see default order below) or `provider_candidate_order`
 2. Filter by `linked_harnesses` — only `KnownHarness` links filter
-3. Per-candidate gate: installed → native match + auth → OpenCode probe → Pi probe → Cursor passthrough
+3. Per-candidate gate: installed → native catalog slug match + auth → OpenCode probe → Pi probe → Pi/Cursor passthrough (deferred)
 4. Fallback chain: config `default_harness` → linked fallback → hardcoded `pi`
 5. Link constraints block config-default and hardcoded fallbacks from routing outside known links
+
+### Default `harness_order`
+
+When `settings.harness_order` is omitted, policy loaders supply
+`harness::registry::default_harness_order_names()` — canonical list and rationale live in
+[`src/harness/registry.rs`](../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`).
+
+### Deferred passthrough (Pi, Cursor)
+
+`Passthrough` candidates do **not** win immediately. The loop records the first passthrough
+harness and keeps trying stronger candidates (`Confirmed` / `Constrained` exit early). Only
+after the order is exhausted does Mars return that deferred passthrough selection. This lets
+native and probe-backed harnesses outrank universal routers.
+
+### Routing parity with `mars models` and launch-bundle
+
+`mars models list|resolve` and `mars build launch-bundle` both call `evaluate_candidates()`
+with the same `RoutingInput` shape: shared capability snapshot, probe caches, and
+`catalog_model_slugs` for native harness matching. Parity drift is a bug — see parity smoke
+in `.context/CONTEXT.md`.
+
+### Linked fallback and prior skips
+
+When auto-routing exhausts candidates under link constraints, `select_linked_fallback_harness`
+walks linked harnesses in `harness_order` (or link declaration order) and **skips** harnesses
+whose assessment has a hard `skip_reason` (`not_installed`, `pi_incompatible`, `no_model_match`,
+etc.). Soft passthrough deferrals do not block linked fallback the same way.
 
 ## Key Types
 

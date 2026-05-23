@@ -10,7 +10,7 @@ pub(crate) fn build_launch_bundle_includes_skill_documents_and_system_instructio
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
-model: claude-opus-4-6
+model: gpt-5
 skills: [planning]
 ---
 Review code changes."#;
@@ -55,7 +55,7 @@ pub(crate) fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
-model: claude-opus-4-6
+model: gpt-5
 skills: [planning]
 ---
 Review code changes."#;
@@ -114,7 +114,7 @@ pub(crate) fn build_launch_bundle_uses_harness_override_skills_for_prompt_surfac
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
-model: claude-opus-4-6
+model: gpt-5
 skills: [planning]
 harness-overrides:
   codex:

@@ -4,8 +4,9 @@ use std::path::Path;
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
+use crate::models;
 
 mod config;
 mod execution;
@@ -23,6 +24,7 @@ pub struct PolicyInput<'a> {
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
+    pub models_refresh: models::ModelsRefreshControl,
 }
 
 pub struct ResolvedPolicy {
@@ -153,7 +155,28 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let overlay = input
         .agent
         .and_then(|name| resolution_config.agents.get(name));
-    let cache = model::load_models_cache(input.project_root)?;
+    let mars_dir = input.project_root.join(".mars");
+    let ttl_hours = crate::config::load(input.project_root)
+        .map(|config| config.settings.models_cache_ttl_hours)
+        .unwrap_or(24);
+    let (cache, catalog_outcome) =
+        match models::ensure_fresh(&mars_dir, ttl_hours, input.models_refresh.catalog_mode) {
+            Ok(pair) => pair,
+            Err(err) => {
+                warnings.push(format!("models cache unavailable: {err}"));
+                (
+                    model::load_models_cache(input.project_root).unwrap_or(models::ModelsCache {
+                        models: Vec::new(),
+                        fetched_at: None,
+                    }),
+                    models::RefreshOutcome::Offline,
+                )
+            }
+        };
+    if let models::RefreshOutcome::StaleFallback { reason } = catalog_outcome {
+        warnings.push(format!("models cache: {reason}"));
+    }
+    let catalog_slugs = models::catalog_model_slugs(&cache);
     let model_input = PolicyInput {
         project_root: input.project_root,
         agent: input.agent,
@@ -164,6 +187,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         effort_override: input.effort_override,
         approval_override: input.approval_override,
         sandbox_override: input.sandbox_override,
+        models_refresh: input.models_refresh,
     };
     let resolved_model =
         model::resolve_model(&model_input, overlay, &resolution_config.aliases, &cache)?;
@@ -185,7 +209,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
 
     let capability_snapshot = collect_capability_snapshot(&CapabilityCollectionOptions {
         offline: crate::models::is_mars_offline(),
-        allow_probe_refresh: true,
+        probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_snapshot.installed_harnesses();
     let opencode_probe_result = capability_snapshot.opencode.result();
@@ -201,15 +225,16 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             model_id: &resolved_model.model,
             provider_for_order: resolved_model.provider_for_order.as_deref(),
             provider_constraint: resolved_model.provider_constraint.as_deref(),
-            provider_order: resolution_config.provider_order.as_deref(),
+            settings_provider_order: resolution_config.provider_order.as_deref(),
             config_default_harness: resolution_config.default_harness.as_deref(),
-            harness_order: resolution_config.harness_order.as_deref(),
+            settings_harness_order: resolution_config.harness_order.as_deref(),
             installed_harnesses: &installed_harnesses,
             linked_harnesses: (!resolution_config.linked_harnesses.is_empty())
                 .then_some(resolution_config.linked_harnesses.as_slice()),
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
+            catalog_model_slugs: Some(catalog_slugs.as_slice()),
         },
     )?;
 
@@ -310,9 +335,9 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     }
 
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
-        model: resolved_model.model,
-        model_token: resolved_model.model_token,
-        harness: harness_resolution.harness.value,
+        model: resolved_model.model.clone(),
+        model_token: resolved_model.model_token.clone(),
+        harness: harness_resolution.harness.value.clone(),
         selection_kind: harness_resolution
             .route_trace
             .selected_selection_kind()
@@ -324,17 +349,48 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             .label()
             .to_string(),
         provider: resolved_model.provider_for_order.as_deref(),
+        effort: execution_resolution.effort.value.clone(),
         opencode_probe_result,
+        cursor_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
     });
 
+    let cursor_effort_resolution_failed = routing_resolution
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("no cursor slug matched"));
     warnings.extend(routing_resolution.warnings);
+
+    let mut effort = execution_resolution.effort.value;
+    if routing_resolution.effort_consumed {
+        effort = None;
+        provenance.insert(
+            "effort_applied_to_harness_model".to_string(),
+            "true".to_string(),
+        );
+    } else if harness_resolution
+        .harness
+        .value
+        .eq_ignore_ascii_case("cursor")
+        && effort
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && cursor_effort_resolution_failed
+    {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "cursor harness cannot resolve model `{}` with effort `{}` from probe catalog",
+                resolved_model.model,
+                effort.as_deref().unwrap_or_default()
+            ),
+        }));
+    }
 
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
-            effort: execution_resolution.effort.value,
+            effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
             autocompact: execution_resolution.autocompact.value,

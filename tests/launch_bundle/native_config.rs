@@ -11,7 +11,7 @@ pub(crate) fn build_launch_bundle_emits_native_config_for_resolved_harness_and_k
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
-model: claude-opus-4-6
+model: gpt-5
 harness-overrides:
   codex:
     native-config:

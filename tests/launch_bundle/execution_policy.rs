@@ -5,6 +5,7 @@ use serde_json::Value;
 
 pub(crate) fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -30,11 +31,13 @@ Review code changes."#;
         "--sandbox",
         "danger-full-access",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
     assert_eq!(
         bundle["execution_policy"]["approval"].as_str(),
         Some("yolo")
@@ -146,6 +149,7 @@ autocompact_pct = 55"#;
 
 pub(crate) fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -160,10 +164,12 @@ Review code changes."#;
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
     assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("xhigh"));
     assert_eq!(
         bundle["execution_policy"]["approval"].as_str(),

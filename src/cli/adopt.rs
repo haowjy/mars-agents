@@ -91,6 +91,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             force: false,
             dry_run: false,
             frozen: false,
+            refresh_models: false,
             no_refresh_models: false,
         },
     };

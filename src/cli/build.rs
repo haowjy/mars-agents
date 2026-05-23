@@ -126,6 +126,14 @@ pub struct LaunchBundleArgs {
     /// Add extra skills by name. Supports `--skill a --skill b` and `--skill a,b`.
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
     pub extra_skills: Vec<String>,
+
+    /// Refresh models.dev catalog and harness probes synchronously before building (blocks until complete).
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    pub refresh_models: bool,
+
+    /// Skip automatic models-cache refresh; use disk cache only (no probe background refresh).
+    #[arg(long, conflicts_with = "refresh_models")]
+    pub no_refresh_models: bool,
 }
 
 pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, MarsError> {
@@ -135,6 +143,8 @@ pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Mars
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {
+    let models_refresh =
+        crate::models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let bundle = build_launch_bundle(
         ctx,
         LaunchBundleRequest {
@@ -145,6 +155,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
             extra_skills: args.extra_skills.clone(),
+            models_refresh,
         },
     )?;
 

@@ -28,7 +28,7 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
 
 - `collect_capability_snapshot(options)` — collects for all known harnesses
 - `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
-- `CapabilityCollectionOptions { offline, allow_probe_refresh }` — caller controls probe refresh
+- `CapabilityCollectionOptions { offline, probe_refresh }` — `offline` from `MARS_OFFLINE` (`is_mars_offline()`); `probe_refresh` from `ModelsRefreshControl` at CLI/build call sites (see [probe refresh modes](../../models/probes/.context/CONTEXT.md))
 - `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl
 - `AuthState`: `NotApplicable` (Pi/OpenCode/Cursor), `Authenticated`, `Unauthenticated`, `Unknown`
 
@@ -37,6 +37,8 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
 - `auth: BTreeMap<HarnessId, AuthState>` — auth probe result (only meaningful for Native harnesses)
 - `opencode: CachedProbeOutcome` — OpenCode capability probe from disk cache
 - `pi: CachedPiProbeOutcome` — Pi capability probe from disk cache
+- `cursor: CachedCursorProbeOutcome` — Cursor capability probe from disk cache
+- `offline: bool` — copy of collection-time `MARS_OFFLINE` (not set by `--no-refresh-models` alone)
 
 ## Architecture
 
@@ -48,7 +50,7 @@ registry.rs   ←── pure static data (no I/O, no env reads)
 host.rs       ←── I/O at collection time only
                     ExecutableResolver → PATH lookup (once per harness)
                     native_auth_state → subprocess probe (claude/codex only)
-                    opencode_cache/pi_cache → disk reads
+                    opencode_cache / pi_cache / cursor_cache → disk reads
                     → CapabilitySnapshot (cloneable, shared across command)
 ```
 
@@ -79,7 +81,10 @@ let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
 **Offline/test options:**
 
 ```rust
-let options = CapabilityCollectionOptions { offline: true, allow_probe_refresh: false };
+let options = CapabilityCollectionOptions {
+    offline: true,
+    probe_refresh: ProbeRefreshMode::Skip,
+};
 ```
 
 This prevents probe refresh and uses stale cache (or returns empty probe result).

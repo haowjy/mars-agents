@@ -175,7 +175,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
     assert!(stdout["route_trace"].is_object());
     assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
@@ -276,7 +276,7 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -300,7 +300,7 @@ fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -324,7 +324,7 @@ fn resolve_passthrough_unrecognized_pattern_with_pi_installed_still_fails_closed
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -349,7 +349,7 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "pi", "codex", "opencode", "cursor"])
     );
 }
 
@@ -450,6 +450,7 @@ model = "gpt-5.4-mini"
         })],
         &fresh_fetched_at(),
     );
+    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "list"]);
@@ -495,6 +496,7 @@ model = "gpt-5.4-mini"
         })],
         &fresh_fetched_at(),
     );
+    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "fast"]);
@@ -506,6 +508,55 @@ model = "gpt-5.4-mini"
 
     assert_eq!(stdout["harness"].as_str(), Some("cursor"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
+}
+
+#[test]
+#[serial]
+fn resolve_gpt5_prefers_codex_over_deferred_pi_passthrough() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+harness_order = ["codex", "pi"]
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    for model_arg in ["gpt-5", "openai/gpt-5"] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(["--json", "models", "resolve", model_arg]);
+        cmd.env("PATH", replace_path_with(&bin_dir));
+
+        let output = cmd.assert().success().get_output().clone();
+        let stdout: Value =
+            serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+        assert_eq!(
+            stdout["harness"].as_str(),
+            Some("codex"),
+            "models resolve {model_arg} should match build routing to codex"
+        );
+        assert!(
+            matches!(
+                stdout["route"]["match_evidence"].as_str(),
+                Some("confirmed") | Some("constrained")
+            ),
+            "unexpected match evidence for {model_arg}: {}",
+            stdout["route"]["match_evidence"]
+        );
+        assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
+    }
 }
 
 #[test]
@@ -864,12 +915,33 @@ fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
 }
 
+fn write_cursor_probe_cache(temp_root: &Path, slugs: Vec<&str>) {
+    let cache_dir = temp_root.join("mars-cache").join("availability");
+    fs::create_dir_all(&cache_dir).expect("failed to create probe cache dir");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_secs();
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": now,
+        "last_attempt_at": now,
+        "last_error": Value::Null,
+        "result": {
+            "slugs": slugs,
+            "model_probe_success": true,
+            "error": Value::Null
+        }
+    });
+    fs::write(
+        cache_dir.join("cursor-probe.json"),
+        serde_json::to_vec_pretty(&payload).expect("failed to serialize probe cache payload"),
+    )
+    .expect("failed to write cursor probe cache");
+}
+
 fn write_opencode_probe_cache(temp_root: &Path, providers: Value, model_slugs: Vec<&str>) {
-    let cache_dir = temp_root
-        .join("xdg-cache")
-        .join("mars")
-        .join("cache")
-        .join("availability");
+    let cache_dir = temp_root.join("mars-cache").join("availability");
     fs::create_dir_all(&cache_dir).expect("failed to create probe cache dir");
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

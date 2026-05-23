@@ -5,6 +5,7 @@ use std::process::Stdio;
 use serde::{Deserialize, Serialize};
 
 use super::pi::PiProbeResult;
+use super::probe_refresh::ProbeCacheBranch;
 use crate::error::MarsError;
 
 const SCHEMA_VERSION: u32 = 2;
@@ -168,18 +169,27 @@ fn lock_at(path: &Path, nonblocking: bool) -> Option<FileLock> {
     Some(FileLock { _file: file })
 }
 
-pub fn probe_cached(installed: &HashSet<String>, is_offline: bool) -> CachedPiProbeOutcome {
-    if !should_probe_pi(installed, is_offline) {
+pub fn probe_cached(
+    installed: &HashSet<String>,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+) -> CachedPiProbeOutcome {
+    if !should_probe_pi(installed, mars_offline) {
         return CachedPiProbeOutcome::Unavailable;
     }
 
-    probe_cached_impl(is_offline, &cache_path().ok(), super::pi::probe, || {
-        spawn_detached_refresh().map_err(|_| ())
-    })
+    probe_cached_impl(
+        mars_offline,
+        probe_refresh,
+        &cache_path().ok(),
+        super::pi::probe,
+        || spawn_detached_refresh().map_err(|_| ()),
+    )
 }
 
 fn probe_cached_impl<F, S>(
-    is_offline: bool,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
     path: &Option<PathBuf>,
     probe: F,
     spawn_refresh: S,
@@ -189,20 +199,23 @@ where
     S: Fn() -> Result<(), ()>,
 {
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
-
-    match cached {
-        Some(entry) if is_fresh(&entry) && is_usable_result(entry.result.as_ref()) => {
-            CachedPiProbeOutcome::Hit(entry.result.unwrap())
-        }
-        Some(entry) if is_usable_result(entry.result.as_ref()) => {
-            let result = entry.result.clone().unwrap();
-            if !is_offline {
-                trigger_background_refresh_with(spawn_refresh);
-            }
-            CachedPiProbeOutcome::Stale(result)
-        }
-        _ if is_offline => CachedPiProbeOutcome::Unavailable,
-        _ => synchronous_probe_with(path, probe),
+    match super::probe_refresh::resolve_probe_cache_branch(
+        cached,
+        mars_offline,
+        probe_refresh,
+        |entry| {
+            entry
+                .result
+                .as_ref()
+                .filter(|result| is_usable_result(Some(*result)))
+        },
+        is_fresh,
+        || trigger_background_refresh_with(spawn_refresh),
+    ) {
+        ProbeCacheBranch::Hit(result) => CachedPiProbeOutcome::Hit(result),
+        ProbeCacheBranch::Stale(result) => CachedPiProbeOutcome::Stale(result),
+        ProbeCacheBranch::Unavailable => CachedPiProbeOutcome::Unavailable,
+        ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
     }
 }
 
@@ -393,6 +406,7 @@ mod tests {
 
         let outcome = probe_cached_impl(
             false,
+            crate::models::probes::ProbeRefreshMode::Background,
             &Some(path),
             || PiProbeResult {
                 model_slugs: HashSet::from(["openai/gpt-5.5".to_string()]),
@@ -413,7 +427,13 @@ mod tests {
         let path = cache_file(&temp);
         write_entry(&path, &entry(now_unix_secs(), Some(compatible_result())));
 
-        let outcome = probe_cached_impl(false, &Some(path), incompatible_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            incompatible_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedPiProbeOutcome::Hit(_)));
     }
 
@@ -423,7 +443,13 @@ mod tests {
         let path = cache_file(&temp);
         write_entry(&path, &entry(1, Some(compatible_result())));
 
-        let outcome = probe_cached_impl(false, &Some(path), incompatible_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            incompatible_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedPiProbeOutcome::Stale(_)));
     }
 
@@ -431,7 +457,13 @@ mod tests {
     fn missing_cache_runs_probe() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
-        let outcome = probe_cached_impl(false, &Some(path), compatible_result, || Ok(()));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            compatible_result,
+            || Ok(()),
+        );
         assert!(matches!(outcome, CachedPiProbeOutcome::Miss(_)));
     }
 }

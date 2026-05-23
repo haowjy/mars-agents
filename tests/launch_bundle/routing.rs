@@ -2,8 +2,12 @@
 // qa-validated: capability-cache-resolver-routing-gaps
 
 use super::common::setup_bundle_project;
-use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, write_cache};
+use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;
+use assert_fs::fixture::PathChild;
+use assert_fs::prelude::*;
+use httpmock::MockServer;
+use httpmock::prelude::*;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,7 +99,7 @@ model = "gpt-5""#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
@@ -103,7 +107,7 @@ model = "gpt-5""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex")
+        Some("claude,pi,codex")
     );
 }
 
@@ -136,18 +140,21 @@ model = "gpt-5""#;
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5")
+    );
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("provider-match")
+        Some("cached-probe")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
@@ -155,7 +162,7 @@ model = "gpt-5""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex")
+        Some("claude,pi,codex")
     );
 }
 
@@ -183,7 +190,7 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["routing"]["model"].as_str(), Some("openai_alias"));
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["routing"]["harness_model"].as_str(),
         Some("openai_alias")
@@ -198,7 +205,7 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("default")
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -252,7 +259,7 @@ default_harness = "pi""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
     assert_eq!(
         bundle["routing"]["harness_model"].as_str(),
@@ -297,11 +304,11 @@ Review code changes."#;
 
     assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
     assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
+        Some("config-order")
     );
 }
 
@@ -443,7 +450,7 @@ default_harness = "invalid-harness""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -490,7 +497,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -839,7 +846,7 @@ pub(crate) fn build_launch_bundle_profile_harness_beats_settings_harness_order()
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex", "opencode"]);
     let agent_content = r#"---
 name: reviewer
-model: gpt-5
+model: claude-opus-4-6
 harness: claude
 ---
 Review code changes."#;
@@ -1339,7 +1346,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
@@ -1347,7 +1354,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1377,7 +1384,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1407,7 +1414,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
@@ -1415,7 +1422,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1445,11 +1452,11 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1480,7 +1487,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1530,7 +1537,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1575,7 +1582,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
@@ -1583,7 +1590,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("claude,pi,codex,opencode")
     );
 }
 
@@ -1624,7 +1631,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi")
+        Some("claude,pi")
     );
 }
 
@@ -1665,7 +1672,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("claude,pi,codex,opencode")
     );
 }
 
@@ -1706,8 +1713,102 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
+}
+
+pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+    let cache_root = temp.path().join("mars-cache");
+    write_cursor_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        &["gpt-5.5-high", "gpt-5.5-low"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-effort-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("gpt-5.5-high")
+    );
+    assert!(bundle["execution_policy"]["effort"].is_null());
+    assert_eq!(
+        bundle["provenance"]["effort_applied_to_harness_model"].as_str(),
+        Some("true")
+    );
+}
+
+pub(crate) fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+    let cache_root = temp.path().join("mars-cache");
+    write_cursor_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        &["gpt-5.5", "gpt-5.5-high", "gpt-5.5-low"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-medium-effort-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "medium",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5.5"));
+    assert!(bundle["execution_policy"]["effort"].is_null());
 }
 
 pub(crate) fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
@@ -1736,11 +1837,11 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
 }
 
@@ -1785,7 +1886,119 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("claude,pi,codex,opencode")
+    );
+}
+
+pub(crate) fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("refresh-probe-spawned");
+    let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.4-mini
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs().saturating_sub(120),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.4-mini"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--no-refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert!(
+        !marker_path.exists(),
+        "--no-refresh-models should not spawn __refresh-probe or run the harness probe"
+    );
+}
+
+pub(crate) fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("sync-probe-ran");
+    let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.5
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs().saturating_sub(120),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5.4-mini"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5.5")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert!(
+        marker_path.exists(),
+        "--refresh-models should run the stale probe refresh synchronously"
     );
 }
 
@@ -1819,7 +2032,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,cursor")
+        Some("claude,pi,codex,opencode,cursor")
     );
 }
 
@@ -1923,7 +2136,7 @@ targets = [".opencode", ".agents"]"#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("config-order")
     );
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
@@ -1958,10 +2171,10 @@ default_harness = "pi""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("provider")
+        Some("default")
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -2148,14 +2361,17 @@ harness = "codex""#;
         bundle["routing"]["match_evidence"].as_str(),
         Some("constrained")
     );
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai/gpt-5")
+    );
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("provider-match")
+        Some("cached-probe")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("likely")
+        Some("confirmed")
     );
 }
 
@@ -2478,6 +2694,64 @@ fn install_fake_harnesses_with_auth_failures(
 
 fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
+}
+
+fn install_opencode_probe_harness(
+    temp: &TempDir,
+    model_slug: &str,
+    marker_path: Option<&Path>,
+) -> PathBuf {
+    let bin_dir = temp.path().join("harness-bin-probe");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+        let marker_command = marker_path
+            .map(|path| format!("echo ran>\"{}\"\r\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "@echo off\r\nif \"%~1\"==\"models\" (\r\n  {marker_command}  echo {model_slug}\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+        );
+        fs::write(bin_dir.join("opencode.bat"), script).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let marker_command = marker_path
+            .map(|path| format!("printf ran > '{}'\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  {marker_command}  printf '%s\\n' '{model_slug}'\n  exit 0\nfi\nexit 0\n"
+        );
+        let path = bin_dir.join("opencode");
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    bin_dir
+}
+
+fn write_cursor_probe_cache(cache_root: &Path, fetched_at: u64, slugs: &[&str]) {
+    let cache_path = cache_root.join("availability").join("cursor-probe.json");
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": fetched_at,
+        "last_attempt_at": fetched_at,
+        "last_error": null,
+        "result": {
+            "slugs": slugs,
+            "model_probe_success": true,
+            "error": null
+        }
+    });
+    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 fn write_opencode_probe_cache(cache_root: &Path, fetched_at: u64, result: Value) {

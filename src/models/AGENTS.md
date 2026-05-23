@@ -29,16 +29,46 @@ The mars binary ships zero hardcoded model aliases. All aliases come from packag
 
 ## Catalog Lifecycle
 
-- `mars models refresh` — fetches from models.dev API, caches to `.mars/models-cache.json`
-- `mars models list` — loads dependency aliases from `.mars/models-merged.json`, overlays consumer config, applies visibility filtering
-- `mars models resolve <alias>` — resolves against cache
+- `mars models refresh` — explicit catalog fetch (`RefreshMode::Force`); does not accept refresh flags
+- `mars models list` / `mars models resolve <alias>` — merge + resolve; honor `--refresh-models` / `--no-refresh-models`
+- `mars sync` — same refresh flags for best-effort catalog refresh before merge write
+- `mars build launch-bundle` — same flags via build policy (`models_refresh` on policy input)
+
+Probe subprocess behavior for list/resolve/launch-bundle is tied to the same flags; see [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) for per-harness probe contracts and cache paths.
+
+### Refresh control (`ModelsRefreshControl`)
+
+CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_refresh_models)` → `ModelsRefreshControl { catalog_mode, probe_refresh }`. The two flags are mutually exclusive.
+
+| Input | `catalog_mode` (`RefreshMode`) | `probe_refresh` (`ProbeRefreshMode`) |
+|---|---|---|
+| default | `Auto` | `Background` |
+| `--refresh-models` | `Force` | `Synchronous` |
+| `--no-refresh-models` | `Offline` | `Skip` |
+
+`RefreshMode` drives `ensure_fresh()` against `.mars/models-cache.json`:
+
+- **Auto** — fetch when TTL stale; stale cache on fetch failure (cooldown/backoff)
+- **Force** — always attempt fetch (used by `mars models refresh` and `--refresh-models`)
+- **Offline** — disk only; error if no usable cache
+
+`ensure_fresh` coerces **Auto → Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing.
 
 ### Cache Behavior
 
 - TTL: 24h default, configurable via `settings.models_cache_ttl_hours`
 - Stale fallback: uses existing cache if fetch fails (with diagnostic)
-- Cooldown: 5s backoff after failed fetch attempt
-- `MARS_OFFLINE=1` forces offline mode
+- Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
+- `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
+
+### `MARS_OFFLINE` vs probe `Skip`
+
+Both suppress probe subprocesses, but through different paths:
+
+- **`MARS_OFFLINE`** — host `offline: true`; `should_probe_*` returns false before cache read → probe outcome `Unavailable` even when harness is installed
+- **`ProbeRefreshMode::Skip`** (`--no-refresh-models`) — `offline` stays false; installed harnesses still enter probe cache logic but only read disk (stale hit OK, cold miss → `Unavailable`)
+
+Do not conflate env offline with flag-driven skip when debugging missing probe data.
 
 ## Auto-Resolve Algorithm
 
@@ -76,6 +106,7 @@ resolve_all_with_probe(&aliases, &cache, &mut diag, Some(&opencode_probe), Some(
 
 ## See Also
 
-- `.context/CONTEXT.md` in `src/models/probes/` — probe semantics
+- [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) — probe semantics, refresh-mode table, effort slug rules
+- [../harness/AGENTS.md](../harness/AGENTS.md) — capability snapshot collection (once per command)
 - `src/routing/AGENTS.md` — uses resolved aliases for harness routing
 - `src/config/AGENTS.md` — model visibility settings

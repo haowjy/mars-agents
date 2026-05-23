@@ -48,6 +48,22 @@ pub struct HarnessDescriptor {
 pub const UNKNOWN_PROVIDER_FALLBACK_ORDER: &[HarnessId] =
     &[HarnessId::Pi, HarnessId::OpenCode, HarnessId::Cursor];
 
+/// Default launch-bundle harness try order when `settings.harness_order` is unset.
+pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
+    HarnessId::Claude,
+    HarnessId::Pi,
+    HarnessId::Codex,
+    HarnessId::OpenCode,
+    HarnessId::Cursor,
+];
+
+pub fn default_harness_order_names() -> Vec<String> {
+    DEFAULT_HARNESS_ORDER
+        .iter()
+        .map(|harness| harness.as_str().to_string())
+        .collect()
+}
+
 const DESCRIPTORS: &[HarnessDescriptor] = &[
     HarnessDescriptor {
         id: HarnessId::Claude,
@@ -108,7 +124,7 @@ pub fn all() -> &'static [HarnessId] {
 }
 
 pub fn names() -> &'static [&'static str] {
-    &["claude", "codex", "pi", "opencode", "cursor"]
+    &["claude", "pi", "codex", "opencode", "cursor"]
 }
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {

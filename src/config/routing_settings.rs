@@ -96,10 +96,17 @@ pub struct OrderedHarnessCandidate {
     pub position: usize,
 }
 
+fn harness_order_input(settings: &Settings) -> Option<Vec<String>> {
+    match &settings.harness_order {
+        Some(order) => Some(order.clone()),
+        None => Some(crate::harness::registry::default_harness_order_names()),
+    }
+}
+
 pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
     let mut diagnostics = Vec::new();
 
-    let harness_order = settings.harness_order.as_ref().map(|order| {
+    let harness_order = harness_order_input(settings).map(|order| {
         if order.is_empty() {
             diagnostics.push(RoutingConfigDiagnostic {
                 message:
@@ -238,6 +245,19 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("settings.default_harness"))
         );
+    }
+
+    #[test]
+    fn default_harness_order_when_unset() {
+        let settings = settings_with_links(None);
+        assert!(settings.harness_order.is_none());
+
+        let resolved = resolve(&settings);
+        let order = resolved.harness_order.expect("default harness order");
+        assert_eq!(order.candidates.len(), 5);
+        assert_eq!(order.candidates[0].harness, HarnessId::Claude);
+        assert_eq!(order.candidates[1].harness, HarnessId::Pi);
+        assert_eq!(order.candidates[2].harness, HarnessId::Codex);
     }
 
     #[test]

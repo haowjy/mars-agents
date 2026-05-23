@@ -103,7 +103,10 @@ pub fn find_model_matches<'a>(
     slugs
         .into_iter()
         .filter_map(parse)
-        .filter(|parts| model_ids_match(target_model_id, parts.model_id))
+        .filter(|parts| {
+            model_ids_match(target_model_id, parts.model_id)
+                || model_ids_match(target_model_id, parts.full)
+        })
         .map(|parts| SlugMatch {
             slug: parts.full.to_string(),
             provider: parts.provider.to_string(),
@@ -210,6 +213,16 @@ mod tests {
         assert_eq!(matches[0].slug, "openai/gpt-5.4-mini");
         assert_eq!(matches[0].provider, "openai");
         assert_eq!(matches[0].model_id, "gpt-5.4-mini");
+    }
+
+    #[test]
+    fn find_model_matches_accepts_exact_full_slug_token() {
+        let matches = find_model_matches("openai/gpt-5", vec!["openai/gpt-5", "openai/gpt-5.4"]);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].slug, "openai/gpt-5");
+        assert_eq!(matches[0].provider, "openai");
+        assert_eq!(matches[0].model_id, "gpt-5");
     }
 
     #[test]

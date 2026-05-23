@@ -174,6 +174,16 @@ fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
 }
 
 #[test]
+fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
+    routing::build_launch_bundle_cursor_effort_bakes_slug_into_harness_model();
+}
+
+#[test]
+fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
+    routing::build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug();
+}
+
+#[test]
 fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     routing::build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed();
 }
@@ -181,6 +191,16 @@ fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() 
 #[test]
 fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
     routing::build_launch_bundle_selects_opencode_when_opencode_cache_is_stale();
+}
+
+#[test]
+fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
+    routing::build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh();
+}
+
+#[test]
+fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
+    routing::build_launch_bundle_refresh_models_sync_probe_updates_stale_routing();
 }
 
 #[test]

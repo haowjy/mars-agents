@@ -1,8 +1,9 @@
 use super::common::{install_fake_harnesses, replace_path_with, setup_bundle_project};
-use crate::test_common::{API_PATH, configure_assert_cmd, mars, mars_cmd};
+use crate::test_common::{API_PATH, configure_assert_cmd, mars, mars_cmd, sample_catalog_json};
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use httpmock::MockServer;
+use httpmock::prelude::*;
 use serde_json::Value;
 
 fn assert_field_absent_or_null(bundle: &Value, field: &str) {
@@ -45,6 +46,8 @@ Review code changes.
         "reviewer",
         "--harness",
         "codex",
+        "--model",
+        "gpt-5",
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
@@ -151,6 +154,10 @@ Review code changes."#;
 pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
     let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     let project = temp.child("plain-project");
     project.create_dir_all().unwrap();
@@ -184,6 +191,7 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
 pub(crate) fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides()
 {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -215,6 +223,7 @@ Review code changes."#;
         "--sandbox",
         "workspace-write",
     ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();

@@ -20,8 +20,12 @@ pub struct SyncArgs {
     #[arg(long)]
     pub frozen: bool,
 
+    /// Refresh models.dev catalog and harness probes synchronously before sync (blocks until complete).
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    pub refresh_models: bool,
+
     /// Skip the automatic models-cache refresh during sync.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
 
     /// Suppress the post-sync upgrade hint line.
@@ -38,6 +42,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             force: args.force,
             dry_run: args.diff,
             frozen: args.frozen,
+            refresh_models: args.refresh_models,
             no_refresh_models: args.no_refresh_models,
         },
     };
@@ -69,6 +74,23 @@ mod tests {
             panic!("expected sync command");
         };
         assert!(args.no_refresh_models);
+    }
+
+    #[test]
+    fn parses_refresh_models() {
+        let cli = Cli::try_parse_from(["mars", "sync", "--refresh-models"]).unwrap();
+        let Command::Sync(args) = cli.command else {
+            panic!("expected sync command");
+        };
+        assert!(args.refresh_models);
+    }
+
+    #[test]
+    fn refresh_and_no_refresh_conflict() {
+        assert!(
+            Cli::try_parse_from(["mars", "sync", "--refresh-models", "--no-refresh-models"])
+                .is_err()
+        );
     }
 
     #[test]

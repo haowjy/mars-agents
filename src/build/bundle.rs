@@ -30,6 +30,8 @@ pub struct Routing {
     pub harness_model: String,
     pub harness_model_source: String,
     pub harness_model_confidence: String,
+    /// Diagnostic only: probe/catalog slug candidates for the selected harness.
+    /// Consumers should run `harness_model` verbatim and ignore this unless debugging.
     pub candidate_slugs: Vec<String>,
     pub route_trace: crate::routing::report::RouteDecisionReport,
 }

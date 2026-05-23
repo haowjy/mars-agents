@@ -340,6 +340,21 @@ pub struct CachedModel {
     pub cost_reasoning: Option<f64>,
 }
 
+/// Provider/model slugs from the models.dev catalog for harness routing comparisons.
+pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
+    cache
+        .models
+        .iter()
+        .map(|model| {
+            format!(
+                "{}/{}",
+                crate::routing::slug::normalize_provider(&model.provider),
+                model.id
+            )
+        })
+        .collect()
+}
+
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
 const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
@@ -383,11 +398,53 @@ pub fn is_mars_offline() -> bool {
 }
 
 pub fn resolve_refresh_mode(no_refresh_flag: bool) -> RefreshMode {
-    if no_refresh_flag {
-        RefreshMode::Offline
-    } else {
-        RefreshMode::Auto
+    resolve_models_refresh_control(false, no_refresh_flag)
+        .expect("refresh and no-refresh are mutually exclusive")
+        .catalog_mode
+}
+
+/// Catalog + harness probe refresh intent from CLI flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelsRefreshControl {
+    pub catalog_mode: RefreshMode,
+    pub probe_refresh: crate::models::probes::ProbeRefreshMode,
+}
+
+impl ModelsRefreshControl {
+    pub fn auto() -> Self {
+        Self {
+            catalog_mode: RefreshMode::Auto,
+            probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
+        }
     }
+}
+
+pub fn resolve_models_refresh_control(
+    refresh_models: bool,
+    no_refresh_models: bool,
+) -> Result<ModelsRefreshControl, crate::error::MarsError> {
+    use crate::error::ConfigError;
+    use crate::models::probes::ProbeRefreshMode;
+
+    if refresh_models && no_refresh_models {
+        return Err(crate::error::MarsError::Config(ConfigError::Invalid {
+            message: "--refresh-models and --no-refresh-models cannot be used together".to_string(),
+        }));
+    }
+
+    Ok(if no_refresh_models {
+        ModelsRefreshControl {
+            catalog_mode: RefreshMode::Offline,
+            probe_refresh: ProbeRefreshMode::Skip,
+        }
+    } else if refresh_models {
+        ModelsRefreshControl {
+            catalog_mode: RefreshMode::Force,
+            probe_refresh: ProbeRefreshMode::Synchronous,
+        }
+    } else {
+        ModelsRefreshControl::auto()
+    })
 }
 
 pub fn load_models_cache_ttl(ctx: &MarsContext) -> u32 {
@@ -973,18 +1030,21 @@ pub fn resolve_with_alias_prefix_with_probe(
         _ => (None, None, None),
     };
     let installed = harness::detect_installed_harnesses();
+    let catalog_slugs = catalog_model_slugs(cache);
+    let default_harness_order = crate::harness::registry::default_harness_order_names();
     let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
         model_id: &winner.id,
         provider_for_order: Some(&provider),
         provider_constraint: None,
         settings_provider_order: None,
-        settings_harness_order: None,
+        settings_harness_order: Some(default_harness_order.as_slice()),
         config_default_harness: None,
         installed_harnesses: &installed,
         linked_harnesses: None,
         opencode_probe_result: opencode_probe,
         pi_probe_result: pi_probe,
         cursor_probe_result: cursor_probe,
+        catalog_model_slugs: Some(catalog_slugs.as_slice()),
     });
     let (harness, harness_source) = match crate::routing::acceptance::accept_route(
         &trace,
@@ -1602,6 +1662,7 @@ fn resolve_harness(
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
+            catalog_model_slugs: None,
         });
         match crate::routing::acceptance::accept_route(
             &trace,
@@ -2030,6 +2091,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
+            catalog_model_slugs: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2607,6 +2669,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
+            catalog_model_slugs: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -4221,6 +4284,41 @@ harness = "claude"
         let _offline = EnvVarGuard::set("MARS_OFFLINE", "0");
         assert!(!is_mars_offline());
         assert_eq!(resolve_refresh_mode(false), RefreshMode::Auto);
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_defaults_to_auto_background() {
+        let control = resolve_models_refresh_control(false, false).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Auto);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Background
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_no_refresh_is_offline_skip() {
+        let control = resolve_models_refresh_control(false, true).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Offline);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Skip
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_refresh_is_force_sync() {
+        let control = resolve_models_refresh_control(true, false).unwrap();
+        assert_eq!(control.catalog_mode, RefreshMode::Force);
+        assert_eq!(
+            control.probe_refresh,
+            crate::models::probes::ProbeRefreshMode::Synchronous
+        );
+    }
+
+    #[test]
+    fn resolve_models_refresh_control_rejects_both_flags() {
+        assert!(resolve_models_refresh_control(true, true).is_err());
     }
 
     #[test]

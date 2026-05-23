@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::routing::slug;
 
-use super::probes::{OpenCodeProbeResult, PiProbeResult};
+use super::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +29,12 @@ pub enum AvailabilitySource {
     OpenCodeProbeNegative,
     #[serde(rename = "opencode_probe_unknown")]
     OpenCodeProbeUnknown,
+    #[serde(rename = "cursor_probe")]
+    CursorProbe,
+    #[serde(rename = "cursor_probe_negative")]
+    CursorProbeNegative,
+    #[serde(rename = "cursor_probe_unknown")]
+    CursorProbeUnknown,
     NoHarness,
     Offline,
 }
@@ -157,6 +163,7 @@ pub fn classify_for_harness(
     model_id: &str,
     installed: &HashSet<String>,
     probe_result: Option<&OpenCodeProbeResult>,
+    cursor_probe_result: Option<&CursorProbeResult>,
 ) -> Option<(AvailabilityStatus, AvailabilitySource, Option<RunnablePath>)> {
     let harness = harness.to_ascii_lowercase();
     if !installed.contains(&harness) {
@@ -171,7 +178,8 @@ pub fn classify_for_harness(
         "claude" => slug::providers_match(provider, "anthropic"),
         "codex" => slug::providers_match(provider, "openai"),
         "opencode" => return classify_opencode(provider, model_id, probe_result),
-        "pi" | "cursor" => return classify_universal_harness(),
+        "pi" => return classify_universal_harness(),
+        "cursor" => return classify_cursor(model_id, cursor_probe_result),
         _ => false,
     };
 
@@ -256,6 +264,53 @@ fn classify_opencode(
     ))
 }
 
+fn classify_cursor(
+    model_id: &str,
+    probe_result: Option<&CursorProbeResult>,
+) -> Option<(AvailabilityStatus, AvailabilitySource, Option<RunnablePath>)> {
+    let Some(probe) = probe_result else {
+        return Some((
+            AvailabilityStatus::Unknown,
+            AvailabilitySource::CursorProbeUnknown,
+            None,
+        ));
+    };
+
+    if !probe.model_probe_success {
+        return Some((
+            AvailabilityStatus::Unknown,
+            AvailabilitySource::CursorProbeUnknown,
+            None,
+        ));
+    }
+    if probe.slugs.is_empty() {
+        return Some((
+            AvailabilityStatus::Unknown,
+            AvailabilitySource::CursorProbeUnknown,
+            None,
+        ));
+    }
+
+    let matches = crate::models::probes::cursor::find_cursor_prefix_matches(model_id, &probe.slugs);
+    if matches.is_empty() {
+        return Some((
+            AvailabilityStatus::Unavailable,
+            AvailabilitySource::CursorProbeNegative,
+            None,
+        ));
+    }
+
+    Some((
+        AvailabilityStatus::Runnable,
+        AvailabilitySource::CursorProbe,
+        Some(RunnablePath {
+            harness: "cursor".to_string(),
+            mars_provider: "cursor".to_string(),
+            harness_model_id: model_id.to_string(),
+        }),
+    ))
+}
+
 fn is_unknown_provider(provider: &str) -> bool {
     let provider = provider.trim();
     provider.is_empty() || provider.eq_ignore_ascii_case("unknown")
@@ -271,14 +326,15 @@ pub fn classify_model(
     installed: &HashSet<String>,
     opencode_probe_result: Option<&OpenCodeProbeResult>,
     pi_probe_result: Option<&PiProbeResult>,
+    cursor_probe_result: Option<&CursorProbeResult>,
     offline: bool,
 ) -> ModelAvailability {
     let mut statuses = Vec::new();
     let mut runnable_paths = Vec::new();
 
-    for harness in ["claude", "codex", "cursor"] {
+    for harness in ["claude", "codex"] {
         let Some((status, source, path)) =
-            classify_for_harness(harness, provider, model_id, installed, None)
+            classify_for_harness(harness, provider, model_id, installed, None, None)
         else {
             continue;
         };
@@ -301,9 +357,14 @@ pub fn classify_model(
         if offline {
             statuses.push((AvailabilityStatus::Unknown, AvailabilitySource::Offline));
         } else if let Some(result) = opencode_probe_result {
-            if let Some((status, source, path)) =
-                classify_for_harness("opencode", provider, model_id, installed, Some(result))
-            {
+            if let Some((status, source, path)) = classify_for_harness(
+                "opencode",
+                provider,
+                model_id,
+                installed,
+                Some(result),
+                None,
+            ) {
                 if let Some(path) = path {
                     runnable_paths.push(path);
                 }
@@ -314,6 +375,18 @@ pub fn classify_model(
                 AvailabilityStatus::Unknown,
                 AvailabilitySource::OpenCodeProbeUnknown,
             ));
+        }
+    }
+
+    if installed.contains("cursor") {
+        if offline {
+            statuses.push((AvailabilityStatus::Unknown, AvailabilitySource::Offline));
+        } else if let Some((status, source, path)) = classify_cursor(model_id, cursor_probe_result)
+        {
+            if let Some(path) = path {
+                runnable_paths.push(path);
+            }
+            statuses.push((status, source));
         }
     }
 
@@ -441,6 +514,7 @@ mod tests {
             "claude-opus-4-7",
             &installed(&["claude"]),
             None,
+            None,
         )
         .unwrap();
         assert_eq!(result.0, AvailabilityStatus::Runnable);
@@ -453,9 +527,15 @@ mod tests {
 
     #[test]
     fn test_classify_codex_openai() {
-        let result =
-            classify_for_harness("codex", "OpenAI", "gpt-5.4", &installed(&["codex"]), None)
-                .unwrap();
+        let result = classify_for_harness(
+            "codex",
+            "OpenAI",
+            "gpt-5.4",
+            &installed(&["codex"]),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(result.0, AvailabilityStatus::Runnable);
         assert_eq!(result.1, AvailabilitySource::HarnessInstalled);
     }
@@ -467,6 +547,7 @@ mod tests {
             "openai-codex",
             "gpt-5.4-mini",
             &installed(&["codex"]),
+            None,
             None,
         )
         .unwrap();
@@ -483,9 +564,15 @@ mod tests {
 
     #[test]
     fn test_classify_pi_is_universal_unknown_when_installed() {
-        let result =
-            classify_for_harness("pi", "OpenAI", "gpt-5.4-mini", &installed(&["pi"]), None)
-                .unwrap();
+        let result = classify_for_harness(
+            "pi",
+            "OpenAI",
+            "gpt-5.4-mini",
+            &installed(&["pi"]),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(result.0, AvailabilityStatus::Unknown);
         assert_eq!(result.1, AvailabilitySource::UniversalHarness);
         assert!(result.2.is_none());
@@ -499,11 +586,80 @@ mod tests {
             "claude-opus-4-7",
             &installed(&["cursor"]),
             None,
+            None,
         )
         .unwrap();
         assert_eq!(result.0, AvailabilityStatus::Unknown);
-        assert_eq!(result.1, AvailabilitySource::UniversalHarness);
+        assert_eq!(result.1, AvailabilitySource::CursorProbeUnknown);
         assert!(result.2.is_none());
+    }
+
+    #[test]
+    fn test_classify_cursor_probe_prefix_match_is_runnable() {
+        let cursor_probe = CursorProbeResult {
+            slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let result = classify_model(
+            "gpt-5.5",
+            "OpenAI",
+            &installed(&["cursor"]),
+            None,
+            None,
+            Some(&cursor_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Runnable);
+        assert_eq!(result.source, AvailabilitySource::CursorProbe);
+        assert_eq!(result.runnable_paths.len(), 1);
+        assert_eq!(result.runnable_paths[0].harness, "cursor");
+        assert_eq!(result.runnable_paths[0].harness_model_id, "gpt-5.5");
+    }
+
+    #[test]
+    fn test_classify_cursor_probe_no_match_is_unavailable() {
+        let cursor_probe = CursorProbeResult {
+            slugs: vec!["claude-opus-4-7-high".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
+        let result = classify_model(
+            "gpt-5.5",
+            "OpenAI",
+            &installed(&["cursor"]),
+            None,
+            None,
+            Some(&cursor_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unavailable);
+        assert_eq!(result.source, AvailabilitySource::CursorProbeNegative);
+        assert!(result.runnable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_classify_cursor_probe_empty_catalog_is_unknown() {
+        let cursor_probe = CursorProbeResult {
+            slugs: Vec::new(),
+            model_probe_success: true,
+            error: None,
+        };
+        let result = classify_model(
+            "gpt-5.5",
+            "OpenAI",
+            &installed(&["cursor"]),
+            None,
+            None,
+            Some(&cursor_probe),
+            false,
+        );
+
+        assert_eq!(result.status, AvailabilityStatus::Unknown);
+        assert_eq!(result.source, AvailabilitySource::CursorProbeUnknown);
+        assert!(result.runnable_paths.is_empty());
     }
 
     #[test]
@@ -513,6 +669,7 @@ mod tests {
             "Anthropic",
             "claude-opus-4-7",
             &installed(&[]),
+            None,
             None,
         )
         .unwrap();
@@ -527,6 +684,7 @@ mod tests {
             "claude-opus-4-7",
             "Anthropic",
             &installed(&["claude", "codex"]),
+            None,
             None,
             None,
             false,
@@ -545,6 +703,7 @@ mod tests {
             &installed(&[]),
             None,
             None,
+            None,
             false,
         );
         assert_eq!(result.status, AvailabilityStatus::Unavailable);
@@ -558,6 +717,7 @@ mod tests {
             "gemini-2.5-pro",
             "Google",
             &installed(&["pi"]),
+            None,
             None,
             None,
             false,
@@ -581,6 +741,7 @@ mod tests {
             &installed(&["pi"]),
             None,
             Some(&pi_probe),
+            None,
             false,
         );
 
@@ -607,6 +768,7 @@ mod tests {
             &installed(&["pi"]),
             None,
             Some(&pi_probe),
+            None,
             false,
         );
 
@@ -628,6 +790,7 @@ mod tests {
             &installed(&["pi", "codex"]),
             None,
             Some(&pi_probe),
+            None,
             false,
         );
 
@@ -651,6 +814,7 @@ mod tests {
             &installed(&["pi"]),
             None,
             Some(&pi_probe),
+            None,
             false,
         );
 
@@ -667,6 +831,7 @@ mod tests {
             &installed(&["codex"]),
             None,
             None,
+            None,
             true,
         );
         assert_eq!(result.status, AvailabilityStatus::Runnable);
@@ -678,6 +843,7 @@ mod tests {
             "gpt-5.4",
             "OpenAI",
             &installed(&["opencode"]),
+            None,
             None,
             None,
             true,
@@ -700,6 +866,7 @@ mod tests {
             "OpenAI",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             None,
             false,
         );
@@ -725,6 +892,7 @@ mod tests {
             &installed(&["opencode"]),
             Some(&probe),
             None,
+            None,
             false,
         );
 
@@ -746,6 +914,7 @@ mod tests {
             "OpenAI",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             None,
             false,
         );
@@ -769,6 +938,7 @@ mod tests {
             &installed(&["opencode"]),
             Some(&probe),
             None,
+            None,
             false,
         );
 
@@ -791,6 +961,7 @@ mod tests {
             &installed(&["opencode"]),
             Some(&probe),
             None,
+            None,
             false,
         );
 
@@ -812,6 +983,7 @@ mod tests {
             "Anthropic",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             None,
             false,
         );
@@ -863,6 +1035,7 @@ mod tests {
             &installed(&["opencode"]),
             Some(&probe),
             None,
+            None,
             false,
         );
 
@@ -884,6 +1057,7 @@ mod tests {
             "unknown",
             &installed(&["opencode"]),
             Some(&probe),
+            None,
             None,
             false,
         );

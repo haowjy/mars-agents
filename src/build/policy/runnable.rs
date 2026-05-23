@@ -56,6 +56,12 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             runnable.confidence = crate::models::availability::RunnableConfidence::Confirmed;
         }
     }
+    let candidate_slugs = route_trace
+        .assessments
+        .iter()
+        .find(|assessment| assessment.harness == harness)
+        .map(|assessment| assessment.candidate_slugs.clone())
+        .unwrap_or_default();
 
     RoutingResolution {
         routing: Routing {
@@ -67,6 +73,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             harness_model: runnable.harness_model_id,
             harness_model_source: runnable.source.label().to_string(),
             harness_model_confidence: runnable.confidence.label().to_string(),
+            candidate_slugs,
             route_trace: route_trace.to_report(),
         },
         warnings: Vec::new(),

@@ -853,7 +853,15 @@ pub fn resolve_with_alias_prefix(
     cache: &ModelsCache,
 ) -> Option<ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_with_alias_prefix_with_probe(input, aliases, cache, opencode_probe.as_ref(), None)
+    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
+    resolve_with_alias_prefix_with_probe(
+        input,
+        aliases,
+        cache,
+        opencode_probe.as_ref(),
+        None,
+        cursor_probe.as_ref(),
+    )
 }
 
 pub fn resolve_with_alias_prefix_with_probe(
@@ -862,6 +870,7 @@ pub fn resolve_with_alias_prefix_with_probe(
     cache: &ModelsCache,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
     pi_probe: Option<&probes::PiProbeResult>,
+    cursor_probe: Option<&probes::CursorProbeResult>,
 ) -> Option<ResolvedAlias> {
     let pattern = if input.contains('*') {
         input.to_string()
@@ -975,6 +984,7 @@ pub fn resolve_with_alias_prefix_with_probe(
         linked_harnesses: None,
         opencode_probe_result: opencode_probe,
         pi_probe_result: pi_probe,
+        cursor_probe_result: cursor_probe,
     });
     let (harness, harness_source) = match crate::routing::acceptance::accept_route(
         &trace,
@@ -1296,7 +1306,15 @@ pub fn resolve_all(
     diag: &mut DiagnosticCollector,
 ) -> IndexMap<String, ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_all_with_probe(aliases, cache, diag, opencode_probe.as_ref(), None)
+    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
+    resolve_all_with_probe(
+        aliases,
+        cache,
+        diag,
+        opencode_probe.as_ref(),
+        None,
+        cursor_probe.as_ref(),
+    )
 }
 
 pub fn resolve_all_with_probe(
@@ -1305,6 +1323,7 @@ pub fn resolve_all_with_probe(
     diag: &mut DiagnosticCollector,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
     pi_probe: Option<&probes::PiProbeResult>,
+    cursor_probe: Option<&probes::CursorProbeResult>,
 ) -> IndexMap<String, ResolvedAlias> {
     let _ = diag;
     let installed = harness::detect_installed_harnesses();
@@ -1323,6 +1342,7 @@ pub fn resolve_all_with_probe(
             &installed,
             opencode_probe,
             pi_probe,
+            cursor_probe,
         );
 
         resolved.insert(
@@ -1354,7 +1374,16 @@ pub fn resolve_one(
     diag: &mut DiagnosticCollector,
 ) -> Option<ResolvedAlias> {
     let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    resolve_one_with_probe(name, aliases, cache, diag, opencode_probe.as_ref(), None)
+    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
+    resolve_one_with_probe(
+        name,
+        aliases,
+        cache,
+        diag,
+        opencode_probe.as_ref(),
+        None,
+        cursor_probe.as_ref(),
+    )
 }
 
 pub fn resolve_one_with_probe(
@@ -1364,6 +1393,7 @@ pub fn resolve_one_with_probe(
     diag: &mut DiagnosticCollector,
     opencode_probe: Option<&probes::OpenCodeProbeResult>,
     pi_probe: Option<&probes::PiProbeResult>,
+    cursor_probe: Option<&probes::CursorProbeResult>,
 ) -> Option<ResolvedAlias> {
     let alias = aliases.get(name)?;
     let installed = harness::detect_installed_harnesses();
@@ -1376,6 +1406,7 @@ pub fn resolve_one_with_probe(
         &installed,
         opencode_probe,
         pi_probe,
+        cursor_probe,
     );
     let _ = diag;
     Some(ResolvedAlias {
@@ -1549,6 +1580,7 @@ fn resolve_harness(
     installed: &HashSet<String>,
     opencode_probe_result: Option<&probes::OpenCodeProbeResult>,
     pi_probe_result: Option<&probes::PiProbeResult>,
+    cursor_probe_result: Option<&probes::CursorProbeResult>,
 ) -> (Option<String>, HarnessSource) {
     if let Some(h) = &alias.harness {
         if installed.contains(h) {
@@ -1569,6 +1601,7 @@ fn resolve_harness(
             linked_harnesses: None,
             opencode_probe_result,
             pi_probe_result,
+            cursor_probe_result,
         });
         match crate::routing::acceptance::accept_route(
             &trace,
@@ -1996,6 +2029,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2572,6 +2606,7 @@ mod tests {
             linked_harnesses: None,
             opencode_probe_result: None,
             pi_probe_result: None,
+            cursor_probe_result: None,
         });
         let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
             (Some(trace.harness), HarnessSource::AutoDetected)
@@ -2987,6 +3022,7 @@ mod tests {
             &installed,
             None,
             None,
+            None,
         );
         assert_eq!(
             resolved,
@@ -3016,6 +3052,7 @@ mod tests {
             &installed,
             None,
             None,
+            None,
         );
         assert_eq!(
             resolved,
@@ -3043,6 +3080,7 @@ mod tests {
             "anthropic",
             "claude-opus-4-6",
             &installed,
+            None,
             None,
             None,
         );
@@ -3077,6 +3115,7 @@ mod tests {
             &installed,
             None,
             None,
+            None,
         );
         assert_eq!(resolved, (None, HarnessSource::Unavailable));
     }
@@ -3096,8 +3135,15 @@ mod tests {
         };
         let installed: HashSet<String> = ["claude", "pi"].iter().map(|s| s.to_string()).collect();
 
-        let resolved =
-            resolve_harness(&alias, "unknown", "my-custom-model", &installed, None, None);
+        let resolved = resolve_harness(
+            &alias,
+            "unknown",
+            "my-custom-model",
+            &installed,
+            None,
+            None,
+            None,
+        );
         assert_eq!(
             resolved,
             (Some("pi".to_string()), HarnessSource::AutoDetected)

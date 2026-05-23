@@ -181,6 +181,8 @@ struct RawModelAlias {
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
+    native: Option<toml::Value>,
+    #[serde(default)]
     default_effort: Option<String>,
     #[serde(default)]
     autocompact: Option<toml::Value>,
@@ -213,6 +215,11 @@ impl<'de> Deserialize<'de> for ModelAlias {
         } else {
             None
         };
+        if raw.native.is_some() {
+            return Err(serde::de::Error::custom(
+                "[models.<alias>.native] is no longer supported; Cursor model adaptation is internal",
+            ));
+        }
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
             const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
@@ -3261,6 +3268,26 @@ description = "Fast and cheap"
         let json = serde_json::to_string(alias).unwrap();
         let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
         assert_eq!(roundtripped, *alias);
+    }
+
+    #[test]
+    fn model_alias_native_overrides_removed_errors() {
+        let toml_str = r#"
+[models.fast]
+model = "gpt-5.5"
+
+[models.fast.native]
+cursor = "gpt-5.5-high"
+"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            models: IndexMap<String, ModelAlias>,
+        }
+
+        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
+        assert!(err.contains("no longer supported"));
     }
 
     #[test]

@@ -696,7 +696,7 @@ pub(crate) fn finalize(
     })
 }
 
-fn declaration_ordered_dep_models(
+pub(crate) fn declaration_ordered_dep_models(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
 ) -> Vec<crate::models::ResolvedDepModels> {

@@ -21,6 +21,8 @@ pub mod visibility;
 
 use std::path::Path;
 
+use indexmap::IndexMap;
+
 use crate::config::AgentEmission;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
@@ -79,13 +81,20 @@ pub fn compile(
         diag,
     );
     let compiled_native_outputs = if matches!(agent_surface_policy, AgentSurfacePolicy::EmitAll) {
+        let model_aliases =
+            merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
+        let cursor_probe_slugs = cached_cursor_probe_slugs_for_native_agents();
         dual_surface_compile(
             &ctx.project_root,
             &mars_dir,
+            &model_aliases,
+            &cursor_probe_slugs,
             &applied.planned.targeted.resolved.loaded.old_lock,
-            request.options.force,
-            crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            request.options.dry_run,
+            NativeAgentSurfaceCompileOptions {
+                force: request.options.force,
+                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                dry_run: request.options.dry_run,
+            },
             diag,
         )
     } else {
@@ -277,18 +286,26 @@ fn remove_native_agent_shapes(
 ///
 /// Errors are non-fatal — they are emitted as diagnostics and the sync continues.
 /// This preserves the "target sync is non-fatal" principle (D9).
-fn dual_surface_compile(
-    project_root: &Path,
-    mars_dir: &Path,
-    old_lock: &crate::lock::LockFile,
+struct NativeAgentSurfaceCompileOptions {
     force: bool,
     collision_hint: crate::surface_ownership::CollisionAdoptHint,
     dry_run: bool,
+}
+
+fn dual_surface_compile(
+    project_root: &Path,
+    mars_dir: &Path,
+    model_aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
+    old_lock: &crate::lock::LockFile,
+    options: NativeAgentSurfaceCompileOptions,
     diag: &mut DiagnosticCollector,
 ) -> Vec<(String, String, crate::types::ContentHash)> {
-    use crate::compiler::agents::HarnessKind;
-    use crate::compiler::agents::lower::lower_for_harness;
-    use crate::compiler::agents::parse_agent_content;
+    use crate::compiler::agents::{
+        HarnessKind,
+        lower::{lower_for_harness, lower_for_harness_with_model},
+        parse_agent_content,
+    };
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
     let agents_dir = mars_dir.join("agents");
@@ -356,7 +373,12 @@ fn dual_surface_compile(
 
         // Lower to native format.
         let body = fm.body().to_string();
-        let lowered = lower_for_harness(harness, &profile, &fm, &body);
+        let model_override =
+            native_model_override_for_harness(harness, &profile, model_aliases, cursor_probe_slugs);
+        let lowered = match model_override.as_deref() {
+            Some(model) => lower_for_harness_with_model(harness, &profile, &fm, &body, Some(model)),
+            None => lower_for_harness(harness, &profile, &fm, &body),
+        };
 
         // Emit lossiness diagnostics.
         for lf in &lowered.lossy_fields {
@@ -387,23 +409,29 @@ fn dual_surface_compile(
         let dest_rel = format!("agents/{file_name}");
         let target_dir = harness.target_dir();
         let dest_exists = surface_ownership::target_dest_exists(&native_path);
-        match surface_ownership::copy_decision(old_lock, target_dir, &dest_rel, dest_exists, force)
-        {
+        match surface_ownership::copy_decision(
+            old_lock,
+            target_dir,
+            &dest_rel,
+            dest_exists,
+            options.force,
+        ) {
             SurfaceCopyDecision::SkipUnmanagedCollision => {
                 surface_ownership::warn_unmanaged_collision(
                     target_dir,
                     &dest_rel,
-                    collision_hint,
+                    options.collision_hint,
                     diag,
                 );
                 continue;
             }
             SurfaceCopyDecision::Proceed => {
-                if dest_exists && force && !old_lock.contains_output(target_dir, &dest_rel) {
+                if dest_exists && options.force && !old_lock.contains_output(target_dir, &dest_rel)
+                {
                     surface_ownership::warn_unmanaged_adopted(
                         target_dir,
                         &dest_rel,
-                        collision_hint,
+                        options.collision_hint,
                         diag,
                     );
                 }
@@ -411,7 +439,7 @@ fn dual_surface_compile(
         }
 
         // Write native artifact (atomic tmp+rename) — skipped on dry runs.
-        if !dry_run {
+        if !options.dry_run {
             if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {
                 diag.warn(
                     "dual-surface-mkdir",
@@ -435,14 +463,125 @@ fn dual_surface_compile(
     records
 }
 
+fn merged_model_aliases_for_native_agents(
+    resolved: &crate::sync::ResolvedState,
+) -> IndexMap<String, crate::models::ModelAlias> {
+    let dep_models =
+        crate::sync::declaration_ordered_dep_models(&resolved.graph, &resolved.loaded.effective);
+    let mut local_diag = DiagnosticCollector::new();
+    crate::models::merge_model_config(
+        &resolved.loaded.config.models,
+        &dep_models,
+        &mut local_diag,
+        None,
+    )
+}
+
+fn cached_cursor_probe_slugs_for_native_agents() -> Vec<String> {
+    crate::models::probes::cursor_cache::read_cached_probe_result_usable()
+        .map(|probe| probe.slugs)
+        .unwrap_or_default()
+}
+
+fn native_model_override_for_harness(
+    harness: &crate::compiler::agents::HarnessKind,
+    profile: &crate::compiler::agents::AgentProfile,
+    aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
+) -> Option<String> {
+    if !matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
+        return None;
+    }
+    map_cursor_native_model(profile, aliases, cursor_probe_slugs)
+}
+
+fn map_cursor_native_model(
+    profile: &crate::compiler::agents::AgentProfile,
+    aliases: &IndexMap<String, crate::models::ModelAlias>,
+    cursor_probe_slugs: &[String],
+) -> Option<String> {
+    let token = profile.model.as_deref()?;
+    if token.contains('[') {
+        return None;
+    }
+
+    let alias = aliases.get(token);
+    let model_id = alias.and_then(pinned_model_id).unwrap_or(token);
+    let effort = cursor_effective_effort(profile, alias).unwrap_or("medium");
+    if cursor_probe_slugs.is_empty() {
+        return None;
+    }
+
+    for candidate in cursor_probe_lookup_model_ids(model_id) {
+        if let Ok(resolution) = crate::models::probes::cursor::resolve_cursor_effort_slug(
+            &candidate,
+            effort,
+            cursor_probe_slugs,
+        ) {
+            return Some(resolution.slug);
+        }
+    }
+
+    None
+}
+
+fn pinned_model_id(alias: &crate::models::ModelAlias) -> Option<&str> {
+    match &alias.spec {
+        crate::models::ModelSpec::Pinned { model, .. }
+        | crate::models::ModelSpec::PinnedWithMatch { model, .. } => Some(model.as_str()),
+        crate::models::ModelSpec::AutoResolve { .. } => None,
+    }
+}
+
+fn cursor_effective_effort<'a>(
+    profile: &'a crate::compiler::agents::AgentProfile,
+    alias: Option<&'a crate::models::ModelAlias>,
+) -> Option<&'a str> {
+    profile
+        .harness_overrides
+        .cursor
+        .as_ref()
+        .and_then(|overrides| overrides.effort.as_ref())
+        .map(crate::compiler::agents::EffortLevel::as_str)
+        .or_else(|| {
+            profile
+                .effort
+                .as_ref()
+                .map(crate::compiler::agents::EffortLevel::as_str)
+        })
+        .or_else(|| alias.and_then(|resolved| resolved.default_effort.as_deref()))
+        .map(|effort| match effort {
+            "auto" => "medium",
+            other => other,
+        })
+}
+
+fn cursor_probe_lookup_model_ids(model_id: &str) -> Vec<String> {
+    let mut candidates = vec![model_id.to_string()];
+    if let Some(shimmed) = cursor_probe_model_id_shim(model_id) {
+        candidates.push(shimmed);
+    }
+    candidates
+}
+
+fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
+    match model_id.to_ascii_lowercase().as_str() {
+        "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
+        "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod skill_surface_tests {
     use super::*;
     use crate::compiler::agents::HarnessKind;
     use crate::diagnostic::DiagnosticCollector;
     use crate::lock::{ItemId, ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::models::{ModelAlias, ModelSpec};
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
+    use indexmap::IndexMap;
     use tempfile::TempDir;
 
     #[test]
@@ -474,6 +613,101 @@ mod skill_surface_tests {
         assert_eq!(
             agent_surface_policy(Some(&AgentEmission::Never), false),
             AgentSurfacePolicy::SuppressAll
+        );
+    }
+
+    fn profile_with_cursor_model(model: &str) -> crate::compiler::agents::AgentProfile {
+        crate::compiler::agents::AgentProfile {
+            name: None,
+            description: None,
+            harness: Some(HarnessKind::Cursor),
+            model: Some(model.to_string()),
+            mode: None,
+            model_invocable: true,
+            approval: None,
+            sandbox: None,
+            effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            skills: Vec::new(),
+            tools: Vec::new(),
+            tools_denied: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_tools: Vec::new(),
+            harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
+            model_policies: Vec::new(),
+            fanout: Vec::new(),
+        }
+    }
+
+    fn pinned_alias(model: &str, default_effort: Option<&str>) -> ModelAlias {
+        ModelAlias {
+            harness: Some("codex".to_string()),
+            description: None,
+            default_effort: default_effort.map(str::to_owned),
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::Pinned {
+                model: model.to_string(),
+                provider: None,
+            },
+        }
+    }
+
+    #[test]
+    fn cursor_native_model_mapping_uses_shared_resolver_for_alias_and_effort() {
+        let profile = profile_with_cursor_model("gpt55");
+        let mut aliases = IndexMap::new();
+        aliases.insert("gpt55".to_string(), pinned_alias("gpt-5.5", Some("high")));
+        let slugs = vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()];
+        assert_eq!(
+            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases, &slugs),
+            Some("gpt-5.5-high".to_string())
+        );
+    }
+
+    #[test]
+    fn cursor_native_model_mapping_preserves_unknown_or_cursor_literal_tokens() {
+        let profile = profile_with_cursor_model("composer-2.5[fast=false]");
+        let slugs = vec!["composer-2.5".to_string(), "composer-2.5-fast".to_string()];
+        assert_eq!(
+            native_model_override_for_harness(
+                &HarnessKind::Cursor,
+                &profile,
+                &IndexMap::new(),
+                &slugs
+            ),
+            None
+        );
+
+        let profile = profile_with_cursor_model("unmapped-model");
+        assert_eq!(
+            native_model_override_for_harness(
+                &HarnessKind::Cursor,
+                &profile,
+                &IndexMap::new(),
+                &slugs
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn cursor_native_model_mapping_uses_claude_shim_with_shared_resolver() {
+        let profile = profile_with_cursor_model("opus");
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            pinned_alias("claude-opus-4-6", Some("high")),
+        );
+        let slugs = vec![
+            "claude-4.6-opus-thinking-high".to_string(),
+            "claude-4.6-opus-thinking-medium".to_string(),
+        ];
+
+        assert_eq!(
+            native_model_override_for_harness(&HarnessKind::Cursor, &profile, &aliases, &slugs),
+            Some("claude-4.6-opus-thinking-high".to_string())
         );
     }
 

@@ -4,8 +4,10 @@ mod common;
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use predicates::prelude::*;
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
 
@@ -753,6 +755,92 @@ path = "{}"
         !cursor_native.contains("cursor.only"),
         "native-config keys must not leak into native Cursor markdown: {cursor_native}"
     );
+}
+
+#[test]
+fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
+    let dir = TempDir::new().unwrap();
+    let cache_root = dir.child("mars-cache");
+    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-low"]);
+    let cursor_agent = r#"---
+name: cursor-worker
+description: Cursor worker
+harness: cursor
+model: gpt55
+---
+# Cursor body
+Use Cursor-native markdown.
+"#;
+    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+    fs::write(
+        source.join("mars.toml"),
+        r#"[package]
+name = "base"
+version = "0.1.0"
+
+[models.gpt55]
+harness = "codex"
+model = "gpt-5.5"
+default_effort = "high"
+"#,
+    )
+    .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .env("MARS_CACHE_DIR", cache_root.path())
+        .assert()
+        .success();
+
+    let cursor_native =
+        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
+    assert!(
+        cursor_native.contains("model: gpt-5.5-high"),
+        "cursor model should be internally adapted: {cursor_native}"
+    );
+    assert!(
+        !cursor_native.contains("model: gpt55"),
+        "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
+    );
+}
+
+fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
+    let cache_path = cache_root.join("availability").join("cursor-probe.json");
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_secs();
+    let payload = json!({
+        "schema_version": 1,
+        "fetched_at": now,
+        "last_attempt_at": now,
+        "last_error": null,
+        "result": {
+            "slugs": slugs,
+            "model_probe_success": true,
+            "error": null
+        }
+    });
+    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 #[test]

@@ -572,12 +572,160 @@ pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
     lower_to_opencode_like(profile, body, HarnessKind::OpenCode, "OpenCode")
 }
 
+fn normalize_cursor_description(description: &str) -> String {
+    description.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn lower_to_cursor_with_model(
+    profile: &AgentProfile,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
+    let eff = Effective::new(profile, &HarnessKind::Cursor);
+    let mut lossy = Vec::new();
+    let target = "Cursor";
+
+    let mut yaml = serde_yaml::Mapping::new();
+    let yk = |s: &str| serde_yaml::Value::String(s.to_string());
+    let yv = |s: &str| serde_yaml::Value::String(s.to_string());
+
+    if let Some(name) = &profile.name {
+        yaml.insert(yk("name"), yv(name));
+    }
+    if let Some(desc) = &profile.description {
+        yaml.insert(yk("description"), yv(&normalize_cursor_description(desc)));
+    }
+    if let Some(model) = model_override.or(profile.model.as_deref()) {
+        yaml.insert(yk("model"), yv(model));
+    }
+    let skills = eff.skills();
+    if !skills.is_empty() {
+        let seq: serde_yaml::Value =
+            serde_yaml::Value::Sequence(skills.iter().map(|skill| yv(skill)).collect());
+        yaml.insert(yk("skills"), seq);
+    }
+    // mode — approximate (Cursor may use the same mode concept)
+    if let Some(mode) = &profile.mode {
+        yaml.insert(yk("mode"), yv(mode.as_str()));
+        lossy.push(LossyField {
+            field: "mode".into(),
+            target: target.into(),
+            classification: Lossiness::Approximate {
+                note: "Cursor may use the same mode concept",
+            },
+        });
+    }
+
+    // Unsupported policy fields retain existing lossiness behavior.
+    if eff.approval().is_some() {
+        lossy.push(LossyField {
+            field: "approval".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.sandbox().is_some() {
+        lossy.push(LossyField {
+            field: "sandbox".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if !eff.tools().is_empty() {
+        lossy.push(LossyField {
+            field: "tools".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if !eff.disallowed_tools().is_empty() {
+        lossy.push(LossyField {
+            field: "disallowed-tools".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.effort().is_some() {
+        lossy.push(LossyField {
+            field: "effort".into(),
+            target: target.into(),
+            classification: Lossiness::Approximate {
+                note: "effort maps to --variant on subprocess only",
+            },
+        });
+    }
+    if !eff.mcp_tools().is_empty() {
+        lossy.push(LossyField {
+            field: "mcp-tools".into(),
+            target: target.into(),
+            classification: Lossiness::Approximate {
+                note: "mcp-tools on subprocess errors; streaming uses session payload",
+            },
+        });
+    }
+    if profile.autocompact.is_some() {
+        lossy.push(LossyField {
+            field: "autocompact".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.autocompact_pct().is_some() {
+        lossy.push(LossyField {
+            field: "autocompact_pct".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if !profile.model_policies.is_empty() {
+        lossy.push(LossyField {
+            field: "model-policies".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if !profile.fanout.is_empty() {
+        lossy.push(LossyField {
+            field: "fanout".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.native_config().is_some() {
+        lossy.push(LossyField {
+            field: "native-config".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+
+    let yaml_str = if yaml.is_empty() {
+        String::new()
+    } else {
+        let mut s = serde_yaml::to_string(&yaml).unwrap_or_default();
+        if let Some(stripped) = s.strip_prefix("---\n") {
+            s = stripped.to_string();
+        }
+        s
+    };
+
+    let out = if yaml.is_empty() {
+        body.to_string()
+    } else {
+        format!("---\n{}---\n{}", yaml_str, body)
+    };
+
+    LoweredOutput {
+        bytes: out.into_bytes(),
+        lossy_fields: lossy,
+    }
+}
+
 /// Lower an agent profile to Cursor-native markdown format.
 ///
-/// Cursor is currently experimental. For this slice we reuse OpenCode-style
-/// markdown+frontmatter lowering and relabel diagnostics to Cursor.
+/// Cursor lowering preserves only Cursor-native fields plus the markdown body.
 pub fn lower_to_cursor(profile: &AgentProfile, body: &str) -> LoweredOutput {
-    lower_to_opencode_like(profile, body, HarnessKind::Cursor, "Cursor")
+    lower_to_cursor_with_model(profile, body, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -729,11 +877,24 @@ pub fn lower_for_harness(
     fm: &Frontmatter,
     body: &str,
 ) -> LoweredOutput {
+    lower_for_harness_with_model(harness, profile, fm, body, None)
+}
+
+pub fn lower_for_harness_with_model(
+    harness: &HarnessKind,
+    profile: &AgentProfile,
+    fm: &Frontmatter,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
     match harness {
         HarnessKind::Claude => lower_to_claude(profile, fm, body),
         HarnessKind::Codex => lower_to_codex(profile, body),
         HarnessKind::OpenCode => lower_to_opencode(profile, body),
-        HarnessKind::Cursor => lower_to_cursor(profile, body),
+        HarnessKind::Cursor => match model_override {
+            Some(model) => lower_to_cursor_with_model(profile, body, Some(model)),
+            None => lower_to_cursor(profile, body),
+        },
         HarnessKind::Pi => lower_to_pi(profile, body),
     }
 }
@@ -1034,6 +1195,25 @@ mod tests {
                     && matches!(field.classification, Lossiness::MeridianOnly)
             }),
             "cursor native-config should be reported as meridian-only",
+        );
+    }
+
+    #[test]
+    fn cursor_lowering_normalizes_multiline_description_to_one_line() {
+        let content = "---\nname: cursor-agent\ndescription: |\n  Cursor agent\n  with   lots\t of\n  whitespace\nharness: cursor\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+
+        let out = lower_to_cursor(&profile, fm.body());
+        let text = String::from_utf8(out.bytes).unwrap();
+
+        assert!(
+            text.contains("description: Cursor agent with lots of whitespace")
+                || text.contains("description: \"Cursor agent with lots of whitespace\""),
+            "cursor description should be one line: {text}"
+        );
+        assert!(
+            !text.contains("description: |\n"),
+            "block description should be flattened: {text}"
         );
     }
 

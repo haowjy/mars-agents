@@ -2474,6 +2474,7 @@ description = "Old alias"
         crate::config::routing_settings::resolve(&crate::config::Settings::default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_all_model_entries(
         merged: &IndexMap<String, ModelAlias>,
         cache: &models::ModelsCache,

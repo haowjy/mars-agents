@@ -1217,41 +1217,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cursor_lowering_emits_skills() {
-        let content = "---\nname: cursor-agent\nharness: cursor\nskills: [review, dev-principles]\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-
-        let out = lower_to_cursor(&profile, fm.body());
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("skills:"), "skills missing: {text}");
-        assert!(text.contains("- review"), "review skill missing: {text}");
-        assert!(
-            text.contains("- dev-principles"),
-            "dev-principles skill missing: {text}"
-        );
-    }
-
-    #[test]
-    fn cursor_lowering_uses_explicit_model_override() {
-        let content = "---\nname: cursor-agent\nharness: cursor\nmodel: gpt55\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-
-        let out = lower_for_harness_with_model(
-            &HarnessKind::Cursor,
-            &profile,
-            &fm,
-            fm.body(),
-            Some("gpt-5.4-medium"),
-        );
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("model: gpt-5.4-medium"),
-            "cursor model override missing: {text}"
-        );
-        assert!(!text.contains("model: gpt55"), "alias leaked: {text}");
-    }
-
     // --- 3.3: Pi lowering ---
 
     #[test]

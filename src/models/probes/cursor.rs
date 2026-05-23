@@ -162,6 +162,107 @@ pub fn find_cursor_prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Ve
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorEffortResolution {
+    pub slug: String,
+    pub candidate_slugs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CursorEffortResolutionError {
+    NoProbeSlugs,
+    NoModelPrefixMatch,
+    NoEffortMatch { model_id: String, effort: String },
+}
+
+/// Resolve a Cursor catalog slug from base model id + effort tier.
+pub fn resolve_cursor_effort_slug(
+    model_id: &str,
+    effort: &str,
+    slugs: &[String],
+) -> Result<CursorEffortResolution, CursorEffortResolutionError> {
+    if slugs.is_empty() {
+        return Err(CursorEffortResolutionError::NoProbeSlugs);
+    }
+
+    let prefix_matches = find_cursor_prefix_matches(model_id, slugs);
+    if prefix_matches.is_empty() {
+        return Err(CursorEffortResolutionError::NoModelPrefixMatch);
+    }
+
+    let normalized_model = normalize_slug(model_id);
+    let normalized_effort = normalize_slug(effort);
+    let effort_matches: Vec<&str> = prefix_matches
+        .into_iter()
+        .filter(|slug| {
+            slug_matches_effort(&normalized_model, &normalize_slug(slug), &normalized_effort)
+        })
+        .collect();
+
+    if effort_matches.is_empty() {
+        return Err(CursorEffortResolutionError::NoEffortMatch {
+            model_id: model_id.to_string(),
+            effort: effort.to_string(),
+        });
+    }
+
+    let chosen = choose_cursor_effort_slug(&normalized_model, effort_matches);
+    let candidate_slugs = slugs
+        .iter()
+        .filter(|slug| {
+            let normalized_slug = normalize_slug(slug);
+            normalized_slug == normalized_model
+                || normalized_slug.starts_with(&format!("{normalized_model}-"))
+        })
+        .cloned()
+        .collect();
+
+    Ok(CursorEffortResolution {
+        slug: chosen.to_string(),
+        candidate_slugs,
+    })
+}
+
+fn slug_matches_effort(
+    normalized_model: &str,
+    normalized_slug: &str,
+    normalized_effort: &str,
+) -> bool {
+    if normalized_slug == normalized_model {
+        return normalized_effort == "auto";
+    }
+
+    let Some(suffix) = normalized_slug
+        .strip_prefix(normalized_model)
+        .and_then(|rest| rest.strip_prefix('-'))
+    else {
+        return false;
+    };
+
+    suffix == normalized_effort
+        || suffix.ends_with(&format!("-{normalized_effort}"))
+        || suffix.contains(&format!("-{normalized_effort}-"))
+}
+
+fn choose_cursor_effort_slug<'a>(normalized_model: &str, matches: Vec<&'a str>) -> &'a str {
+    if matches.len() == 1 {
+        return matches[0];
+    }
+
+    let is_claude = normalized_model.starts_with("claude");
+    if is_claude {
+        if let Some(thinking) = matches
+            .iter()
+            .copied()
+            .find(|slug| normalize_slug(slug).contains("-thinking-"))
+        {
+            return thinking;
+        }
+    }
+
+    matches[0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +337,40 @@ Tip: use --model <id> to select"#;
     #[test]
     fn test_normalize_slug() {
         assert_eq!(normalize_slug("GPT.5.5-High"), "gpt-5-5-high");
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_openai() {
+        let slugs = vec![
+            "gpt-5.5-high".to_string(),
+            "gpt-5.5-low".to_string(),
+            "gpt-55-high".to_string(),
+        ];
+        let resolution = resolve_cursor_effort_slug("gpt-5.5", "high", &slugs).unwrap();
+        assert_eq!(resolution.slug, "gpt-5.5-high");
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_prefers_thinking_for_claude() {
+        let slugs = vec![
+            "claude-opus-4-7-high".to_string(),
+            "claude-opus-4-7-thinking-high".to_string(),
+        ];
+        let resolution = resolve_cursor_effort_slug("claude-opus-4-7", "high", &slugs).unwrap();
+        assert_eq!(resolution.slug, "claude-opus-4-7-thinking-high");
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_no_effort_match() {
+        let slugs = vec!["gpt-5.5-low".to_string()];
+        let err = resolve_cursor_effort_slug("gpt-5.5", "high", &slugs).unwrap_err();
+        assert_eq!(
+            err,
+            CursorEffortResolutionError::NoEffortMatch {
+                model_id: "gpt-5.5".to_string(),
+                effort: "high".to_string(),
+            }
+        );
     }
 
     #[test]

@@ -18,7 +18,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
-use crate::lock::{ItemId, ItemKind};
+use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind};
 use crate::lock::{LockFile, LockIndex};
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
@@ -312,7 +312,9 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
-        if !old_lock_index.contains_dest_path(&dest_path) && disk_path.symlink_metadata().is_ok() {
+        if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+            && disk_path.symlink_metadata().is_ok()
+        {
             diag.warn(
                 "unmanaged-collision",
                 format!(

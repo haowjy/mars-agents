@@ -8,7 +8,7 @@ use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{ItemId, ItemKind, LockFile, LockIndex};
+use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind, LockFile, LockIndex};
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
 use crate::types::{
@@ -218,7 +218,7 @@ pub fn check_unmanaged_collisions(
     let lock_index = LockIndex::new(lock);
 
     for (dest_key, target_item) in &target.items {
-        if lock_index.contains_dest_path(dest_key) {
+        if lock_index.contains_output(CANONICAL_TARGET_ROOT, dest_key) {
             continue;
         }
 

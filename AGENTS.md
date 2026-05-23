@@ -219,6 +219,14 @@ cargo clippy
 
 Integration tests under `tests/`. Prefer keeping changes localized to one module.
 
+## Pull Requests
+
+When creating or updating a GitHub PR, follow `.github/PULL_REQUEST_TEMPLATE.md`.
+Fill every section with the current branch state: why, goal, summary, work item,
+changes, verification, knowledge updates, spawn trace, release label guidance,
+post-merge automation, and cleanup. Keep the PR body current as the branch
+evolves; update it when verification, knowledge capture, risks, or scope changes.
+
 ## Releasing
 
 Mars releases are CI-owned. Never manually `git tag` or edit version numbers for stable releases.

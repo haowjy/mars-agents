@@ -21,6 +21,7 @@ use crate::types::MarsContext;
 
 pub mod availability;
 pub mod harness;
+pub mod harness_model;
 pub mod probes;
 
 pub use availability::ModelAvailability;

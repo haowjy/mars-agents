@@ -348,13 +348,16 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             .selected_match_evidence()
             .label()
             .to_string(),
-        provider: resolved_model.provider_for_order.as_deref(),
+        provider_constraint: resolved_model.provider_constraint.as_deref(),
+        provider_for_order: resolved_model.provider_for_order.as_deref(),
+        settings_provider_order: resolution_config.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
         opencode_probe_result,
+        pi_probe_result,
         cursor_probe_result,
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
-    });
+    })?;
 
     let cursor_effort_resolution_failed = routing_resolution
         .warnings

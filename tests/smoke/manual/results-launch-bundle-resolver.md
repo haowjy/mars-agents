@@ -64,9 +64,10 @@ Representative output:
 Why: OpenAI provider routing tries Codex first. Codex was installed and usable,
 so Mars selected it without needing Pi/OpenCode/Cursor fallback.
 
-## Explicit Pi harness passthrough is quiet
+## Explicit Pi harness resolves qualified harness_model from probe
 
-Command shape from a plain directory with no `mars.toml`:
+Command shape from a plain directory with no `mars.toml` (real `pi` on PATH with
+`--list-models` showing `openai-codex/gpt-5.4-mini`):
 
 ```bash
 mkdir -p "$SCRATCH/plain"
@@ -74,33 +75,52 @@ cd "$SCRATCH/plain"
 mars build launch-bundle --model gpt-5.4-mini --harness pi --json
 ```
 
-Representative output after the warning-semantics fix:
+Representative output:
 
 ```json
 {
   "version": 2,
   "routing": {
     "harness": "pi",
+    "model": "gpt-5.4-mini",
     "selection_kind": "fixed",
-    "match_evidence": "passthrough",
-    "harness_model": "gpt-5.4-mini",
-    "harness_model_source": "passthrough",
-    "harness_model_confidence": "unknown"
+    "match_evidence": "confirmed",
+    "harness_model": "openai-codex/gpt-5.4-mini",
+    "harness_model_source": "cached-probe",
+    "harness_model_confidence": "confirmed"
   },
   "provenance": {
     "candidates_tried": "pi",
     "harness_source": "cli",
     "model_source": "cli",
     "selection_kind": "fixed",
-    "match_evidence": "passthrough"
+    "match_evidence": "confirmed"
   },
   "warnings": []
 }
 ```
 
-Why: CLI harness selection is fixed intent. Pi receives the model token as a
-provider-router/runtime concern, so passthrough is an expected route fact, not a
-warning.
+Why: Mars resolves bare model IDs against the Pi probe and passes a qualified
+`provider/model` slug to Meridian/Pi. Bare passthrough is no longer used when
+the probe lists a matching slug.
+
+Qualified CLI tokens pass through unchanged:
+
+```bash
+mars build launch-bundle --model openai-codex/gpt-5.4-mini --harness pi --json
+# routing.harness_model == "openai-codex/gpt-5.4-mini", harness_model_source == "passthrough"
+```
+
+## Meridian smoke (after Mars bump)
+
+From `meridian-cli` with updated Mars:
+
+```bash
+meridian spawn --harness pi -m gpt-5.4-mini -- <prompt>
+```
+
+Verify Pi argv includes `--model openai-codex/gpt-5.4-mini` (not bare
+`gpt-5.4-mini`) and does **not** require `-- --provider openai-codex`.
 
 ## Profile Pi harness passthrough is quiet
 

@@ -140,17 +140,14 @@ model = "gpt-5""#;
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("openai/gpt-5")
-    );
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("cached-probe")
+        Some("provider-match")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("confirmed")
+        Some("likely")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
@@ -2274,6 +2271,123 @@ model = "gpt-5""#;
     );
 }
 
+pub(crate) fn build_launch_bundle_pi_harness_resolves_qualified_harness_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "gpt-5.4-mini",
+        "--harness",
+        "pi",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai-codex/gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("cached-probe")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+}
+
+pub(crate) fn build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.4-mini
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+harness_order = ["pi", "codex"]"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai-codex/gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_order_position"].as_str(),
+        Some("0")
+    );
+}
+
+pub(crate) fn build_launch_bundle_pi_harness_preserves_qualified_model_token() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "openai-codex/gpt-5.4-mini",
+        "--harness",
+        "pi",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("openai-codex/gpt-5.4-mini")
+    );
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("passthrough")
+    );
+}
+
 pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_fails_closed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
@@ -2363,11 +2477,11 @@ harness = "codex""#;
     );
     assert_eq!(
         bundle["routing"]["harness_model"].as_str(),
-        Some("openai/gpt-5")
+        Some("openai-codex/gpt-5")
     );
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("cached-probe")
+        Some("passthrough")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
@@ -2626,7 +2740,7 @@ fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
             use std::os::unix::fs::PermissionsExt;
             let path = bin_dir.join(harness);
             let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai-codex gpt-5.4-mini' \\\n    'openai-codex gpt-5.5' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else if *harness == "opencode" {
                 "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else {

@@ -1,7 +1,11 @@
 use crate::build::bundle::Routing;
-use crate::models::availability::{RunnableConfidence, RunnablePathSource, resolve_runnable_path};
+use crate::error::{ConfigError, MarsError};
+use crate::models::availability::{RunnableConfidence, RunnablePathSource};
+use crate::models::harness_model::{
+    HarnessModelInput, pi_harness_model_requires_probe_slug, resolve_harness_model,
+};
 use crate::models::probes::cursor::{CursorEffortResolutionError, resolve_cursor_effort_slug};
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult};
+use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 use crate::routing::{MatchEvidence, RoutingTrace};
 
 pub(super) struct RoutingInput<'a> {
@@ -10,9 +14,12 @@ pub(super) struct RoutingInput<'a> {
     pub(super) harness: String,
     pub(super) selection_kind: String,
     pub(super) match_evidence: String,
-    pub(super) provider: Option<&'a str>,
+    pub(super) provider_constraint: Option<&'a str>,
+    pub(super) provider_for_order: Option<&'a str>,
+    pub(super) settings_provider_order: Option<&'a [String]>,
     pub(super) effort: Option<String>,
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
+    pub(super) pi_probe_result: Option<&'a PiProbeResult>,
     pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
     pub(super) alias_resolution_failed: bool,
     pub(super) route_trace: RoutingTrace,
@@ -24,46 +31,49 @@ pub(super) struct RoutingResolution {
     pub(super) effort_consumed: bool,
 }
 
-pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
+pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResolution, MarsError> {
     let RoutingInput {
         model,
         model_token,
         harness,
         selection_kind,
         match_evidence,
-        provider,
+        provider_constraint,
+        provider_for_order,
+        settings_provider_order,
         effort,
         opencode_probe_result,
+        pi_probe_result,
         cursor_probe_result,
         alias_resolution_failed,
         route_trace,
     } = input;
 
-    let provider_for_runnable = if alias_resolution_failed {
-        ""
+    let effective_provider_constraint = if alias_resolution_failed {
+        None
     } else {
-        provider.unwrap_or("")
+        provider_constraint
     };
-    let cached_probe = harness
-        .eq_ignore_ascii_case("opencode")
-        .then_some(opencode_probe_result)
-        .flatten();
-    let mut runnable = resolve_runnable_path(&model, provider_for_runnable, &harness, cached_probe);
-    if let Some(chosen_slug) = route_trace.selected_chosen_slug_evidence() {
-        let use_chosen_slug = harness.eq_ignore_ascii_case("pi")
-            || ((harness.eq_ignore_ascii_case("opencode")
-                || harness.eq_ignore_ascii_case("claude")
-                || harness.eq_ignore_ascii_case("codex"))
-                && matches!(
-                    chosen_slug.match_evidence,
-                    Some(MatchEvidence::Confirmed | MatchEvidence::Constrained)
-                ));
-        if use_chosen_slug {
-            runnable.harness_model_id = chosen_slug.slug;
-            runnable.source = crate::models::availability::RunnablePathSource::CachedProbe;
-            runnable.confidence = crate::models::availability::RunnableConfidence::Confirmed;
-        }
+    let effective_provider_for_order = if alias_resolution_failed {
+        None
+    } else {
+        provider_for_order
+    };
+
+    let runnable = resolve_harness_model(HarnessModelInput {
+        harness: &harness,
+        model_id: &model,
+        provider_constraint: effective_provider_constraint,
+        provider_for_order: effective_provider_for_order,
+        settings_provider_order,
+        opencode_probe: opencode_probe_result,
+        pi_probe: pi_probe_result,
+    });
+
+    if pi_harness_model_requires_probe_slug(&harness, &selection_kind, &model, &runnable) {
+        return Err(fixed_pi_harness_model_error(&harness));
     }
+
     let candidate_slugs = route_trace
         .assessments
         .iter()
@@ -135,21 +145,32 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         }
     }
 
-    RoutingResolution {
+    Ok(RoutingResolution {
         routing,
         warnings,
         effort_consumed,
-    }
+    })
+}
+
+fn fixed_pi_harness_model_error(harness: &str) -> MarsError {
+    MarsError::Config(ConfigError::Invalid {
+        message: format!(
+            "cli harness `{harness}` cannot run requested model under model-first routing (no_model_match)"
+        ),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    use crate::routing::SelectionKind;
 
     fn trace_with_assessment(evidence: MatchEvidence) -> RoutingTrace {
         RoutingTrace {
             source: crate::routing::RouteSource::Provider,
-            selection_kind: crate::routing::SelectionKind::Auto,
+            selection_kind: SelectionKind::Auto,
             match_evidence: evidence,
             harness: "opencode".to_string(),
             harness_order_position: None,
@@ -169,44 +190,161 @@ mod tests {
     }
 
     #[test]
-    fn opencode_uses_chosen_slug_when_assessment_evidence_is_confirmed() {
+    fn opencode_uses_probe_slug_when_probe_available() {
+        let opencode_probe = OpenCodeProbeResult {
+            model_slugs: vec!["openai/gpt-5.4-mini".to_string()],
+            model_probe_success: true,
+            error: None,
+        };
         let resolution = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gptmini".to_string(),
             harness: "opencode".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "confirmed".to_string(),
-            provider: None,
+            provider_constraint: None,
+            provider_for_order: Some("openai"),
+            settings_provider_order: None,
             effort: None,
-            opencode_probe_result: None,
+            opencode_probe_result: Some(&opencode_probe),
+            pi_probe_result: None,
             cursor_probe_result: None,
             alias_resolution_failed: false,
             route_trace: trace_with_assessment(MatchEvidence::Confirmed),
-        });
+        })
+        .expect("routing should resolve");
 
         assert_eq!(
             resolution.routing.harness_model,
             "openai/gpt-5.4-mini".to_string()
         );
+        assert_eq!(
+            resolution.routing.harness_model_source,
+            "cached-probe".to_string()
+        );
     }
 
     #[test]
-    fn opencode_keeps_passthrough_model_when_assessment_evidence_is_passthrough() {
+    fn opencode_keeps_passthrough_model_when_probe_unavailable() {
         let resolution = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gptmini".to_string(),
             harness: "opencode".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "passthrough".to_string(),
-            provider: None,
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
             effort: None,
             opencode_probe_result: None,
+            pi_probe_result: None,
             cursor_probe_result: None,
             alias_resolution_failed: false,
             route_trace: trace_with_assessment(MatchEvidence::Passthrough),
-        });
+        })
+        .expect("routing should resolve");
 
         assert_eq!(resolution.routing.harness_model, "gpt-5.4-mini".to_string());
+    }
+
+    #[test]
+    fn pi_fixed_without_probe_slug_errors() {
+        let trace = RoutingTrace {
+            source: crate::routing::RouteSource::Cli,
+            selection_kind: SelectionKind::Fixed,
+            match_evidence: MatchEvidence::Passthrough,
+            harness: "pi".to_string(),
+            harness_order_position: None,
+            candidates_tried: vec!["pi".to_string()],
+            assessments: vec![crate::routing::CandidateAssessment {
+                harness: "pi".to_string(),
+                installed: true,
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: None,
+                match_evidence: Some(MatchEvidence::Passthrough),
+                skip_reason: None,
+            }],
+            diagnostics: Vec::new(),
+        };
+        let err = match resolve_routing(RoutingInput {
+            model: "gpt-5.4-mini".to_string(),
+            model_token: "gpt-5.4-mini".to_string(),
+            harness: "pi".to_string(),
+            selection_kind: "fixed".to_string(),
+            match_evidence: "passthrough".to_string(),
+            provider_constraint: None,
+            provider_for_order: Some("openai"),
+            settings_provider_order: None,
+            effort: None,
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: trace,
+        }) {
+            Err(err) => err,
+            Ok(_) => panic!("fixed pi without probe slug should fail"),
+        };
+
+        assert!(err.to_string().contains("no_model_match"));
+    }
+
+    #[test]
+    fn pi_uses_probe_slug_for_bare_model() {
+        let mut model_slugs = HashSet::new();
+        model_slugs.insert("openai-codex/gpt-5.4-mini".to_string());
+        let pi_probe = PiProbeResult {
+            compatible: true,
+            model_slugs,
+            ..PiProbeResult::default()
+        };
+        let trace = RoutingTrace {
+            source: crate::routing::RouteSource::Cli,
+            selection_kind: SelectionKind::Fixed,
+            match_evidence: MatchEvidence::Confirmed,
+            harness: "pi".to_string(),
+            harness_order_position: None,
+            candidates_tried: vec!["pi".to_string()],
+            assessments: vec![crate::routing::CandidateAssessment {
+                harness: "pi".to_string(),
+                installed: true,
+                candidate_slugs: vec!["openai-codex/gpt-5.4-mini".to_string()],
+                filtered_slugs: vec!["openai-codex/gpt-5.4-mini".to_string()],
+                chosen_slug: Some("openai-codex/gpt-5.4-mini".to_string()),
+                chosen_model: Some("gpt-5.4-mini".to_string()),
+                match_evidence: Some(MatchEvidence::Confirmed),
+                skip_reason: None,
+            }],
+            diagnostics: Vec::new(),
+        };
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.4-mini".to_string(),
+            model_token: "gpt-5.4-mini".to_string(),
+            harness: "pi".to_string(),
+            selection_kind: "fixed".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: Some("openai"),
+            settings_provider_order: None,
+            effort: None,
+            opencode_probe_result: None,
+            pi_probe_result: Some(&pi_probe),
+            cursor_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: trace,
+        })
+        .expect("routing should resolve");
+
+        assert_eq!(
+            resolution.routing.harness_model,
+            "openai-codex/gpt-5.4-mini".to_string()
+        );
+        assert_eq!(
+            resolution.routing.harness_model_source,
+            "cached-probe".to_string()
+        );
     }
 
     #[test]
@@ -217,9 +355,12 @@ mod tests {
             harness: "cursor".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "confirmed".to_string(),
-            provider: None,
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
             effort: Some("high".to_string()),
             opencode_probe_result: None,
+            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
                 model_probe_success: true,
@@ -227,7 +368,8 @@ mod tests {
             }),
             alias_resolution_failed: false,
             route_trace: trace_with_assessment(MatchEvidence::Confirmed),
-        });
+        })
+        .expect("routing should resolve");
 
         assert!(resolution.effort_consumed);
         assert_eq!(resolution.routing.harness_model, "gpt-5.5-high");
@@ -242,9 +384,12 @@ mod tests {
             harness: "cursor".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "confirmed".to_string(),
-            provider: None,
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
             effort: Some("medium".to_string()),
             opencode_probe_result: None,
+            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec![
                     "gpt-5.5".to_string(),
@@ -256,7 +401,8 @@ mod tests {
             }),
             alias_resolution_failed: false,
             route_trace: trace_with_assessment(MatchEvidence::Confirmed),
-        });
+        })
+        .expect("routing should resolve");
 
         assert!(resolution.effort_consumed);
         assert_eq!(resolution.routing.harness_model, "gpt-5.5");
@@ -270,14 +416,17 @@ mod tests {
             harness: "claude".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "passthrough".to_string(),
-            provider: None,
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
             effort: None,
             opencode_probe_result: None,
+            pi_probe_result: None,
             cursor_probe_result: None,
             alias_resolution_failed: false,
             route_trace: RoutingTrace {
                 source: crate::routing::RouteSource::Provider,
-                selection_kind: crate::routing::SelectionKind::Auto,
+                selection_kind: SelectionKind::Auto,
                 match_evidence: MatchEvidence::Passthrough,
                 harness: "claude".to_string(),
                 harness_order_position: None,
@@ -285,7 +434,8 @@ mod tests {
                 assessments: Vec::new(),
                 diagnostics: Vec::new(),
             },
-        });
+        })
+        .expect("routing should resolve");
 
         assert_eq!(resolution.routing.model, "");
         assert_eq!(resolution.routing.model_token, "");

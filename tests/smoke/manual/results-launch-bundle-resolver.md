@@ -1,5 +1,30 @@
 # Launch Bundle / Resolver Smoke Results
 
+## Alias `gptmini` — native Codex bare id, Pi probe slug (2026-05-24)
+
+Date run: 2026-05-24  
+Repo: `/home/jimyao/gitrepos/mars-agents.worktrees/native-harness-model`  
+Project root: `meridian-cli` worktree (synced `mars.toml` / catalog; `gptmini` from base package)
+
+```bash
+MARS=./target/release/mars
+ROOT=~/gitrepos/meridian-cli.worktrees/pi-generic-background-tasks
+```
+
+| Command | `harness_model` | `harness_model_source` |
+|---------|-----------------|------------------------|
+| `--root "$ROOT" --model gptmini` | `gpt-5.4-mini` | `provider-match` |
+| `--root "$ROOT" --model gptmini --harness pi` | `openai-codex/gpt-5.4-mini` | `cached-probe` |
+
+Before this change (main): both cases produced `openai/gpt-5.4-mini` from blind
+`provider_constraint` prefixing.
+
+Why: alias `provider = "openai"` must not become argv `openai/…` on Codex (ChatGPT auth
+expects bare ids) or on Pi (probe lists `openai-codex/…`). See
+[`src/models/.context/CONTEXT.md`](../../../src/models/.context/CONTEXT.md).
+
+---
+
 Date run: 2026-05-20
 Repo: `/home/jimyao/gitrepos/mars-agents.worktrees/capability-cache-resolver`
 

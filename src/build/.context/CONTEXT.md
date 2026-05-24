@@ -99,6 +99,18 @@ Catalog slugs feed `RoutingInput.catalog_model_slugs` so native harness matching
 probe/catalog candidates for debugging only — bundle doc comment: consumers run `harness_model`
 verbatim. `routing.candidate_slugs` on the trace/report is diagnostic; do not use it for launch.
 
+### Alias `provider` → `harness_model`
+
+Resolved in `models::resolve_harness_model` ([`src/models/.context/CONTEXT.md`](../../models/.context/CONTEXT.md)):
+
+- **Codex / Claude:** when alias or routing `provider` matches the native harness, emit the
+  **bare** canonical model id (`gpt-5.4-mini`, not `openai/gpt-5.4-mini`).
+- **Pi / OpenCode:** pick a probe-listed slug (`openai-codex/gpt-5.4-mini`, etc.); use
+  `provider_constraint` only to order/filter slugs, not to prefix before the probe runs.
+
+`harness_model_source` / `harness_model_confidence` record how the id was chosen (`provider-match`,
+`cached-probe`, `passthrough`) — still not user-facing warnings.
+
 ### Cursor effort → `harness_model`
 
 When harness is `cursor` and effort is set, `resolve_routing` calls

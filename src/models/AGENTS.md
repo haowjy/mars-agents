@@ -91,6 +91,13 @@ Do not conflate env offline with flag-driven skip when debugging missing probe d
 
 Resolved aliases include auto-detected harness based on installed binaries and probe results. Encapsulated in `resolve_harness()` — callers don't pass installed harnesses.
 
+## Launch `harness_model` (argv model id)
+
+After harness selection, `resolve_harness_model()` in `harness_model.rs` produces
+`routing.harness_model`. Alias `provider` is **not** a blind `provider/model` prefix:
+native Codex/Claude get bare ids when the provider matches; Pi/OpenCode use probe slugs.
+Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
+
 ## Patterns
 
 **Test without real API:**

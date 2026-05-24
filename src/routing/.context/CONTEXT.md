@@ -25,7 +25,7 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 |---|---|
 | `model_id` | Resolved model identifier (used for OpenCode/Pi slug matching) |
 | `provider_for_order` | Optional provider name (determines native affinity and candidate order) |
-| `provider_constraint` | Optional provider constraint (filters slug selection, excludes mismatched native harnesses) |
+| `provider_constraint` | Alias/provider pin from model config — filters probe slug selection and native harness acceptance; shapes `harness_model` via [`resolve_harness_model`](../../models/harness_model.rs) (no blind `provider/model` prefix) |
 | `settings_provider_order` | Raw `provider_order` from config, if set |
 | `settings_harness_order` | Raw `harness_order` from config, if set |
 | `config_default_harness` | Raw `default_harness` from config, if set |

@@ -176,10 +176,7 @@ mod tests {
             Some("openai-codex"),
             None,
             None,
-            [
-                "openai/gpt-5.4-mini",
-                "openai-codex/gpt-5.4-mini",
-            ],
+            ["openai/gpt-5.4-mini", "openai-codex/gpt-5.4-mini"],
         );
         assert_eq!(
             selection.chosen_slug.as_deref(),
@@ -194,10 +191,7 @@ mod tests {
             None,
             None,
             None,
-            [
-                "openai-codex/gpt-5.4-mini",
-                "openai/gpt-5.4-mini",
-            ],
+            ["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"],
         );
         assert_eq!(
             selection.chosen_slug.as_deref(),

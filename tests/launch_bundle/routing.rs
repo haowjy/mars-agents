@@ -2384,7 +2384,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+        Some("cached-probe")
     );
 }
 
@@ -2475,17 +2475,14 @@ harness = "codex""#;
         bundle["routing"]["match_evidence"].as_str(),
         Some("constrained")
     );
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("openai-codex/gpt-5")
-    );
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5"));
     assert_eq!(
         bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+        Some("provider-match")
     );
     assert_eq!(
         bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("confirmed")
+        Some("likely")
     );
 }
 

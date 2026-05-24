@@ -73,6 +73,8 @@ effort from `routing.effort`.
 `routing.candidate_slugs` is **diagnostic only** (probe/catalog candidates for the selected
 harness). Consumers ignore it unless debugging.
 
+Alias `provider` → `harness_model` (bare native ids vs probe slugs): [`src/models/.context/CONTEXT.md`](../models/.context/CONTEXT.md).
+
 ## Anti-Patterns
 
 - Do NOT add warnings for harness-model path facts (`passthrough`, `synthesized`, `unknown` confidence)

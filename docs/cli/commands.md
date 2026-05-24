@@ -590,6 +590,12 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: linked harness constraints exhausting auto-routing candidates, or Cursor experimental target.
 
+**`harness_model` resolution:** Alias `provider` does not always become `provider/model` in
+`routing.harness_model`. Native Codex/Claude use bare canonical ids when the provider matches;
+Pi/OpenCode select probe slugs. Example: `-m gptmini` on a project with that alias → Codex +
+`harness_model: "gpt-5.4-mini"` (`provider-match`), not `openai/gpt-5.4-mini`. See
+[`src/models/.context/CONTEXT.md`](../../src/models/.context/CONTEXT.md).
+
 ```bash
 # Ad-hoc: route gpt-5.4-mini from any directory
 mars build launch-bundle --model gpt-5.4-mini --json

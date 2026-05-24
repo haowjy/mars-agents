@@ -234,6 +234,21 @@ fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
 }
 
 #[test]
+fn build_launch_bundle_pi_harness_resolves_qualified_harness_model() {
+    routing::build_launch_bundle_pi_harness_resolves_qualified_harness_model();
+}
+
+#[test]
+fn build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug() {
+    routing::build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug();
+}
+
+#[test]
+fn build_launch_bundle_pi_harness_preserves_qualified_model_token() {
+    routing::build_launch_bundle_pi_harness_preserves_qualified_model_token();
+}
+
+#[test]
 fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
     routing::build_launch_bundle_synthesizes_opencode_model_when_cache_missing();
 }

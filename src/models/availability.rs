@@ -104,55 +104,14 @@ pub fn resolve_runnable_path(
     target_harness: &str,
     probe_result: Option<&OpenCodeProbeResult>,
 ) -> ResolvedRunnablePath {
-    if let Some(cached_path) =
-        resolve_cached_probe_path(model_id, provider, target_harness, probe_result)
-    {
-        return cached_path;
-    }
-
-    if is_provider_native_harness(provider, target_harness) {
-        return ResolvedRunnablePath {
-            harness_model_id: model_id.to_string(),
-            source: RunnablePathSource::ProviderMatch,
-            confidence: RunnableConfidence::Likely,
-        };
-    }
-
-    ResolvedRunnablePath {
-        harness_model_id: model_id.to_string(),
-        source: RunnablePathSource::Passthrough,
-        confidence: RunnableConfidence::Unknown,
-    }
-}
-
-fn resolve_cached_probe_path(
-    model_id: &str,
-    provider: &str,
-    target_harness: &str,
-    probe_result: Option<&OpenCodeProbeResult>,
-) -> Option<ResolvedRunnablePath> {
-    if !target_harness.eq_ignore_ascii_case("opencode") {
-        return None;
-    }
-    if provider.trim().is_empty() {
-        return None;
-    }
-
-    let probe = probe_result?;
-    if !probe.model_probe_success {
-        return None;
-    }
-
-    let matched_slug = slug::find_exact_match(
+    super::harness_model::resolve_harness_model(super::harness_model::HarnessModelInput {
+        harness: target_harness,
         model_id,
-        provider,
-        probe.model_slugs.iter().map(String::as_str),
-    )?
-    .slug;
-    Some(ResolvedRunnablePath {
-        harness_model_id: matched_slug,
-        source: RunnablePathSource::CachedProbe,
-        confidence: RunnableConfidence::Confirmed,
+        provider_constraint: None,
+        provider_for_order: (!provider.trim().is_empty()).then_some(provider),
+        settings_provider_order: None,
+        opencode_probe: probe_result,
+        pi_probe: None,
     })
 }
 
@@ -314,10 +273,6 @@ fn classify_cursor(
 fn is_unknown_provider(provider: &str) -> bool {
     let provider = provider.trim();
     provider.is_empty() || provider.eq_ignore_ascii_case("unknown")
-}
-
-fn is_provider_native_harness(provider: &str, target_harness: &str) -> bool {
-    slug::provider_matches_native_harness(provider, target_harness)
 }
 
 pub fn classify_model(

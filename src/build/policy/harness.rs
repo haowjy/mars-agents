@@ -350,13 +350,18 @@ pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
 mod tests {
     use super::*;
 
+    use indexmap::IndexMap;
     use std::path::Path;
+    use std::sync::LazyLock;
 
     use crate::compiler::agents::AgentProfile;
     use crate::compiler::agents::HarnessOverrides;
     use crate::models::ModelSpec;
     use crate::models::probes::OpenCodeProbeResult;
     use crate::routing::MatchEvidence;
+
+    static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
+        LazyLock::new(IndexMap::new);
 
     fn installed(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| (*name).to_string()).collect()
@@ -407,6 +412,7 @@ mod tests {
     ) -> PolicyInput<'a> {
         PolicyInput {
             project_root: Path::new("."),
+            runtime_aliases: &EMPTY_RUNTIME_ALIASES,
             agent: None,
             profile,
             model_override,

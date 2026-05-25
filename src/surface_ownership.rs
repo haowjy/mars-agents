@@ -122,6 +122,7 @@ mod tests {
                 },
             )]),
             config_entries: Default::default(),
+            dependency_model_aliases: IndexMap::new(),
         }
     }
 

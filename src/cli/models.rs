@@ -182,6 +182,14 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
     }
+
+    // Load runtime aliases before cache refresh so legacy locks that predate
+    // dependency alias authority fail with an explicit sync remediation instead
+    // of surfacing an unrelated cache error first.
+    let merged = (!args.catalog)
+        .then(|| load_merged_aliases(&ctx.project_root, project_config.as_ref()))
+        .transpose()?;
+
     let (cache, outcome) = match ensure_fresh_or_json_error(&mars, ttl, mode, json)? {
         FreshOrJsonError::Fresh(cache, outcome) => (cache, outcome),
         FreshOrJsonError::JsonError(error_message) => {
@@ -208,8 +216,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         });
     }
 
-    // Load config to get consumer models + trigger merge
-    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref());
+    let merged = merged.expect("non-catalog models list loaded runtime aliases");
     let installed = capability_snapshot.installed_harnesses();
     let is_offline = capability_snapshot.offline;
     let opencode_probe_result = capability_snapshot.opencode.result().cloned();
@@ -1215,7 +1222,7 @@ fn print_route_text(trace: &crate::routing::RoutingTrace) {
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
-    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref());
+    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
     let mars = mars_dir(ctx);
     let ttl = models_cache_ttl_hours(project_config.as_ref());
     let refresh =
@@ -2053,15 +2060,17 @@ fn models_cache_ttl_hours(project_config: Option<&crate::config::LoadedProjectCo
         .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours)
 }
 
-/// Load model aliases by combining cached dependency aliases with consumer config.
+/// Load model aliases by combining lock-persisted dependency aliases with effective
+/// project/local consumer aliases.
 fn load_merged_aliases(
     project_root: &std::path::Path,
     project_config: Option<&crate::config::LoadedProjectConfig>,
-) -> indexmap::IndexMap<String, ModelAlias> {
-    models::merged_runtime_aliases(
-        project_root,
+) -> Result<indexmap::IndexMap<String, ModelAlias>, MarsError> {
+    let lock = crate::lock::load_for_runtime_aliases(project_root)?;
+    Ok(models::merged_runtime_aliases(
+        &lock.dependency_model_aliases,
         project_config.map(|loaded| &loaded.effective.models),
-    )
+    ))
 }
 
 /// Determine which layer provides an alias (consumer or dependency).

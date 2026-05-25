@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use indexmap::IndexMap;
+
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
-use crate::models;
+use crate::models::{self, ModelAlias};
 
 mod execution;
 mod harness;
@@ -15,6 +17,7 @@ mod runnable;
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
+    pub runtime_aliases: &'a IndexMap<String, ModelAlias>,
     pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
@@ -152,8 +155,7 @@ pub fn resolve_policy(
     let mut warnings = Vec::new();
     let mut provenance = BTreeMap::new();
 
-    let aliases =
-        models::merged_runtime_aliases(input.project_root, Some(&effective_config.models));
+    let aliases = input.runtime_aliases;
     let overlay = input
         .agent
         .and_then(|name| effective_config.agents.get(name));
@@ -189,7 +191,7 @@ pub fn resolve_policy(
         &input,
         effective_config.settings.default_model.as_deref(),
         overlay,
-        &aliases,
+        aliases,
         &cache,
     )?;
 

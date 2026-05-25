@@ -326,6 +326,11 @@ fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
 }
 
 #[test]
+fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
+    routing::build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority();
+}
+
+#[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     routing::build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default();
 }

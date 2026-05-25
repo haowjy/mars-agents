@@ -336,7 +336,7 @@ Conflicts never block sync — they warn and continue.
 
 ### Persistence
 
-Dependency-sourced aliases are persisted to `.mars/models-dependencies.json` during finalize. Consumer aliases are **not** baked into this file — `mars models list` overlays fresh consumer config at read time.
+Dependency-sourced alias winners are persisted in committed `mars.lock` under `dependency_model_aliases` during finalize. Consumer aliases are **not** baked into lock state — `mars models list` overlays fresh consumer config at read time.
 
 ## `mars.local.toml`
 

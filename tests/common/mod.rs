@@ -160,10 +160,6 @@ pub fn cache_path(project_root: &Path) -> PathBuf {
     project_root.join(".mars").join("models-cache.json")
 }
 
-pub fn dependency_aliases_path(project_root: &Path) -> PathBuf {
-    project_root.join(".mars").join("models-dependencies.json")
-}
-
 pub fn write_local_source_with_model_alias(
     temp_root: &Path,
     source_dir_name: &str,

@@ -220,7 +220,7 @@ Copies content from `.mars/` canonical store to each configured target directory
 Writes lock and constructs the final `SyncReport`.
 
 - **Lock write**: constructs new `mars.lock` from resolved graph + apply outcomes (checksums). Keys sorted deterministically for clean git diffs. Lock is written **regardless of target sync outcome** — this ensures the lock always reflects what's in `.mars/`, even if a target sync failed.
-- **Model aliases**: persists dependency-only model aliases to `.mars/models-dependencies.json`. Uses the dependency snapshot helper so the cache contains only dep-sourced aliases and never builtin fallback aliases — `mars models list` can then overlay the current consumer config at read time without stale consumer aliases from prior syncs.
+- **Model aliases**: persists dependency-only alias winners to committed `mars.lock` (`dependency_model_aliases`). Consumer aliases are not baked into lock state, so `mars models list` overlays current consumer config at read time.
 - **Validation warnings**: emits diagnostics for missing skill references in agents.
 - **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 

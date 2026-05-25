@@ -295,6 +295,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -333,6 +334,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -371,6 +373,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -409,6 +412,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -434,6 +438,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -476,6 +481,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -543,6 +549,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -623,6 +630,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let normal = compute(root.path(), &lock, &target, false).unwrap();
@@ -684,6 +692,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -755,6 +764,7 @@ mod tests {
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();

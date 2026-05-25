@@ -39,8 +39,6 @@ mod tracing {
     pub(super) use debug;
 }
 
-const DEPENDENCY_ALIAS_CACHE_FILE: &str = "models-dependencies.json";
-
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -457,26 +455,6 @@ pub fn resolve_models_refresh_control(
     })
 }
 
-fn load_cached_dependency_aliases(project_root: &Path) -> IndexMap<String, ModelAlias> {
-    let path = project_root.join(".mars").join(DEPENDENCY_ALIAS_CACHE_FILE);
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<IndexMap<String, ModelAlias>>(&content).ok())
-        .unwrap_or_default()
-}
-
-pub fn write_dependency_alias_snapshot(
-    mars_dir: &Path,
-    aliases: &IndexMap<String, ModelAlias>,
-) -> Result<(), MarsError> {
-    let snapshot_path = mars_dir.join(DEPENDENCY_ALIAS_CACHE_FILE);
-    let json = serde_json::to_string_pretty(aliases).map_err(|err| {
-        MarsError::Internal(format!("serialize dependency alias snapshot: {err}"))
-    })?;
-    crate::fs::atomic_write(&snapshot_path, json.as_bytes())?;
-    Ok(())
-}
-
 pub fn dependency_alias_snapshot(deps: &[ResolvedDepModels]) -> IndexMap<String, ModelAlias> {
     let mut merged = IndexMap::new();
     for dep in deps {
@@ -490,18 +468,17 @@ pub fn dependency_alias_snapshot(deps: &[ResolvedDepModels]) -> IndexMap<String,
 }
 
 pub fn merged_runtime_aliases(
-    project_root: &Path,
+    dependency_aliases: &IndexMap<String, ModelAlias>,
     project_aliases: Option<&IndexMap<String, ModelAlias>>,
 ) -> IndexMap<String, ModelAlias> {
-    let cached_aliases = load_cached_dependency_aliases(project_root);
     let has_project_aliases = project_aliases.is_some_and(|aliases| !aliases.is_empty());
-    let mut merged = if cached_aliases.is_empty() && !has_project_aliases {
+    let mut merged = if dependency_aliases.is_empty() && !has_project_aliases {
         builtin_aliases()
     } else {
         IndexMap::new()
     };
-    for (name, alias) in cached_aliases {
-        merged.insert(name, alias);
+    for (name, alias) in dependency_aliases {
+        merged.insert(name.clone(), alias.clone());
     }
     if let Some(project_aliases) = project_aliases {
         for (name, alias) in project_aliases {
@@ -4575,23 +4552,12 @@ harness = "claude"
 
     #[test]
     fn merged_runtime_aliases_suppresses_builtins_when_cached_or_project_aliases_exist() {
-        let project = tempdir().unwrap();
-        std::fs::create_dir_all(project.path().join(".mars")).unwrap();
-
-        let mut cached = IndexMap::new();
-        cached.insert("dep".to_string(), pinned_alias(Some("codex"), "dep-model"));
-        cached.insert(
+        let mut dependency_aliases = IndexMap::new();
+        dependency_aliases.insert("dep".to_string(), pinned_alias(Some("codex"), "dep-model"));
+        dependency_aliases.insert(
             "override".to_string(),
             pinned_alias(Some("codex"), "dep-override"),
         );
-        std::fs::write(
-            project
-                .path()
-                .join(".mars")
-                .join(DEPENDENCY_ALIAS_CACHE_FILE),
-            serde_json::to_string(&cached).unwrap(),
-        )
-        .unwrap();
 
         let mut project_aliases = IndexMap::new();
         project_aliases.insert(
@@ -4603,7 +4569,7 @@ harness = "claude"
             pinned_alias(Some("pi"), "project-model"),
         );
 
-        let merged = merged_runtime_aliases(project.path(), Some(&project_aliases));
+        let merged = merged_runtime_aliases(&dependency_aliases, Some(&project_aliases));
 
         assert!(!merged.contains_key("opus"));
         assert_eq!(
@@ -4626,9 +4592,7 @@ harness = "claude"
 
     #[test]
     fn merged_runtime_aliases_empty_project_uses_builtins() {
-        let project = tempdir().unwrap();
-
-        let merged = merged_runtime_aliases(project.path(), None);
+        let merged = merged_runtime_aliases(&IndexMap::new(), None);
 
         assert!(merged.contains_key("opus"));
         assert!(merged.contains_key("sonnet"));

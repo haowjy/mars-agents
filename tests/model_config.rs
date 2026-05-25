@@ -62,18 +62,10 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
         cache["fetched_at"].as_str().is_some(),
         "expected fetched_at to be set after sync"
     );
+    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
     assert!(
-        dependency_aliases_path(&project_root).exists(),
-        "expected models-dependencies.json to be written during sync"
-    );
-    let merged: Value = serde_json::from_str(
-        &fs::read_to_string(dependency_aliases_path(&project_root))
-            .expect("failed to read models-dependencies.json"),
-    )
-    .expect("failed to parse models-dependencies.json");
-    assert!(
-        merged.get("test-alias").is_some(),
-        "expected dependency alias in models-dependencies.json"
+        lock.dependency_model_aliases.get("test-alias").is_some(),
+        "expected dependency alias winner persisted in mars.lock"
     );
     assert_eq!(
         mock.hits(),
@@ -115,8 +107,11 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
         "expected resolved pinned model in resolve output:\n{resolve_stdout}"
     );
     assert!(
-        dependency_aliases_path(&project_root).exists(),
-        "expected models-dependencies.json after add-triggered sync"
+        mars_agents::lock::load(&project_root)
+            .expect("failed to load mars.lock")
+            .dependency_model_aliases
+            .contains_key("test-alias-immediate"),
+        "expected add-triggered sync to persist dependency alias winner in mars.lock"
     );
     assert_eq!(
         mock.hits(),
@@ -127,7 +122,74 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
 
 #[test]
 #[serial]
-fn sync_empty_project_writes_empty_dependency_alias_snapshot() {
+fn resolve_dependency_alias_uses_lock_authority_when_mars_cache_is_stale_or_missing() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let source_root = write_local_source_with_model_alias(
+        temp.path(),
+        "alias-source-lock-authority",
+        "lock-authority-alias",
+        "openai/gpt-5",
+    );
+
+    let mut add_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    add_cmd.arg("add").arg(source_root.as_os_str());
+    add_cmd.assert().success();
+
+    fs::write(
+        project_root.join(".mars").join("models-dependencies.json"),
+        r#"{"lock-authority-alias":{"harness":"codex","model":"openai/bogus"}}"#,
+    )
+    .expect("failed to write stale dependency alias snapshot");
+
+    let mut stale_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    stale_cmd.args([
+        "--json",
+        "models",
+        "resolve",
+        "lock-authority-alias",
+        "--no-refresh-models",
+    ]);
+    stale_cmd.env("PATH", replace_path_with(&bin_dir));
+    let stale_output = stale_cmd.assert().success().get_output().clone();
+    let stale_json: Value =
+        serde_json::from_slice(&stale_output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stale_json["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(stale_json["source"].as_str(), Some("dependency"));
+
+    fs::remove_dir_all(project_root.join(".mars")).expect("failed to remove .mars cache");
+
+    let mut fresh_clone_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    fresh_clone_cmd.args([
+        "--json",
+        "models",
+        "resolve",
+        "lock-authority-alias",
+        "--no-refresh-models",
+    ]);
+    fresh_clone_cmd.env("PATH", replace_path_with(&bin_dir));
+    let fresh_output = fresh_clone_cmd.assert().success().get_output().clone();
+    let fresh_json: Value =
+        serde_json::from_slice(&fresh_output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(fresh_json["resolved_model"].as_str(), Some("openai/gpt-5"));
+    assert_eq!(fresh_json["source"].as_str(), Some("dependency"));
+
+    assert_eq!(
+        mock.hits(),
+        1,
+        "only add-triggered sync should fetch models catalog"
+    );
+}
+
+#[test]
+#[serial]
+fn sync_empty_project_persists_empty_dependency_aliases_in_lock() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
@@ -136,12 +198,18 @@ fn sync_empty_project_writes_empty_dependency_alias_snapshot() {
     sync_cmd.args(["sync", "--no-refresh-models"]);
     sync_cmd.assert().success();
 
-    let dependency_aliases: Value = serde_json::from_str(
-        &fs::read_to_string(dependency_aliases_path(&project_root))
-            .expect("failed to read models-dependencies.json"),
-    )
-    .expect("failed to parse models-dependencies.json");
-    assert_eq!(dependency_aliases, json!({}));
+    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
+    assert!(
+        lock.dependency_model_aliases.is_empty(),
+        "empty project should persist an empty dependency alias set in mars.lock"
+    );
+    assert!(
+        !project_root
+            .join(".mars")
+            .join("models-dependencies.json")
+            .exists(),
+        ".mars/models-dependencies.json should not be used as runtime authority"
+    );
 
     let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     list_cmd.args([
@@ -168,6 +236,49 @@ fn sync_empty_project_writes_empty_dependency_alias_snapshot() {
 
 #[test]
 #[serial]
+fn models_list_dependency_alias_suppresses_builtin_aliases() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let source_root = write_local_source_with_model_alias(
+        temp.path(),
+        "alias-source-builtin-suppress",
+        "dep-fast",
+        "openai/gpt-5",
+    );
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    let mut add_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    add_cmd.arg("add").arg(source_root.as_os_str());
+    add_cmd.assert().success();
+
+    let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    list_cmd.args([
+        "--json",
+        "models",
+        "list",
+        "--unavailable",
+        "--no-refresh-models",
+    ]);
+    list_cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = list_cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let alias_names: Vec<_> = stdout["aliases"]
+        .as_array()
+        .expect("aliases should be present")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert!(alias_names.contains(&"dep-fast"));
+    assert!(
+        !alias_names.contains(&"opus"),
+        "dependency aliases should suppress builtin fallback aliases: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
 fn models_list_local_alias_after_sync_suppresses_builtin_aliases() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -185,12 +296,11 @@ model = "gpt-5"
     sync_cmd.args(["sync", "--no-refresh-models"]);
     sync_cmd.assert().success();
 
-    let dependency_aliases: Value = serde_json::from_str(
-        &fs::read_to_string(dependency_aliases_path(&project_root))
-            .expect("failed to read models-dependencies.json"),
-    )
-    .expect("failed to parse models-dependencies.json");
-    assert_eq!(dependency_aliases, json!({}));
+    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
+    assert!(
+        lock.dependency_model_aliases.is_empty(),
+        "local-only alias projects should keep dependency alias winners empty"
+    );
 
     let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     list_cmd.args([
@@ -1197,6 +1307,87 @@ fn models_commands_fail_before_fetch_when_local_settings_cannot_parse() {
             "invalid local settings should fail before any models catalog fetch for {args:?}"
         );
     }
+}
+
+#[test]
+#[serial]
+fn models_runtime_alias_commands_reject_legacy_lock_missing_dependency_alias_authority() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.lock"),
+        r#"version = 2
+
+[dependencies.base]
+url = "https://github.com/org/base.git"
+version = "v1.0.0"
+commit = "abc123"
+"#,
+    )
+    .expect("failed to write legacy lock fixture");
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    for args in [
+        ["models", "list", "--no-refresh-models"].as_slice(),
+        ["models", "resolve", "gpt-5", "--no-refresh-models"].as_slice(),
+    ] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(args);
+
+        let output = cmd.assert().code(2).get_output().clone();
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+        assert!(
+            stderr.contains("missing `dependency_model_aliases`"),
+            "expected missing dependency alias authority error for {args:?}, stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("run `mars sync`"),
+            "expected sync remediation hint for {args:?}, stderr:\n{stderr}"
+        );
+    }
+
+    assert_eq!(
+        mock.hits(),
+        0,
+        "legacy lock rejection should happen before any models catalog fetch"
+    );
+}
+
+#[test]
+#[serial]
+fn models_runtime_alias_commands_allow_legacy_lock_without_dependencies() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(project_root.join("mars.lock"), "version = 2\n")
+        .expect("failed to write no-dependency legacy lock fixture");
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "--json",
+        "models",
+        "list",
+        "--unavailable",
+        "--no-refresh-models",
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let alias_names: Vec<_> = stdout["aliases"]
+        .as_array()
+        .expect("aliases should be present")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert!(
+        alias_names.contains(&"opus"),
+        "no-dependency legacy locks should continue exposing builtin aliases: {stdout}"
+    );
 }
 
 fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {

@@ -572,24 +572,23 @@ pub(crate) fn finalize(
 
     // Write lock file (D21 — regardless of target sync outcome).
     if !request.options.dry_run {
+        let dep_models = crate::models::declaration_ordered_dep_models(
+            graph,
+            &state.applied.planned.targeted.resolved.loaded.effective,
+        );
+        let mut dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
+        dep_model_aliases.sort_keys();
+
         let mut new_lock = crate::lock::build(
             graph,
             &state.applied.applied,
             old_lock,
             state.config_entries,
         )?;
+        new_lock.dependency_model_aliases = dep_model_aliases;
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
         crate::lock::write(project_root, &new_lock)?;
-
-        // Persist dependency-only model aliases so runtime commands can load
-        // dependency aliases without re-resolving the graph, then overlay
-        // current project/local aliases at read time.
-        let dep_models = crate::models::declaration_ordered_dep_models(
-            graph,
-            &state.applied.planned.targeted.resolved.loaded.effective,
-        );
-        let dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh
@@ -623,15 +622,6 @@ pub(crate) fn finalize(
                     format!("failed to refresh models cache: {err}"),
                 );
             }
-        }
-
-        if let Err(err) =
-            crate::models::write_dependency_alias_snapshot(&mars_path, &dep_model_aliases)
-        {
-            diag.warn(
-                "models-merge-write",
-                format!("failed to write dependency alias snapshot: {err}"),
-            );
         }
     }
 

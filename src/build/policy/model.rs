@@ -134,8 +134,10 @@ mod tests {
     #[test]
     fn resolve_model_infers_provider_for_bare_model_id() {
         let profile = empty_profile();
+        let aliases = IndexMap::new();
         let input = PolicyInput {
             project_root: Path::new("."),
+            runtime_aliases: &aliases,
             agent: None,
             profile: &profile,
             model_override: Some("claude-opus-4-6"),
@@ -145,7 +147,6 @@ mod tests {
             sandbox_override: None,
             models_refresh: crate::models::ModelsRefreshControl::auto(),
         };
-        let aliases = IndexMap::new();
         let cache = ModelsCache {
             models: Vec::new(),
             fetched_at: None,
@@ -161,8 +162,10 @@ mod tests {
     #[test]
     fn resolve_model_returns_unset_when_no_model_source_exists() {
         let profile = empty_profile();
+        let aliases = IndexMap::new();
         let input = PolicyInput {
             project_root: Path::new("."),
+            runtime_aliases: &aliases,
             agent: None,
             profile: &profile,
             model_override: None,
@@ -172,7 +175,6 @@ mod tests {
             sandbox_override: None,
             models_refresh: crate::models::ModelsRefreshControl::auto(),
         };
-        let aliases = IndexMap::new();
         let cache = ModelsCache {
             models: Vec::new(),
             fetched_at: None,

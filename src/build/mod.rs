@@ -79,11 +79,17 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    let lock = crate::lock::load_for_runtime_aliases(&ctx.project_root)?;
+    let runtime_aliases = crate::models::merged_runtime_aliases(
+        &lock.dependency_model_aliases,
+        Some(&effective_project_config.models),
+    );
 
     let policy = resolve_policy(
         &effective_project_config,
         PolicyInput {
             project_root: &ctx.project_root,
+            runtime_aliases: &runtime_aliases,
             agent: request.agent.as_deref(),
             profile: &profile,
             model_override: request.model.as_deref(),

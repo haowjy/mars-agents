@@ -650,6 +650,45 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    fs::write(
+        project_root.join("mars.lock"),
+        r#"version = 2
+
+[dependencies.base]
+url = "https://github.com/org/base.git"
+version = "v1.0.0"
+commit = "abc123"
+"#,
+    )
+    .expect("failed to write legacy lock fixture");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("missing `dependency_model_aliases`"),
+        "expected missing dependency alias authority error, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("run `mars sync`"),
+        "expected sync remediation hint, stderr:\n{stderr}"
+    );
+}
+
 pub(crate) fn build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug()
 {
     let temp = TempDir::new().unwrap();

@@ -20,11 +20,13 @@ use crate::error::MarsError;
 use crate::types::MarsContext;
 
 pub mod availability;
+mod dependencies;
 pub mod harness;
 pub mod harness_model;
 pub mod probes;
 
 pub use availability::ModelAvailability;
+pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
 
 mod tracing {
     macro_rules! debug {

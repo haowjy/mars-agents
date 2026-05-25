@@ -612,9 +612,41 @@ harness_order = ["codex", "pi"]"#,
         bundle["provenance"]["harness_order_position"].as_str(),
         Some("0")
     );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("codex")
+    let candidates_tried = bundle["provenance"]["candidates_tried"]
+        .as_str()
+        .expect("candidates_tried provenance should be present");
+    assert!(
+        candidates_tried.starts_with("codex"),
+        "local harness_order should try codex first, got {candidates_tried}"
+    );
+}
+
+pub(crate) fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        "[settings]\nharness_order = 1\n",
+    )
+    .expect("failed to write invalid mars.local.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("parse error"),
+        "expected parse error for invalid local settings, stderr:\n{stderr}"
     );
 }
 

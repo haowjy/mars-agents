@@ -820,6 +820,261 @@ path = "{}"
     );
 }
 
+#[test]
+fn sync_cursor_native_agent_uses_mars_local_model_overlay_for_native_slug_mapping() {
+    let dir = TempDir::new().unwrap();
+    let cache_root = dir.child("mars-cache");
+    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-turbo-high"]);
+    let cursor_agent = r#"---
+name: cursor-worker
+description: Cursor worker
+harness: cursor
+model: gpt55
+---
+# Cursor body
+Use Cursor-native markdown.
+"#;
+    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+    fs::write(
+        source.join("mars.toml"),
+        r#"[package]
+name = "base"
+version = "0.1.0"
+
+[models.gpt55]
+harness = "codex"
+model = "gpt-5.5"
+default_effort = "high"
+"#,
+    )
+    .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [".cursor"]
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    project
+        .child("mars.local.toml")
+        .write_str(
+            r#"[models.gpt55]
+harness = "codex"
+model = "gpt-5.5-turbo"
+default_effort = "high"
+"#,
+        )
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .env("MARS_CACHE_DIR", cache_root.path())
+        .assert()
+        .success();
+
+    let cursor_native =
+        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
+    assert!(
+        cursor_native.contains("model: gpt-5.5-turbo-high"),
+        "local model overlay should drive cursor slug mapping: {cursor_native}"
+    );
+    assert!(
+        !cursor_native.contains("model: gpt-5.5-high"),
+        "dependency alias model should be overridden by mars.local.toml: {cursor_native}"
+    );
+}
+
+#[test]
+fn sync_suppresses_dependency_model_alias_conflict_when_local_overlay_defines_alias() {
+    let dir = TempDir::new().unwrap();
+
+    let dep_a = create_source(&dir, "dep-a", &[("a", "# A\n")], &[]);
+    fs::write(
+        dep_a.join("mars.toml"),
+        r#"[package]
+name = "dep-a"
+version = "0.1.0"
+
+[models.shared]
+harness = "codex"
+model = "gpt-5"
+"#,
+    )
+    .unwrap();
+
+    let dep_b = create_source(&dir, "dep-b", &[("b", "# B\n")], &[]);
+    fs::write(
+        dep_b.join("mars.toml"),
+        r#"[package]
+name = "dep-b"
+version = "0.1.0"
+
+[models.shared]
+harness = "codex"
+model = "gpt-5.1"
+"#,
+    )
+    .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[dependencies.dep-a]
+path = "{}"
+
+[dependencies.dep-b]
+path = "{}"
+"#,
+            dep_a.display().to_string().replace('\\', "/"),
+            dep_b.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    project
+        .child("mars.local.toml")
+        .write_str(
+            r#"[models.shared]
+harness = "codex"
+model = "gpt-5-local"
+"#,
+        )
+        .unwrap();
+
+    let output = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "sync should succeed, stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        !stderr.contains("model-alias-conflict"),
+        "diagnostic code should be suppressed when local overlay owns the alias: {stderr}"
+    );
+    assert!(
+        !stderr.contains("model alias `shared` defined by both"),
+        "local [models.shared] overlay should suppress dependency alias conflict diagnostics: {stderr}"
+    );
+}
+
+#[test]
+fn sync_persists_dependency_model_aliases_in_consumer_declaration_order() {
+    let dir = TempDir::new().unwrap();
+    let dep_a = create_source(&dir, "dep-a", &[("a", "# A\n")], &[]);
+    fs::write(
+        dep_a.join("mars.toml"),
+        r#"[package]
+name = "dep-a"
+version = "0.1.0"
+
+[models.shared]
+harness = "codex"
+model = "gpt-a"
+"#,
+    )
+    .unwrap();
+    let dep_b = create_source(&dir, "dep-b", &[("b", "# B\n")], &[]);
+    fs::write(
+        dep_b.join("mars.toml"),
+        r#"[package]
+name = "dep-b"
+version = "0.1.0"
+
+[models.shared]
+harness = "codex"
+model = "gpt-b"
+"#,
+    )
+    .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[dependencies.dep-b]
+path = "{}"
+
+[dependencies.dep-a]
+path = "{}"
+"#,
+            dep_b.display().to_string().replace('\\', "/"),
+            dep_a.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    write_cache(
+        project.path(),
+        vec![
+            json!({
+                "id": "gpt-a",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+            json!({
+                "id": "gpt-b",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+        ],
+        &fresh_fetched_at(),
+    );
+    let output = mars()
+        .args([
+            "--json",
+            "models",
+            "list",
+            "--unavailable",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "models list should succeed, stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let shared = stdout["aliases"]
+        .as_array()
+        .expect("models list should include aliases")
+        .iter()
+        .find(|alias| alias["name"].as_str() == Some("shared"))
+        .expect("shared dependency alias should be listed");
+    assert_eq!(
+        shared["model_id"].as_str(),
+        Some("gpt-b"),
+        "the dependency declared first in mars.toml should win persisted alias conflicts: {stdout}"
+    );
+}
+
 fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
     let cache_path = cache_root.join("availability").join("cursor-probe.json");
     if let Some(parent) = cache_path.parent() {

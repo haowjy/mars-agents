@@ -346,6 +346,11 @@ fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
 }
 
 #[test]
+fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
+    routing::build_launch_bundle_fails_when_local_settings_cannot_parse();
+}
+
+#[test]
 fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
     routing::build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection();
 }

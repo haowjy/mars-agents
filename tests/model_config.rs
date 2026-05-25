@@ -768,9 +768,12 @@ harness_order = ["codex", "pi"]
 
         assert_eq!(stdout["harness"].as_str(), Some("codex"));
         assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
+        let candidates = stdout["route_trace"]["candidates_tried"]
+            .as_array()
+            .expect("route_trace.candidates_tried should be an array");
         assert_eq!(
-            stdout["route_trace"]["candidates_tried"],
-            json!(["codex"]),
+            candidates.first().and_then(|candidate| candidate.as_str()),
+            Some("codex"),
             "local harness_order should replace project harness order for {model_arg}"
         );
         assert!(

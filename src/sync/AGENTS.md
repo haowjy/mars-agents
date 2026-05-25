@@ -47,7 +47,9 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 
 ### Declaration-Ordered Model Merge
 
-`declaration_ordered_dep_models()` uses topological sort with declaration position tie-breaking. Transitive deps take the minimum position among all direct dependencies that reach them. This ensures deterministic model alias ordering for merge precedence.
+Dependency-ordered alias assembly lives in `src/models/dependencies.rs`.
+`sync` calls `crate::models::merged_model_aliases()`/`declaration_ordered_dep_models()`
+so compiler + sync share one low-level implementation.
 
 ## Patterns
 

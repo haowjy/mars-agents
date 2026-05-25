@@ -467,8 +467,14 @@ pub fn merged_runtime_aliases(
     project_root: &Path,
     project_aliases: Option<&IndexMap<String, ModelAlias>>,
 ) -> IndexMap<String, ModelAlias> {
-    let mut merged = builtin_aliases();
-    for (name, alias) in load_cached_dependency_aliases(project_root) {
+    let cached_aliases = load_cached_dependency_aliases(project_root);
+    let has_project_aliases = project_aliases.is_some_and(|aliases| !aliases.is_empty());
+    let mut merged = if cached_aliases.is_empty() && !has_project_aliases {
+        builtin_aliases()
+    } else {
+        IndexMap::new()
+    };
+    for (name, alias) in cached_aliases {
         merged.insert(name, alias);
     }
     if let Some(project_aliases) = project_aliases {
@@ -1235,8 +1241,7 @@ fn glob_match_no_slash(pattern: &str, text: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Minimal builtin aliases so common model names work out of the box.
-/// No descriptions — packages layer those on top.
-/// Precedence: consumer > deps > builtins.
+/// Suppressed as soon as consumer or dependency aliases exist.
 pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
     let mut m = IndexMap::new();
     let add = |m: &mut IndexMap<String, ModelAlias>,
@@ -1299,7 +1304,8 @@ pub struct ResolvedDepModels {
 
 /// Merge model aliases from dependency tree.
 ///
-/// Precedence: consumer > deps (declaration order) > builtins.
+/// Precedence: consumer > deps (declaration order).
+/// Builtins appear only when consumer and dependency aliases are both empty.
 /// When two deps define the same alias, first in declaration order wins
 /// with a diagnostic warning.
 pub fn merge_model_config(
@@ -1314,19 +1320,18 @@ pub fn merge_model_config(
         alias: ModelAlias,
     }
 
-    let mut merged = IndexMap::new();
-    let builtins = builtin_aliases();
+    let has_dep_aliases = deps.iter().any(|dep| !dep.models.is_empty());
+    let mut merged = if consumer.is_empty() && !has_dep_aliases {
+        builtin_aliases()
+    } else {
+        IndexMap::new()
+    };
 
-    // Layer 0 (lowest): builtins
-    for (name, alias) in &builtins {
-        merged.insert(name.clone(), alias.clone());
-    }
-
-    // Track which dep won each alias (vs builtin)
+    // Track which dep won each alias
     let mut dep_provided: std::collections::HashMap<String, DepWinner> =
         std::collections::HashMap::new();
 
-    // Layer 1: dependencies (override builtins silently, first dep wins on conflicts)
+    // Dependencies: first dep wins on conflicts
     for dep in deps {
         for (name, alias) in &dep.models {
             if consumer.contains_key(name) {
@@ -1362,7 +1367,6 @@ pub fn merge_model_config(
                 };
                 diag.warn_with_context("model-alias-conflict", message, dep.source_name.clone());
             } else {
-                // Override builtin or insert new
                 merged.insert(name.clone(), alias.clone());
                 dep_provided.insert(
                     name.clone(),
@@ -1375,7 +1379,7 @@ pub fn merge_model_config(
         }
     }
 
-    // Layer 2 (highest): consumer config
+    // Consumer config overrides dependency aliases.
     for (name, alias) in consumer {
         merged.insert(name.clone(), alias.clone());
     }
@@ -2236,7 +2240,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_consumer_overrides_dependency_alias() {
+    fn merge_consumer_aliases_suppress_builtins() {
         let mut consumer = IndexMap::new();
         consumer.insert(
             "opus".to_string(),
@@ -2252,10 +2256,12 @@ mod tests {
                 provider: None
             }
         );
+        assert!(!merged.contains_key("sonnet"));
+        assert!(!merged.contains_key("codex"));
     }
 
     #[test]
-    fn merge_dep_overrides_builtin() {
+    fn merge_dependency_aliases_suppress_builtins() {
         let dep = ResolvedDepModels {
             source_name: "my-pkg".to_string(),
             models: {
@@ -2267,7 +2273,6 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[dep], &mut diag, None);
-        // Dep overrides builtin
         assert_eq!(
             merged.get("opus").unwrap().spec,
             ModelSpec::Pinned {
@@ -2275,6 +2280,8 @@ mod tests {
                 provider: None
             }
         );
+        assert!(!merged.contains_key("sonnet"));
+        assert!(!merged.contains_key("codex"));
     }
 
     #[test]
@@ -2559,7 +2566,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
 
-        assert!(merged.contains_key("opus"));
+        assert!(!merged.contains_key("opus"));
         assert_eq!(
             merged.get("custom").unwrap().spec,
             ModelSpec::Pinned {
@@ -4541,7 +4548,7 @@ harness = "claude"
     }
 
     #[test]
-    fn merged_runtime_aliases_layers_builtin_cached_and_project_aliases() {
+    fn merged_runtime_aliases_suppresses_builtins_when_cached_or_project_aliases_exist() {
         let project = tempdir().unwrap();
         std::fs::create_dir_all(project.path().join(".mars")).unwrap();
 
@@ -4569,7 +4576,7 @@ harness = "claude"
 
         let merged = merged_runtime_aliases(project.path(), Some(&project_aliases));
 
-        assert!(merged.contains_key("opus"));
+        assert!(!merged.contains_key("opus"));
         assert_eq!(
             merged.get("dep").and_then(|alias| alias.harness.as_deref()),
             Some("codex")
@@ -4586,5 +4593,16 @@ harness = "claude"
                 .and_then(|alias| alias.harness.as_deref()),
             Some("pi")
         );
+    }
+
+    #[test]
+    fn merged_runtime_aliases_empty_project_uses_builtins() {
+        let project = tempdir().unwrap();
+
+        let merged = merged_runtime_aliases(project.path(), None);
+
+        assert!(merged.contains_key("opus"));
+        assert!(merged.contains_key("sonnet"));
+        assert!(merged.contains_key("codex"));
     }
 }

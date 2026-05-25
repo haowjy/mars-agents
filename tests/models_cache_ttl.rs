@@ -322,8 +322,8 @@ fn scenario_g_offline_sync_succeeds_without_cache_and_emits_diag() {
         "offline sync with empty cache should not create cache file"
     );
     assert!(
-        models_merged_path(&project_root).exists(),
-        "offline sync should still write models-merged.json"
+        dependency_aliases_path(&project_root).exists(),
+        "offline sync should still write models-dependencies.json"
     );
     assert_eq!(
         mock.hits(),

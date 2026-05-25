@@ -39,6 +39,8 @@ mod tracing {
     pub(super) use debug;
 }
 
+const DEPENDENCY_ALIAS_CACHE_FILE: &str = "models-dependencies.json";
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -456,11 +458,35 @@ pub fn resolve_models_refresh_control(
 }
 
 fn load_cached_dependency_aliases(project_root: &Path) -> IndexMap<String, ModelAlias> {
-    let merged_path = project_root.join(".mars").join("models-merged.json");
-    std::fs::read_to_string(&merged_path)
+    let path = project_root.join(".mars").join(DEPENDENCY_ALIAS_CACHE_FILE);
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<IndexMap<String, ModelAlias>>(&content).ok())
         .unwrap_or_default()
+}
+
+pub fn write_dependency_alias_snapshot(
+    mars_dir: &Path,
+    aliases: &IndexMap<String, ModelAlias>,
+) -> Result<(), MarsError> {
+    let snapshot_path = mars_dir.join(DEPENDENCY_ALIAS_CACHE_FILE);
+    let json = serde_json::to_string_pretty(aliases).map_err(|err| {
+        MarsError::Internal(format!("serialize dependency alias snapshot: {err}"))
+    })?;
+    crate::fs::atomic_write(&snapshot_path, json.as_bytes())?;
+    Ok(())
+}
+
+pub fn dependency_alias_snapshot(deps: &[ResolvedDepModels]) -> IndexMap<String, ModelAlias> {
+    let mut merged = IndexMap::new();
+    for dep in deps {
+        for (name, alias) in &dep.models {
+            if !merged.contains_key(name) {
+                merged.insert(name.clone(), alias.clone());
+            }
+        }
+    }
+    merged
 }
 
 pub fn merged_runtime_aliases(
@@ -4559,7 +4585,10 @@ harness = "claude"
             pinned_alias(Some("codex"), "dep-override"),
         );
         std::fs::write(
-            project.path().join(".mars").join("models-merged.json"),
+            project
+                .path()
+                .join(".mars")
+                .join(DEPENDENCY_ALIAS_CACHE_FILE),
             serde_json::to_string(&cached).unwrap(),
         )
         .unwrap();

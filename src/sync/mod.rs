@@ -582,22 +582,14 @@ pub(crate) fn finalize(
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
         crate::lock::write(project_root, &new_lock)?;
 
-        // Persist dependency-only model aliases so `mars models list` can load
-        // deps from cache, then overlay current consumer config without keeping
-        // stale consumer aliases from prior syncs.
+        // Persist dependency-only model aliases so runtime commands can load
+        // dependency aliases without re-resolving the graph, then overlay
+        // current project/local aliases at read time.
         let dep_models = crate::models::declaration_ordered_dep_models(
             graph,
             &state.applied.planned.targeted.resolved.loaded.effective,
         );
-        let empty_consumer: indexmap::IndexMap<String, crate::models::ModelAlias> =
-            indexmap::IndexMap::new();
-        let mut ignored_diag = DiagnosticCollector::new();
-        let dep_model_aliases = crate::models::merge_model_config(
-            &empty_consumer,
-            &dep_models,
-            &mut ignored_diag,
-            None,
-        );
+        let dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh
@@ -633,22 +625,13 @@ pub(crate) fn finalize(
             }
         }
 
-        match serde_json::to_string_pretty(&dep_model_aliases) {
-            Ok(json) => {
-                let merged_path = ctx.project_root.join(".mars").join("models-merged.json");
-                if let Err(err) = crate::fs::atomic_write(&merged_path, json.as_bytes()) {
-                    diag.warn(
-                        "models-merge-write",
-                        format!("failed to write models-merged.json: {err}"),
-                    );
-                }
-            }
-            Err(err) => {
-                diag.warn(
-                    "models-merge-write",
-                    format!("failed to serialize merged model aliases: {err}"),
-                );
-            }
+        if let Err(err) =
+            crate::models::write_dependency_alias_snapshot(&mars_path, &dep_model_aliases)
+        {
+            diag.warn(
+                "models-merge-write",
+                format!("failed to write dependency alias snapshot: {err}"),
+            );
         }
     }
 

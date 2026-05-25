@@ -63,17 +63,17 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
         "expected fetched_at to be set after sync"
     );
     assert!(
-        models_merged_path(&project_root).exists(),
-        "expected models-merged.json to be written during sync"
+        dependency_aliases_path(&project_root).exists(),
+        "expected models-dependencies.json to be written during sync"
     );
     let merged: Value = serde_json::from_str(
-        &fs::read_to_string(models_merged_path(&project_root))
-            .expect("failed to read models-merged.json"),
+        &fs::read_to_string(dependency_aliases_path(&project_root))
+            .expect("failed to read models-dependencies.json"),
     )
-    .expect("failed to parse models-merged.json");
+    .expect("failed to parse models-dependencies.json");
     assert!(
         merged.get("test-alias").is_some(),
-        "expected dependency alias in models-merged.json"
+        "expected dependency alias in models-dependencies.json"
     );
     assert_eq!(
         mock.hits(),
@@ -115,13 +115,108 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
         "expected resolved pinned model in resolve output:\n{resolve_stdout}"
     );
     assert!(
-        models_merged_path(&project_root).exists(),
-        "expected models-merged.json after add-triggered sync"
+        dependency_aliases_path(&project_root).exists(),
+        "expected models-dependencies.json after add-triggered sync"
     );
     assert_eq!(
         mock.hits(),
         1,
         "expected add+immediate resolve online flow to fetch models catalog once"
+    );
+}
+
+#[test]
+#[serial]
+fn sync_empty_project_writes_empty_dependency_alias_snapshot() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    let mut sync_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    sync_cmd.args(["sync", "--no-refresh-models"]);
+    sync_cmd.assert().success();
+
+    let dependency_aliases: Value = serde_json::from_str(
+        &fs::read_to_string(dependency_aliases_path(&project_root))
+            .expect("failed to read models-dependencies.json"),
+    )
+    .expect("failed to parse models-dependencies.json");
+    assert_eq!(dependency_aliases, json!({}));
+
+    let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    list_cmd.args([
+        "--json",
+        "models",
+        "list",
+        "--unavailable",
+        "--no-refresh-models",
+    ]);
+    let output = list_cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let alias_names: Vec<_> = stdout["aliases"]
+        .as_array()
+        .expect("aliases should be present")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert!(
+        alias_names.contains(&"opus"),
+        "empty projects should still expose ephemeral builtin aliases: {stdout}"
+    );
+}
+
+#[test]
+#[serial]
+fn models_list_local_alias_after_sync_suppresses_builtin_aliases() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[models.fast]
+harness = "codex"
+model = "gpt-5"
+"#,
+    )
+    .expect("failed to write mars.local.toml");
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+
+    let mut sync_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    sync_cmd.args(["sync", "--no-refresh-models"]);
+    sync_cmd.assert().success();
+
+    let dependency_aliases: Value = serde_json::from_str(
+        &fs::read_to_string(dependency_aliases_path(&project_root))
+            .expect("failed to read models-dependencies.json"),
+    )
+    .expect("failed to parse models-dependencies.json");
+    assert_eq!(dependency_aliases, json!({}));
+
+    let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    list_cmd.args([
+        "--json",
+        "models",
+        "list",
+        "--unavailable",
+        "--no-refresh-models",
+    ]);
+    let output = list_cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let alias_names: Vec<_> = stdout["aliases"]
+        .as_array()
+        .expect("aliases should be present")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+
+    assert!(
+        alias_names.contains(&"fast"),
+        "local aliases should be present in runtime alias view: {stdout}"
+    );
+    assert!(
+        !alias_names.contains(&"opus"),
+        "non-empty local/project alias sets should suppress builtin aliases: {stdout}"
     );
 }
 

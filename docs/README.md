@@ -55,7 +55,7 @@ project/
     agents/              # Resolved agent profiles
     skills/              # Resolved skills
     models-cache.json    # Cached model catalog
-    models-merged.json   # Dependency-sourced model aliases
+    models-dependencies.json # Dependency-sourced model aliases
   .agents/               # Managed root — files copied here (committed)
     agents/
     skills/

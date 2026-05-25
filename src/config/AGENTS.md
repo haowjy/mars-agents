@@ -1,6 +1,6 @@
 # src/config/ — Config Loading & Routing Settings
 
-mars.toml + mars.local.toml schemas, load/save, merge to EffectiveConfig. 5 files + `.context/`, ~3500 lines.
+mars.toml + mars.local.toml schemas, load/save, merge to EffectiveConfig. 6 files + `.context/`, ~3500 lines.
 
 ## Mental Model
 
@@ -20,6 +20,12 @@ pipeline operates on EffectiveConfig only
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`) |
+
+## Layering (`layering.rs`)
+
+- `SettingsLayerInputs` models precedence boundary: `user < project < project-local`.
+- Project settings can apply as **presence-aware overlay** (per-field) when loaded from `mars.toml`.
+- Model and agent overlays are **replace-by-key** (entire alias/agent entry replaces lower layer).
 
 ## Dependency Entry Validation
 

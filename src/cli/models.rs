@@ -125,7 +125,7 @@ fn collect_models_capability_snapshot(
 
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx);
+    let ttl = models::load_models_cache_ttl(ctx)?;
     eprint!("Fetching models catalog... ");
 
     let (cache, outcome) = models::ensure_fresh(&mars, ttl, models::RefreshMode::Force)?;
@@ -165,11 +165,11 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
 
 fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx);
+    let ttl = models::load_models_cache_ttl(ctx)?;
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let mode = refresh.catalog_mode;
-    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
+    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root)?;
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
@@ -207,7 +207,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let opencode_probe_result = capability_snapshot.opencode.result().cloned();
     let pi_probe_result = capability_snapshot.pi.result().cloned();
     let cursor_probe_result = capability_snapshot.cursor.result().cloned();
-    let visibility = effective_visibility(ctx, args);
+    let visibility = effective_visibility(ctx, args)?;
     if args.all {
         let catalog_slugs = models::catalog_model_slugs(&cache);
         let availability_ctx = AvailabilityContext {
@@ -539,7 +539,7 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
         is_offline,
         routing_settings,
     };
-    let visibility = effective_visibility(ctx, args);
+    let visibility = effective_visibility(ctx, args)?;
     let models = collect_catalog_model_entries(cache, availability_ctx);
     let models = filter_model_entries_by_visibility(models, &visibility);
 
@@ -939,17 +939,24 @@ fn route_trace_for_fixed_harness(
     crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
 }
 
-fn effective_visibility(ctx: &MarsContext, args: &ListArgs) -> crate::config::ModelVisibility {
+fn effective_visibility(
+    ctx: &MarsContext,
+    args: &ListArgs,
+) -> Result<crate::config::ModelVisibility, MarsError> {
     if args.include.is_some() || args.exclude.is_some() {
-        return crate::config::ModelVisibility {
+        return Ok(crate::config::ModelVisibility {
             include: args.include.clone(),
             exclude: args.exclude.clone(),
-        };
+        });
     }
 
-    crate::config::load(&ctx.project_root)
-        .map(|config| config.settings.model_visibility)
-        .unwrap_or_default()
+    match crate::config::load_effective_project_config(&ctx.project_root) {
+        Ok(effective) => Ok(effective.settings.model_visibility),
+        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
+            Ok(crate::config::ModelVisibility::default())
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1207,11 +1214,11 @@ fn print_route_text(trace: &crate::routing::RoutingTrace) {
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let merged = load_merged_aliases(ctx)?;
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx);
+    let ttl = models::load_models_cache_ttl(ctx)?;
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let mode = refresh.catalog_mode;
-    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root);
+    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root)?;
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
@@ -1971,10 +1978,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         is_offline,
     );
 
-    let warning = format!(
-        "model '{}' not found in catalog, passing through to harness",
-        name
-    );
+    let warning = passthrough_catalog_warning(name, &trace);
 
     if json {
         let mut out = serde_json::json!({
@@ -1987,8 +1991,10 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             "harness_source": harness_source,
             "harness_candidates": harness_candidates,
             "description": serde_json::Value::Null,
-            "warning": warning,
         });
+        if let Some(warning) = warning.as_deref() {
+            out["warning"] = serde_json::json!(warning);
+        }
         add_availability_json_fields(&mut out, Some(&availability));
         add_route_json_fields(&mut out, &trace);
         if let Some(warning) = cache_warning.as_deref() {
@@ -2000,7 +2006,9 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
-        eprintln!("warning: {}", warning);
+        if let Some(warning) = warning.as_deref() {
+            eprintln!("warning: {}", warning);
+        }
         let h = harness.as_deref().unwrap_or("—");
         println!("Model:      {}", name);
         println!("Source:     passthrough");
@@ -2039,11 +2047,15 @@ fn load_merged_aliases(
         }
     }
 
-    // Layer consumer config on top (highest precedence)
-    if let Ok(config) = crate::config::load(&ctx.project_root) {
-        for (name, alias) in &config.models {
-            merged.insert(name.clone(), alias.clone());
+    // Layer consumer + project-local config on top (highest precedence).
+    match crate::config::load_effective_project_config(&ctx.project_root) {
+        Ok(effective) => {
+            for (name, alias) in &effective.models {
+                merged.insert(name.clone(), alias.clone());
+            }
         }
+        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {}
+        Err(err) => return Err(err),
     }
 
     Ok(merged)
@@ -2051,10 +2063,14 @@ fn load_merged_aliases(
 
 /// Determine which layer provides an alias (consumer or dependency).
 fn determine_source(name: &str, ctx: &MarsContext) -> Result<String, MarsError> {
-    let config = match crate::config::load(&ctx.project_root) {
-        Ok(c) => c,
+    let (config, local) = match crate::config::load_config_with_local(&ctx.project_root) {
+        Ok(pair) => pair,
         Err(_) => return Ok("unknown".to_string()),
     };
+
+    if local.models.contains_key(name) {
+        return Ok("consumer local (mars.local.toml)".to_string());
+    }
 
     if config.models.contains_key(name) {
         return Ok("consumer (mars.toml)".to_string());
@@ -2173,6 +2189,19 @@ fn passthrough_rejection_message(
             "model '{model_name}' failed model-first routing assessment on harness '{harness}' ({})",
             skip_reason.as_deref().unwrap_or("unavailable")
         ),
+    }
+}
+
+fn passthrough_catalog_warning(name: &str, trace: &crate::routing::RoutingTrace) -> Option<String> {
+    match trace.selected_match_evidence() {
+        crate::routing::MatchEvidence::Passthrough => Some(format!(
+            "model '{}' not found in catalog, passing through to harness",
+            name
+        )),
+        crate::routing::MatchEvidence::Confirmed | crate::routing::MatchEvidence::Constrained => {
+            None
+        }
+        crate::routing::MatchEvidence::None => None,
     }
 }
 
@@ -2888,5 +2917,48 @@ description = "Old alias"
         let resolved = models::resolve_one("opus", &merged, &models_cache, &mut diag).unwrap();
         assert_eq!(resolved.model_id, "claude-opus-4-6");
         assert!(diag.drain().is_empty());
+    }
+
+    fn passthrough_trace(
+        match_evidence: crate::routing::MatchEvidence,
+    ) -> crate::routing::RoutingTrace {
+        crate::routing::RoutingTrace {
+            source: crate::routing::RouteSource::Provider,
+            selection_kind: crate::routing::SelectionKind::Auto,
+            match_evidence,
+            harness: "opencode".to_string(),
+            harness_order_position: None,
+            candidates_tried: vec!["opencode".to_string()],
+            assessments: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn passthrough_catalog_warning_omits_warning_for_confirmed_and_constrained_routes() {
+        assert!(
+            passthrough_catalog_warning(
+                "openai/gpt-5.4-mini",
+                &passthrough_trace(crate::routing::MatchEvidence::Confirmed)
+            )
+            .is_none()
+        );
+        assert!(
+            passthrough_catalog_warning(
+                "openai/gpt-5.4-mini",
+                &passthrough_trace(crate::routing::MatchEvidence::Constrained)
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn passthrough_catalog_warning_keeps_warning_for_passthrough_routes() {
+        let warning = passthrough_catalog_warning(
+            "unknown-model",
+            &passthrough_trace(crate::routing::MatchEvidence::Passthrough),
+        )
+        .expect("passthrough warning expected");
+        assert!(warning.contains("not found in catalog"));
     }
 }

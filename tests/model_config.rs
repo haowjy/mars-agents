@@ -232,6 +232,73 @@ include = ["catalog-only-*"]
 
 #[test]
 #[serial]
+fn models_list_uses_local_model_visibility_overlay() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[settings.model_visibility]
+include = ["gpt-5"]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+
+[models.slow]
+harness = "codex"
+model = "gpt-5.4-mini"
+provider = "openai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[settings.model_visibility]
+include = ["gpt-5.4-mini"]
+"#,
+    )
+    .expect("failed to write mars.local.toml");
+    write_cache(
+        &project_root,
+        vec![
+            json!({
+                "id": "gpt-5",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+            json!({
+                "id": "gpt-5.4-mini",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+        ],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list", "--unavailable"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    let names: Vec<_> = aliases
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+
+    assert_eq!(names, vec!["slow"]);
+}
+
+#[test]
+#[serial]
 fn resolve_prefix_no_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -379,6 +446,10 @@ fn resolve_passthrough_provider_model_slug_succeeds_when_harness_reports_match()
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5.4-mini"));
     assert_eq!(stdout["harness"].as_str(), Some("opencode"));
     assert_eq!(stdout["harness_source"].as_str(), Some("pattern_guess"));
+    assert!(
+        stdout.get("warning").is_none(),
+        "confirmed passthrough route should not emit warning: {stdout}"
+    );
     assert!(stdout["route_trace"].is_object());
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()
@@ -473,6 +544,59 @@ model = "gpt-5.4-mini"
 
 #[test]
 #[serial]
+fn models_list_exact_alias_respects_local_harness_order_override() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "cursor"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+harness_order = ["pi", "cursor"]
+
+[models.fast]
+model = "gpt-5.4-mini"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[settings]
+harness_order = ["cursor", "pi"]
+"#,
+    )
+    .expect("failed to write mars.local.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5.4-mini",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    let fast = aliases
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("fast"))
+        .expect("expected fast alias entry");
+
+    assert_eq!(fast["harness"].as_str(), Some("cursor"));
+    assert_eq!(fast["harness_source"].as_str(), Some("auto_detected"));
+}
+
+#[test]
+#[serial]
 fn resolve_exact_alias_respects_settings_harness_order() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -508,6 +632,50 @@ model = "gpt-5.4-mini"
 
     assert_eq!(stdout["harness"].as_str(), Some("cursor"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
+}
+
+#[test]
+#[serial]
+fn resolve_exact_alias_uses_local_model_overlay_replace_by_key() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[models.fast]
+harness = "pi"
+model = "gpt-5.4-mini"
+provider = "openai"
+"#,
+    )
+    .expect("failed to write mars.local.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "fast", "--no-refresh-models"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+    assert_eq!(
+        stdout["source"].as_str(),
+        Some("consumer local (mars.local.toml)")
+    );
+    assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(stdout["harness"].as_str(), Some("pi"));
+    assert_eq!(stdout["spec"]["model"].as_str(), Some("gpt-5.4-mini"));
 }
 
 #[test]
@@ -557,6 +725,69 @@ harness_order = ["codex", "pi"]
         );
         assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
     }
+}
+
+#[test]
+#[serial]
+fn resolve_raw_model_uses_local_harness_order_overlay_and_suppresses_catalog_warning() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings]
+harness_order = ["pi", "codex"]
+"#,
+    )
+    .expect("failed to write mars.toml");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[settings]
+harness_order = ["codex", "pi"]
+"#,
+    )
+    .expect("failed to write mars.local.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    for model_arg in ["gpt-5", "openai/gpt-5"] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(["--json", "models", "resolve", model_arg]);
+        cmd.env("PATH", replace_path_with(&bin_dir));
+
+        let output = cmd.assert().success().get_output().clone();
+        let stdout: Value =
+            serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+
+        assert_eq!(stdout["harness"].as_str(), Some("codex"));
+        assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
+        assert_eq!(
+            stdout["route_trace"]["candidates_tried"],
+            json!(["codex"]),
+            "local harness_order should replace project harness order for {model_arg}"
+        );
+        assert!(
+            stdout.get("warning").is_none(),
+            "confirmed/constrained passthrough resolves should not emit catalog passthrough warning: {stdout}"
+        );
+    }
+
+    let mut text_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    text_cmd.args(["models", "resolve", "gpt-5"]);
+    text_cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = text_cmd.assert().success().get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        !stderr.contains("not found in catalog, passing through to harness"),
+        "text output should suppress passthrough catalog warning when route evidence is confirmed: {stderr}"
+    );
 }
 
 #[test]
@@ -831,6 +1062,50 @@ model = "gpt-5.4-mini"
 
     assert_eq!(stdout["harness"].as_str(), Some("cursor"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
+}
+
+#[test]
+#[serial]
+fn models_list_fails_when_local_settings_cannot_parse() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.local.toml"),
+        "[settings]\nharness_order = 1\n",
+    )
+    .expect("failed to write invalid mars.local.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list"]);
+
+    let output = cmd.assert().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("parse error"),
+        "expected parse error for invalid local settings, stderr:\n{stderr}"
+    );
+}
+
+#[test]
+#[serial]
+fn models_resolve_fails_when_local_settings_cannot_parse() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.local.toml"),
+        "[settings]\nharness_order = 1\n",
+    )
+    .expect("failed to write invalid mars.local.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["models", "resolve", "gpt-5"]);
+
+    let output = cmd.assert().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(
+        stderr.contains("parse error"),
+        "expected parse error for invalid local settings, stderr:\n{stderr}"
+    );
 }
 
 fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {

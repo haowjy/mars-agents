@@ -599,7 +599,15 @@ pub(crate) fn finalize(
         // new aliases we're about to persist. Sync never aborts on refresh
         // failure — warn and continue.
         let mars_path = ctx.project_root.join(".mars");
-        let ttl = crate::models::load_models_cache_ttl(ctx);
+        let ttl = state
+            .applied
+            .planned
+            .targeted
+            .resolved
+            .loaded
+            .effective
+            .settings
+            .models_cache_ttl_hours;
         let refresh = crate::models::resolve_models_refresh_control(
             request.options.refresh_models,
             request.options.no_refresh_models,

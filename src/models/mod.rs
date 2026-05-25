@@ -455,10 +455,14 @@ pub fn resolve_models_refresh_control(
     })
 }
 
-pub fn load_models_cache_ttl(ctx: &MarsContext) -> u32 {
-    crate::config::load(&ctx.project_root)
-        .map(|config| config.settings.models_cache_ttl_hours)
-        .unwrap_or(DEFAULT_MODELS_CACHE_TTL_HOURS)
+pub fn load_models_cache_ttl(ctx: &MarsContext) -> Result<u32, crate::error::MarsError> {
+    match crate::config::load_effective_project_config(&ctx.project_root) {
+        Ok(effective) => Ok(effective.settings.models_cache_ttl_hours),
+        Err(crate::error::MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
+            Ok(DEFAULT_MODELS_CACHE_TTL_HOURS)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn read_cache_tolerant(mars_dir: &Path) -> ModelsCache {
@@ -4529,7 +4533,7 @@ harness = "claude"
             project.path().to_path_buf(),
             project.path().join(".agents"),
         );
-        assert_eq!(load_models_cache_ttl(&ctx), 24);
+        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 24);
     }
 
     #[test]
@@ -4544,6 +4548,44 @@ harness = "claude"
             project.path().to_path_buf(),
             project.path().join(".agents"),
         );
-        assert_eq!(load_models_cache_ttl(&ctx), 48);
+        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 48);
+    }
+
+    #[test]
+    fn load_models_cache_ttl_reads_local_overlay_value() {
+        let project = tempdir().unwrap();
+        std::fs::write(
+            project.path().join("mars.toml"),
+            "[settings]\nmodels_cache_ttl_hours = 24\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("mars.local.toml"),
+            "[settings]\nmodels_cache_ttl_hours = 48\n",
+        )
+        .unwrap();
+        let ctx = crate::types::MarsContext::for_test(
+            project.path().to_path_buf(),
+            project.path().join(".agents"),
+        );
+        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 48);
+    }
+
+    #[test]
+    fn load_models_cache_ttl_returns_local_parse_error() {
+        let project = tempdir().unwrap();
+        std::fs::write(project.path().join("mars.toml"), "[settings]\n").unwrap();
+        std::fs::write(
+            project.path().join("mars.local.toml"),
+            "[settings]\nmodels_cache_ttl_hours = \"bad\"\n",
+        )
+        .unwrap();
+        let ctx = crate::types::MarsContext::for_test(
+            project.path().to_path_buf(),
+            project.path().join(".agents"),
+        );
+
+        let err = load_models_cache_ttl(&ctx).expect_err("invalid local config should fail");
+        assert!(err.to_string().contains("parse error"));
     }
 }

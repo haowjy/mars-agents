@@ -156,9 +156,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         .agent
         .and_then(|name| resolution_config.agents.get(name));
     let mars_dir = input.project_root.join(".mars");
-    let ttl_hours = crate::config::load(input.project_root)
-        .map(|config| config.settings.models_cache_ttl_hours)
-        .unwrap_or(24);
+    let ttl_hours = resolution_config.models_cache_ttl_hours;
     let (cache, catalog_outcome) =
         match models::ensure_fresh(&mars_dir, ttl_hours, input.models_refresh.catalog_mode) {
             Ok(pair) => pair,

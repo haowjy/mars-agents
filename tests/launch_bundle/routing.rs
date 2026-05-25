@@ -575,6 +575,49 @@ default_harness = "claude""#;
     );
 }
 
+pub(crate) fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+harness_order = ["pi", "codex"]"#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+    fs::write(
+        project_root.join("mars.local.toml"),
+        r#"[settings]
+harness_order = ["codex", "pi"]"#,
+    )
+    .expect("failed to write mars.local.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(
+        bundle["provenance"]["harness_source"].as_str(),
+        Some("config-order")
+    );
+    assert_eq!(
+        bundle["provenance"]["harness_order_position"].as_str(),
+        Some("0")
+    );
+    assert_eq!(
+        bundle["provenance"]["candidates_tried"].as_str(),
+        Some("codex")
+    );
+}
+
 pub(crate) fn build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug()
 {
     let temp = TempDir::new().unwrap();

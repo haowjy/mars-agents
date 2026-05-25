@@ -8,6 +8,7 @@ use crate::models::{self, ModelAlias};
 
 pub(super) struct PolicyResolutionConfig {
     pub(super) aliases: IndexMap<String, ModelAlias>,
+    pub(super) models_cache_ttl_hours: u32,
     pub(super) default_harness: Option<String>,
     pub(super) default_model: Option<String>,
     pub(super) harness_order: Option<Vec<String>>,
@@ -21,6 +22,7 @@ pub(super) fn load_policy_resolution_config(
     project_root: &Path,
 ) -> Result<PolicyResolutionConfig, MarsError> {
     let mut merged = models::builtin_aliases();
+    let mut models_cache_ttl_hours = crate::config::Settings::default().models_cache_ttl_hours;
     let mut default_harness = None;
     let mut default_model = None;
     let mut harness_order = None;
@@ -38,21 +40,20 @@ pub(super) fn load_policy_resolution_config(
         }
     }
 
-    match crate::config::load(project_root) {
-        Ok(config) => {
-            default_harness = config.settings.default_harness.clone();
-            default_model = config.settings.default_model.clone();
-            harness_order = config.settings.harness_order.clone();
-            provider_order = config.settings.provider_order.clone();
-            linked_harnesses = config.settings.linked_harnesses();
-            agents = config.agents.clone();
-            for (name, alias) in &config.models {
+    match crate::config::load_effective_project_config(project_root) {
+        Ok(effective) => {
+            models_cache_ttl_hours = effective.settings.models_cache_ttl_hours;
+            default_harness = effective.settings.default_harness.clone();
+            default_model = effective.settings.default_model.clone();
+            harness_order = effective.settings.harness_order.clone();
+            provider_order = effective.settings.provider_order.clone();
+            linked_harnesses = effective.settings.linked_harnesses();
+            agents = effective.agents.clone();
+            settings_model_policies = effective.settings.model_policies.clone();
+
+            for (name, alias) in &effective.models {
                 merged.insert(name.clone(), alias.clone());
             }
-            let local = crate::config::load_local(project_root)?;
-            agents = crate::config::merged_agent_overlays(&agents, &local);
-            settings_model_policies =
-                crate::config::merged_settings_model_policies(&config.settings, &local);
         }
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {}
         Err(err) => return Err(err),
@@ -63,6 +64,7 @@ pub(super) fn load_policy_resolution_config(
 
     Ok(PolicyResolutionConfig {
         aliases: merged,
+        models_cache_ttl_hours,
         default_harness,
         default_model,
         harness_order,

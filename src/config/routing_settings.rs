@@ -1,8 +1,5 @@
-use std::collections::BTreeSet;
-use std::path::Path;
-
-use crate::error::{ConfigError, MarsError};
 use crate::harness::registry::HarnessId;
+use std::collections::BTreeSet;
 
 use super::Settings;
 
@@ -23,18 +20,6 @@ pub struct ResolvedRoutingSettings {
 impl ResolvedRoutingSettings {
     pub fn from_settings(settings: &Settings) -> Self {
         resolve(settings)
-    }
-
-    /// Resolve routing settings from the layered effective project config.
-    /// Falls back to Settings::default() only when mars.toml is absent.
-    pub fn from_config(root: &Path) -> Result<Self, MarsError> {
-        match crate::config::load_effective_project_config(root) {
-            Ok(effective) => Ok(Self::from_settings(&effective.settings)),
-            Err(MarsError::Config(ConfigError::NotFound { .. })) => {
-                Ok(Self::from_settings(&Settings::default()))
-            }
-            Err(err) => Err(err),
-        }
     }
 
     pub fn harness_order_names(&self) -> Option<Vec<String>> {
@@ -230,8 +215,6 @@ fn is_known_provider_or_variant(provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
     fn settings_with_links(targets: Option<Vec<&str>>) -> Settings {
         Settings {
             managed_root: None,
@@ -288,48 +271,5 @@ mod tests {
 
         assert!(resolved.linked_harnesses.contains(&HarnessId::OpenCode));
         assert!(!resolved.linked_harnesses.contains(&HarnessId::Codex));
-    }
-
-    #[test]
-    fn from_config_falls_back_to_default_settings_when_missing() {
-        let temp = TempDir::new().expect("temp dir");
-        let resolved = ResolvedRoutingSettings::from_config(temp.path()).expect("fallback");
-        assert_eq!(resolved, resolve(&Settings::default()));
-    }
-
-    #[test]
-    fn from_config_applies_local_harness_order_override() {
-        let temp = TempDir::new().expect("temp dir");
-        std::fs::write(
-            temp.path().join("mars.toml"),
-            "[settings]\nharness_order = [\"claude\", \"pi\"]\n",
-        )
-        .unwrap();
-        std::fs::write(
-            temp.path().join("mars.local.toml"),
-            "[settings]\nharness_order = [\"cursor\", \"pi\"]\n",
-        )
-        .unwrap();
-
-        let resolved = ResolvedRoutingSettings::from_config(temp.path()).expect("config loaded");
-        assert_eq!(
-            resolved.harness_order_names(),
-            Some(vec!["cursor".to_string(), "pi".to_string()])
-        );
-    }
-
-    #[test]
-    fn from_config_returns_local_parse_errors() {
-        let temp = TempDir::new().expect("temp dir");
-        std::fs::write(temp.path().join("mars.toml"), "[settings]\n").unwrap();
-        std::fs::write(
-            temp.path().join("mars.local.toml"),
-            "[settings]\nharness_order = 1\n",
-        )
-        .unwrap();
-
-        let err = ResolvedRoutingSettings::from_config(temp.path())
-            .expect_err("invalid local config should be returned");
-        assert!(err.to_string().contains("parse error"));
     }
 }

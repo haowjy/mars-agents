@@ -1069,95 +1069,39 @@ model = "gpt-5.4-mini"
 
 #[test]
 #[serial]
-fn models_list_fails_when_local_settings_cannot_parse() {
-    let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.local.toml"),
-        "[settings]\nharness_order = 1\n",
-    )
-    .expect("failed to write invalid mars.local.toml");
+fn models_commands_fail_before_fetch_when_local_settings_cannot_parse() {
+    for args in [
+        ["--json", "models", "list"].as_slice(),
+        ["models", "resolve", "gpt-5"].as_slice(),
+        ["models", "refresh"].as_slice(),
+    ] {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path(API_PATH);
+            then.status(200).json_body(sample_catalog_json());
+        });
+        let (temp, project_root) = setup_project(&server);
+        fs::write(
+            project_root.join("mars.local.toml"),
+            "[settings]\nharness_order = 1\n",
+        )
+        .expect("failed to write invalid mars.local.toml");
 
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(args);
 
-    let output = cmd.assert().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(
-        stderr.contains("parse error"),
-        "expected parse error for invalid local settings, stderr:\n{stderr}"
-    );
-    assert_eq!(
-        mock.hits(),
-        0,
-        "invalid local settings should fail before any models catalog fetch"
-    );
-}
-
-#[test]
-#[serial]
-fn models_resolve_fails_when_local_settings_cannot_parse() {
-    let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.local.toml"),
-        "[settings]\nharness_order = 1\n",
-    )
-    .expect("failed to write invalid mars.local.toml");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "resolve", "gpt-5"]);
-
-    let output = cmd.assert().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(
-        stderr.contains("parse error"),
-        "expected parse error for invalid local settings, stderr:\n{stderr}"
-    );
-    assert_eq!(
-        mock.hits(),
-        0,
-        "invalid local settings should fail before any models catalog fetch"
-    );
-}
-
-#[test]
-#[serial]
-fn models_refresh_fails_when_local_settings_cannot_parse_without_fetching_catalog() {
-    let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.local.toml"),
-        "[settings]\nharness_order = 1\n",
-    )
-    .expect("failed to write invalid mars.local.toml");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "refresh"]);
-
-    let output = cmd.assert().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(
-        stderr.contains("parse error"),
-        "expected parse error for invalid local settings, stderr:\n{stderr}"
-    );
-    assert_eq!(
-        mock.hits(),
-        0,
-        "invalid local settings should fail before any models catalog fetch"
-    );
+        let output = cmd.assert().code(2).get_output().clone();
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+        assert!(
+            stderr.contains("parse error"),
+            "expected parse error for invalid local settings, stderr:\n{stderr}"
+        );
+        assert_eq!(
+            mock.hits(),
+            0,
+            "invalid local settings should fail before any models catalog fetch for {args:?}"
+        );
+    }
 }
 
 fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {

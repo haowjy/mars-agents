@@ -19,8 +19,7 @@ pub mod routing_settings;
 pub mod targets;
 
 pub use layering::{
-    SettingsLayerInputs, layered_settings, merged_settings, merged_settings_model_policies,
-    overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
+    merged_settings, overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
 };
 
 /// Top-level mars.toml configuration.
@@ -765,26 +764,9 @@ pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), Mars
     Ok((config, local))
 }
 
-pub fn load_effective_settings(root: &Path) -> Result<Settings, MarsError> {
-    Ok(load_effective_project_config(root)?.settings)
-}
-
-pub fn effective_project_config(config: &Config, local: &LocalConfig) -> EffectiveProjectConfig {
-    effective_project_config_with_layers(config, local, None)
-}
-
-fn effective_project_config_with_layers(
-    config: &Config,
-    local: &LocalConfig,
-    project_overlay: Option<&LocalSettings>,
-) -> EffectiveProjectConfig {
+fn effective_project_config(config: &Config, local: &LocalConfig) -> EffectiveProjectConfig {
     EffectiveProjectConfig {
-        settings: layered_settings(SettingsLayerInputs {
-            user: None,
-            project: Some(&config.settings),
-            project_overlay,
-            project_local: Some(&local.settings),
-        }),
+        settings: merged_settings(&config.settings, local),
         models: overlay_models_replace_by_key(&config.models, local),
         agents: overlay_agent_overlays_replace_by_key(&config.agents, local),
     }
@@ -796,8 +778,7 @@ pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConf
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
     let (config, local) = load_config_with_local(root)?;
-    let project_overlay = layering::load_project_settings_overlay(root)?;
-    let effective = effective_project_config_with_layers(&config, &local, project_overlay.as_ref());
+    let effective = effective_project_config(&config, &local);
     Ok(LoadedProjectConfig {
         config,
         local,
@@ -1718,48 +1699,6 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn merged_settings_model_policies_use_local_replacement_when_present() {
-        let mut base_override = serde_yaml::Mapping::new();
-        base_override.insert(
-            serde_yaml::Value::String("harness".to_string()),
-            serde_yaml::Value::String("codex".to_string()),
-        );
-        let base_rule = ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "gpt55".to_string(),
-            no_fallback: false,
-            overrides: base_override,
-        };
-
-        let mut local_override = serde_yaml::Mapping::new();
-        local_override.insert(
-            serde_yaml::Value::String("harness".to_string()),
-            serde_yaml::Value::String("opencode".to_string()),
-        );
-        let local_rule = ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "gpt55".to_string(),
-            no_fallback: false,
-            overrides: local_override,
-        };
-
-        let settings = Settings {
-            model_policies: vec![base_rule],
-            ..Settings::default()
-        };
-        let local = LocalConfig {
-            settings: LocalSettings {
-                model_policies: Some(vec![local_rule.clone()]),
-                ..LocalSettings::default()
-            },
-            ..LocalConfig::default()
-        };
-
-        let merged = merged_settings_model_policies(&settings, &local);
-        assert_eq!(merged, vec![local_rule]);
-    }
-
-    #[test]
     fn merged_settings_applies_local_routing_overrides() {
         let settings = Settings {
             default_harness: Some("claude".to_string()),
@@ -1787,37 +1726,6 @@ override = { effort = "high" }
             Some(vec!["cursor".to_string(), "pi".to_string()])
         );
         assert_eq!(merged.provider_order, Some(vec!["openai".to_string()]));
-    }
-
-    #[test]
-    fn layered_settings_project_overlay_preserves_user_when_project_omits_field() {
-        let user = LocalSettings {
-            harness_order: Some(vec!["cursor".to_string(), "pi".to_string()]),
-            default_model: Some("user-default".to_string()),
-            ..LocalSettings::default()
-        };
-        let project = Settings {
-            default_model: Some("project-default".to_string()),
-            ..Settings::default()
-        };
-        let project_overlay = LocalSettings {
-            default_model: Some("project-default".to_string()),
-            ..LocalSettings::default()
-        };
-
-        let merged = layered_settings(SettingsLayerInputs {
-            user: Some(&user),
-            project: Some(&project),
-            project_overlay: Some(&project_overlay),
-            project_local: None,
-        });
-
-        assert_eq!(merged.default_model.as_deref(), Some("project-default"));
-        assert_eq!(
-            merged.harness_order,
-            Some(vec!["cursor".to_string(), "pi".to_string()]),
-            "project omitted harness_order, so user value should survive"
-        );
     }
 
     #[test]
@@ -1853,6 +1761,18 @@ override = { effort = "high" }
 
     #[test]
     fn merged_settings_replaces_scalar_table_and_array_fields() {
+        let base_rule = ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "gpt55".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        };
+        let local_rule = ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "gptmini".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
             model_visibility: ModelVisibility {
@@ -1861,6 +1781,7 @@ override = { effort = "high" }
             },
             models_cache_ttl_hours: 24,
             min_mars_version: Some("0.1.0".to_string()),
+            model_policies: vec![base_rule],
             ..Settings::default()
         };
         let local = LocalConfig {
@@ -1872,6 +1793,7 @@ override = { effort = "high" }
                 }),
                 models_cache_ttl_hours: Some(48),
                 min_mars_version: Some("0.2.0".to_string()),
+                model_policies: Some(vec![local_rule.clone()]),
                 ..LocalSettings::default()
             },
             ..LocalConfig::default()
@@ -1889,6 +1811,7 @@ override = { effort = "high" }
             merged.model_visibility.include,
             Some(vec!["anthropic/*".to_string()])
         );
+        assert_eq!(merged.model_policies, vec![local_rule]);
     }
 
     #[test]
@@ -1969,38 +1892,6 @@ override = { effort = "high" }
         );
         assert_eq!(merged["legacy"].harness.as_deref(), Some("claude"));
         assert_eq!(merged["local-only"].harness.as_deref(), Some("pi"));
-    }
-
-    #[test]
-    fn layered_settings_preserves_user_project_project_local_precedence() {
-        let user = LocalSettings {
-            default_model: Some("user-model".to_string()),
-            harness_order: Some(vec!["cursor".to_string()]),
-            ..LocalSettings::default()
-        };
-        let project = Settings {
-            default_model: Some("project-model".to_string()),
-            harness_order: Some(vec!["codex".to_string()]),
-            ..Settings::default()
-        };
-        let project_local = LocalSettings {
-            default_model: Some("local-model".to_string()),
-            ..LocalSettings::default()
-        };
-
-        let merged = layered_settings(SettingsLayerInputs {
-            user: Some(&user),
-            project: Some(&project),
-            project_overlay: None,
-            project_local: Some(&project_local),
-        });
-
-        assert_eq!(merged.default_model.as_deref(), Some("local-model"));
-        assert_eq!(
-            merged.harness_order,
-            Some(vec!["codex".to_string()]),
-            "project-local omitted harness_order so project value should remain"
-        );
     }
 
     #[test]

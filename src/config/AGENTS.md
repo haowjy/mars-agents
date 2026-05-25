@@ -23,8 +23,7 @@ pipeline operates on EffectiveConfig only
 
 ## Layering (`layering.rs`)
 
-- `SettingsLayerInputs` models precedence boundary: `user < project < project-local`.
-- Project settings can apply as **presence-aware overlay** (per-field) when loaded from `mars.toml`.
+- `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
 - Model and agent overlays are **replace-by-key** (entire alias/agent entry replaces lower layer).
 
 ## Dependency Entry Validation

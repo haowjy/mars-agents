@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::types::MarsContext;
 
 pub mod availability;
 mod dependencies;
@@ -367,7 +366,6 @@ pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
 
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
-const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 pub(crate) const FETCH_FAIL_COOLDOWN_SECS: u64 = 300;
 const FETCH_FAIL_COOLDOWN_REASON: &str = "recent fetch attempt failed; backing off (cooldown)";
 
@@ -457,14 +455,28 @@ pub fn resolve_models_refresh_control(
     })
 }
 
-pub fn load_models_cache_ttl(ctx: &MarsContext) -> Result<u32, crate::error::MarsError> {
-    match crate::config::load_effective_project_config(&ctx.project_root) {
-        Ok(effective) => Ok(effective.settings.models_cache_ttl_hours),
-        Err(crate::error::MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
-            Ok(DEFAULT_MODELS_CACHE_TTL_HOURS)
-        }
-        Err(err) => Err(err),
+fn load_cached_dependency_aliases(project_root: &Path) -> IndexMap<String, ModelAlias> {
+    let merged_path = project_root.join(".mars").join("models-merged.json");
+    std::fs::read_to_string(&merged_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<IndexMap<String, ModelAlias>>(&content).ok())
+        .unwrap_or_default()
+}
+
+pub fn merged_runtime_aliases(
+    project_root: &Path,
+    project_aliases: Option<&IndexMap<String, ModelAlias>>,
+) -> IndexMap<String, ModelAlias> {
+    let mut merged = builtin_aliases();
+    for (name, alias) in load_cached_dependency_aliases(project_root) {
+        merged.insert(name, alias);
     }
+    if let Some(project_aliases) = project_aliases {
+        for (name, alias) in project_aliases {
+            merged.insert(name.clone(), alias.clone());
+        }
+    }
+    merged
 }
 
 fn read_cache_tolerant(mars_dir: &Path) -> ModelsCache {
@@ -4529,65 +4541,50 @@ harness = "claude"
     }
 
     #[test]
-    fn load_models_cache_ttl_defaults_to_24_when_config_missing() {
+    fn merged_runtime_aliases_layers_builtin_cached_and_project_aliases() {
         let project = tempdir().unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
-        );
-        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 24);
-    }
+        std::fs::create_dir_all(project.path().join(".mars")).unwrap();
 
-    #[test]
-    fn load_models_cache_ttl_reads_config_value() {
-        let project = tempdir().unwrap();
+        let mut cached = IndexMap::new();
+        cached.insert("dep".to_string(), pinned_alias(Some("codex"), "dep-model"));
+        cached.insert(
+            "override".to_string(),
+            pinned_alias(Some("codex"), "dep-override"),
+        );
         std::fs::write(
-            project.path().join("mars.toml"),
-            "[settings]\nmodels_cache_ttl_hours = 48\n",
+            project.path().join(".mars").join("models-merged.json"),
+            serde_json::to_string(&cached).unwrap(),
         )
         .unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
-        );
-        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 48);
-    }
 
-    #[test]
-    fn load_models_cache_ttl_reads_local_overlay_value() {
-        let project = tempdir().unwrap();
-        std::fs::write(
-            project.path().join("mars.toml"),
-            "[settings]\nmodels_cache_ttl_hours = 24\n",
-        )
-        .unwrap();
-        std::fs::write(
-            project.path().join("mars.local.toml"),
-            "[settings]\nmodels_cache_ttl_hours = 48\n",
-        )
-        .unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
+        let mut project_aliases = IndexMap::new();
+        project_aliases.insert(
+            "override".to_string(),
+            pinned_alias(Some("claude"), "project-override"),
         );
-        assert_eq!(load_models_cache_ttl(&ctx).unwrap(), 48);
-    }
-
-    #[test]
-    fn load_models_cache_ttl_returns_local_parse_error() {
-        let project = tempdir().unwrap();
-        std::fs::write(project.path().join("mars.toml"), "[settings]\n").unwrap();
-        std::fs::write(
-            project.path().join("mars.local.toml"),
-            "[settings]\nmodels_cache_ttl_hours = \"bad\"\n",
-        )
-        .unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
+        project_aliases.insert(
+            "project".to_string(),
+            pinned_alias(Some("pi"), "project-model"),
         );
 
-        let err = load_models_cache_ttl(&ctx).expect_err("invalid local config should fail");
-        assert!(err.to_string().contains("parse error"));
+        let merged = merged_runtime_aliases(project.path(), Some(&project_aliases));
+
+        assert!(merged.contains_key("opus"));
+        assert_eq!(
+            merged.get("dep").and_then(|alias| alias.harness.as_deref()),
+            Some("codex")
+        );
+        assert_eq!(
+            merged
+                .get("override")
+                .and_then(|alias| alias.harness.as_deref()),
+            Some("claude")
+        );
+        assert_eq!(
+            merged
+                .get("project")
+                .and_then(|alias| alias.harness.as_deref()),
+            Some("pi")
+        );
     }
 }

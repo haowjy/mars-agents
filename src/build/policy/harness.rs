@@ -410,7 +410,6 @@ mod tests {
             agent: None,
             profile,
             model_override,
-            config_default_model: None,
             harness_override,
             effort_override: None,
             approval_override: None,

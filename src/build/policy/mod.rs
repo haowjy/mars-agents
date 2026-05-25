@@ -3,12 +3,11 @@ use std::path::Path;
 
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
-use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
+use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
 use crate::models;
 
-mod config;
 mod execution;
 mod harness;
 mod model;
@@ -19,7 +18,6 @@ pub struct PolicyInput<'a> {
     pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
-    pub config_default_model: Option<&'a str>,
     pub harness_override: Option<&'a str>,
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
@@ -147,16 +145,28 @@ impl MatchedModelPolicy {
     }
 }
 
-pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsError> {
+pub fn resolve_policy(
+    effective_config: &EffectiveProjectConfig,
+    input: PolicyInput<'_>,
+) -> Result<ResolvedPolicy, MarsError> {
     let mut warnings = Vec::new();
     let mut provenance = BTreeMap::new();
 
-    let resolution_config = config::load_policy_resolution_config(input.project_root)?;
+    let aliases =
+        models::merged_runtime_aliases(input.project_root, Some(&effective_config.models));
     let overlay = input
         .agent
-        .and_then(|name| resolution_config.agents.get(name));
+        .and_then(|name| effective_config.agents.get(name));
+    let settings_model_policies = &effective_config.settings.model_policies;
+    let linked_harnesses = effective_config.settings.linked_harnesses();
+    let default_harness_order = crate::harness::registry::default_harness_order_names();
+    let harness_order = effective_config
+        .settings
+        .harness_order
+        .as_deref()
+        .unwrap_or(default_harness_order.as_slice());
     let mars_dir = input.project_root.join(".mars");
-    let ttl_hours = resolution_config.models_cache_ttl_hours;
+    let ttl_hours = effective_config.settings.models_cache_ttl_hours;
     let (cache, catalog_outcome) =
         match models::ensure_fresh(&mars_dir, ttl_hours, input.models_refresh.catalog_mode) {
             Ok(pair) => pair,
@@ -175,20 +185,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         warnings.push(format!("models cache: {reason}"));
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
-    let model_input = PolicyInput {
-        project_root: input.project_root,
-        agent: input.agent,
-        profile: input.profile,
-        model_override: input.model_override,
-        config_default_model: resolution_config.default_model.as_deref(),
-        harness_override: input.harness_override,
-        effort_override: input.effort_override,
-        approval_override: input.approval_override,
-        sandbox_override: input.sandbox_override,
-        models_refresh: input.models_refresh,
-    };
-    let resolved_model =
-        model::resolve_model(&model_input, overlay, &resolution_config.aliases, &cache)?;
+    let resolved_model = model::resolve_model(
+        &input,
+        effective_config.settings.default_model.as_deref(),
+        overlay,
+        &aliases,
+        &cache,
+    )?;
 
     warnings.extend(resolved_model.warnings);
     provenance.insert(
@@ -199,7 +202,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         effective_policies(
             overlay,
             &input.profile.model_policies,
-            &resolution_config.settings_model_policies,
+            settings_model_policies,
         ),
         &resolved_model.model,
         &resolved_model.model_token,
@@ -215,7 +218,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
     let cursor_probe_result = capability_snapshot.cursor.result();
 
     let harness_resolution = harness::resolve_harness(
-        &model_input,
+        &input,
         resolved_model.alias,
         overlay,
         matched_policy.as_ref(),
@@ -223,12 +226,11 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             model_id: &resolved_model.model,
             provider_for_order: resolved_model.provider_for_order.as_deref(),
             provider_constraint: resolved_model.provider_constraint.as_deref(),
-            settings_provider_order: resolution_config.provider_order.as_deref(),
-            config_default_harness: resolution_config.default_harness.as_deref(),
-            settings_harness_order: resolution_config.harness_order.as_deref(),
+            settings_provider_order: effective_config.settings.provider_order.as_deref(),
+            config_default_harness: effective_config.settings.default_harness.as_deref(),
+            settings_harness_order: Some(harness_order),
             installed_harnesses: &installed_harnesses,
-            linked_harnesses: (!resolution_config.linked_harnesses.is_empty())
-                .then_some(resolution_config.linked_harnesses.as_slice()),
+            linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
@@ -348,7 +350,7 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             .to_string(),
         provider_constraint: resolved_model.provider_constraint.as_deref(),
         provider_for_order: resolved_model.provider_for_order.as_deref(),
-        settings_provider_order: resolution_config.provider_order.as_deref(),
+        settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
         opencode_probe_result,
         pi_probe_result,

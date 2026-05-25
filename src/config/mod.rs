@@ -631,11 +631,18 @@ pub struct EffectiveConfig {
 /// Layered project-level config used by routing and policy consumers.
 ///
 /// Precedence: project config < project-local overrides.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EffectiveProjectConfig {
     pub settings: Settings,
     pub models: IndexMap<String, crate::models::ModelAlias>,
     pub agents: IndexMap<String, AgentOverlay>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoadedProjectConfig {
+    pub(crate) config: Config,
+    pub(crate) local: LocalConfig,
+    pub(crate) effective: EffectiveProjectConfig,
 }
 
 /// A fully-resolved source with override tracking.
@@ -784,13 +791,18 @@ fn effective_project_config_with_layers(
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
+    Ok(load_project_config_layers(root)?.effective)
+}
+
+pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
     let (config, local) = load_config_with_local(root)?;
     let project_overlay = layering::load_project_settings_overlay(root)?;
-    Ok(effective_project_config_with_layers(
-        &config,
-        &local,
-        project_overlay.as_ref(),
-    ))
+    let effective = effective_project_config_with_layers(&config, &local, project_overlay.as_ref());
+    Ok(LoadedProjectConfig {
+        config,
+        local,
+        effective,
+    })
 }
 
 /// Merge config + local overrides into EffectiveConfig.

@@ -12,6 +12,7 @@ use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_too
 
 use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
+use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 2;
@@ -77,18 +78,22 @@ pub fn build_launch_bundle(
         agent_body = None;
     }
 
-    let policy = resolve_policy(PolicyInput {
-        project_root: &ctx.project_root,
-        agent: request.agent.as_deref(),
-        profile: &profile,
-        model_override: request.model.as_deref(),
-        config_default_model: None,
-        harness_override: request.harness.as_deref(),
-        effort_override: request.effort.as_deref(),
-        approval_override: request.approval.as_deref(),
-        sandbox_override: request.sandbox.as_deref(),
-        models_refresh: request.models_refresh,
-    })?;
+    let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+
+    let policy = resolve_policy(
+        &effective_project_config,
+        PolicyInput {
+            project_root: &ctx.project_root,
+            agent: request.agent.as_deref(),
+            profile: &profile,
+            model_override: request.model.as_deref(),
+            harness_override: request.harness.as_deref(),
+            effort_override: request.effort.as_deref(),
+            approval_override: request.approval.as_deref(),
+            sandbox_override: request.sandbox.as_deref(),
+            models_refresh: request.models_refresh,
+        },
+    )?;
 
     warnings.extend(policy.warnings);
 
@@ -152,6 +157,18 @@ fn empty_agent_profile() -> AgentProfile {
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),
+    }
+}
+
+fn load_effective_project_config_or_default(
+    project_root: &std::path::Path,
+) -> Result<EffectiveProjectConfig, MarsError> {
+    match crate::config::load_effective_project_config(project_root) {
+        Ok(config) => Ok(config),
+        Err(MarsError::Config(ConfigError::NotFound { .. })) => {
+            Ok(EffectiveProjectConfig::default())
+        }
+        Err(err) => Err(err),
     }
 }
 

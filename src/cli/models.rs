@@ -125,7 +125,8 @@ fn collect_models_capability_snapshot(
 
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx)?;
+    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
+    let ttl = models_cache_ttl_hours(project_config.as_ref());
     eprint!("Fetching models catalog... ");
 
     let (cache, outcome) = models::ensure_fresh(&mars, ttl, models::RefreshMode::Force)?;
@@ -165,12 +166,19 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
 
 fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx)?;
+    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
+    let ttl = models_cache_ttl_hours(project_config.as_ref());
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let mode = refresh.catalog_mode;
-    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root)?;
+    let default_settings = crate::config::Settings::default();
+    let settings = project_config
+        .as_ref()
+        .map(|loaded| &loaded.effective.settings)
+        .unwrap_or(&default_settings);
+    let routing_settings = ResolvedRoutingSettings::from_settings(settings);
     let routing_diagnostics = routing_settings.diagnostic_messages();
+    let visibility = effective_visibility(project_config.as_ref(), args);
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
     }
@@ -191,8 +199,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         return run_list_catalog(ListCatalogInput {
             cache: &cache,
             outcome: &outcome,
-            ctx,
             args,
+            visibility: &visibility,
             routing_settings: &routing_settings,
             routing_diagnostics: &routing_diagnostics,
             capability_snapshot: &capability_snapshot,
@@ -201,13 +209,12 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     }
 
     // Load config to get consumer models + trigger merge
-    let merged = load_merged_aliases(ctx)?;
+    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref());
     let installed = capability_snapshot.installed_harnesses();
     let is_offline = capability_snapshot.offline;
     let opencode_probe_result = capability_snapshot.opencode.result().cloned();
     let pi_probe_result = capability_snapshot.pi.result().cloned();
     let cursor_probe_result = capability_snapshot.cursor.result().cloned();
-    let visibility = effective_visibility(ctx, args)?;
     if args.all {
         let catalog_slugs = models::catalog_model_slugs(&cache);
         let availability_ctx = AvailabilityContext {
@@ -401,8 +408,8 @@ struct RouteTraceInput<'a> {
 struct ListCatalogInput<'a> {
     cache: &'a models::ModelsCache,
     outcome: &'a models::RefreshOutcome,
-    ctx: &'a MarsContext,
     args: &'a ListArgs,
+    visibility: &'a crate::config::ModelVisibility,
     routing_settings: &'a ResolvedRoutingSettings,
     routing_diagnostics: &'a [String],
     capability_snapshot: &'a CapabilitySnapshot,
@@ -516,8 +523,8 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
     let ListCatalogInput {
         cache,
         outcome,
-        ctx,
         args,
+        visibility,
         routing_settings,
         routing_diagnostics,
         capability_snapshot,
@@ -539,9 +546,8 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
         is_offline,
         routing_settings,
     };
-    let visibility = effective_visibility(ctx, args)?;
     let models = collect_catalog_model_entries(cache, availability_ctx);
-    let models = filter_model_entries_by_visibility(models, &visibility);
+    let models = filter_model_entries_by_visibility(models, visibility);
 
     if json {
         let entries: Vec<serde_json::Value> = models
@@ -940,23 +946,19 @@ fn route_trace_for_fixed_harness(
 }
 
 fn effective_visibility(
-    ctx: &MarsContext,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
     args: &ListArgs,
-) -> Result<crate::config::ModelVisibility, MarsError> {
+) -> crate::config::ModelVisibility {
     if args.include.is_some() || args.exclude.is_some() {
-        return Ok(crate::config::ModelVisibility {
+        return crate::config::ModelVisibility {
             include: args.include.clone(),
             exclude: args.exclude.clone(),
-        });
+        };
     }
 
-    match crate::config::load_effective_project_config(&ctx.project_root) {
-        Ok(effective) => Ok(effective.settings.model_visibility),
-        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
-            Ok(crate::config::ModelVisibility::default())
-        }
-        Err(err) => Err(err),
-    }
+    project_config
+        .map(|loaded| loaded.effective.settings.model_visibility.clone())
+        .unwrap_or_default()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1212,13 +1214,19 @@ fn print_route_text(trace: &crate::routing::RoutingTrace) {
 }
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let merged = load_merged_aliases(ctx)?;
+    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
+    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref());
     let mars = mars_dir(ctx);
-    let ttl = models::load_models_cache_ttl(ctx)?;
+    let ttl = models_cache_ttl_hours(project_config.as_ref());
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let mode = refresh.catalog_mode;
-    let routing_settings = ResolvedRoutingSettings::from_config(&ctx.project_root)?;
+    let default_settings = crate::config::Settings::default();
+    let settings = project_config
+        .as_ref()
+        .map(|loaded| &loaded.effective.settings)
+        .unwrap_or(&default_settings);
+    let routing_settings = ResolvedRoutingSettings::from_settings(settings);
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
@@ -1247,7 +1255,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 AutoResolveAliasCacheUnavailableInput {
                     name: &args.name,
                     alias,
-                    ctx,
+                    project_config: project_config.as_ref(),
                     cache_error: cache_error.as_deref(),
                     routing_diagnostics: &routing_diagnostics,
                     json,
@@ -1287,7 +1295,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             args,
             alias,
             &merged,
-            ctx,
+            project_config.as_ref(),
             runtime,
             &routing_diagnostics,
             json,
@@ -1455,7 +1463,7 @@ fn run_resolve_exact_alias(
     args: &ResolveAliasArgs,
     alias: &ModelAlias,
     merged: &IndexMap<String, ModelAlias>,
-    ctx: &MarsContext,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
     runtime: ResolveRuntime<'_>,
     routing_diagnostics: &[String],
     json: bool,
@@ -1468,7 +1476,7 @@ fn run_resolve_exact_alias(
     }
 
     let name = &args.name;
-    let source = determine_source(name, ctx)?;
+    let source = determine_source(name, project_config);
     let mut diag = DiagnosticCollector::new();
     let mut resolved_entry = models::resolve_one_with_probe(
         name,
@@ -1695,7 +1703,7 @@ struct ResolveFixedHarnessFailureInput<'a> {
 struct AutoResolveAliasCacheUnavailableInput<'a> {
     name: &'a str,
     alias: &'a ModelAlias,
-    ctx: &'a MarsContext,
+    project_config: Option<&'a crate::config::LoadedProjectConfig>,
     cache_error: Option<&'a str>,
     routing_diagnostics: &'a [String],
     json: bool,
@@ -1707,12 +1715,12 @@ fn run_auto_resolve_alias_cache_unavailable(
     let AutoResolveAliasCacheUnavailableInput {
         name,
         alias,
-        ctx,
+        project_config,
         cache_error,
         routing_diagnostics,
         json,
     } = input;
-    let source = determine_source(name, ctx)?;
+    let source = determine_source(name, project_config);
     let detail = cache_error.unwrap_or("models cache unavailable");
     let error = format!(
         "alias `{name}` requires models cache for auto-resolve, but cache is unavailable ({detail})"
@@ -2029,54 +2037,51 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn load_project_config_layers_optional(
+    project_root: &std::path::Path,
+) -> Result<Option<crate::config::LoadedProjectConfig>, MarsError> {
+    match crate::config::load_project_config_layers(project_root) {
+        Ok(loaded) => Ok(Some(loaded)),
+        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn models_cache_ttl_hours(project_config: Option<&crate::config::LoadedProjectConfig>) -> u32 {
+    project_config
+        .map(|loaded| loaded.effective.settings.models_cache_ttl_hours)
+        .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours)
+}
+
 /// Load model aliases by combining cached dependency aliases with consumer config.
 fn load_merged_aliases(
-    ctx: &MarsContext,
-) -> Result<indexmap::IndexMap<String, ModelAlias>, MarsError> {
-    // Start with builtins (lowest precedence)
-    let mut merged = models::builtin_aliases();
-
-    // Layer dep aliases from cached merge file (overrides builtins)
-    let mars_dir = ctx.project_root.join(".mars");
-    let merged_path = mars_dir.join("models-merged.json");
-    if let Ok(content) = std::fs::read_to_string(&merged_path)
-        && let Ok(cached) = serde_json::from_str::<IndexMap<String, ModelAlias>>(&content)
-    {
-        for (name, alias) in cached {
-            merged.insert(name, alias);
-        }
-    }
-
-    // Layer consumer + project-local config on top (highest precedence).
-    match crate::config::load_effective_project_config(&ctx.project_root) {
-        Ok(effective) => {
-            for (name, alias) in &effective.models {
-                merged.insert(name.clone(), alias.clone());
-            }
-        }
-        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {}
-        Err(err) => return Err(err),
-    }
-
-    Ok(merged)
+    project_root: &std::path::Path,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> indexmap::IndexMap<String, ModelAlias> {
+    models::merged_runtime_aliases(
+        project_root,
+        project_config.map(|loaded| &loaded.effective.models),
+    )
 }
 
 /// Determine which layer provides an alias (consumer or dependency).
-fn determine_source(name: &str, ctx: &MarsContext) -> Result<String, MarsError> {
-    let (config, local) = match crate::config::load_config_with_local(&ctx.project_root) {
-        Ok(pair) => pair,
-        Err(_) => return Ok("unknown".to_string()),
+fn determine_source(
+    name: &str,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> String {
+    let Some(project_config) = project_config else {
+        return "unknown".to_string();
     };
 
-    if local.models.contains_key(name) {
-        return Ok("consumer local (mars.local.toml)".to_string());
+    if project_config.local.models.contains_key(name) {
+        return "consumer local (mars.local.toml)".to_string();
     }
 
-    if config.models.contains_key(name) {
-        return Ok("consumer (mars.toml)".to_string());
+    if project_config.config.models.contains_key(name) {
+        return "consumer (mars.toml)".to_string();
     }
 
-    Ok("dependency".to_string())
+    "dependency".to_string()
 }
 
 fn format_spec(spec: &ModelSpec) -> serde_json::Value {

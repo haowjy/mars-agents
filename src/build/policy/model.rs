@@ -24,6 +24,7 @@ pub(super) struct ResolvedModel<'a> {
 /// `settings.default_model` from `mars.toml`.
 pub(super) fn resolve_model<'a>(
     input: &PolicyInput<'_>,
+    config_default_model: Option<&str>,
     overlay: Option<&AgentOverlay>,
     aliases: &'a IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
@@ -36,7 +37,7 @@ pub(super) fn resolve_model<'a>(
             Some(model) => (model.to_string(), PolicySource::Overlay),
             None => match input.profile.model.as_deref() {
                 Some(model) => (model.to_string(), PolicySource::Profile),
-                None => match input.config_default_model {
+                None => match config_default_model {
                     Some(model) => (model.to_string(), PolicySource::Project),
                     None => (String::new(), PolicySource::Unset),
                 },
@@ -138,7 +139,6 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: Some("claude-opus-4-6"),
-            config_default_model: None,
             harness_override: None,
             effort_override: None,
             approval_override: None,
@@ -151,8 +151,8 @@ mod tests {
             fetched_at: None,
         };
 
-        let resolved =
-            resolve_model(&input, None, &aliases, &cache).expect("bare model id should resolve");
+        let resolved = resolve_model(&input, None, None, &aliases, &cache)
+            .expect("bare model id should resolve");
 
         assert_eq!(resolved.model, "claude-opus-4-6");
         assert_eq!(resolved.provider_for_order.as_deref(), Some("anthropic"));
@@ -166,7 +166,6 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: None,
-            config_default_model: None,
             harness_override: None,
             effort_override: None,
             approval_override: None,
@@ -180,7 +179,7 @@ mod tests {
         };
 
         let resolved =
-            resolve_model(&input, None, &aliases, &cache).expect("missing model is allowed");
+            resolve_model(&input, None, None, &aliases, &cache).expect("missing model is allowed");
 
         assert_eq!(resolved.model_token, "");
         assert_eq!(resolved.model_source, PolicySource::Unset);

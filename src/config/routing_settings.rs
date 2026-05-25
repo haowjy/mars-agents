@@ -21,13 +21,17 @@ pub struct ResolvedRoutingSettings {
 }
 
 impl ResolvedRoutingSettings {
+    pub fn from_settings(settings: &Settings) -> Self {
+        resolve(settings)
+    }
+
     /// Resolve routing settings from the layered effective project config.
     /// Falls back to Settings::default() only when mars.toml is absent.
     pub fn from_config(root: &Path) -> Result<Self, MarsError> {
         match crate::config::load_effective_project_config(root) {
-            Ok(effective) => Ok(resolve(&effective.settings)),
+            Ok(effective) => Ok(Self::from_settings(&effective.settings)),
             Err(MarsError::Config(ConfigError::NotFound { .. })) => {
-                Ok(resolve(&Settings::default()))
+                Ok(Self::from_settings(&Settings::default()))
             }
             Err(err) => Err(err),
         }

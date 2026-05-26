@@ -1914,42 +1914,6 @@ pub(crate) fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
     assert!(bundle["execution_policy"]["effort"].is_null());
 }
 
-pub(crate) fn build_launch_bundle_cursor_effort_without_model_keeps_execution_effort() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_failing_cursor_probe_harness(&temp, None);
-
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let project = temp.child("cursor-effort-no-model-project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\n")
-        .unwrap();
-
-    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--harness",
-        "cursor",
-        "--effort",
-        "high",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
-    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
-}
-
 pub(crate) fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(

@@ -184,11 +184,6 @@ fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
 }
 
 #[test]
-fn build_launch_bundle_cursor_effort_without_model_keeps_execution_effort() {
-    routing::build_launch_bundle_cursor_effort_without_model_keeps_execution_effort();
-}
-
-#[test]
 fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
     routing::build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug();
 }

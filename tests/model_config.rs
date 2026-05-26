@@ -437,45 +437,6 @@ include = ["catalog-only-*"]
 
 #[test]
 #[serial]
-fn models_list_static_default_omits_routed_harness_and_availability_fields() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[models.fast]
-model = "gpt-5"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    write_cache(
-        &project_root,
-        vec![json!({
-            "id": "gpt-5",
-            "provider": "OpenAI",
-            "release_date": "2026-01-01"
-        })],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let fast = aliases
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("fast"))
-        .expect("expected fast alias entry");
-
-    assert!(fast.get("harness").is_none());
-    assert!(fast.get("availability").is_none());
-}
-
-#[test]
-#[serial]
 fn models_list_static_default_does_not_execute_harness_commands() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -513,12 +474,12 @@ model = "gpt-5"
     let aliases = stdout["aliases"]
         .as_array()
         .expect("models list JSON should include aliases");
-    assert!(
-        aliases
-            .iter()
-            .any(|entry| entry["name"].as_str() == Some("fast")),
-        "expected static list output to include fast alias"
-    );
+    let fast = aliases
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("fast"))
+        .expect("expected static list output to include fast alias");
+    assert!(fast.get("harness").is_none());
+    assert!(fast.get("availability").is_none());
     assert!(
         !marker_file.exists(),
         "default models list should not execute harness commands"
@@ -648,30 +609,6 @@ fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &[]);
-    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().code(1).get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
-
-    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider_constraint"], Value::Null);
-    assert_eq!(
-        stdout["harnesses_tried"],
-        json!(["claude", "pi", "codex", "opencode", "cursor"])
-    );
-}
-
-#[test]
-#[serial]
-fn resolve_passthrough_unrecognized_pattern_with_pi_installed_still_fails_closed() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));

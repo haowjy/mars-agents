@@ -437,6 +437,96 @@ include = ["catalog-only-*"]
 
 #[test]
 #[serial]
+fn models_list_static_default_omits_routed_harness_and_availability_fields() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[models.fast]
+model = "gpt-5"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list"]);
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    let fast = aliases
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("fast"))
+        .expect("expected fast alias entry");
+
+    assert!(fast.get("harness").is_none());
+    assert!(fast.get("availability").is_none());
+}
+
+#[test]
+#[serial]
+fn models_list_static_default_does_not_execute_harness_commands() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let marker_file = temp.path().join("harness-invocations.log");
+    let bin_dir = install_tracing_harnesses(
+        temp.path(),
+        &marker_file,
+        &["claude", "codex", "pi", "opencode", "cursor"],
+    );
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[models.fast]
+harness = "codex"
+model = "gpt-5"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![json!({
+            "id": "gpt-5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list", "--no-refresh-models"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    assert!(
+        aliases
+            .iter()
+            .any(|entry| entry["name"].as_str() == Some("fast")),
+        "expected static list output to include fast alias"
+    );
+    assert!(
+        !marker_file.exists(),
+        "default models list should not execute harness commands"
+    );
+}
+
+#[test]
+#[serial]
 fn models_list_uses_local_model_visibility_overlay() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -729,7 +819,7 @@ model = "gpt-5.4-mini"
     write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
+    cmd.args(["--json", "models", "list", "--live"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
@@ -782,7 +872,7 @@ harness_order = ["cursor", "pi"]
     write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
+    cmd.args(["--json", "models", "list", "--live"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
@@ -1401,6 +1491,8 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
                 "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else if *harness == "opencode" {
                 "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
+            } else if *harness == "cursor" {
+                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else {
                 "@echo off\r\nexit /b 0\r\n"
             };
@@ -1414,6 +1506,8 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
                 "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else if *harness == "opencode" {
                 "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
+            } else if *harness == "cursor" {
+                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 0\n"
             };
@@ -1442,6 +1536,8 @@ fn install_fake_harnesses_with_pi_help(
                 format!(
                     "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo {pi_help_output}\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
                 )
+            } else if *harness == "cursor" {
+                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n".to_string()
             } else {
                 "@echo off\r\nexit /b 0\r\n".to_string()
             };
@@ -1455,6 +1551,8 @@ fn install_fake_harnesses_with_pi_help(
                 format!(
                     "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"{pi_help_output}\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
                 )
+            } else if *harness == "cursor" {
+                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n".to_string()
             } else {
                 "#!/bin/sh\nexit 0\n".to_string()
             };
@@ -1462,6 +1560,37 @@ fn install_fake_harnesses_with_pi_help(
             let mut perms = fs::metadata(&path).unwrap().permissions();
             perms.set_mode(0o755);
             fs::set_permissions(path, perms).unwrap();
+        }
+    }
+
+    bin_dir
+}
+
+fn install_tracing_harnesses(temp_root: &Path, marker_file: &Path, harnesses: &[&str]) -> PathBuf {
+    let bin_dir = temp_root.join("harness-bin-tracing");
+    fs::create_dir_all(&bin_dir).expect("failed to create tracing harness bin dir");
+
+    for harness in harnesses {
+        #[cfg(windows)]
+        {
+            let marker = marker_file.to_string_lossy().replace('/', "\\");
+            let script = format!("@echo off\r\necho {harness} %*>>\"{marker}\"\r\nexit /b 99\r\n");
+            fs::write(bin_dir.join(format!("{harness}.bat")), script)
+                .expect("failed to write tracing harness script");
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let marker = marker_file.to_string_lossy().replace('\'', "'\"'\"'");
+            let path = bin_dir.join(harness);
+            let script =
+                format!("#!/bin/sh\nprintf '%s\\n' \"{harness} $*\" >> '{marker}'\nexit 99\n");
+            fs::write(&path, script).expect("failed to write tracing harness script");
+            let mut perms = fs::metadata(&path)
+                .expect("failed to stat tracing harness script")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(path, perms).expect("failed to chmod tracing harness script");
         }
     }
 

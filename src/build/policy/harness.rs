@@ -30,6 +30,7 @@ pub(super) fn resolve_harness(
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
     evidence: HarnessEvidence<'_>,
+    probe_resolver: &mut dyn routing::ProbeResolver,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
 
@@ -77,7 +78,12 @@ pub(super) fn resolve_harness(
                 normalized_config_default_harness.as_deref(),
             );
             fixed_input.provider_for_order = fixed_provider_for_order;
-            let fixed_assessment = routing::evaluate_fixed_harness(&fixed_input, &selection.value);
+            let fixed_assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
+                &fixed_input,
+                &selection.value,
+                probe_resolver,
+                crate::models::harness::native_harness_authenticated,
+            );
             let fixed_route_trace = routing::trace_for_fixed_harness(
                 route_source_for_policy_source(selection.source),
                 &selection.value,
@@ -96,8 +102,11 @@ pub(super) fn resolve_harness(
                     "profile harness '{}' not installed; pivoting via model-policies",
                     selection.value
                 ));
-                let trace =
-                    evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+                let trace = evaluate_candidates(
+                    &evidence,
+                    normalized_config_default_harness.as_deref(),
+                    probe_resolver,
+                );
                 selected_harness_order_position = trace.selected_harness_order_position();
                 warnings.extend(trace.selected_diagnostics().to_vec());
                 let unavailable = routing::acceptance::accept_route(
@@ -146,8 +155,11 @@ pub(super) fn resolve_harness(
                 (selection, candidates_tried, route_trace, None)
             }
         } else {
-            let trace =
-                evaluate_candidates(&evidence, normalized_config_default_harness.as_deref());
+            let trace = evaluate_candidates(
+                &evidence,
+                normalized_config_default_harness.as_deref(),
+                probe_resolver,
+            );
             selected_harness_order_position = trace.selected_harness_order_position();
             warnings.extend(trace.selected_diagnostics().to_vec());
             let candidates_tried = trace.candidates_tried.clone();
@@ -263,11 +275,13 @@ fn routing_input_from_evidence<'a>(
 fn evaluate_candidates(
     evidence: &HarnessEvidence<'_>,
     normalized_config_default_harness: Option<&str>,
+    probe_resolver: &mut dyn routing::ProbeResolver,
 ) -> routing::RoutingTrace {
-    routing::evaluate_candidates(&routing_input_from_evidence(
-        evidence,
-        normalized_config_default_harness,
-    ))
+    routing::evaluate_candidates_with_auth_and_probes(
+        &routing_input_from_evidence(evidence, normalized_config_default_harness),
+        probe_resolver,
+        crate::models::harness::native_harness_authenticated,
+    )
 }
 
 fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource {
@@ -357,7 +371,7 @@ mod tests {
     use crate::compiler::agents::AgentProfile;
     use crate::compiler::agents::HarnessOverrides;
     use crate::models::ModelSpec;
-    use crate::models::probes::OpenCodeProbeResult;
+    use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
     use crate::routing::MatchEvidence;
 
     static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
@@ -453,11 +467,33 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct TestProbeResolver {
+        opencode: Option<OpenCodeProbeResult>,
+        pi: Option<PiProbeResult>,
+        cursor: Option<CursorProbeResult>,
+    }
+
+    impl routing::ProbeResolver for TestProbeResolver {
+        fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
+            self.opencode.clone()
+        }
+
+        fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
+            self.pi.clone()
+        }
+
+        fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
+            self.cursor.clone()
+        }
+    }
+
     #[test]
     fn cli_override_is_explicit_and_skips_candidate_eval() {
         let installed = installed(&["codex", "pi"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, Some("pi"));
+        let mut probe_resolver = TestProbeResolver::default();
 
         let resolution = resolve_harness(
             &input,
@@ -465,6 +501,7 @@ mod tests {
             None,
             None,
             evidence(None, None, &installed),
+            &mut probe_resolver,
         )
         .expect("harness should resolve");
 
@@ -487,6 +524,7 @@ mod tests {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, Some("gptmini"), None);
+        let mut probe_resolver = TestProbeResolver::default();
 
         let resolution = resolve_harness(
             &input,
@@ -494,6 +532,7 @@ mod tests {
             None,
             None,
             evidence(None, None, &installed),
+            &mut probe_resolver,
         )
         .expect("harness should resolve");
 
@@ -515,6 +554,7 @@ mod tests {
         let installed = installed(&["codex", "pi"]);
         let profile = profile(Some(HarnessKind::Pi));
         let input = policy_input(&profile, None, None);
+        let mut probe_resolver = TestProbeResolver::default();
 
         let resolution = resolve_harness(
             &input,
@@ -522,6 +562,7 @@ mod tests {
             None,
             None,
             evidence(None, None, &installed),
+            &mut probe_resolver,
         )
         .expect("harness should resolve");
 
@@ -544,6 +585,10 @@ mod tests {
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
         let opencode_probe = positive_opencode_probe();
+        let mut probe_resolver = TestProbeResolver {
+            opencode: Some(opencode_probe.clone()),
+            ..Default::default()
+        };
         let evidence = HarnessEvidence {
             model_id: "gpt-5",
             provider_for_order: Some("openai"),
@@ -553,13 +598,13 @@ mod tests {
             settings_harness_order: None,
             installed_harnesses: &installed,
             linked_harnesses: None,
-            opencode_probe_result: Some(&opencode_probe),
+            opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
             catalog_model_slugs: None,
         };
 
-        let resolution = resolve_harness(&input, None, None, None, evidence)
+        let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect("harness should pivot to opencode");
 
         assert_eq!(resolution.harness.value, "opencode");
@@ -579,10 +624,17 @@ mod tests {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
+        let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution =
-            resolve_harness(&input, None, None, None, evidence(None, None, &installed))
-                .expect("profile harness should pivot to available candidates");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence(None, None, &installed),
+            &mut probe_resolver,
+        )
+        .expect("profile harness should pivot to available candidates");
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
         assert_eq!(
@@ -596,6 +648,7 @@ mod tests {
         let installed = installed(&["codex", "opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, Some("claude"));
+        let mut probe_resolver = TestProbeResolver::default();
 
         let error = resolve_harness(
             &input,
@@ -603,6 +656,7 @@ mod tests {
             None,
             None,
             evidence(None, None, &installed),
+            &mut probe_resolver,
         )
         .expect_err("unavailable explicit harness should fail");
         let message = error.to_string();
@@ -616,6 +670,7 @@ mod tests {
         let installed = installed(&["codex"]);
         let profile = profile(None);
         let input = policy_input(&profile, None, Some("codex"));
+        let mut probe_resolver = TestProbeResolver::default();
         let evidence = HarnessEvidence {
             model_id: "gpt-5",
             provider_for_order: Some("openai"),
@@ -631,7 +686,7 @@ mod tests {
             catalog_model_slugs: None,
         };
 
-        let error = resolve_harness(&input, None, None, None, evidence)
+        let error = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("incompatible provider constraint should fail");
         let message = error.to_string();
         assert!(message.contains("cli harness `codex` cannot run requested model"));
@@ -644,6 +699,7 @@ mod tests {
         let order = vec!["pi".to_string(), "codex".to_string()];
         let profile = profile(None);
         let input = policy_input(&profile, None, None);
+        let mut probe_resolver = TestProbeResolver::default();
 
         let resolution = resolve_harness(
             &input,
@@ -651,6 +707,7 @@ mod tests {
             None,
             None,
             evidence(None, Some(&order), &installed),
+            &mut probe_resolver,
         )
         .expect("harness should resolve");
 
@@ -669,6 +726,7 @@ mod tests {
         let installed = installed(&["pi"]);
         let profile = profile(Some(HarnessKind::Pi));
         let input = policy_input(&profile, None, None);
+        let mut probe_resolver = TestProbeResolver::default();
 
         let resolution = resolve_harness(
             &input,
@@ -676,6 +734,7 @@ mod tests {
             None,
             None,
             evidence(Some("bogus"), None, &installed),
+            &mut probe_resolver,
         )
         .expect("harness should resolve");
 

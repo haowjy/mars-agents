@@ -7,13 +7,31 @@ use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::{ConfigError, MarsError};
-use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
+use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 
 mod execution;
 mod harness;
 mod model;
 mod runnable;
+
+struct SessionProbeResolver<'a> {
+    session: &'a mut CapabilitySession,
+}
+
+impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
+    fn opencode_probe_result(&mut self) -> Option<crate::models::probes::OpenCodeProbeResult> {
+        self.session.opencode_probe_result()
+    }
+
+    fn pi_probe_result(&mut self) -> Option<crate::models::probes::PiProbeResult> {
+        self.session.pi_probe_result()
+    }
+
+    fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
+        self.session.cursor_probe_result()
+    }
+}
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
@@ -210,35 +228,38 @@ pub fn resolve_policy(
         &resolved_model.model_token,
     );
 
-    let capability_snapshot = collect_capability_snapshot(&CapabilityCollectionOptions {
+    let mut capability_session = CapabilitySession::collect(&CapabilityCollectionOptions {
         offline: crate::models::is_mars_offline(),
         probe_refresh: input.models_refresh.probe_refresh,
     });
-    let installed_harnesses = capability_snapshot.installed_harnesses();
-    let opencode_probe_result = capability_snapshot.opencode.result();
-    let pi_probe_result = capability_snapshot.pi.result();
-    let cursor_probe_result = capability_snapshot.cursor.result();
-
-    let harness_resolution = harness::resolve_harness(
-        &input,
-        resolved_model.alias,
-        overlay,
-        matched_policy.as_ref(),
-        harness::HarnessEvidence {
-            model_id: &resolved_model.model,
-            provider_for_order: resolved_model.provider_for_order.as_deref(),
-            provider_constraint: resolved_model.provider_constraint.as_deref(),
-            settings_provider_order: effective_config.settings.provider_order.as_deref(),
-            config_default_harness: effective_config.settings.default_harness.as_deref(),
-            settings_harness_order: Some(harness_order),
-            installed_harnesses: &installed_harnesses,
-            linked_harnesses: (!linked_harnesses.is_empty()).then_some(linked_harnesses.as_slice()),
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            catalog_model_slugs: Some(catalog_slugs.as_slice()),
-        },
-    )?;
+    let installed_harnesses = capability_session.installed_harnesses();
+    let harness_resolution = {
+        let mut probe_resolver = SessionProbeResolver {
+            session: &mut capability_session,
+        };
+        harness::resolve_harness(
+            &input,
+            resolved_model.alias,
+            overlay,
+            matched_policy.as_ref(),
+            harness::HarnessEvidence {
+                model_id: &resolved_model.model,
+                provider_for_order: resolved_model.provider_for_order.as_deref(),
+                provider_constraint: resolved_model.provider_constraint.as_deref(),
+                settings_provider_order: effective_config.settings.provider_order.as_deref(),
+                config_default_harness: effective_config.settings.default_harness.as_deref(),
+                settings_harness_order: Some(harness_order),
+                installed_harnesses: &installed_harnesses,
+                linked_harnesses: (!linked_harnesses.is_empty())
+                    .then_some(linked_harnesses.as_slice()),
+                opencode_probe_result: None,
+                pi_probe_result: None,
+                cursor_probe_result: None,
+                catalog_model_slugs: Some(catalog_slugs.as_slice()),
+            },
+            &mut probe_resolver,
+        )?
+    };
 
     warnings.extend(harness_resolution.warnings);
     provenance.insert(
@@ -336,10 +357,24 @@ pub fn resolve_policy(
         provenance.insert("matched_policy_rule".to_string(), matched_rule.label());
     }
 
+    let selected_harness = harness_resolution.harness.value.clone();
+    let needs_opencode_probe = selected_harness.eq_ignore_ascii_case("opencode");
+    let needs_pi_probe = selected_harness.eq_ignore_ascii_case("pi");
+    let needs_cursor_probe = selected_harness.eq_ignore_ascii_case("cursor");
+    let opencode_probe_result = needs_opencode_probe
+        .then(|| capability_session.opencode_probe_result())
+        .flatten();
+    let pi_probe_result = needs_pi_probe
+        .then(|| capability_session.pi_probe_result())
+        .flatten();
+    let cursor_probe_result = needs_cursor_probe
+        .then(|| capability_session.cursor_probe_result())
+        .flatten();
+
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
         model_token: resolved_model.model_token.clone(),
-        harness: harness_resolution.harness.value.clone(),
+        harness: selected_harness.clone(),
         selection_kind: harness_resolution
             .route_trace
             .selected_selection_kind()
@@ -354,9 +389,9 @@ pub fn resolve_policy(
         provider_for_order: resolved_model.provider_for_order.as_deref(),
         settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
+        opencode_probe_result: opencode_probe_result.as_ref(),
+        pi_probe_result: pi_probe_result.as_ref(),
+        cursor_probe_result: cursor_probe_result.as_ref(),
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
     })?;

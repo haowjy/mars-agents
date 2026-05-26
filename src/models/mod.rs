@@ -1410,6 +1410,42 @@ pub fn resolve_all(
     )
 }
 
+/// Resolve aliases without any harness detection or probe/auth checks.
+///
+/// This is intended for static list views where only alias -> model/provider
+/// resolution is needed.
+pub fn resolve_all_static(
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+) -> IndexMap<String, ResolvedAlias> {
+    let mut resolved = IndexMap::new();
+
+    for (name, alias) in aliases {
+        let Some((model_id, provider)) = resolve_model_and_provider(alias, cache) else {
+            continue; // unresolvable — omit
+        };
+
+        resolved.insert(
+            name.clone(),
+            ResolvedAlias {
+                name: name.clone(),
+                model_id,
+                provider,
+                harness: None,
+                harness_source: HarnessSource::Unavailable,
+                harness_candidates: Vec::new(),
+                description: alias.description.clone(),
+                default_effort: alias.default_effort.clone(),
+                autocompact: alias.autocompact,
+                autocompact_pct: alias.autocompact_pct,
+                availability: None,
+            },
+        );
+    }
+
+    resolved
+}
+
 pub fn resolve_all_with_probe(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,

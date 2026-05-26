@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-26
+
 ### Changed
 - Builtin model aliases now act as an empty-project fallback only; any dependency, project, or local model alias suppresses them so package-provided alias sets stay noise-free.
 - Added a shared layered config boundary for project + project-local overlays (`user < project < project-local < command`) and switched launch-bundle policy resolution plus `mars models` routing to consume the same effective settings view.

@@ -25,13 +25,14 @@ pub enum CachedCursorProbeOutcome {
     Hit(CursorProbeResult),
     Stale(CursorProbeResult),
     Miss(CursorProbeResult),
+    Failed(CursorProbeResult),
     Unavailable,
 }
 
 impl CachedCursorProbeOutcome {
     pub fn result(&self) -> Option<&CursorProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) => Some(r),
+            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -41,6 +42,7 @@ impl CachedCursorProbeOutcome {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
             Self::Miss(_) => "miss",
+            Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
     }
@@ -285,7 +287,7 @@ where
     if probe_result.model_probe_success {
         CachedCursorProbeOutcome::Miss(probe_result)
     } else {
-        CachedCursorProbeOutcome::Unavailable
+        CachedCursorProbeOutcome::Failed(probe_result)
     }
 }
 
@@ -568,6 +570,25 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedCursorProbeOutcome::Miss(_)));
+    }
+
+    #[test]
+    fn cold_probe_failure_returns_failed_outcome_with_error_status() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            fail_result,
+            || Ok(()),
+        );
+
+        assert!(matches!(outcome, CachedCursorProbeOutcome::Failed(_)));
+        assert_eq!(outcome.cache_status(), "failed");
+        assert!(!outcome.result().unwrap().model_probe_success);
+        assert_eq!(outcome.result().unwrap().error.as_deref(), Some("boom"));
     }
 
     struct EnvGuard {

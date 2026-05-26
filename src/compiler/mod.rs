@@ -466,14 +466,13 @@ fn dual_surface_compile(
 fn merged_model_aliases_for_native_agents(
     resolved: &crate::sync::ResolvedState,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    let dep_models =
-        crate::sync::declaration_ordered_dep_models(&resolved.graph, &resolved.loaded.effective);
     let mut local_diag = DiagnosticCollector::new();
-    crate::models::merge_model_config(
-        &resolved.loaded.config.models,
-        &dep_models,
+    crate::models::merged_model_aliases(
+        &resolved.graph,
+        &resolved.loaded.effective,
+        &resolved.loaded.config,
+        &resolved.loaded.local,
         &mut local_diag,
-        None,
     )
 }
 

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
+use crate::models::ModelAlias;
 use crate::types::{
     CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
@@ -29,6 +30,9 @@ pub struct LockFile {
     /// Config entries installed by mars sync, keyed by target root and entry key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    /// Dependency model alias winners (declaration-order merged, dependency-only).
+    #[serde(default)]
+    pub dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
 /// Custom `Deserialize` for `LockFile`: delegates to the v2 wire type.
@@ -44,6 +48,7 @@ impl<'de> serde::Deserialize<'de> for LockFile {
             dependencies: wire.dependencies,
             items: wire.items,
             config_entries: wire.config_entries,
+            dependency_model_aliases: wire.dependency_model_aliases,
         })
     }
 }
@@ -56,6 +61,7 @@ impl LockFile {
             dependencies: IndexMap::new(),
             items: IndexMap::new(),
             config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         }
     }
 
@@ -363,6 +369,8 @@ struct LockFileV2Wire {
     items: IndexMap<String, LockedItemV2>,
     #[serde(default)]
     config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    #[serde(default)]
+    dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +384,45 @@ struct LockFileV2Wire {
 /// the lock is only written as v2 after a successful sync.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
     let (lock, _) = load_with_diagnostics(root)?;
+    Ok(lock)
+}
+
+/// Load lock for runtime alias commands (`models list/resolve`, launch bundle routing).
+///
+/// Legacy v2 lock files created before dependency aliases were moved into `mars.lock`
+/// may omit `dependency_model_aliases` entirely. When dependency entries exist, runtime
+/// alias consumers must fail closed so dependency alias authority is not silently treated
+/// as empty.
+pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
+    let path = root.join(LOCK_FILE);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LockFile::empty()),
+        Err(e) => return Err(LockError::Io(e).into()),
+    };
+
+    let value: toml::Value = toml::from_str(&content).map_err(|e| LockError::Corrupt {
+        message: format!("failed to parse {}: {e}", path.display()),
+    })?;
+
+    let has_dependency_alias_field = value
+        .as_table()
+        .map(|table| table.contains_key("dependency_model_aliases"))
+        .unwrap_or(false);
+
+    let (lock, _) = load_with_diagnostics(root)?;
+
+    if !has_dependency_alias_field && !lock.dependencies.is_empty() {
+        return Err(LockError::Corrupt {
+            message: format!(
+                "legacy {} is missing `dependency_model_aliases` for dependency alias authority; run `{}` to update it",
+                LOCK_FILE,
+                crate::types::managed_cmd("mars sync")
+            ),
+        }
+        .into());
+    }
+
     Ok(lock)
 }
 
@@ -404,6 +451,7 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
                 dependencies: wire.dependencies,
                 items: wire.items,
                 config_entries: wire.config_entries,
+                dependency_model_aliases: wire.dependency_model_aliases,
             },
             Vec::new(),
         )),
@@ -427,6 +475,7 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
                     dependencies: wire.dependencies,
                     items,
                     config_entries: BTreeMap::new(),
+                    dependency_model_aliases: IndexMap::new(),
                 },
                 diagnostics,
             ))
@@ -437,7 +486,12 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
 /// Write the lock file atomically to the given root directory (always v2 format).
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let path = root.join(LOCK_FILE);
-    let content = toml::to_string_pretty(lock).map_err(|e| LockError::Corrupt {
+    let mut normalized = lock.clone();
+    normalized.dependencies.sort_keys();
+    normalized.items.sort_keys();
+    normalized.dependency_model_aliases.sort_keys();
+
+    let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())
@@ -720,6 +774,7 @@ pub fn build(
         dependencies,
         items,
         config_entries,
+        dependency_model_aliases: IndexMap::new(),
     })
 }
 
@@ -897,6 +952,7 @@ mod tests {
             dependencies,
             items,
             config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         }
     }
 
@@ -974,6 +1030,58 @@ installed_checksum = "sha256:bbb"
     }
 
     #[test]
+    fn load_for_runtime_aliases_rejects_legacy_v2_without_dependency_alias_authority() {
+        let toml_str = r#"
+version = 2
+
+[dependencies.base]
+url = "https://github.com/org/base.git"
+version = "v1.0.0"
+commit = "abc123"
+
+[items."agent/coder"]
+source = "base"
+kind = "agent"
+source_checksum = "sha256:aaa"
+
+[[items."agent/coder".outputs]]
+target_root = ".mars"
+dest_path = "agents/coder.md"
+installed_checksum = "sha256:bbb"
+"#;
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
+
+        let err = load_for_runtime_aliases(dir.path()).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("missing `dependency_model_aliases`"));
+        assert!(message.contains("run `mars sync`"));
+    }
+
+    #[test]
+    fn load_for_runtime_aliases_allows_missing_dependency_aliases_when_no_dependencies() {
+        let toml_str = r#"
+version = 2
+
+[items."agent/coder"]
+source = "_self"
+kind = "agent"
+source_checksum = "sha256:aaa"
+
+[[items."agent/coder".outputs]]
+target_root = ".mars"
+dest_path = "agents/coder.md"
+installed_checksum = "sha256:bbb"
+"#;
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
+
+        let lock = load_for_runtime_aliases(dir.path()).unwrap();
+        assert!(lock.dependencies.is_empty());
+        assert!(lock.dependency_model_aliases.is_empty());
+    }
+
+    #[test]
     fn roundtrip_lock_file() {
         let lock = sample_lock();
         let dir = TempDir::new().unwrap();
@@ -1007,6 +1115,19 @@ installed_checksum = "sha256:bbb"
     }
 
     #[test]
+    fn write_emits_dependency_model_aliases_table_even_when_empty() {
+        let lock = sample_lock();
+        let dir = TempDir::new().unwrap();
+        write(dir.path(), &lock).unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join("mars.lock")).unwrap();
+        assert!(
+            content.contains("dependency_model_aliases"),
+            "serialized lock should include dependency_model_aliases authority table"
+        );
+    }
+
+    #[test]
     fn deterministic_serialization() {
         let lock = sample_lock();
         let s1 = toml::to_string_pretty(&lock).unwrap();
@@ -1020,6 +1141,33 @@ installed_checksum = "sha256:bbb"
             coder_pos < review_pos,
             "agent/coder should appear before skill/review"
         );
+    }
+
+    #[test]
+    fn write_sorts_dependency_model_aliases_keys() {
+        let toml_str = r#"
+version = 2
+
+[dependency_model_aliases.zeta]
+model = "openai/gpt-z"
+
+[dependency_model_aliases.alpha]
+model = "openai/gpt-a"
+"#;
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
+
+        let lock = load(dir.path()).unwrap();
+        write(dir.path(), &lock).unwrap();
+
+        let written = std::fs::read_to_string(dir.path().join("mars.lock")).unwrap();
+        let alpha = written
+            .find("[dependency_model_aliases.alpha]")
+            .expect("alpha alias should be serialized");
+        let zeta = written
+            .find("[dependency_model_aliases.zeta]")
+            .expect("zeta alias should be serialized");
+        assert!(alpha < zeta, "aliases should serialize in sorted key order");
     }
 
     #[test]
@@ -1431,6 +1579,7 @@ dest_path = "agents/coder.md"
             dependencies: old_sources,
             items: IndexMap::new(),
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
 
         let new_lock = build(
@@ -1548,6 +1697,7 @@ dest_path = "agents/coder.md"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -1733,6 +1883,7 @@ dest_path = "hooks/pre-push/hook.sh"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {

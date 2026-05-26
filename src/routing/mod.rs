@@ -174,18 +174,62 @@ pub struct RoutingInput<'a> {
     pub catalog_model_slugs: Option<&'a [String]>,
 }
 
+pub trait ProbeResolver {
+    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult>;
+    fn pi_probe_result(&mut self) -> Option<PiProbeResult>;
+    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult>;
+}
+
+#[derive(Debug, Default)]
+struct StaticProbeResolver {
+    opencode_probe_result: Option<OpenCodeProbeResult>,
+    pi_probe_result: Option<PiProbeResult>,
+    cursor_probe_result: Option<CursorProbeResult>,
+}
+
+impl StaticProbeResolver {
+    fn from_input(input: &RoutingInput<'_>) -> Self {
+        Self {
+            opencode_probe_result: input.opencode_probe_result.cloned(),
+            pi_probe_result: input.pi_probe_result.cloned(),
+            cursor_probe_result: input.cursor_probe_result.cloned(),
+        }
+    }
+}
+
+impl ProbeResolver for StaticProbeResolver {
+    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
+        self.opencode_probe_result.clone()
+    }
+
+    fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
+        self.pi_probe_result.clone()
+    }
+
+    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
+        self.cursor_probe_result.clone()
+    }
+}
+
 /// Evaluate all candidates and return a routing trace.
 /// This is the ONLY candidate evaluator. Both `mars models` and `mars build` call this.
 pub fn evaluate_candidates(input: &RoutingInput<'_>) -> RoutingTrace {
-    evaluate_candidates_with_auth(input, models::harness::native_harness_authenticated)
+    let mut probe_resolver = StaticProbeResolver::from_input(input);
+    evaluate_candidates_with_auth_and_probes(
+        input,
+        &mut probe_resolver,
+        models::harness::native_harness_authenticated,
+    )
 }
 
 /// Evaluate one fixed harness choice without fallback.
 /// Used by fixed-selection precedence paths (CLI/profile/alias).
 pub fn evaluate_fixed_harness(input: &RoutingInput<'_>, harness: &str) -> CandidateAssessment {
-    evaluate_fixed_harness_with_auth(
+    let mut probe_resolver = StaticProbeResolver::from_input(input);
+    evaluate_fixed_harness_with_auth_and_probes(
         input,
         harness,
+        &mut probe_resolver,
         models::harness::native_harness_authenticated,
     )
 }
@@ -198,7 +242,27 @@ pub fn evaluate_fixed_harness_with_auth<F>(
 where
     F: Fn(&str) -> bool,
 {
-    candidate_match_evidence_with_auth(input, harness, input.settings_provider_order, &auth_check)
+    let mut probe_resolver = StaticProbeResolver::from_input(input);
+    evaluate_fixed_harness_with_auth_and_probes(input, harness, &mut probe_resolver, auth_check)
+}
+
+pub fn evaluate_fixed_harness_with_auth_and_probes<F, P>(
+    input: &RoutingInput<'_>,
+    harness: &str,
+    probe_resolver: &mut P,
+    auth_check: F,
+) -> CandidateAssessment
+where
+    F: Fn(&str) -> bool,
+    P: ProbeResolver + ?Sized,
+{
+    candidate_match_evidence_with_auth(
+        input,
+        harness,
+        input.settings_provider_order,
+        probe_resolver,
+        &auth_check,
+    )
 }
 
 /// Build a fixed-selection routing trace from one fixed harness assessment.
@@ -239,6 +303,19 @@ pub fn provider_for_order_for_fixed_harness<'a>(
 pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
 where
     F: Fn(&str) -> bool,
+{
+    let mut probe_resolver = StaticProbeResolver::from_input(input);
+    evaluate_candidates_with_auth_and_probes(input, &mut probe_resolver, auth_check)
+}
+
+pub fn evaluate_candidates_with_auth_and_probes<F, P>(
+    input: &RoutingInput<'_>,
+    probe_resolver: &mut P,
+    auth_check: F,
+) -> RoutingTrace
+where
+    F: Fn(&str) -> bool,
+    P: ProbeResolver + ?Sized,
 {
     let mut diagnostics = Vec::new();
     let parsed_provider_order =
@@ -349,6 +426,7 @@ where
             input,
             &harness,
             Some(parsed_provider_order.as_slice()),
+            probe_resolver,
             &auth_check,
         );
 
@@ -500,14 +578,16 @@ fn filter_candidates_by_links(
         .collect()
 }
 
-fn candidate_match_evidence_with_auth<F>(
+fn candidate_match_evidence_with_auth<F, P>(
     input: &RoutingInput<'_>,
     harness: &str,
     provider_order: Option<&[String]>,
+    probe_resolver: &mut P,
     auth_check: &F,
 ) -> CandidateAssessment
 where
     F: Fn(&str) -> bool,
+    P: ProbeResolver + ?Sized,
 {
     if !input.installed_harnesses.contains(harness) {
         return CandidateAssessment {
@@ -608,7 +688,7 @@ where
     }
 
     if harness == "opencode" {
-        let Some(opencode_probe) = input.opencode_probe_result else {
+        let Some(opencode_probe) = probe_resolver.opencode_probe_result() else {
             return CandidateAssessment {
                 harness: harness.to_string(),
                 installed: true,
@@ -680,7 +760,7 @@ where
     }
 
     if harness == "pi" {
-        if let Some(pi_probe) = input.pi_probe_result {
+        if let Some(pi_probe) = probe_resolver.pi_probe_result() {
             if pi_probe.compatible {
                 let selection = select_probe_slug(
                     input.model_id,
@@ -753,7 +833,7 @@ where
     }
 
     if harness == "cursor" {
-        let Some(cursor_probe) = input.cursor_probe_result else {
+        let Some(cursor_probe) = probe_resolver.cursor_probe_result() else {
             return passthrough_assessment(harness);
         };
         if !cursor_probe.model_probe_success {

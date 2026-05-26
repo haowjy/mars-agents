@@ -49,7 +49,9 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 ## Policy Resolution Pipeline
 
 ```
-config::load_policy_resolution_config()  → aliases, harness_order, linked targets
+build_launch_bundle()                    → load EffectiveProjectConfig once
+                                        (fallback to default only when mars.toml is absent)
+models::merged_runtime_aliases()         → merged alias map (dependency + consumer overlays)
 models::ensure_fresh()                   → models.dev catalog (TTL-aware; not read-only)
 model::resolve_model()                   → alias → model_id + provider, or unset
 harness::resolve_harness()               → route selection, candidate eval (shared evaluator)

@@ -13,9 +13,14 @@ use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
 
+pub mod layering;
 pub mod migrations;
 pub mod routing_settings;
 pub mod targets;
+
+pub use layering::{
+    merged_settings, overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
+};
 
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -416,21 +421,47 @@ pub struct LocalConfig {
     #[serde(default)]
     pub overrides: IndexMap<SourceName, OverrideEntry>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub models: IndexMap<String, crate::models::ModelAlias>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub agents: IndexMap<String, AgentOverlay>,
     #[serde(default, skip_serializing_if = "LocalSettings::is_empty")]
     pub settings: LocalSettings,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct LocalSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_visibility: Option<LocalModelVisibility>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models_cache_ttl_hours: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_mars_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_order: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_order: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_emission: Option<AgentEmission>,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
 }
 
-impl LocalSettings {
-    fn is_empty(&self) -> bool {
-        self.model_policies.is_none()
-    }
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelVisibility {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -596,6 +627,23 @@ pub struct EffectiveConfig {
     pub settings: Settings,
 }
 
+/// Layered project-level config used by routing and policy consumers.
+///
+/// Precedence: project config < project-local overrides.
+#[derive(Debug, Clone, Default)]
+pub struct EffectiveProjectConfig {
+    pub settings: Settings,
+    pub models: IndexMap<String, crate::models::ModelAlias>,
+    pub agents: IndexMap<String, AgentOverlay>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoadedProjectConfig {
+    pub(crate) config: Config,
+    pub(crate) local: LocalConfig,
+    pub(crate) effective: EffectiveProjectConfig,
+}
+
 /// A fully-resolved source with override tracking.
 #[derive(Debug, Clone)]
 pub struct EffectiveDependency {
@@ -694,26 +742,48 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     }
 }
 
+/// Apply mars.local.toml model overlays as replace-by-key entries.
+pub fn merged_models(
+    base: &IndexMap<String, crate::models::ModelAlias>,
+    local: &LocalConfig,
+) -> IndexMap<String, crate::models::ModelAlias> {
+    overlay_models_replace_by_key(base, local)
+}
+
+/// Apply mars.local.toml agent overlays as replace-by-key entries.
 pub fn merged_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    let mut merged = base.clone();
-    for (name, overlay) in &local.agents {
-        merged.insert(name.clone(), overlay.clone());
-    }
-    merged
+    overlay_agent_overlays_replace_by_key(base, local)
 }
 
-pub fn merged_settings_model_policies(
-    settings: &Settings,
-    local: &LocalConfig,
-) -> Vec<ModelPolicyRule> {
-    local
-        .settings
-        .model_policies
-        .clone()
-        .unwrap_or_else(|| settings.model_policies.clone())
+pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), MarsError> {
+    let config = load(root)?;
+    let local = load_local(root)?;
+    Ok((config, local))
+}
+
+fn effective_project_config(config: &Config, local: &LocalConfig) -> EffectiveProjectConfig {
+    EffectiveProjectConfig {
+        settings: merged_settings(&config.settings, local),
+        models: overlay_models_replace_by_key(&config.models, local),
+        agents: overlay_agent_overlays_replace_by_key(&config.agents, local),
+    }
+}
+
+pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
+    Ok(load_project_config_layers(root)?.effective)
+}
+
+pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
+    let (config, local) = load_config_with_local(root)?;
+    let effective = effective_project_config(&config, &local);
+    Ok(LoadedProjectConfig {
+        config,
+        local,
+        effective,
+    })
 }
 
 /// Merge config + local overrides into EffectiveConfig.
@@ -733,12 +803,13 @@ pub fn merge_with_root(
     local: LocalConfig,
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
-    config.settings.model_visibility.validate()?;
+    let merged_settings = merged_settings(&config.settings, &local);
+    merged_settings.model_visibility.validate()?;
     let mut dependencies = IndexMap::new();
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    diagnostics.extend(deprecated_agents_target_diagnostics(&config.settings));
+    diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
@@ -842,7 +913,7 @@ pub fn merge_with_root(
     Ok((
         EffectiveConfig {
             dependencies,
-            settings: config.settings,
+            settings: merged_settings,
         },
         diagnostics,
     ))
@@ -1162,6 +1233,7 @@ pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ModelAlias, ModelSpec};
     use tempfile::TempDir;
 
     #[test]
@@ -1627,44 +1699,255 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn merged_settings_model_policies_use_local_replacement_when_present() {
-        let mut base_override = serde_yaml::Mapping::new();
-        base_override.insert(
-            serde_yaml::Value::String("harness".to_string()),
-            serde_yaml::Value::String("codex".to_string()),
+    fn merged_settings_applies_local_routing_overrides() {
+        let settings = Settings {
+            default_harness: Some("claude".to_string()),
+            harness_order: Some(vec!["claude".to_string(), "pi".to_string()]),
+            provider_order: Some(vec!["anthropic".to_string()]),
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                default_harness: Some("cursor".to_string()),
+                default_model: Some("gpt-5".to_string()),
+                harness_order: Some(vec!["cursor".to_string(), "pi".to_string()]),
+                provider_order: Some(vec!["openai".to_string()]),
+                model_policies: None,
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(merged.default_harness.as_deref(), Some("cursor"));
+        assert_eq!(merged.default_model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            merged.harness_order,
+            Some(vec!["cursor".to_string(), "pi".to_string()])
         );
+        assert_eq!(merged.provider_order, Some(vec!["openai".to_string()]));
+    }
+
+    #[test]
+    fn merged_settings_overlays_model_visibility_keys_independently() {
+        let settings = Settings {
+            model_visibility: ModelVisibility {
+                include: Some(vec!["openai/*".to_string()]),
+                exclude: Some(vec!["*-preview".to_string()]),
+            },
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                model_visibility: Some(LocalModelVisibility {
+                    include: Some(vec!["anthropic/*".to_string()]),
+                    exclude: None,
+                }),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(
+            merged.model_visibility.include,
+            Some(vec!["anthropic/*".to_string()])
+        );
+        assert_eq!(
+            merged.model_visibility.exclude,
+            Some(vec!["*-preview".to_string()])
+        );
+    }
+
+    #[test]
+    fn merged_settings_replaces_scalar_table_and_array_fields() {
         let base_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gpt55".to_string(),
             no_fallback: false,
-            overrides: base_override,
+            overrides: serde_yaml::Mapping::new(),
         };
-
-        let mut local_override = serde_yaml::Mapping::new();
-        local_override.insert(
-            serde_yaml::Value::String("harness".to_string()),
-            serde_yaml::Value::String("opencode".to_string()),
-        );
         let local_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
-            match_value: "gpt55".to_string(),
+            match_value: "gptmini".to_string(),
             no_fallback: false,
-            overrides: local_override,
+            overrides: serde_yaml::Mapping::new(),
         };
-
         let settings = Settings {
+            targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
+            model_visibility: ModelVisibility {
+                include: Some(vec!["anthropic/*".to_string()]),
+                exclude: None,
+            },
+            models_cache_ttl_hours: 24,
+            min_mars_version: Some("0.1.0".to_string()),
             model_policies: vec![base_rule],
             ..Settings::default()
         };
         let local = LocalConfig {
             settings: LocalSettings {
+                targets: Some(vec![".cursor".to_string()]),
+                model_visibility: Some(LocalModelVisibility {
+                    include: None,
+                    exclude: Some(vec!["*-preview*".to_string()]),
+                }),
+                models_cache_ttl_hours: Some(48),
+                min_mars_version: Some("0.2.0".to_string()),
                 model_policies: Some(vec![local_rule.clone()]),
+                ..LocalSettings::default()
             },
             ..LocalConfig::default()
         };
 
-        let merged = merged_settings_model_policies(&settings, &local);
-        assert_eq!(merged, vec![local_rule]);
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(merged.targets, Some(vec![".cursor".to_string()]));
+        assert_eq!(merged.models_cache_ttl_hours, 48);
+        assert_eq!(merged.min_mars_version.as_deref(), Some("0.2.0"));
+        assert_eq!(
+            merged.model_visibility.exclude,
+            Some(vec!["*-preview*".to_string()])
+        );
+        assert_eq!(
+            merged.model_visibility.include,
+            Some(vec!["anthropic/*".to_string()])
+        );
+        assert_eq!(merged.model_policies, vec![local_rule]);
+    }
+
+    #[test]
+    fn merged_models_local_overlay_replaces_by_key_and_inherits_others() {
+        let mut base = IndexMap::new();
+        base.insert(
+            "fast".to_string(),
+            ModelAlias {
+                harness: Some("codex".to_string()),
+                description: Some("base".to_string()),
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "gpt-5".to_string(),
+                    provider: None,
+                },
+            },
+        );
+        base.insert(
+            "legacy".to_string(),
+            ModelAlias {
+                harness: Some("claude".to_string()),
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-opus-4-6".to_string(),
+                    provider: None,
+                },
+            },
+        );
+
+        let local = LocalConfig {
+            models: {
+                let mut m = IndexMap::new();
+                m.insert(
+                    "fast".to_string(),
+                    ModelAlias {
+                        harness: Some("cursor".to_string()),
+                        description: Some("local".to_string()),
+                        default_effort: None,
+                        autocompact: None,
+                        autocompact_pct: None,
+                        spec: ModelSpec::Pinned {
+                            model: "gpt-5.4-mini".to_string(),
+                            provider: None,
+                        },
+                    },
+                );
+                m.insert(
+                    "local-only".to_string(),
+                    ModelAlias {
+                        harness: Some("pi".to_string()),
+                        description: None,
+                        default_effort: None,
+                        autocompact: None,
+                        autocompact_pct: None,
+                        spec: ModelSpec::Pinned {
+                            model: "gpt-5.5".to_string(),
+                            provider: None,
+                        },
+                    },
+                );
+                m
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_models(&base, &local);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged["fast"].harness.as_deref(), Some("cursor"));
+        assert_eq!(
+            merged["fast"].description.as_deref(),
+            Some("local"),
+            "local value should replace by key"
+        );
+        assert_eq!(merged["legacy"].harness.as_deref(), Some("claude"));
+        assert_eq!(merged["local-only"].harness.as_deref(), Some("pi"));
+    }
+
+    #[test]
+    fn load_local_rejects_unknown_local_settings_fields() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.local.toml"),
+            "[settings]\nnot_supported = true\n",
+        )
+        .unwrap();
+
+        let err = load_local(dir.path()).unwrap_err().to_string();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
+        assert!(err.contains("not_supported"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn load_local_rejects_unknown_local_model_visibility_fields() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.local.toml"),
+            "[settings.model_visibility]\nfuture_nested_key = true\n",
+        )
+        .unwrap();
+
+        let err = load_local(dir.path()).unwrap_err().to_string();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
+        assert!(err.contains("future_nested_key"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn load_effective_project_config_accepts_unknown_project_settings_keys() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"[settings]
+harness_order = ["codex", "pi"]
+future_key = "allowed"
+
+[settings.model_visibility]
+include = ["openai/*"]
+future_nested_key = true
+"#,
+        )
+        .unwrap();
+
+        let effective = load_effective_project_config(dir.path())
+            .expect("project settings overlay should ignore unknown keys");
+        assert_eq!(
+            effective.settings.harness_order,
+            Some(vec!["codex".to_string(), "pi".to_string()])
+        );
+        assert_eq!(
+            effective.settings.model_visibility.include,
+            Some(vec!["openai/*".to_string()])
+        );
     }
 
     #[test]

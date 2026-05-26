@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::cli::MarsContext;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+use crate::error::ConfigError;
 use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 
@@ -78,9 +79,12 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
 
     // Load config to get min_mars_version for compatibility preflight.
     // This is a lightweight read that doesn't acquire the sync lock.
-    let min_required: Option<String> = crate::config::load(&ctx.project_root)
-        .ok()
-        .and_then(|cfg| cfg.settings.min_mars_version);
+    let min_required: Option<String> =
+        match crate::config::load_effective_project_config(&ctx.project_root) {
+            Ok(effective) => effective.settings.min_mars_version,
+            Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
+            Err(err) => return Err(err),
+        };
 
     // Run the pipeline in dry-run mode (no writes).
     // ValidationWarnings are included in report.diagnostics by finalize().

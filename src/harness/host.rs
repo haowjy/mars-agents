@@ -7,9 +7,10 @@ use wait_timeout::ChildExt;
 
 use crate::harness::registry::{self, HarnessId};
 use crate::models::probes::ProbeRefreshMode;
-use crate::models::probes::cursor_cache::{self, CachedCursorProbeOutcome};
-use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
-use crate::models::probes::pi_cache::{self, CachedPiProbeOutcome};
+use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
+use crate::models::probes::opencode_cache::CachedProbeOutcome;
+use crate::models::probes::pi_cache::CachedPiProbeOutcome;
+use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 
 #[derive(Debug, Clone)]
 pub struct CapabilityCollectionOptions {
@@ -46,6 +47,180 @@ impl CapabilitySnapshot {
             .map(|id| id.as_str().to_string())
             .collect()
     }
+}
+
+/// Command-scoped lazy capability session.
+///
+/// Executable/auth checks are collected immediately. Harness probe checks are
+/// loaded lazily on first use per harness and memoized for the command.
+#[derive(Debug, Clone)]
+pub struct CapabilitySession {
+    executable: BTreeMap<HarnessId, ExecutableState>,
+    auth: BTreeMap<HarnessId, AuthState>,
+    installed: HashSet<String>,
+    offline: bool,
+    probe_refresh: ProbeRefreshMode,
+    opencode: Option<CachedProbeOutcome>,
+    pi: Option<CachedPiProbeOutcome>,
+    cursor: Option<CachedCursorProbeOutcome>,
+}
+
+impl CapabilitySession {
+    pub fn collect(options: &CapabilityCollectionOptions) -> Self {
+        Self::collect_with_resolver(options, &PathExecutableResolver)
+    }
+
+    pub fn collect_with_resolver(
+        options: &CapabilityCollectionOptions,
+        resolver: &dyn ExecutableResolver,
+    ) -> Self {
+        let mut executable = BTreeMap::new();
+        let mut auth = BTreeMap::new();
+
+        for descriptor in registry::descriptors() {
+            let state = resolver.resolve(descriptor.binary);
+            executable.insert(descriptor.id, state.clone());
+            auth.insert(
+                descriptor.id,
+                native_auth_state(descriptor.id, &state, resolver, auth_probe_timeout()),
+            );
+        }
+
+        let installed = executable
+            .iter()
+            .filter(|(_, state)| matches!(state, ExecutableState::Found { .. }))
+            .map(|(id, _)| id.as_str().to_string())
+            .collect::<HashSet<_>>();
+
+        Self {
+            executable,
+            auth,
+            installed,
+            offline: options.offline,
+            probe_refresh: options.probe_refresh,
+            opencode: None,
+            pi: None,
+            cursor: None,
+        }
+    }
+
+    pub fn installed_harnesses(&self) -> HashSet<String> {
+        self.installed.clone()
+    }
+
+    pub fn offline(&self) -> bool {
+        self.offline
+    }
+
+    pub fn executable_snapshot(&self) -> BTreeMap<HarnessId, ExecutableState> {
+        self.executable.clone()
+    }
+
+    pub fn auth_snapshot(&self) -> BTreeMap<HarnessId, AuthState> {
+        self.auth.clone()
+    }
+
+    pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
+        self.opencode.get_or_insert_with(|| {
+            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
+    }
+
+    pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome> {
+        self.opencode.as_ref()
+    }
+
+    pub fn loaded_pi_outcome(&self) -> Option<&CachedPiProbeOutcome> {
+        self.pi.as_ref()
+    }
+
+    pub fn loaded_cursor_outcome(&self) -> Option<&CachedCursorProbeOutcome> {
+        self.cursor.as_ref()
+    }
+
+    pub fn loaded_opencode_probe_result(&self) -> Option<&OpenCodeProbeResult> {
+        self.loaded_opencode_outcome()
+            .and_then(CachedProbeOutcome::result)
+    }
+
+    pub fn loaded_pi_probe_result(&self) -> Option<&PiProbeResult> {
+        self.loaded_pi_outcome()
+            .and_then(CachedPiProbeOutcome::result)
+    }
+
+    pub fn loaded_cursor_probe_result(&self) -> Option<&CursorProbeResult> {
+        self.loaded_cursor_outcome()
+            .and_then(CachedCursorProbeOutcome::result)
+    }
+
+    pub fn pi_outcome(&mut self) -> &CachedPiProbeOutcome {
+        self.pi.get_or_insert_with(|| {
+            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
+    }
+
+    pub fn cursor_outcome(&mut self) -> &CachedCursorProbeOutcome {
+        self.cursor.get_or_insert_with(|| {
+            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
+    }
+
+    pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
+        self.opencode_outcome().result().cloned()
+    }
+
+    pub fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
+        self.pi_outcome().result().cloned()
+    }
+
+    pub fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
+        self.cursor_outcome().result().cloned()
+    }
+
+    pub fn into_snapshot(mut self) -> CapabilitySnapshot {
+        let opencode = self.opencode.take().unwrap_or_else(|| {
+            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
+        let pi = self.pi.take().unwrap_or_else(|| {
+            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
+        let cursor = self.cursor.take().unwrap_or_else(|| {
+            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
+
+        CapabilitySnapshot {
+            executable: self.executable,
+            auth: self.auth,
+            opencode,
+            pi,
+            cursor,
+            offline: self.offline,
+        }
+    }
+}
+
+fn cached_opencode_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedProbeOutcome {
+    crate::models::probes::opencode_cache::probe_cached(installed, is_offline, probe_refresh)
+}
+
+fn cached_pi_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedPiProbeOutcome {
+    crate::models::probes::pi_cache::probe_cached(installed, is_offline, probe_refresh)
+}
+
+fn cached_cursor_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedCursorProbeOutcome {
+    crate::models::probes::cursor_cache::probe_cached(installed, is_offline, probe_refresh)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,35 +271,7 @@ pub fn collect_capability_snapshot_with_resolver(
     options: &CapabilityCollectionOptions,
     resolver: &dyn ExecutableResolver,
 ) -> CapabilitySnapshot {
-    let mut executable = BTreeMap::new();
-    let mut auth = BTreeMap::new();
-
-    for descriptor in registry::descriptors() {
-        let state = resolver.resolve(descriptor.binary);
-        executable.insert(descriptor.id, state.clone());
-        auth.insert(
-            descriptor.id,
-            native_auth_state(descriptor.id, &state, resolver, auth_probe_timeout()),
-        );
-    }
-
-    let installed = executable
-        .iter()
-        .filter(|(_, state)| matches!(state, ExecutableState::Found { .. }))
-        .map(|(id, _)| id)
-        .map(|id| id.as_str().to_string())
-        .collect::<HashSet<_>>();
-
-    let mars_offline = options.offline;
-
-    CapabilitySnapshot {
-        executable,
-        auth,
-        opencode: opencode_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
-        pi: pi_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
-        cursor: cursor_cache::probe_cached(&installed, mars_offline, options.probe_refresh),
-        offline: options.offline,
-    }
+    CapabilitySession::collect_with_resolver(options, resolver).into_snapshot()
 }
 
 pub fn native_harness_authenticated(harness: &str) -> bool {
@@ -275,5 +422,15 @@ mod tests {
     fn resolve_binary_path_returns_none_when_missing() {
         let resolver = FakeResolver::default();
         assert_eq!(resolve_binary_path("codex", &resolver), None);
+    }
+
+    #[test]
+    fn probe_refresh_skip_does_not_force_offline_mode() {
+        let options = CapabilityCollectionOptions {
+            offline: false,
+            probe_refresh: ProbeRefreshMode::Skip,
+        };
+        let session = CapabilitySession::collect_with_resolver(&options, &FakeResolver::default());
+        assert!(!session.offline());
     }
 }

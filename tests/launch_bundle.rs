@@ -184,6 +184,31 @@ fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
 }
 
 #[test]
+fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
+    routing::build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug();
+}
+
+#[test]
+fn build_launch_bundle_cursor_non_composer_missing_effort_variant_errors() {
+    routing::build_launch_bundle_cursor_non_composer_missing_effort_variant_errors();
+}
+
+#[test]
+fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message() {
+    routing::build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message();
+}
+
+#[test]
+fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_message() {
+    routing::build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_message();
+}
+
+#[test]
+fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message() {
+    routing::build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message();
+}
+
+#[test]
 fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     routing::build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed();
 }
@@ -196,6 +221,11 @@ fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
 #[test]
 fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
     routing::build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh();
+}
+
+#[test]
+fn build_launch_bundle_no_refresh_uses_stale_cursor_probe_without_spawning_refresh() {
+    routing::build_launch_bundle_no_refresh_uses_stale_cursor_probe_without_spawning_refresh();
 }
 
 #[test]
@@ -326,6 +356,11 @@ fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
 }
 
 #[test]
+fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
+    routing::build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority();
+}
+
+#[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     routing::build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default();
 }
@@ -338,6 +373,16 @@ fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
 #[test]
 fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
     routing::build_launch_bundle_uses_settings_harness_order_before_default_harness();
+}
+
+#[test]
+fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
+    routing::build_launch_bundle_local_settings_harness_order_overrides_project_order();
+}
+
+#[test]
+fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
+    routing::build_launch_bundle_fails_when_local_settings_cannot_parse();
 }
 
 #[test]

@@ -25,13 +25,14 @@ pub enum CachedProbeOutcome {
     Hit(OpenCodeProbeResult),
     Stale(OpenCodeProbeResult),
     Miss(OpenCodeProbeResult),
+    Failed(OpenCodeProbeResult),
     Unavailable,
 }
 
 impl CachedProbeOutcome {
     pub fn result(&self) -> Option<&OpenCodeProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) => Some(r),
+            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -41,6 +42,7 @@ impl CachedProbeOutcome {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
             Self::Miss(_) => "miss",
+            Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
     }
@@ -285,7 +287,7 @@ where
     if probe_result.model_probe_success {
         CachedProbeOutcome::Miss(probe_result)
     } else {
-        CachedProbeOutcome::Unavailable
+        CachedProbeOutcome::Failed(probe_result)
     }
 }
 
@@ -603,6 +605,25 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedProbeOutcome::Miss(_)));
+    }
+
+    #[test]
+    fn cold_probe_failure_returns_failed_outcome_with_error_status() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Background,
+            &Some(path),
+            fail_result,
+            || Ok(()),
+        );
+
+        assert!(matches!(outcome, CachedProbeOutcome::Failed(_)));
+        assert_eq!(outcome.cache_status(), "failed");
+        assert!(!outcome.result().unwrap().model_probe_success);
+        assert_eq!(outcome.result().unwrap().error.as_deref(), Some("boom"));
     }
 
     struct EnvGuard {

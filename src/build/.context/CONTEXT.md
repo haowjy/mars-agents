@@ -121,14 +121,19 @@ marks effort consumed (cleared from execution policy output).
 
 ## Architecture
 
+`build_launch_bundle()` resolves project config once, then passes it into policy resolution.
+
 ```
 LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_skills}
     │
     ├─ [agent mode] read + parse .mars/agents/<name>.md → AgentProfile + body
     ├─ [ad-hoc mode] empty_agent_profile() + "" body
     │
-    └─ resolve_policy()
-           ├─ config::load_policy_resolution_config()  (aliases, harness_order, linked targets)
+    ├─ load_effective_project_config_or_default(project_root)
+    │      └─ default only when mars.toml is absent
+    │
+    └─ resolve_policy(&EffectiveProjectConfig, PolicyInput)
+           ├─ models::merged_runtime_aliases()         (consumer + dependency aliases)
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)

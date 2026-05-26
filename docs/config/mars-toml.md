@@ -15,6 +15,25 @@ Mars uses three config files, all at the project root:
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
 
+## Layering and precedence
+
+Mars applies configuration layers in this precedence order:
+
+`user config < mars.toml < mars.local.toml < CLI/command inputs`
+
+Current implementation uses `mars.toml < mars.local.toml < CLI/command inputs`; the user layer is reserved in the merge boundary for future support.
+
+Default merge semantics:
+
+- **Scalars / Option values:** higher layer replaces lower layer when present.
+- **Maps / tables:** higher layer adds/replaces entries by key.
+- **Arrays/lists:** higher layer replaces the full list (including explicit `[]`).
+
+For keyed overlay tables:
+
+- `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
+- `[agents]` overlays are **replace-by-key** per agent entry (no recursive field merge inside one agent block).
+
 ## `mars.toml`
 
 ### `[package]` (optional)
@@ -317,18 +336,46 @@ Conflicts never block sync — they warn and continue.
 
 ### Persistence
 
-Dependency-sourced aliases are persisted to `.mars/models-merged.json` during finalize. Consumer aliases are **not** baked into this file — `mars models list` overlays fresh consumer config at read time.
+Dependency-sourced alias winners are persisted in committed `mars.lock` under `dependency_model_aliases` during finalize. Consumer aliases are **not** baked into lock state — `mars models list` overlays fresh consumer config at read time.
 
 ## `mars.local.toml`
 
-Developer-local overrides. Gitignored by `mars init`. Lets each developer swap a git source for a local checkout without modifying the shared config.
+Developer-local overlays. Gitignored by `mars init`.
 
 ```toml
 [overrides.base]
 path = "../meridian-base"
+
+[settings]
+harness_order = ["codex", "pi"]
+default_model = "gpt-5"
+
+[models.fast]
+model = "gpt-5.4-mini"
+
+[agents.reviewer]
+model = "fast"
 ```
 
 Each key under `[overrides]` must match a dependency name in `mars.toml`. The override replaces the source URL with a local path for resolution and sync. The original git spec is preserved internally so `mars doctor` can still validate config consistency.
+
+Local overlays can target:
+
+- `[overrides]` dependency source swaps
+- `[settings]` project-local settings
+- `[models]` alias additions/overrides
+- `[agents]` agent overlay additions/overrides
+
+For local overlay semantics:
+
+- Maps replace by key.
+- Arrays replace by value.
+- Scalars/options replace when present.
+- `[models.<alias>]` and `[agents.<name>]` entries replace the full keyed block from `mars.toml` when the same key appears in `mars.local.toml`.
+
+Unknown keys under `mars.local.toml [settings]` are rejected.
+
+`mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 
 If an override references a dependency name not in config, Mars prints a warning but continues.
 

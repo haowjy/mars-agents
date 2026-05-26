@@ -1,25 +1,45 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use indexmap::IndexMap;
+
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
-use crate::config::{AgentOverlay, ModelPolicyMatchType, ModelPolicyRule};
+use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
 use crate::error::{ConfigError, MarsError};
-use crate::harness::host::{CapabilityCollectionOptions, collect_capability_snapshot};
-use crate::models;
+use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
+use crate::models::{self, ModelAlias};
 
-mod config;
 mod execution;
 mod harness;
 mod model;
 mod runnable;
+use runnable::CursorEffortOutcome;
+
+struct SessionProbeResolver<'a> {
+    session: &'a mut CapabilitySession,
+}
+
+impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
+    fn opencode_probe_result(&mut self) -> Option<crate::models::probes::OpenCodeProbeResult> {
+        self.session.opencode_probe_result()
+    }
+
+    fn pi_probe_result(&mut self) -> Option<crate::models::probes::PiProbeResult> {
+        self.session.pi_probe_result()
+    }
+
+    fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
+        self.session.cursor_probe_result()
+    }
+}
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
+    pub runtime_aliases: &'a IndexMap<String, ModelAlias>,
     pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
-    pub config_default_model: Option<&'a str>,
     pub harness_override: Option<&'a str>,
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
@@ -147,18 +167,27 @@ impl MatchedModelPolicy {
     }
 }
 
-pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsError> {
+pub fn resolve_policy(
+    effective_config: &EffectiveProjectConfig,
+    input: PolicyInput<'_>,
+) -> Result<ResolvedPolicy, MarsError> {
     let mut warnings = Vec::new();
     let mut provenance = BTreeMap::new();
 
-    let resolution_config = config::load_policy_resolution_config(input.project_root)?;
+    let aliases = input.runtime_aliases;
     let overlay = input
         .agent
-        .and_then(|name| resolution_config.agents.get(name));
+        .and_then(|name| effective_config.agents.get(name));
+    let settings_model_policies = &effective_config.settings.model_policies;
+    let linked_harnesses = effective_config.settings.linked_harnesses();
+    let default_harness_order = crate::harness::registry::default_harness_order_names();
+    let harness_order = effective_config
+        .settings
+        .harness_order
+        .as_deref()
+        .unwrap_or(default_harness_order.as_slice());
     let mars_dir = input.project_root.join(".mars");
-    let ttl_hours = crate::config::load(input.project_root)
-        .map(|config| config.settings.models_cache_ttl_hours)
-        .unwrap_or(24);
+    let ttl_hours = effective_config.settings.models_cache_ttl_hours;
     let (cache, catalog_outcome) =
         match models::ensure_fresh(&mars_dir, ttl_hours, input.models_refresh.catalog_mode) {
             Ok(pair) => pair,
@@ -177,20 +206,13 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         warnings.push(format!("models cache: {reason}"));
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
-    let model_input = PolicyInput {
-        project_root: input.project_root,
-        agent: input.agent,
-        profile: input.profile,
-        model_override: input.model_override,
-        config_default_model: resolution_config.default_model.as_deref(),
-        harness_override: input.harness_override,
-        effort_override: input.effort_override,
-        approval_override: input.approval_override,
-        sandbox_override: input.sandbox_override,
-        models_refresh: input.models_refresh,
-    };
-    let resolved_model =
-        model::resolve_model(&model_input, overlay, &resolution_config.aliases, &cache)?;
+    let resolved_model = model::resolve_model(
+        &input,
+        effective_config.settings.default_model.as_deref(),
+        overlay,
+        aliases,
+        &cache,
+    )?;
 
     warnings.extend(resolved_model.warnings);
     provenance.insert(
@@ -201,42 +223,44 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         effective_policies(
             overlay,
             &input.profile.model_policies,
-            &resolution_config.settings_model_policies,
+            settings_model_policies,
         ),
         &resolved_model.model,
         &resolved_model.model_token,
     );
 
-    let capability_snapshot = collect_capability_snapshot(&CapabilityCollectionOptions {
+    let mut capability_session = CapabilitySession::collect(&CapabilityCollectionOptions {
         offline: crate::models::is_mars_offline(),
         probe_refresh: input.models_refresh.probe_refresh,
     });
-    let installed_harnesses = capability_snapshot.installed_harnesses();
-    let opencode_probe_result = capability_snapshot.opencode.result();
-    let pi_probe_result = capability_snapshot.pi.result();
-    let cursor_probe_result = capability_snapshot.cursor.result();
-
-    let harness_resolution = harness::resolve_harness(
-        &model_input,
-        resolved_model.alias,
-        overlay,
-        matched_policy.as_ref(),
-        harness::HarnessEvidence {
-            model_id: &resolved_model.model,
-            provider_for_order: resolved_model.provider_for_order.as_deref(),
-            provider_constraint: resolved_model.provider_constraint.as_deref(),
-            settings_provider_order: resolution_config.provider_order.as_deref(),
-            config_default_harness: resolution_config.default_harness.as_deref(),
-            settings_harness_order: resolution_config.harness_order.as_deref(),
-            installed_harnesses: &installed_harnesses,
-            linked_harnesses: (!resolution_config.linked_harnesses.is_empty())
-                .then_some(resolution_config.linked_harnesses.as_slice()),
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            catalog_model_slugs: Some(catalog_slugs.as_slice()),
-        },
-    )?;
+    let installed_harnesses = capability_session.installed_harnesses();
+    let harness_resolution = {
+        let mut probe_resolver = SessionProbeResolver {
+            session: &mut capability_session,
+        };
+        harness::resolve_harness(
+            &input,
+            resolved_model.alias,
+            overlay,
+            matched_policy.as_ref(),
+            harness::HarnessEvidence {
+                model_id: &resolved_model.model,
+                provider_for_order: resolved_model.provider_for_order.as_deref(),
+                provider_constraint: resolved_model.provider_constraint.as_deref(),
+                settings_provider_order: effective_config.settings.provider_order.as_deref(),
+                config_default_harness: effective_config.settings.default_harness.as_deref(),
+                settings_harness_order: Some(harness_order),
+                installed_harnesses: &installed_harnesses,
+                linked_harnesses: (!linked_harnesses.is_empty())
+                    .then_some(linked_harnesses.as_slice()),
+                opencode_probe_result: None,
+                pi_probe_result: None,
+                cursor_probe_result: None,
+                catalog_model_slugs: Some(catalog_slugs.as_slice()),
+            },
+            &mut probe_resolver,
+        )?
+    };
 
     warnings.extend(harness_resolution.warnings);
     provenance.insert(
@@ -334,10 +358,24 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         provenance.insert("matched_policy_rule".to_string(), matched_rule.label());
     }
 
+    let selected_harness = harness_resolution.harness.value.clone();
+    let needs_opencode_probe = selected_harness.eq_ignore_ascii_case("opencode");
+    let needs_pi_probe = selected_harness.eq_ignore_ascii_case("pi");
+    let needs_cursor_probe = selected_harness.eq_ignore_ascii_case("cursor");
+    let opencode_probe_result = needs_opencode_probe
+        .then(|| capability_session.opencode_probe_result())
+        .flatten();
+    let pi_probe_result = needs_pi_probe
+        .then(|| capability_session.pi_probe_result())
+        .flatten();
+    let cursor_probe_result = needs_cursor_probe
+        .then(|| capability_session.cursor_probe_result())
+        .flatten();
+
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
         model_token: resolved_model.model_token.clone(),
-        harness: harness_resolution.harness.value.clone(),
+        harness: selected_harness.clone(),
         selection_kind: harness_resolution
             .route_trace
             .selected_selection_kind()
@@ -350,19 +388,15 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
             .to_string(),
         provider_constraint: resolved_model.provider_constraint.as_deref(),
         provider_for_order: resolved_model.provider_for_order.as_deref(),
-        settings_provider_order: resolution_config.provider_order.as_deref(),
+        settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
+        opencode_probe_result: opencode_probe_result.as_ref(),
+        pi_probe_result: pi_probe_result.as_ref(),
+        cursor_probe_result: cursor_probe_result.as_ref(),
         alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
     })?;
 
-    let cursor_effort_resolution_failed = routing_resolution
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("no cursor slug matched"));
     warnings.extend(routing_resolution.warnings);
 
     let mut effort = execution_resolution.effort.value;
@@ -376,18 +410,47 @@ pub fn resolve_policy(input: PolicyInput<'_>) -> Result<ResolvedPolicy, MarsErro
         .harness
         .value
         .eq_ignore_ascii_case("cursor")
-        && effort
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty())
-        && cursor_effort_resolution_failed
+        && let Some(cursor_effort) = effort
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
     {
-        return Err(MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "cursor harness cannot resolve model `{}` with effort `{}` from probe catalog",
-                resolved_model.model,
-                effort.as_deref().unwrap_or_default()
-            ),
-        }));
+        let actor = input
+            .agent
+            .map(|agent| format!("agent {agent}"))
+            .unwrap_or_else(|| "requested model".to_string());
+        let message = match routing_resolution.cursor_effort_outcome {
+            CursorEffortOutcome::NoEffortVariant => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model {} has no {cursor_effort} variant; try --effort medium/none.",
+                resolved_model.model
+            )),
+            CursorEffortOutcome::ProbeUnavailable => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
+            )),
+            CursorEffortOutcome::ProbeFailed { error } => {
+                let detail = error
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" ({value})"))
+                    .unwrap_or_default();
+                Some(format!(
+                    "{actor} selected effort {cursor_effort}; Cursor model list probe failed{detail}."
+                ))
+            }
+            CursorEffortOutcome::ProbeReturnedNoSlugs => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model list returned no model slugs; rerun without --no-refresh-models or with --refresh-models."
+            )),
+            CursorEffortOutcome::NoModelPrefixMatch => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model catalog has no matching model slug for `{}`.",
+                resolved_model.model
+            )),
+            CursorEffortOutcome::NotRequested | CursorEffortOutcome::Applied => None,
+        };
+
+        if let Some(message) = message {
+            return Err(MarsError::Config(ConfigError::Invalid { message }));
+        }
     }
 
     Ok(ResolvedPolicy {

@@ -17,14 +17,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::types::MarsContext;
 
 pub mod availability;
+mod dependencies;
 pub mod harness;
 pub mod harness_model;
 pub mod probes;
 
 pub use availability::ModelAvailability;
+pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
 
 mod tracing {
     macro_rules! debug {
@@ -365,7 +366,6 @@ pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
 
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
-const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 pub(crate) const FETCH_FAIL_COOLDOWN_SECS: u64 = 300;
 const FETCH_FAIL_COOLDOWN_REASON: &str = "recent fetch attempt failed; backing off (cooldown)";
 
@@ -455,10 +455,37 @@ pub fn resolve_models_refresh_control(
     })
 }
 
-pub fn load_models_cache_ttl(ctx: &MarsContext) -> u32 {
-    crate::config::load(&ctx.project_root)
-        .map(|config| config.settings.models_cache_ttl_hours)
-        .unwrap_or(DEFAULT_MODELS_CACHE_TTL_HOURS)
+pub fn dependency_alias_snapshot(deps: &[ResolvedDepModels]) -> IndexMap<String, ModelAlias> {
+    let mut merged = IndexMap::new();
+    for dep in deps {
+        for (name, alias) in &dep.models {
+            if !merged.contains_key(name) {
+                merged.insert(name.clone(), alias.clone());
+            }
+        }
+    }
+    merged
+}
+
+pub fn merged_runtime_aliases(
+    dependency_aliases: &IndexMap<String, ModelAlias>,
+    project_aliases: Option<&IndexMap<String, ModelAlias>>,
+) -> IndexMap<String, ModelAlias> {
+    let has_project_aliases = project_aliases.is_some_and(|aliases| !aliases.is_empty());
+    let mut merged = if dependency_aliases.is_empty() && !has_project_aliases {
+        builtin_aliases()
+    } else {
+        IndexMap::new()
+    };
+    for (name, alias) in dependency_aliases {
+        merged.insert(name.clone(), alias.clone());
+    }
+    if let Some(project_aliases) = project_aliases {
+        for (name, alias) in project_aliases {
+            merged.insert(name.clone(), alias.clone());
+        }
+    }
+    merged
 }
 
 fn read_cache_tolerant(mars_dir: &Path) -> ModelsCache {
@@ -1217,8 +1244,7 @@ fn glob_match_no_slash(pattern: &str, text: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Minimal builtin aliases so common model names work out of the box.
-/// No descriptions — packages layer those on top.
-/// Precedence: consumer > deps > builtins.
+/// Suppressed as soon as consumer or dependency aliases exist.
 pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
     let mut m = IndexMap::new();
     let add = |m: &mut IndexMap<String, ModelAlias>,
@@ -1281,7 +1307,8 @@ pub struct ResolvedDepModels {
 
 /// Merge model aliases from dependency tree.
 ///
-/// Precedence: consumer > deps (declaration order) > builtins.
+/// Precedence: consumer > deps (declaration order).
+/// Builtins appear only when consumer and dependency aliases are both empty.
 /// When two deps define the same alias, first in declaration order wins
 /// with a diagnostic warning.
 pub fn merge_model_config(
@@ -1296,19 +1323,18 @@ pub fn merge_model_config(
         alias: ModelAlias,
     }
 
-    let mut merged = IndexMap::new();
-    let builtins = builtin_aliases();
+    let has_dep_aliases = deps.iter().any(|dep| !dep.models.is_empty());
+    let mut merged = if consumer.is_empty() && !has_dep_aliases {
+        builtin_aliases()
+    } else {
+        IndexMap::new()
+    };
 
-    // Layer 0 (lowest): builtins
-    for (name, alias) in &builtins {
-        merged.insert(name.clone(), alias.clone());
-    }
-
-    // Track which dep won each alias (vs builtin)
+    // Track which dep won each alias
     let mut dep_provided: std::collections::HashMap<String, DepWinner> =
         std::collections::HashMap::new();
 
-    // Layer 1: dependencies (override builtins silently, first dep wins on conflicts)
+    // Dependencies: first dep wins on conflicts
     for dep in deps {
         for (name, alias) in &dep.models {
             if consumer.contains_key(name) {
@@ -1344,7 +1370,6 @@ pub fn merge_model_config(
                 };
                 diag.warn_with_context("model-alias-conflict", message, dep.source_name.clone());
             } else {
-                // Override builtin or insert new
                 merged.insert(name.clone(), alias.clone());
                 dep_provided.insert(
                     name.clone(),
@@ -1357,7 +1382,7 @@ pub fn merge_model_config(
         }
     }
 
-    // Layer 2 (highest): consumer config
+    // Consumer config overrides dependency aliases.
     for (name, alias) in consumer {
         merged.insert(name.clone(), alias.clone());
     }
@@ -1383,6 +1408,42 @@ pub fn resolve_all(
         None,
         cursor_probe.as_ref(),
     )
+}
+
+/// Resolve aliases without any harness detection or probe/auth checks.
+///
+/// This is intended for static list views where only alias -> model/provider
+/// resolution is needed.
+pub fn resolve_all_static(
+    aliases: &IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+) -> IndexMap<String, ResolvedAlias> {
+    let mut resolved = IndexMap::new();
+
+    for (name, alias) in aliases {
+        let Some((model_id, provider)) = resolve_model_and_provider(alias, cache) else {
+            continue; // unresolvable — omit
+        };
+
+        resolved.insert(
+            name.clone(),
+            ResolvedAlias {
+                name: name.clone(),
+                model_id,
+                provider,
+                harness: None,
+                harness_source: HarnessSource::Unavailable,
+                harness_candidates: Vec::new(),
+                description: alias.description.clone(),
+                default_effort: alias.default_effort.clone(),
+                autocompact: alias.autocompact,
+                autocompact_pct: alias.autocompact_pct,
+                availability: None,
+            },
+        );
+    }
+
+    resolved
 }
 
 pub fn resolve_all_with_probe(
@@ -1740,7 +1801,6 @@ pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<St
 mod tests {
     use super::*;
     use httpmock::prelude::*;
-    use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, mpsc};
     use std::thread;
@@ -2218,7 +2278,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_consumer_overrides_dependency_alias() {
+    fn merge_consumer_aliases_suppress_builtins() {
         let mut consumer = IndexMap::new();
         consumer.insert(
             "opus".to_string(),
@@ -2234,10 +2294,12 @@ mod tests {
                 provider: None
             }
         );
+        assert!(!merged.contains_key("sonnet"));
+        assert!(!merged.contains_key("codex"));
     }
 
     #[test]
-    fn merge_dep_overrides_builtin() {
+    fn merge_dependency_aliases_suppress_builtins() {
         let dep = ResolvedDepModels {
             source_name: "my-pkg".to_string(),
             models: {
@@ -2249,7 +2311,6 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[dep], &mut diag, None);
-        // Dep overrides builtin
         assert_eq!(
             merged.get("opus").unwrap().spec,
             ModelSpec::Pinned {
@@ -2257,6 +2318,8 @@ mod tests {
                 provider: None
             }
         );
+        assert!(!merged.contains_key("sonnet"));
+        assert!(!merged.contains_key("codex"));
     }
 
     #[test]
@@ -2541,7 +2604,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
 
-        assert!(merged.contains_key("opus"));
+        assert!(!merged.contains_key("opus"));
         assert_eq!(
             merged.get("custom").unwrap().spec,
             ModelSpec::Pinned {
@@ -2633,96 +2696,6 @@ mod tests {
             entry.harness_candidates,
             vec!["codex", "pi", "opencode", "cursor"]
         );
-    }
-
-    #[test]
-    fn resolve_all_pinned_auto_detect_harness() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-opus-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("opus").unwrap();
-        assert_eq!(entry.model_id, "claude-opus-4-6");
-        assert_eq!(entry.provider, "anthropic");
-
-        let installed = harness::detect_installed_harnesses();
-        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-            model_id: "claude-opus-4-6",
-            provider_for_order: Some("anthropic"),
-            provider_constraint: None,
-            settings_provider_order: None,
-            settings_harness_order: None,
-            config_default_harness: None,
-            installed_harnesses: &installed,
-            linked_harnesses: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
-            catalog_model_slugs: None,
-        });
-        let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
-            (Some(trace.harness), HarnessSource::AutoDetected)
-        } else {
-            (None, HarnessSource::Unavailable)
-        };
-
-        assert_eq!(entry.harness, expected_harness);
-        assert_eq!(entry.harness_source, expected_source);
-    }
-
-    #[test]
-    fn resolve_all_auto_detect_harness() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "gpt".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::AutoResolve {
-                    provider: "openai".to_string(),
-                    match_patterns: vec!["gpt-5*".to_string()],
-                    exclude_patterns: vec![],
-                },
-            },
-        );
-        let cache = make_cache(vec![("gpt-5", "OpenAI", Some("2025-06-01"))]);
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("gpt").unwrap();
-        assert_eq!(entry.model_id, "gpt-5");
-        assert_eq!(entry.provider, "openai");
-        assert_eq!(
-            entry.harness_candidates,
-            vec!["codex", "pi", "opencode", "cursor"]
-        );
-        match entry.harness_source {
-            HarnessSource::AutoDetected => assert!(entry.harness.is_some()),
-            HarnessSource::Unavailable => assert!(entry.harness.is_none()),
-            HarnessSource::Explicit => panic!("unexpected explicit harness source"),
-        }
     }
 
     #[test]
@@ -3069,156 +3042,6 @@ mod tests {
 
         let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
         assert_eq!(resolved, ("gpt-5".to_string(), "openai".to_string()));
-    }
-
-    #[test]
-    fn resolve_harness_explicit_installed() {
-        let alias = ModelAlias {
-            harness: Some("claude".to_string()),
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: None,
-            },
-        };
-        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
-
-        let resolved = resolve_harness(
-            &alias,
-            "anthropic",
-            "claude-opus-4-6",
-            &installed,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(
-            resolved,
-            (Some("claude".to_string()), HarnessSource::Explicit)
-        );
-    }
-
-    #[test]
-    fn resolve_harness_explicit_not_installed() {
-        let alias = ModelAlias {
-            harness: Some("claude".to_string()),
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: None,
-            },
-        };
-        let installed = HashSet::new();
-
-        let resolved = resolve_harness(
-            &alias,
-            "anthropic",
-            "claude-opus-4-6",
-            &installed,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(
-            resolved,
-            (Some("claude".to_string()), HarnessSource::Unavailable)
-        );
-    }
-
-    #[test]
-    fn resolve_harness_native_installed_result_depends_on_auth_probe() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        };
-        let installed: HashSet<String> = ["claude"].iter().map(|s| s.to_string()).collect();
-
-        let resolved = resolve_harness(
-            &alias,
-            "anthropic",
-            "claude-opus-4-6",
-            &installed,
-            None,
-            None,
-            None,
-        );
-        assert!(
-            matches!(
-                resolved,
-                (Some(_), HarnessSource::AutoDetected) | (None, HarnessSource::Unavailable)
-            ),
-            "native harness routing must be gated by the host auth probe; got {resolved:?}"
-        );
-    }
-
-    #[test]
-    fn resolve_harness_unavailable() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        };
-        let installed = HashSet::new();
-
-        let resolved = resolve_harness(
-            &alias,
-            "anthropic",
-            "claude-opus-4-6",
-            &installed,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(resolved, (None, HarnessSource::Unavailable));
-    }
-
-    #[test]
-    fn resolve_harness_unknown_provider_uses_pi_first_fallback_ladder() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "my-custom-model".to_string(),
-                provider: Some("unknown".to_string()),
-            },
-        };
-        let installed: HashSet<String> = ["claude", "pi"].iter().map(|s| s.to_string()).collect();
-
-        let resolved = resolve_harness(
-            &alias,
-            "unknown",
-            "my-custom-model",
-            &installed,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(
-            resolved,
-            (Some("pi".to_string()), HarnessSource::AutoDetected)
-        );
     }
 
     // -- serde roundtrip tests --
@@ -4523,27 +4346,51 @@ harness = "claude"
     }
 
     #[test]
-    fn load_models_cache_ttl_defaults_to_24_when_config_missing() {
-        let project = tempdir().unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
+    fn merged_runtime_aliases_suppresses_builtins_when_cached_or_project_aliases_exist() {
+        let mut dependency_aliases = IndexMap::new();
+        dependency_aliases.insert("dep".to_string(), pinned_alias(Some("codex"), "dep-model"));
+        dependency_aliases.insert(
+            "override".to_string(),
+            pinned_alias(Some("codex"), "dep-override"),
         );
-        assert_eq!(load_models_cache_ttl(&ctx), 24);
+
+        let mut project_aliases = IndexMap::new();
+        project_aliases.insert(
+            "override".to_string(),
+            pinned_alias(Some("claude"), "project-override"),
+        );
+        project_aliases.insert(
+            "project".to_string(),
+            pinned_alias(Some("pi"), "project-model"),
+        );
+
+        let merged = merged_runtime_aliases(&dependency_aliases, Some(&project_aliases));
+
+        assert!(!merged.contains_key("opus"));
+        assert_eq!(
+            merged.get("dep").and_then(|alias| alias.harness.as_deref()),
+            Some("codex")
+        );
+        assert_eq!(
+            merged
+                .get("override")
+                .and_then(|alias| alias.harness.as_deref()),
+            Some("claude")
+        );
+        assert_eq!(
+            merged
+                .get("project")
+                .and_then(|alias| alias.harness.as_deref()),
+            Some("pi")
+        );
     }
 
     #[test]
-    fn load_models_cache_ttl_reads_config_value() {
-        let project = tempdir().unwrap();
-        std::fs::write(
-            project.path().join("mars.toml"),
-            "[settings]\nmodels_cache_ttl_hours = 48\n",
-        )
-        .unwrap();
-        let ctx = crate::types::MarsContext::for_test(
-            project.path().to_path_buf(),
-            project.path().join(".agents"),
-        );
-        assert_eq!(load_models_cache_ttl(&ctx), 48);
+    fn merged_runtime_aliases_empty_project_uses_builtins() {
+        let merged = merged_runtime_aliases(&IndexMap::new(), None);
+
+        assert!(merged.contains_key("opus"));
+        assert!(merged.contains_key("sonnet"));
+        assert!(merged.contains_key("codex"));
     }
 }

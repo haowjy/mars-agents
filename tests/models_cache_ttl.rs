@@ -322,8 +322,11 @@ fn scenario_g_offline_sync_succeeds_without_cache_and_emits_diag() {
         "offline sync with empty cache should not create cache file"
     );
     assert!(
-        models_merged_path(&project_root).exists(),
-        "offline sync should still write models-merged.json"
+        mars_agents::lock::load(&project_root)
+            .expect("failed to load mars.lock")
+            .dependency_model_aliases
+            .is_empty(),
+        "offline sync with no dependencies should persist empty dependency alias winners in mars.lock"
     );
     assert_eq!(
         mock.hits(),

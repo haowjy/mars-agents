@@ -503,6 +503,33 @@ fn doctor_warns_when_mars_not_gitignored() {
 }
 
 #[test]
+fn doctor_reports_semantic_config_errors_from_merge() {
+    let dir = TempDir::new().unwrap();
+    let project_root = dir.child("project");
+
+    mars()
+        .args(["init", "--root", project_root.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    fs::write(
+        project_root.child("mars.toml").path(),
+        r#"[dependencies.bad]
+url = "https://example.com/test.git"
+path = "./local-source"
+"#,
+    )
+    .unwrap();
+
+    mars()
+        .args(["doctor", "--root", project_root.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("config error:"))
+        .stdout(predicate::str::contains("has both `url` and `path`"));
+}
+
+#[test]
 fn help_shows_all_commands() {
     mars()
         .arg("--help")

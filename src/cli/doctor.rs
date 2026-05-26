@@ -16,8 +16,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let mut warnings = Vec::new();
 
     // Check config is valid
-    let config = match crate::config::load(&ctx.project_root) {
-        Ok(config) => Some(config),
+    let project_config = match crate::config::load_project_config_layers(&ctx.project_root) {
+        Ok(loaded) => Some(loaded),
         Err(e) => {
             errors.push(format!("config error: {e}"));
             None
@@ -71,20 +71,24 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     // Check agent→skill references
-    if let Some(config) = &config {
-        let local = crate::config::load_local(&ctx.project_root).unwrap_or_default();
-        if let Ok((effective, _diagnostics)) =
-            crate::config::merge_with_root(config.clone(), local, &ctx.project_root)
-        {
-            // Check that all sources in config have corresponding lock entries
-            for source_name in effective.dependencies.keys() {
-                if !lock.dependencies.contains_key(source_name) {
-                    errors.push(format!(
-                        "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
-                        cmd = managed_cmd("mars sync"),
-                    ));
+    if let Some(project_config) = &project_config {
+        match crate::config::merge_with_root(
+            project_config.config.clone(),
+            project_config.local.clone(),
+            &ctx.project_root,
+        ) {
+            Ok((effective, _diagnostics)) => {
+                // Check that all sources in config have corresponding lock entries
+                for source_name in effective.dependencies.keys() {
+                    if !lock.dependencies.contains_key(source_name) {
+                        errors.push(format!(
+                            "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
+                            cmd = managed_cmd("mars sync"),
+                        ));
+                    }
                 }
             }
+            Err(err) => errors.push(format!("config error: {err}")),
         }
     }
 
@@ -157,14 +161,20 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     // Check .mars/ gitignore as warning only.
     check_mars_gitignore(&ctx.project_root, &mut warnings);
-    check_legacy_agents_directory(&ctx.project_root, config.as_ref(), &mut warnings);
+    check_legacy_agents_directory(
+        &ctx.project_root,
+        project_config
+            .as_ref()
+            .map(|loaded| &loaded.effective.settings),
+        &mut warnings,
+    );
 
     // Check explicitly managed native targets against lock checksums.
-    if let Some(config) = &config {
+    if let Some(project_config) = &project_config {
         let target_divergence_count = check_target_divergence(
             &ctx.project_root,
             &lock,
-            &config.settings.managed_targets(),
+            &project_config.effective.settings.managed_targets(),
             &mut warnings,
         );
         if target_divergence_count > 0 {
@@ -185,7 +195,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 /// explicit target.
 fn check_legacy_agents_directory(
     project_root: &std::path::Path,
-    config: Option<&crate::config::Config>,
+    settings: Option<&crate::config::Settings>,
     warnings: &mut Vec<String>,
 ) {
     let agents_dir = project_root.join(".agents");
@@ -193,13 +203,11 @@ fn check_legacy_agents_directory(
         return;
     }
 
-    let is_explicit_target = config.is_some_and(|config| {
-        config.settings.managed_root.as_deref() == Some(".agents")
-            || config
-                .settings
-                .targets
-                .as_ref()
-                .is_some_and(|targets| targets.iter().any(|target| target == ".agents"))
+    let is_explicit_target = settings.is_some_and(|settings| {
+        settings
+            .managed_targets()
+            .iter()
+            .any(|target| target == ".agents")
     });
 
     if !is_explicit_target {
@@ -388,7 +396,7 @@ mod tests {
         let mut warnings = Vec::new();
         check_legacy_agents_directory(
             temp.path(),
-            Some(&crate::config::Config::default()),
+            Some(&crate::config::Settings::default()),
             &mut warnings,
         );
 
@@ -404,15 +412,12 @@ mod tests {
         let temp = TempDir::new().expect("create temp dir");
         fs::create_dir_all(temp.path().join(".agents")).expect("create legacy dir");
 
-        let config = crate::config::Config {
-            settings: crate::config::Settings {
-                targets: Some(vec![".agents".to_string()]),
-                ..crate::config::Settings::default()
-            },
-            ..crate::config::Config::default()
+        let settings = crate::config::Settings {
+            targets: Some(vec![".agents".to_string()]),
+            ..crate::config::Settings::default()
         };
         let mut warnings = Vec::new();
-        check_legacy_agents_directory(temp.path(), Some(&config), &mut warnings);
+        check_legacy_agents_directory(temp.path(), Some(&settings), &mut warnings);
 
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }

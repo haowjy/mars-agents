@@ -17,6 +17,10 @@ commit = "abc123def456"
 [dependencies.local]
 path = "/home/dev/my-agents"
 
+[dependency_model_aliases.fast]
+harness = "codex"
+model = "gpt-5"
+
 [items."agent/coder"]
 source = "base"
 kind = "agent"
@@ -53,6 +57,7 @@ installed_checksum = "sha256:eee555..."
 |---|---|---|
 | `version` | integer | Schema version (`2` is current; `1` is legacy) |
 | `dependencies` | table | Resolved source entries |
+| `dependency_model_aliases` | table | Dependency-only model alias winners (declaration-order merge) |
 | `items` | table | Logical items with source checksums and per-target output records |
 
 ### `[dependencies.<name>]`

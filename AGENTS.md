@@ -66,7 +66,7 @@ mars.toml + mars.lock (committed, project root)
     targets: .agents/, .claude/, .cursor/ (committed, shared)
 ```
 
-- **`.mars/`** — canonical content store. Gitignored. Rebuilt by `mars sync` from lock + sources. Contains resolved content (`agents/`, `skills/`), merge base cache (`cache/bases/`), models cache (`models-cache.json`), dependency model aliases (`models-merged.json`), sync lock.
+- **`.mars/`** — canonical content store. Gitignored. Rebuilt by `mars sync` from lock + sources. Contains resolved content (`agents/`, `skills/`), merge base cache (`cache/bases/`), models cache (`models-cache.json`), sync lock.
 - **Target directories** — mars copies managed items into these from `.mars/`. They may contain non-mars content. Mars tracks what it put there via the lock. Configured via `settings.targets` in mars.toml, defaults to `[".agents"]`.
 - **`.mars/` is NOT the source of truth** — it's a cache. The committed targets + `mars.lock` are the authority. On fresh clone (no `.mars/`), `mars sync` rebuilds the cache from sources.
 
@@ -84,7 +84,7 @@ load_config → resolve_graph → build_target → create_plan → apply_plan �
 4. **create_plan** — diff desired state against lock + disk, generate sync plan (Add/Update/Conflict/Orphan)
 5. **apply_plan** — write resolved content to `.mars/` canonical store (atomic writes via tmp+rename)
 6. **sync_targets** — copy from `.mars/` to each configured target directory (atomic copies, never deletes files mars didn't create, non-fatal per-target — errors don't stop other targets)
-7. **finalize** — write lock (regardless of target sync outcome), persist dependency-only model aliases to `models-merged.json`, validation warnings, build `SyncReport`
+7. **finalize** — write lock (regardless of target sync outcome), persist dependency-only model alias winners in `mars.lock`, validation warnings, build `SyncReport`
 
 ### Phase structs
 
@@ -111,9 +111,9 @@ Each phase produces a typed handoff struct consumed by the next phase:
 
 `src/models/mod.rs` — model aliases, catalog caching, pattern resolution.
 
-### No builtins
+### Builtin fallback
 
-All model aliases come from packages or consumer config. The binary ships zero hardcoded aliases. Merge precedence: consumer > dependencies (declaration order, first-dep wins).
+Model aliases normally come from packages or consumer config. The binary has a small hardcoded fallback alias set (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) only for projects with zero dependency, project, or local aliases. As soon as any non-builtin alias exists, builtins are suppressed. Merge precedence for non-builtin aliases: consumer > dependencies (declaration order, first-dep wins).
 
 ### Two alias modes
 
@@ -123,12 +123,12 @@ All model aliases come from packages or consumer config. The binary ships zero h
 ### Catalog lifecycle
 
 - `mars models refresh` — fetches from models.dev API, caches to `.mars/models-cache.json`
-- `mars models list` — loads dependency aliases from `.mars/models-merged.json`, overlays consumer config from `mars.toml [models]`, then applies visibility filtering from `[settings.model_visibility]` (unless overridden by `--include`/`--exclude`)
+- `mars models list` — loads dependency alias winners from `mars.lock`, overlays consumer config from `mars.toml`/`mars.local.toml [models]`, then applies visibility filtering from `[settings.model_visibility]` (unless overridden by `--include`/`--exclude`)
 - `mars models resolve <alias>` — resolves against cache
 
 ### Dependency model merge
 
-During `resolve_graph`, model configs from all resolved dependencies are collected in declaration order. `merge_model_config()` layers them: deps first (first-dep wins on conflicts), consumer config on top (always wins). Result is used during sync and persisted to `models-merged.json` in `finalize()` as dependency-only aliases (no consumer config baked in, so `models list` can overlay fresh consumer config at read time).
+During `resolve_graph`, model configs from all resolved dependencies are collected in declaration order. `merge_model_config()` layers them: deps first (first-dep wins on conflicts), consumer config on top (always wins). Dependency-only winners are persisted to `mars.lock` in `finalize()`, and runtime commands overlay current consumer/project-local aliases at read time.
 
 ## Harness Routing
 

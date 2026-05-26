@@ -192,21 +192,21 @@ pub fn resolve_cursor_effort_slug(
 
     let normalized_model = normalize_slug(model_id);
     let normalized_effort = normalize_slug(effort);
+    let candidate_slugs: Vec<String> = slugs
+        .iter()
+        .filter(|slug| {
+            let normalized_slug = normalize_slug(slug);
+            normalized_slug == normalized_model
+                || normalized_slug.starts_with(&format!("{normalized_model}-"))
+        })
+        .cloned()
+        .collect();
 
     if cursor_effort_is_default_tier(&normalized_effort) {
         if let Some(bare_slug) = prefix_matches
             .iter()
             .find(|slug| normalize_slug(slug) == normalized_model)
         {
-            let candidate_slugs = slugs
-                .iter()
-                .filter(|slug| {
-                    let normalized_slug = normalize_slug(slug);
-                    normalized_slug == normalized_model
-                        || normalized_slug.starts_with(&format!("{normalized_model}-"))
-                })
-                .cloned()
-                .collect();
             return Ok(CursorEffortResolution {
                 slug: (*bare_slug).to_string(),
                 candidate_slugs,
@@ -220,13 +220,25 @@ pub fn resolve_cursor_effort_slug(
     }
 
     let effort_matches: Vec<&str> = prefix_matches
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|slug| {
             slug_matches_effort(&normalized_model, &normalize_slug(slug), &normalized_effort)
         })
         .collect();
 
     if effort_matches.is_empty() {
+        if cursor_effort_allows_bare_fallback(&normalized_model)
+            && let Some(bare_slug) = prefix_matches
+                .iter()
+                .find(|slug| normalize_slug(slug) == normalized_model)
+        {
+            return Ok(CursorEffortResolution {
+                slug: (*bare_slug).to_string(),
+                candidate_slugs,
+            });
+        }
+
         return Err(CursorEffortResolutionError::NoEffortMatch {
             model_id: model_id.to_string(),
             effort: effort.to_string(),
@@ -234,15 +246,6 @@ pub fn resolve_cursor_effort_slug(
     }
 
     let chosen = choose_cursor_effort_slug(&normalized_model, effort_matches);
-    let candidate_slugs = slugs
-        .iter()
-        .filter(|slug| {
-            let normalized_slug = normalize_slug(slug);
-            normalized_slug == normalized_model
-                || normalized_slug.starts_with(&format!("{normalized_model}-"))
-        })
-        .cloned()
-        .collect();
 
     Ok(CursorEffortResolution {
         slug: chosen.to_string(),
@@ -254,6 +257,10 @@ pub fn resolve_cursor_effort_slug(
 /// not `gpt-5.5-medium`. Treat medium/none/auto as that default tier.
 fn cursor_effort_is_default_tier(normalized_effort: &str) -> bool {
     matches!(normalized_effort, "auto" | "default" | "medium" | "none")
+}
+
+fn cursor_effort_allows_bare_fallback(normalized_model: &str) -> bool {
+    normalized_model.starts_with("composer-")
 }
 
 fn slug_matches_effort(
@@ -431,6 +438,24 @@ Tip: use --model <id> to select"#;
                 effort: "high".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_composer_falls_back_to_bare_slug() {
+        let slugs = vec!["composer-2.5".to_string(), "composer-2.5-low".to_string()];
+        let resolution = resolve_cursor_effort_slug("composer-2.5", "high", &slugs).unwrap();
+        assert_eq!(resolution.slug, "composer-2.5");
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_composer_prefers_exact_effort_slug_when_present() {
+        let slugs = vec![
+            "composer-2.5".to_string(),
+            "composer-2.5-low".to_string(),
+            "composer-2.5-high".to_string(),
+        ];
+        let resolution = resolve_cursor_effort_slug("composer-2.5", "high", &slugs).unwrap();
+        assert_eq!(resolution.slug, "composer-2.5-high");
     }
 
     #[test]

@@ -160,7 +160,7 @@ fn prepend_path(bin_dir: &Path) -> String {
 
 #[test]
 #[serial]
-fn resolve_ignores_prepopulated_probe_cache_and_uses_live_probe() {
+fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
@@ -175,7 +175,7 @@ fn resolve_ignores_prepopulated_probe_cache_and_uses_live_probe() {
     let output = mars_cmd()
         .arg("--root")
         .arg(&project_root)
-        .args(["--json", "models", "resolve", "fast"])
+        .args(["--json", "models", "resolve", "fast", "--refresh-models"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("MARS_PROBE_CACHE_TTL_SECS", "60")
         .env("PATH", prepend_path(&bin_dir))
@@ -231,7 +231,7 @@ fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
-    assert_eq!(stdout["probe_cache"].as_str(), Some("skipped"));
+    assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
     assert!(
         !marker.exists(),
         "--no-refresh-models should skip command-scoped probe execution"
@@ -240,7 +240,7 @@ fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
 
 #[test]
 #[serial]
-fn resolve_raw_model_ignores_stale_probe_cache_for_route_selection() {
+fn resolve_raw_model_uses_stale_probe_cache_for_route_selection_by_default() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
@@ -265,7 +265,8 @@ fn resolve_raw_model_ignores_stale_probe_cache_for_route_selection() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["harness"].as_str(), Some("codex"));
+    assert_eq!(stdout["harness"].as_str(), Some("opencode"));
+    assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
     assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()
@@ -274,7 +275,7 @@ fn resolve_raw_model_ignores_stale_probe_cache_for_route_selection() {
         .iter()
         .find(|assessment| assessment["harness"].as_str() == Some("opencode"))
         .expect("opencode assessment should exist");
-    assert_eq!(opencode["skip_reason"].as_str(), Some("no_model_match"));
+    assert_eq!(opencode["skip_reason"], Value::Null);
 }
 
 #[test]

@@ -1809,14 +1809,14 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode")
+        Some("claude,pi,codex,opencode,cursor")
     );
 }
 
@@ -1847,14 +1847,13 @@ pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() 
         "build",
         "launch-bundle",
         "--model",
-        "gpt-5.5",
-        "--harness",
-        "cursor",
+        "gpt-5",
         "--effort",
         "high",
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1906,12 +1905,280 @@ pub(crate) fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5.5"));
     assert!(bundle["execution_policy"]["effort"].is_null());
+}
+
+pub(crate) fn build_launch_bundle_cursor_effort_without_model_keeps_execution_effort() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_failing_cursor_probe_harness(&temp, None);
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-effort-no-model-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+}
+
+pub(crate) fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses_with_custom_cursor_models(
+        &temp,
+        &["cursor"],
+        &["composer-2.5", "composer-2.5-low"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(json!({
+            "openai": {
+                "models": {
+                    "composer-2.5": {
+                        "id": "composer-2.5",
+                        "name": "Composer 2.5",
+                        "release_date": "2026-01-01",
+                        "limit": {
+                            "context": 400000,
+                            "output": 128000
+                        }
+                    }
+                }
+            }
+        }));
+    });
+    let project = temp.child("cursor-composer-effort-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\nharness_order = [\"cursor\"]\ndefault_harness = \"cursor\"\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "composer-2.5",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("composer-2.5")
+    );
+    assert!(bundle["execution_policy"]["effort"].is_null());
+}
+
+pub(crate) fn build_launch_bundle_cursor_non_composer_missing_effort_variant_errors() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses_with_custom_cursor_models(
+        &temp,
+        &["cursor"],
+        &["gpt-5.5", "gpt-5.5-low"],
+    );
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.5
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "cursor-missing-variant", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "agent reviewer selected effort high; Cursor model gpt-5.5 has no high variant; try --effort medium/none."
+        ),
+        "expected missing-variant message, got:\n{stderr}"
+    );
+}
+
+pub(crate) fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-probe-unavailable-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+        "--no-refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "requested model selected effort high; Cursor model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
+        ),
+        "expected probe-unavailable message, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("has no high variant"),
+        "probe-unavailable errors must not masquerade as missing-variant errors: {stderr}"
+    );
+}
+
+pub(crate) fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_message() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_failing_cursor_probe_harness(&temp, None);
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-probe-failure-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5.5",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "requested model selected effort high; Cursor model list probe failed (model probe failed: exit code 42)."
+        ),
+        "expected probe-failed message, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("rerun without --no-refresh-models"),
+        "attempted probe failures should not point to no-refresh as the primary cause: {stderr}"
+    );
+    assert!(
+        !stderr.contains("has no high variant"),
+        "probe-failed errors must not masquerade as missing-variant errors: {stderr}"
+    );
+}
+
+pub(crate) fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses_with_custom_cursor_models(
+        &temp,
+        &["cursor"],
+        &["claude-opus-4-7", "claude-opus-4-7-high"],
+    );
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let project = temp.child("cursor-no-prefix-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\nharness_order = [\"cursor\"]\ndefault_harness = \"cursor\"\n")
+        .unwrap();
+
+    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--model",
+        "gpt-5",
+        "--effort",
+        "high",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "requested model selected effort high; Cursor model catalog has no matching model slug for `gpt-5`."
+        ),
+        "expected no-prefix message, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("has no high variant"),
+        "no-prefix errors must not be reported as missing variants: {stderr}"
+    );
 }
 
 pub(crate) fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
@@ -2037,15 +2304,73 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
     assert_eq!(
         bundle["routing"]["harness_model"].as_str(),
-        Some("gpt-5.4-mini")
+        Some("openai/gpt-5.4-mini")
     );
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert!(
         !marker_path.exists(),
         "--no-refresh-models should not spawn __refresh-probe or run the harness probe"
+    );
+}
+
+pub(crate) fn build_launch_bundle_no_refresh_uses_stale_cursor_probe_without_spawning_refresh() {
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("cursor-refresh-probe-spawned");
+    let bin_dir = install_cursor_probe_harness(
+        &temp,
+        &["gpt-5.6-high - OpenAI", "gpt-5.6-low - OpenAI"],
+        Some(&marker_path),
+    );
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5.5
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_cursor_probe_cache(
+        &cache_root,
+        now_unix_secs().saturating_sub(120),
+        &["gpt-5.5-high", "gpt-5.5-low"],
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "cursor",
+        "--effort",
+        "high",
+        "--no-refresh-models",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("gpt-5.5-high")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
+    );
+    assert!(
+        !marker_path.exists(),
+        "--no-refresh-models should not spawn __refresh-probe or run the cursor probe"
     );
 }
 
@@ -2922,6 +3247,18 @@ fn install_fake_harnesses_with_custom_opencode_models(
     bin_dir
 }
 
+fn install_fake_harnesses_with_custom_cursor_models(
+    temp: &TempDir,
+    harnesses: &[&str],
+    cursor_models: &[&str],
+) -> PathBuf {
+    let bin_dir = install_fake_harnesses(temp, harnesses);
+    if harnesses.contains(&"cursor") {
+        write_cursor_models_harness(&bin_dir, cursor_models);
+    }
+    bin_dir
+}
+
 fn write_opencode_models_harness(bin_dir: &Path, model_slugs: &[&str]) {
     #[cfg(windows)]
     {
@@ -2946,6 +3283,38 @@ fn write_opencode_models_harness(bin_dir: &Path, model_slugs: &[&str]) {
         let script =
             format!("#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n{slugs}  exit 0\nfi\nexit 0\n");
         let path = bin_dir.join("opencode");
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+}
+
+fn write_cursor_models_harness(bin_dir: &Path, model_slugs: &[&str]) {
+    #[cfg(windows)]
+    {
+        let slugs = model_slugs
+            .iter()
+            .map(|slug| format!("  echo {slug} - Model\r\n"))
+            .collect::<String>();
+        let script = format!(
+            "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n{slugs}  exit /b 0\r\n)\r\nexit /b 0\r\n"
+        );
+        fs::write(bin_dir.join("cursor.bat"), script).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let slugs = model_slugs
+            .iter()
+            .map(|slug| format!("  printf '%s\\n' '{slug} - Model'\n"))
+            .collect::<String>();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n{slugs}  exit 0\nfi\nexit 0\n"
+        );
+        let path = bin_dir.join("cursor");
         fs::write(&path, script).unwrap();
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
@@ -2983,6 +3352,88 @@ fn install_opencode_probe_harness(
             "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  {marker_command}  printf '%s\\n' '{model_slug}'\n  exit 0\nfi\nexit 0\n"
         );
         let path = bin_dir.join("opencode");
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    bin_dir
+}
+
+fn install_cursor_probe_harness(
+    temp: &TempDir,
+    model_slugs: &[&str],
+    marker_path: Option<&Path>,
+) -> PathBuf {
+    let bin_dir = temp.path().join("harness-bin-cursor-probe");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+        let marker_command = marker_path
+            .map(|path| format!("echo ran>\"{}\"\r\n", path.display()))
+            .unwrap_or_default();
+        let models = model_slugs
+            .iter()
+            .map(|slug| format!("  echo {slug}\r\n"))
+            .collect::<String>();
+        let script = format!(
+            "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  {marker_command}{models}  exit /b 0\r\n)\r\nexit /b 0\r\n"
+        );
+        fs::write(bin_dir.join("cursor.bat"), script).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let marker_command = marker_path
+            .map(|path| format!("printf ran > '{}'\n", path.display()))
+            .unwrap_or_default();
+        let models = model_slugs
+            .iter()
+            .map(|slug| format!("  printf '%s\\n' '{slug}'\n"))
+            .collect::<String>();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  {marker_command}{models}  exit 0\nfi\nexit 0\n"
+        );
+        let path = bin_dir.join("cursor");
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    bin_dir
+}
+
+fn install_failing_cursor_probe_harness(temp: &TempDir, marker_path: Option<&Path>) -> PathBuf {
+    let bin_dir = temp.path().join("harness-bin-cursor-probe-fail");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+        let marker_command = marker_path
+            .map(|path| format!("echo ran>\"{}\"\r\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  {marker_command}  exit /b 42\r\n)\r\nexit /b 0\r\n"
+        );
+        fs::write(bin_dir.join("cursor.bat"), script).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let marker_command = marker_path
+            .map(|path| format!("printf ran > '{}'\n", path.display()))
+            .unwrap_or_default();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  {marker_command}  exit 42\nfi\nexit 0\n"
+        );
+        let path = bin_dir.join("cursor");
         fs::write(&path, script).unwrap();
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);

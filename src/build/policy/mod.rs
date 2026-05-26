@@ -14,6 +14,7 @@ mod execution;
 mod harness;
 mod model;
 mod runnable;
+use runnable::CursorEffortOutcome;
 
 struct SessionProbeResolver<'a> {
     session: &'a mut CapabilitySession,
@@ -396,10 +397,6 @@ pub fn resolve_policy(
         route_trace: harness_resolution.route_trace,
     })?;
 
-    let cursor_effort_resolution_failed = routing_resolution
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("no cursor slug matched"));
     warnings.extend(routing_resolution.warnings);
 
     let mut effort = execution_resolution.effort.value;
@@ -413,18 +410,47 @@ pub fn resolve_policy(
         .harness
         .value
         .eq_ignore_ascii_case("cursor")
-        && effort
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty())
-        && cursor_effort_resolution_failed
+        && let Some(cursor_effort) = effort
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
     {
-        return Err(MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "cursor harness cannot resolve model `{}` with effort `{}` from probe catalog",
-                resolved_model.model,
-                effort.as_deref().unwrap_or_default()
-            ),
-        }));
+        let actor = input
+            .agent
+            .map(|agent| format!("agent {agent}"))
+            .unwrap_or_else(|| "requested model".to_string());
+        let message = match routing_resolution.cursor_effort_outcome {
+            CursorEffortOutcome::NoEffortVariant => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model {} has no {cursor_effort} variant; try --effort medium/none.",
+                resolved_model.model
+            )),
+            CursorEffortOutcome::ProbeUnavailable => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
+            )),
+            CursorEffortOutcome::ProbeFailed { error } => {
+                let detail = error
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" ({value})"))
+                    .unwrap_or_default();
+                Some(format!(
+                    "{actor} selected effort {cursor_effort}; Cursor model list probe failed{detail}."
+                ))
+            }
+            CursorEffortOutcome::ProbeReturnedNoSlugs => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model list returned no model slugs; rerun without --no-refresh-models or with --refresh-models."
+            )),
+            CursorEffortOutcome::NoModelPrefixMatch => Some(format!(
+                "{actor} selected effort {cursor_effort}; Cursor model catalog has no matching model slug for `{}`.",
+                resolved_model.model
+            )),
+            CursorEffortOutcome::NotRequested | CursorEffortOutcome::Applied => None,
+        };
+
+        if let Some(message) = message {
+            return Err(MarsError::Config(ConfigError::Invalid { message }));
+        }
     }
 
     Ok(ResolvedPolicy {

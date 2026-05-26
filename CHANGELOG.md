@@ -19,6 +19,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars sync` and native agent generation now honor `mars.local.toml [models]` overlays, and dependency alias conflict diagnostics are suppressed when a local model alias owns that name.
 - `mars sync` now persists dependency alias winners in committed `mars.lock` (`dependency_model_aliases`) and no longer uses `.mars/models-dependencies.json` as alias authority.
 - Raw model-id resolution and launch-bundle routing continue to honor `mars.local.toml` `harness_order` overlays while using lazy probe lookups, so local routing precedence remains consistent without eagerly probing unrelated harnesses.
+- Cursor effort routing now reports typed failure causes (probe unavailable/empty, missing model prefix, missing effort variant), supports Composer bare-slug fallback when no effort variant exists, and emits precise launch-bundle errors instead of warning-string heuristics.
 
 ## [0.7.2] - 2026-05-24
 

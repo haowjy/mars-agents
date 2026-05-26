@@ -29,6 +29,18 @@ pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
     pub(super) warnings: Vec<String>,
     pub(super) effort_consumed: bool,
+    pub(super) cursor_effort_outcome: CursorEffortOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CursorEffortOutcome {
+    NotRequested,
+    Applied,
+    ProbeUnavailable,
+    ProbeFailed { error: Option<String> },
+    ProbeReturnedNoSlugs,
+    NoModelPrefixMatch,
+    NoEffortVariant,
 }
 
 pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResolution, MarsError> {
@@ -93,55 +105,50 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
         candidate_slugs,
         route_trace: route_trace.to_report(),
     };
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
     let mut effort_consumed = false;
+    let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
 
     if harness.eq_ignore_ascii_case("cursor")
+        && !routing.model.trim().is_empty()
         && let Some(effort) = effort.filter(|value| !value.trim().is_empty())
     {
+        cursor_effort_outcome = CursorEffortOutcome::ProbeUnavailable;
         match cursor_probe_result {
-            Some(probe) if probe.model_probe_success && !probe.slugs.is_empty() => {
-                match resolve_cursor_effort_slug(&routing.model, &effort, &probe.slugs) {
-                    Ok(resolution) => {
-                        routing.harness_model = resolution.slug;
-                        routing.harness_model_source =
-                            RunnablePathSource::CachedProbe.label().to_string();
-                        routing.harness_model_confidence =
-                            RunnableConfidence::Confirmed.label().to_string();
-                        routing.candidate_slugs = resolution.candidate_slugs;
-                        routing.match_evidence = MatchEvidence::Confirmed.label().to_string();
-                        effort_consumed = true;
-                        warnings.push(format!(
-                            "applied effort `{effort}` to cursor harness_model `{}`",
-                            routing.harness_model
-                        ));
-                    }
-                    Err(CursorEffortResolutionError::NoEffortMatch { .. }) => {
-                        warnings.push(format!(
-                            "no cursor slug matched model `{}` with effort `{effort}`",
-                            routing.model
-                        ));
-                    }
-                    Err(CursorEffortResolutionError::NoModelPrefixMatch) => {
-                        warnings.push(format!(
-                            "cursor probe has no slug matching model `{}` for effort `{effort}`",
-                            routing.model
-                        ));
-                    }
-                    Err(CursorEffortResolutionError::NoProbeSlugs) => {
-                        warnings.push(
-                            "cursor effort resolution requested but probe returned no slugs"
-                                .to_string(),
-                        );
+            Some(probe) if !probe.model_probe_success => {
+                cursor_effort_outcome = CursorEffortOutcome::ProbeFailed {
+                    error: probe.error.clone(),
+                };
+            }
+            Some(probe) => {
+                if probe.slugs.is_empty() {
+                    cursor_effort_outcome = CursorEffortOutcome::ProbeReturnedNoSlugs;
+                } else {
+                    match resolve_cursor_effort_slug(&routing.model, &effort, &probe.slugs) {
+                        Ok(resolution) => {
+                            routing.harness_model = resolution.slug;
+                            routing.harness_model_source =
+                                RunnablePathSource::CachedProbe.label().to_string();
+                            routing.harness_model_confidence =
+                                RunnableConfidence::Confirmed.label().to_string();
+                            routing.candidate_slugs = resolution.candidate_slugs;
+                            routing.match_evidence = MatchEvidence::Confirmed.label().to_string();
+                            effort_consumed = true;
+                            cursor_effort_outcome = CursorEffortOutcome::Applied;
+                        }
+                        Err(CursorEffortResolutionError::NoEffortMatch { .. }) => {
+                            cursor_effort_outcome = CursorEffortOutcome::NoEffortVariant;
+                        }
+                        Err(CursorEffortResolutionError::NoModelPrefixMatch) => {
+                            cursor_effort_outcome = CursorEffortOutcome::NoModelPrefixMatch;
+                        }
+                        Err(CursorEffortResolutionError::NoProbeSlugs) => {
+                            cursor_effort_outcome = CursorEffortOutcome::ProbeReturnedNoSlugs;
+                        }
                     }
                 }
             }
-            _ => {
-                warnings.push(
-                    "cursor effort resolution requested but cursor probe is unavailable"
-                        .to_string(),
-                );
-            }
+            _ => {}
         }
     }
 
@@ -149,6 +156,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
         routing,
         warnings,
         effort_consumed,
+        cursor_effort_outcome,
     })
 }
 
@@ -372,6 +380,10 @@ mod tests {
         .expect("routing should resolve");
 
         assert!(resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::Applied
+        );
         assert_eq!(resolution.routing.harness_model, "gpt-5.5-high");
         assert_eq!(resolution.routing.harness_model_confidence, "confirmed");
     }
@@ -405,7 +417,271 @@ mod tests {
         .expect("routing should resolve");
 
         assert!(resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::Applied
+        );
         assert_eq!(resolution.routing.harness_model, "gpt-5.5");
+    }
+
+    #[test]
+    fn cursor_applies_effort_to_composer_bare_slug_when_variant_missing() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "composer-2.5".to_string(),
+            model_token: "composer-2.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec!["composer-2.5".to_string(), "composer-2.5-low".to_string()],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert!(resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::Applied
+        );
+        assert_eq!(resolution.routing.harness_model, "composer-2.5");
+    }
+
+    #[test]
+    fn cursor_prefers_exact_effort_variant_for_composer_when_available() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "composer-2.5".to_string(),
+            model_token: "composer-2.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec![
+                    "composer-2.5".to_string(),
+                    "composer-2.5-high".to_string(),
+                    "composer-2.5-low".to_string(),
+                ],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert!(resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::Applied
+        );
+        assert_eq!(resolution.routing.harness_model, "composer-2.5-high");
+    }
+
+    #[test]
+    fn cursor_non_composer_bare_slug_without_variant_reports_missing_effort_variant() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec!["gpt-5.5".to_string(), "gpt-5.5-low".to_string()],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert!(!resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::NoEffortVariant
+        );
+        assert_eq!(resolution.routing.harness_model, "gpt-5.5");
+    }
+
+    #[test]
+    fn cursor_probe_unavailable_reports_typed_outcome() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: None,
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::ProbeUnavailable
+        );
+    }
+
+    #[test]
+    fn cursor_probe_empty_slugs_reports_typed_outcome() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: Vec::new(),
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::ProbeReturnedNoSlugs
+        );
+    }
+
+    #[test]
+    fn cursor_probe_failure_reports_typed_outcome_with_error() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: Vec::new(),
+                model_probe_success: false,
+                error: Some("model probe failed: timeout".to_string()),
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::ProbeFailed {
+                error: Some("model probe failed: timeout".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_probe_no_prefix_match_reports_typed_outcome() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5.5".to_string(),
+            model_token: "gpt-5.5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec!["claude-opus-4-7-high".to_string()],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+        })
+        .expect("routing should resolve");
+
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::NoModelPrefixMatch
+        );
+    }
+
+    #[test]
+    fn cursor_effort_with_empty_model_skips_slug_resolution() {
+        let resolution = resolve_routing(RoutingInput {
+            model: String::new(),
+            model_token: String::new(),
+            harness: "cursor".to_string(),
+            selection_kind: "fixed".to_string(),
+            match_evidence: "passthrough".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            settings_provider_order: None,
+            effort: Some("high".to_string()),
+            opencode_probe_result: None,
+            pi_probe_result: None,
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
+                model_probe_success: true,
+                error: None,
+            }),
+            alias_resolution_failed: false,
+            route_trace: RoutingTrace {
+                source: crate::routing::RouteSource::Cli,
+                selection_kind: SelectionKind::Fixed,
+                match_evidence: MatchEvidence::Passthrough,
+                harness: "cursor".to_string(),
+                harness_order_position: None,
+                candidates_tried: vec!["cursor".to_string()],
+                assessments: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+        })
+        .expect("routing should resolve");
+
+        assert!(!resolution.effort_consumed);
+        assert_eq!(
+            resolution.cursor_effort_outcome,
+            CursorEffortOutcome::NotRequested
+        );
+        assert_eq!(resolution.routing.model, "");
+        assert_eq!(resolution.routing.harness_model, "");
     }
 
     #[test]

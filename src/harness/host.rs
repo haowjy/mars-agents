@@ -59,6 +59,7 @@ pub struct CapabilitySession {
     auth: BTreeMap<HarnessId, AuthState>,
     installed: HashSet<String>,
     offline: bool,
+    probe_refresh: ProbeRefreshMode,
     opencode: Option<CachedProbeOutcome>,
     pi: Option<CachedPiProbeOutcome>,
     cursor: Option<CachedCursorProbeOutcome>,
@@ -95,7 +96,8 @@ impl CapabilitySession {
             executable,
             auth,
             installed,
-            offline: options.offline || matches!(options.probe_refresh, ProbeRefreshMode::Skip),
+            offline: options.offline,
+            probe_refresh: options.probe_refresh,
             opencode: None,
             pi: None,
             cursor: None,
@@ -119,8 +121,9 @@ impl CapabilitySession {
     }
 
     pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
-        self.opencode
-            .get_or_insert_with(|| live_opencode_outcome(&self.installed, self.offline))
+        self.opencode.get_or_insert_with(|| {
+            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
     }
 
     pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome> {
@@ -151,13 +154,15 @@ impl CapabilitySession {
     }
 
     pub fn pi_outcome(&mut self) -> &CachedPiProbeOutcome {
-        self.pi
-            .get_or_insert_with(|| live_pi_outcome(&self.installed, self.offline))
+        self.pi.get_or_insert_with(|| {
+            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
     }
 
     pub fn cursor_outcome(&mut self) -> &CachedCursorProbeOutcome {
-        self.cursor
-            .get_or_insert_with(|| live_cursor_outcome(&self.installed, self.offline))
+        self.cursor.get_or_insert_with(|| {
+            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+        })
     }
 
     pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
@@ -173,18 +178,15 @@ impl CapabilitySession {
     }
 
     pub fn into_snapshot(mut self) -> CapabilitySnapshot {
-        let opencode = self
-            .opencode
-            .take()
-            .unwrap_or_else(|| live_opencode_outcome(&self.installed, self.offline));
-        let pi = self
-            .pi
-            .take()
-            .unwrap_or_else(|| live_pi_outcome(&self.installed, self.offline));
-        let cursor = self
-            .cursor
-            .take()
-            .unwrap_or_else(|| live_cursor_outcome(&self.installed, self.offline));
+        let opencode = self.opencode.take().unwrap_or_else(|| {
+            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
+        let pi = self.pi.take().unwrap_or_else(|| {
+            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
+        let cursor = self.cursor.take().unwrap_or_else(|| {
+            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+        });
 
         CapabilitySnapshot {
             executable: self.executable,
@@ -197,25 +199,28 @@ impl CapabilitySession {
     }
 }
 
-fn live_opencode_outcome(installed: &HashSet<String>, is_offline: bool) -> CachedProbeOutcome {
-    if !crate::models::probes::should_probe_opencode(installed, is_offline) {
-        return CachedProbeOutcome::Unavailable;
-    }
-    CachedProbeOutcome::Miss(crate::models::probes::probe())
+fn cached_opencode_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedProbeOutcome {
+    crate::models::probes::opencode_cache::probe_cached(installed, is_offline, probe_refresh)
 }
 
-fn live_pi_outcome(installed: &HashSet<String>, is_offline: bool) -> CachedPiProbeOutcome {
-    if is_offline || !installed.contains("pi") {
-        return CachedPiProbeOutcome::Unavailable;
-    }
-    CachedPiProbeOutcome::Miss(crate::models::probes::probe_pi())
+fn cached_pi_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedPiProbeOutcome {
+    crate::models::probes::pi_cache::probe_cached(installed, is_offline, probe_refresh)
 }
 
-fn live_cursor_outcome(installed: &HashSet<String>, is_offline: bool) -> CachedCursorProbeOutcome {
-    if !crate::models::probes::should_probe_cursor(installed, is_offline) {
-        return CachedCursorProbeOutcome::Unavailable;
-    }
-    CachedCursorProbeOutcome::Miss(crate::models::probes::probe_cursor())
+fn cached_cursor_outcome(
+    installed: &HashSet<String>,
+    is_offline: bool,
+    probe_refresh: ProbeRefreshMode,
+) -> CachedCursorProbeOutcome {
+    crate::models::probes::cursor_cache::probe_cached(installed, is_offline, probe_refresh)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,5 +422,15 @@ mod tests {
     fn resolve_binary_path_returns_none_when_missing() {
         let resolver = FakeResolver::default();
         assert_eq!(resolve_binary_path("codex", &resolver), None);
+    }
+
+    #[test]
+    fn probe_refresh_skip_does_not_force_offline_mode() {
+        let options = CapabilityCollectionOptions {
+            offline: false,
+            probe_refresh: ProbeRefreshMode::Skip,
+        };
+        let session = CapabilitySession::collect_with_resolver(&options, &FakeResolver::default());
+        assert!(!session.offline());
     }
 }

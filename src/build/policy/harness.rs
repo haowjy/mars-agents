@@ -17,7 +17,9 @@ pub(super) struct HarnessResolution {
     pub(super) harness_order_position: Option<usize>,
     pub(super) candidates_tried: Vec<String>,
     pub(super) route_trace: routing::RoutingTrace,
-    pub(super) model_cleared: bool,
+    /// Set to Some(()) when a soft-fail cleared the model so harness could proceed.
+    /// Downstream routing should treat model/provider fields as empty when this is Some.
+    pub(super) model_override: Option<()>,
     pub(super) is_experimental: bool,
     pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
@@ -38,7 +40,7 @@ pub(super) fn resolve_harness(
     probe_resolver: &mut dyn routing::ProbeResolver,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
-    let mut model_cleared = false;
+    let mut model_override: Option<()> = None;
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let overlay_harness = overlay
@@ -154,7 +156,7 @@ pub(super) fn resolve_harness(
                     selection.source.label(),
                     selection.value
                 ));
-                model_cleared = true;
+                model_override = Some(());
             }
             let route_trace = fixed_route_trace;
             let candidates_tried = route_trace.candidates_tried.clone();
@@ -205,7 +207,7 @@ pub(super) fn resolve_harness(
         harness_order_position: selected_harness_order_position,
         candidates_tried,
         route_trace,
-        model_cleared,
+        model_override,
         warnings,
     })
 }
@@ -854,7 +856,7 @@ mod tests {
         assert!(resolution.warnings.iter().any(|warning| warning.contains(
             "profile model 'opus' cannot run on cli harness 'opencode'; clearing model"
         )));
-        assert!(resolution.model_cleared);
+        assert!(resolution.model_override.is_some());
     }
 
     #[test]

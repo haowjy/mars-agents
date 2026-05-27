@@ -387,14 +387,21 @@ pub fn resolve_policy(
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
-    let effective_routing_model = EffectiveRoutingModel::from_harness_resolution(
-        &resolved_model,
-        harness_resolution.model_cleared,
-    );
+    let (effective_model, effective_model_token, effective_provider_constraint, effective_provider_for_order) =
+        if harness_resolution.model_override.is_some() {
+            (String::new(), String::new(), None::<String>, None::<String>)
+        } else {
+            (
+                resolved_model.model.clone(),
+                resolved_model.model_token.clone(),
+                resolved_model.provider_constraint.clone(),
+                resolved_model.provider_for_order.clone(),
+            )
+        };
 
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
-        model: effective_routing_model.model,
-        model_token: effective_routing_model.model_token,
+        model: effective_model,
+        model_token: effective_model_token,
         harness: selected_harness.clone(),
         selection_kind: harness_resolution
             .route_trace
@@ -406,8 +413,8 @@ pub fn resolve_policy(
             .selected_match_evidence()
             .label()
             .to_string(),
-        provider_constraint: effective_routing_model.provider_constraint.as_deref(),
-        provider_for_order: effective_routing_model.provider_for_order.as_deref(),
+        provider_constraint: effective_provider_constraint.as_deref(),
+        provider_for_order: effective_provider_for_order.as_deref(),
         settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
         opencode_probe_result: opencode_probe_result.as_ref(),
@@ -563,34 +570,6 @@ pub(super) fn matched_policy_u8_override(
         source: policy.layer.field_source(),
         matched_rule: Some(policy.matched_rule_ref()),
     })
-}
-
-#[derive(Debug, Clone)]
-struct EffectiveRoutingModel {
-    model: String,
-    model_token: String,
-    provider_constraint: Option<String>,
-    provider_for_order: Option<String>,
-}
-
-impl EffectiveRoutingModel {
-    fn from_harness_resolution(resolved_model: &model::ResolvedModel, model_cleared: bool) -> Self {
-        if model_cleared {
-            return Self {
-                model: String::new(),
-                model_token: String::new(),
-                provider_constraint: None,
-                provider_for_order: None,
-            };
-        }
-
-        Self {
-            model: resolved_model.model.clone(),
-            model_token: resolved_model.model_token.clone(),
-            provider_constraint: resolved_model.provider_constraint.clone(),
-            provider_for_order: resolved_model.provider_for_order.clone(),
-        }
-    }
 }
 
 fn effective_policies<'a>(

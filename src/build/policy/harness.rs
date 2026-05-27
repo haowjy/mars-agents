@@ -520,11 +520,34 @@ mod tests {
         harness_order: Option<&'a [String]>,
         installed_harnesses: &'a HashSet<String>,
     ) -> HarnessEvidence<'a> {
+        evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            None,
+            installed_harnesses,
+            config_default_harness,
+            harness_order,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evidence_for_model<'a>(
+        model_id: &'a str,
+        model_token: &'a str,
+        model_source: PolicySource,
+        provider_for_order: Option<&'a str>,
+        provider_constraint: Option<&'a str>,
+        installed_harnesses: &'a HashSet<String>,
+        config_default_harness: Option<&'a str>,
+        harness_order: Option<&'a [String]>,
+    ) -> HarnessEvidence<'a> {
         HarnessEvidence {
             routing: routing::RoutingEvidence {
-                model_id: "gpt-5",
-                provider_for_order: Some("openai"),
-                provider_constraint: None,
+                model_id,
+                provider_for_order,
+                provider_constraint,
                 settings_provider_order: None,
                 config_default_harness,
                 settings_harness_order: harness_order,
@@ -535,8 +558,8 @@ mod tests {
                 cursor_probe_result: None,
                 catalog_model_slugs: None,
             },
-            model_token: "gpt-5",
-            model_source: PolicySource::Alias,
+            model_token,
+            model_source,
         }
     }
 
@@ -665,29 +688,12 @@ mod tests {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
-        let opencode_probe = positive_opencode_probe();
         let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe.clone()),
+            opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "gpt-5",
-                provider_for_order: Some("openai"),
-                provider_constraint: None,
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "gpt-5",
-            model_source: PolicySource::Alias,
-        };
+        let evidence =
+            evidence_for_model("gpt-5", "gpt-5", PolicySource::Alias, Some("openai"), None, &installed, None, None);
 
         let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect("harness should pivot to opencode");
@@ -756,24 +762,9 @@ mod tests {
         let profile = profile(None);
         let input = policy_input(&profile, None, Some("codex"));
         let mut probe_resolver = TestProbeResolver::default();
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "gpt-5",
-                provider_for_order: Some("openai"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "gpt-5",
-            model_source: PolicySource::Alias,
-        };
+        let evidence = evidence_for_model(
+            "gpt-5", "gpt-5", PolicySource::Alias, Some("openai"), Some("anthropic"), &installed, None, None,
+        );
 
         let error = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("incompatible provider constraint should fail");
@@ -844,24 +835,10 @@ mod tests {
             opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "claude-opus-4-6",
-                provider_for_order: Some("anthropic"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "opus",
-            model_source: PolicySource::Profile,
-        };
+        let evidence = evidence_for_model(
+            "claude-opus-4-6", "opus", PolicySource::Profile,
+            Some("anthropic"), Some("anthropic"), &installed, None, None,
+        );
 
         let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect("cli harness should soft-fail model mismatch and continue");
@@ -882,24 +859,10 @@ mod tests {
             opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "claude-opus-4-6",
-                provider_for_order: Some("anthropic"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "opus",
-            model_source: PolicySource::Cli,
-        };
+        let evidence = evidence_for_model(
+            "claude-opus-4-6", "opus", PolicySource::Cli,
+            Some("anthropic"), Some("anthropic"), &installed, None, None,
+        );
 
         let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("same-precedence model mismatch must remain hard error");
@@ -915,24 +878,10 @@ mod tests {
             opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "gpt-5",
-                provider_for_order: Some("openai"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "gpt-5",
-            model_source: PolicySource::Profile,
-        };
+        let evidence = evidence_for_model(
+            "gpt-5", "gpt-5", PolicySource::Profile,
+            Some("openai"), Some("anthropic"), &installed, None, None,
+        );
 
         let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("provider constraint failures must remain hard even when probe matches");

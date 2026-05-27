@@ -138,45 +138,23 @@ pub(super) fn resolve_harness(
             )
         } else {
             if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
-                if rejection.is_not_installed() {
-                    return Err(unavailable_fixed_harness_error(
-                        selection.source.label(),
-                        &selection.value,
-                        evidence.routing.installed_harnesses,
-                    ));
-                }
-
-                let skip_reason = match rejection {
-                    routing::acceptance::RejectionReason::AssessmentFailed {
-                        ref skip_reason,
-                        ..
-                    } => skip_reason.as_deref(),
-                    _ => None,
-                };
-                if let Some(trace) = soft_fail_fixed_harness_no_model_match(
+                fixed_route_trace = resolve_fixed_harness_rejection(
+                    rejection,
                     selection.source,
                     evidence.model_source,
-                    skip_reason,
                     fixed_input,
                     &selection.value,
+                    evidence.routing.installed_harnesses,
                     probe_resolver,
-                ) {
-                    fixed_route_trace = trace;
-                    warnings.push(format!(
-                        "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
-                        evidence.model_source.label(),
-                        evidence.model_token,
-                        selection.source.label(),
-                        selection.value
-                    ));
-                    model_cleared = true;
-                } else {
-                    return Err(fixed_harness_constraint_error(
-                        selection.source.label(),
-                        &selection.value,
-                        skip_reason,
-                    ));
-                }
+                )?;
+                warnings.push(format!(
+                    "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
+                    evidence.model_source.label(),
+                    evidence.model_token,
+                    selection.source.label(),
+                    selection.value
+                ));
+                model_cleared = true;
             }
             let route_trace = fixed_route_trace;
             let candidates_tried = route_trace.candidates_tried.clone();
@@ -326,6 +304,44 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
         PolicySource::Provider => routing::RouteSource::Provider,
         _ => routing::RouteSource::Provider,
     }
+}
+
+/// Classifies a fixed-harness assessment rejection into the appropriate outcome:
+/// soft-fail (returns the retry trace when harness outranks model), or a hard error
+/// (not-installed or constraint cannot be resolved).
+fn resolve_fixed_harness_rejection(
+    rejection: routing::acceptance::RejectionReason,
+    selection_source: PolicySource,
+    model_source: PolicySource,
+    fixed_input: RoutingInput<'_>,
+    requested_harness: &str,
+    installed_harnesses: &HashSet<String>,
+    probe_resolver: &mut dyn routing::ProbeResolver,
+) -> Result<routing::RoutingTrace, MarsError> {
+    if rejection.is_not_installed() {
+        return Err(unavailable_fixed_harness_error(
+            selection_source.label(),
+            requested_harness,
+            installed_harnesses,
+        ));
+    }
+    let skip_reason = match &rejection {
+        routing::acceptance::RejectionReason::AssessmentFailed { skip_reason, .. } => {
+            skip_reason.as_deref()
+        }
+        _ => None,
+    };
+    soft_fail_fixed_harness_no_model_match(
+        selection_source,
+        model_source,
+        skip_reason,
+        fixed_input,
+        requested_harness,
+        probe_resolver,
+    )
+    .ok_or_else(|| {
+        fixed_harness_constraint_error(selection_source.label(), requested_harness, skip_reason)
+    })
 }
 
 fn soft_fail_fixed_harness_no_model_match(

@@ -387,17 +387,21 @@ pub fn resolve_policy(
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
-    let (effective_model, effective_model_token, effective_provider_constraint, effective_provider_for_order) =
-        if harness_resolution.model_override.is_some() {
-            (String::new(), String::new(), None::<String>, None::<String>)
-        } else {
-            (
-                resolved_model.model.clone(),
-                resolved_model.model_token.clone(),
-                resolved_model.provider_constraint.clone(),
-                resolved_model.provider_for_order.clone(),
-            )
-        };
+    let (
+        effective_model,
+        effective_model_token,
+        effective_provider_constraint,
+        effective_provider_for_order,
+    ) = if harness_resolution.model_override.is_some() {
+        (String::new(), String::new(), None::<String>, None::<String>)
+    } else {
+        (
+            resolved_model.model.clone(),
+            resolved_model.model_token.clone(),
+            resolved_model.provider_constraint.clone(),
+            resolved_model.provider_for_order.clone(),
+        )
+    };
 
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: effective_model,

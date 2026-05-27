@@ -701,8 +701,16 @@ mod tests {
             opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence =
-            evidence_for_model("gpt-5", "gpt-5", PolicySource::Alias, Some("openai"), None, &installed, None, None);
+        let evidence = evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            None,
+            &installed,
+            None,
+            None,
+        );
 
         let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect("harness should pivot to opencode");
@@ -772,7 +780,14 @@ mod tests {
         let input = policy_input(&profile, None, Some("codex"));
         let mut probe_resolver = TestProbeResolver::default();
         let evidence = evidence_for_model(
-            "gpt-5", "gpt-5", PolicySource::Alias, Some("openai"), Some("anthropic"), &installed, None, None,
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
         );
 
         let error = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
@@ -845,8 +860,14 @@ mod tests {
             ..Default::default()
         };
         let evidence = evidence_for_model(
-            "claude-opus-4-6", "opus", PolicySource::Profile,
-            Some("anthropic"), Some("anthropic"), &installed, None, None,
+            "claude-opus-4-6",
+            "opus",
+            PolicySource::Profile,
+            Some("anthropic"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
         );
 
         let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
@@ -869,8 +890,14 @@ mod tests {
             ..Default::default()
         };
         let evidence = evidence_for_model(
-            "claude-opus-4-6", "opus", PolicySource::Cli,
-            Some("anthropic"), Some("anthropic"), &installed, None, None,
+            "claude-opus-4-6",
+            "opus",
+            PolicySource::Cli,
+            Some("anthropic"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
         );
 
         let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
@@ -888,8 +915,14 @@ mod tests {
             ..Default::default()
         };
         let evidence = evidence_for_model(
-            "gpt-5", "gpt-5", PolicySource::Profile,
-            Some("openai"), Some("anthropic"), &installed, None, None,
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Profile,
+            Some("openai"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
         );
 
         let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
@@ -898,5 +931,4 @@ mod tests {
         assert!(message.contains("provider_constraint_unsatisfied"));
         assert!(!message.contains("no_model_match"));
     }
-
 }

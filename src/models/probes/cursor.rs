@@ -237,7 +237,8 @@ pub fn resolve_cursor_effort_slug(
             .iter()
             .any(|slug| normalize_slug(slug) != normalized_model);
 
-        let allow_bare = !has_effort_variants || cursor_effort_allows_bare_fallback(&normalized_model);
+        let allow_bare =
+            !has_effort_variants || cursor_effort_allows_bare_fallback(&normalized_model);
 
         if allow_bare
             && let Some(bare_slug) = prefix_matches

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `effort: none` accepted as valid sentinel in agent frontmatter and model-policy overrides — means "no effort level" (same as omitting the field). Previously errored with invalid value.
+
 ## [0.7.3] - 2026-05-26
 
 ### Changed

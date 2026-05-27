@@ -679,13 +679,15 @@ fn parse_override_fields(
         match key {
             "effort" => {
                 if let Some(s) = v.as_str() {
-                    if let Some(e) = EffortLevel::from_str(s) {
+                    if s == "none" {
+                        // "none" is a valid sentinel meaning "no effort level" (leave out.effort as None)
+                    } else if let Some(e) = EffortLevel::from_str(s) {
                         out.effort = Some(e);
                     } else {
                         diags.push(AgentDiagnostic::InvalidFieldValue {
                             field: format!("{table_name}.effort"),
                             value: s.to_string(),
-                            allowed: "low, medium, high, xhigh",
+                            allowed: "low, medium, high, xhigh, none",
                         });
                     }
                 }
@@ -1023,13 +1025,17 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
+        if s == "none" {
+            // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
+            return None;
+        }
         if let Some(e) = EffortLevel::from_str(s) {
             Some(e)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "effort".to_string(),
                 value: s.to_string(),
-                allowed: "low, medium, high, xhigh",
+                allowed: "low, medium, high, xhigh, none",
             });
             None
         }

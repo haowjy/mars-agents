@@ -122,6 +122,14 @@ fn parses_effort_all_values() {
 }
 
 #[test]
+fn parses_effort_none_sentinel() {
+    // "none" is a valid value meaning "no effort level" — same as omitting the field.
+    let (p, diags) = parse("---\neffort: none\n---\n");
+    assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+    assert_eq!(p.effort, None);
+}
+
+#[test]
 fn parses_approval_all_values() {
     for s in ["default", "auto", "confirm", "yolo"] {
         let content = format!("---\napproval: {s}\n---\n");

@@ -228,7 +228,18 @@ pub fn resolve_cursor_effort_slug(
         .collect();
 
     if effort_matches.is_empty() {
-        if cursor_effort_allows_bare_fallback(&normalized_model)
+        // Fall back to the bare slug in two cases:
+        // 1. The model has no effort-suffixed variants at all in the probe list — it simply
+        //    doesn't support effort tiers (e.g. bare "composer").
+        // 2. The model is composer-prefixed with partial variant support — compositor models
+        //    expose some tiers but not all, so we accept any effort and fall back gracefully.
+        let has_effort_variants = prefix_matches
+            .iter()
+            .any(|slug| normalize_slug(slug) != normalized_model);
+
+        let allow_bare = !has_effort_variants || cursor_effort_allows_bare_fallback(&normalized_model);
+
+        if allow_bare
             && let Some(bare_slug) = prefix_matches
                 .iter()
                 .find(|slug| normalize_slug(slug) == normalized_model)
@@ -259,6 +270,9 @@ fn cursor_effort_is_default_tier(normalized_effort: &str) -> bool {
     matches!(normalized_effort, "auto" | "default" | "medium" | "none")
 }
 
+/// Composer-prefixed models (e.g. `composer-2.5`) expose some effort tiers but not all.
+/// Allow bare-slug fallback when the exact requested tier is missing, rather than erroring.
+/// Models with *no* effort variants at all are handled by the `has_effort_variants` check above.
 fn cursor_effort_allows_bare_fallback(normalized_model: &str) -> bool {
     normalized_model.starts_with("composer-")
 }
@@ -438,6 +452,19 @@ Tip: use --model <id> to select"#;
                 effort: "high".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn test_resolve_effort_slug_bare_model_no_variants_falls_back() {
+        // "composer" has no effort-suffixed variants — any effort request falls back to bare slug.
+        let slugs = vec!["composer".to_string()];
+        for effort in ["high", "low", "medium", "none"] {
+            let resolution = resolve_cursor_effort_slug("composer", effort, &slugs).unwrap();
+            assert_eq!(
+                resolution.slug, "composer",
+                "effort={effort} should fall back to bare composer slug"
+            );
+        }
     }
 
     #[test]

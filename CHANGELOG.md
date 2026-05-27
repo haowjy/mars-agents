@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `effort: none` accepted as valid sentinel in agent frontmatter and model-policy overrides — means "no effort level" (same as omitting the field). Previously errored with invalid value.
 
+### Fixed
+- Cursor effort resolution now falls back to bare slug for models that have no effort-suffixed variants at all in the probe list (e.g. bare `composer`), instead of erroring with `NoEffortMatch`.
+
 ## [0.7.3] - 2026-05-26
 
 ### Changed

@@ -44,6 +44,36 @@ Examples that are NOT warnings (they go to routing/provenance fields):
 - `harness_model_source: "passthrough"` — Pi or explicit harness receives the model token as-is; this is expected behavior
 - `harness_model_confidence: "unknown"` — Pi/passthrough harnesses are provider-routers at runtime; unknown confidence is the correct answer
 
+### Cross-field precedence soft-fail
+
+When a fixed harness conflicts with a model from a lower-precedence source, the harness wins
+and the model is cleared. Precedence ranks (`PolicySource::precedence_rank()`):
+
+| Rank | Sources |
+|------|---------|
+| 5 | CLI |
+| 4 | Overlay, OverlayModelPolicy |
+| 3 | Profile, ProfileModelPolicy, ProfileHarnessOverride |
+| 2 | SettingsModelPolicy, Project, Config |
+| 1 | Alias |
+| 0 | Unset, ConfigOrder, Provider, Default |
+
+**Trigger condition:** fixed harness assessment returns `skip_reason = "no_model_match"` AND
+`harness_source.precedence_rank() > model_source.precedence_rank()`.
+
+**Only `no_model_match` triggers soft-fail.** Other rejection reasons (`provider_constraint_unsatisfied`,
+`pi_incompatible`) stay hard errors regardless of precedence rank — the model field being cleared
+cannot resolve a provider constraint or compatibility failure.
+
+**Same-precedence conflicts are hard errors.** CLI harness + CLI model both `no_model_match` →
+error; the user explicitly requested an impossible combination.
+
+`HarnessResolution.model_override: Option<()>` signals the outcome. When `Some(())`, `policy/mod.rs`
+substitutes empty strings for `model`, `model_token`, `provider_constraint`, and `provider_for_order`
+before calling `runnable::resolve_routing` — the harness uses its own default model. A warning
+(`"<source> model '<token>' cannot run on <source> harness '<name>'; clearing model"`) flows
+through the normal warnings pipeline to the bundle's `warnings[]` field.
+
 ### `can_run_without_project` guard
 
 ```rust

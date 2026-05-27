@@ -54,7 +54,9 @@ build_launch_bundle()                    → load EffectiveProjectConfig once
 models::merged_runtime_aliases()         → merged alias map (dependency + consumer overlays)
 models::ensure_fresh()                   → models.dev catalog (TTL-aware; not read-only)
 model::resolve_model()                   → alias → model_id + provider, or unset
-harness::resolve_harness()               → route selection, candidate eval (shared evaluator)
+harness::resolve_harness()               → route selection, candidate eval (shared evaluator);
+                                           cross-field soft-fail: fixed harness outranks lower-
+                                           precedence model on no_model_match → model cleared
 execution::resolve_execution_policy()    → effort, approval, sandbox, autocompact
 runnable::resolve_routing()              → populate Routing (warnings always empty)
 ```

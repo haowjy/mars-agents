@@ -153,7 +153,7 @@ pub(super) fn resolve_harness(
                     } => skip_reason.as_deref(),
                     _ => None,
                 };
-                if let Some(retry) = soft_fail_fixed_harness_no_model_match(
+                if let Some(trace) = soft_fail_fixed_harness_no_model_match(
                     selection.source,
                     evidence.model_source,
                     skip_reason,
@@ -161,8 +161,7 @@ pub(super) fn resolve_harness(
                     &selection.value,
                     probe_resolver,
                 ) {
-                    let retry = retry?;
-                    fixed_route_trace = retry;
+                    fixed_route_trace = trace;
                     warnings.push(format!(
                         "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
                         evidence.model_source.label(),
@@ -336,7 +335,7 @@ fn soft_fail_fixed_harness_no_model_match(
     fixed_input: RoutingInput<'_>,
     requested_harness: &str,
     probe_resolver: &mut dyn routing::ProbeResolver,
-) -> Option<Result<routing::RoutingTrace, MarsError>> {
+) -> Option<routing::RoutingTrace> {
     let should_retry = skip_reason == Some("no_model_match")
         && harness_source.precedence_rank() > model_source.precedence_rank();
     if !should_retry {
@@ -357,17 +356,9 @@ fn soft_fail_fixed_harness_no_model_match(
         assessment.clone(),
         Vec::new(),
     );
-    Some(
-        routing::acceptance::accept_assessment(&assessment)
-            .map_err(|_| {
-                fixed_harness_constraint_error(
-                    harness_source.label(),
-                    requested_harness,
-                    skip_reason,
-                )
-            })
-            .map(|_| route_trace),
-    )
+    routing::acceptance::accept_assessment(&assessment)
+        .ok()
+        .map(|_| route_trace)
 }
 
 fn unavailable_profile_pivot_error(

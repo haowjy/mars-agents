@@ -6,6 +6,7 @@
 .agents/
 .claude/
 .mars/
+.mars.lock
 .codex
 .opencode/
 mars.local.toml

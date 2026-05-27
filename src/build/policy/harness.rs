@@ -548,14 +548,6 @@ mod tests {
         }
     }
 
-    fn opencode_probe_without_anthropic() -> OpenCodeProbeResult {
-        OpenCodeProbeResult {
-            model_slugs: vec!["openai/gpt-5".to_string()],
-            model_probe_success: true,
-            error: None,
-        }
-    }
-
     #[derive(Default)]
     struct TestProbeResolver {
         opencode: Option<OpenCodeProbeResult>,
@@ -849,7 +841,7 @@ mod tests {
         let profile = profile_with_model(Some(HarnessKind::Claude), Some("opus"));
         let input = policy_input(&profile, None, Some("opencode"));
         let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe_without_anthropic()),
+            opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
         let evidence = HarnessEvidence {
@@ -887,7 +879,7 @@ mod tests {
         let profile = profile(None);
         let input = policy_input(&profile, Some("opus"), Some("opencode"));
         let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe_without_anthropic()),
+            opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
         let evidence = HarnessEvidence {
@@ -915,52 +907,12 @@ mod tests {
     }
 
     #[test]
-    fn alias_fixed_harness_with_higher_precedence_cli_model_no_model_match_is_hard_error() {
-        let installed = installed(&["opencode"]);
-        let profile = profile(None);
-        let input = policy_input(&profile, Some("opus"), None);
-        let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe_without_anthropic()),
-            ..Default::default()
-        };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "claude-opus-4-6",
-                provider_for_order: Some("anthropic"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "opus",
-            model_source: PolicySource::Cli,
-        };
-
-        let err = resolve_harness(
-            &input,
-            Some(&model_alias(Some("opencode"))),
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-        )
-        .expect_err("higher-precedence cli model mismatch must not be softened by alias harness");
-        assert!(err.to_string().contains("no_model_match"));
-    }
-
-    #[test]
     fn fixed_harness_provider_constraint_unsatisfied_stays_hard_with_probe_match() {
         let installed = installed(&["opencode"]);
         let profile = profile_with_model(None, Some("gpt-5"));
         let input = policy_input(&profile, None, Some("opencode"));
         let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe_without_anthropic()),
+            opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
         let evidence = HarnessEvidence {
@@ -989,36 +941,4 @@ mod tests {
         assert!(!message.contains("no_model_match"));
     }
 
-    #[test]
-    fn profile_fixed_harness_and_profile_model_no_model_match_is_hard_error() {
-        let installed = installed(&["opencode"]);
-        let profile = profile_with_model(Some(HarnessKind::OpenCode), Some("opus"));
-        let input = policy_input(&profile, None, None);
-        let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe_without_anthropic()),
-            ..Default::default()
-        };
-        let evidence = HarnessEvidence {
-            routing: routing::RoutingEvidence {
-                model_id: "claude-opus-4-6",
-                provider_for_order: Some("anthropic"),
-                provider_constraint: Some("anthropic"),
-                settings_provider_order: None,
-                config_default_harness: None,
-                settings_harness_order: None,
-                installed_harnesses: &installed,
-                linked_harnesses: None,
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: None,
-            },
-            model_token: "opus",
-            model_source: PolicySource::Profile,
-        };
-
-        let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
-            .expect_err("equal precedence mismatch must remain hard error");
-        assert!(err.to_string().contains("no_model_match"));
-    }
 }

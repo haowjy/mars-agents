@@ -880,6 +880,24 @@ where
             };
         }
 
+        // Probe slugs didn't match, but if the alias declares provider=cursor,
+        // trust the constraint over possibly-stale probe cache.
+        if input
+            .provider_constraint
+            .is_some_and(|p| p.eq_ignore_ascii_case("cursor"))
+        {
+            return CandidateAssessment {
+                harness: harness.to_string(),
+                installed: true,
+                candidate_slugs: Vec::new(),
+                filtered_slugs: Vec::new(),
+                chosen_slug: None,
+                chosen_model: None,
+                match_evidence: Some(MatchEvidence::Constrained),
+                skip_reason: None,
+            };
+        }
+
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: true,

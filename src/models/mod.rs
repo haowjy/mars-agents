@@ -78,7 +78,7 @@ pub enum ModelSpec {
     },
     /// Pattern-based resolution against models cache.
     AutoResolve {
-        provider: String,
+        provider: Option<String>,
         match_patterns: Vec<String>,
         exclude_patterns: Vec<String>,
     },
@@ -160,12 +160,17 @@ impl Serialize for ModelSpec {
                 match_patterns,
                 exclude_patterns,
             } => {
-                let mut count = 2; // provider + match
+                let mut count = 1; // match
+                if provider.is_some() {
+                    count += 1;
+                }
                 if !exclude_patterns.is_empty() {
                     count += 1;
                 }
                 let mut map = serializer.serialize_map(Some(count))?;
-                map.serialize_entry("provider", provider)?;
+                if let Some(provider) = provider {
+                    map.serialize_entry("provider", provider)?;
+                }
                 map.serialize_entry("match", match_patterns)?;
                 if !exclude_patterns.is_empty() {
                     map.serialize_entry("exclude", exclude_patterns)?;
@@ -285,13 +290,8 @@ impl<'de> Deserialize<'de> for ModelAlias {
                 }
             }
         } else if let Some(match_patterns) = raw.match_patterns {
-            let provider = raw.provider.ok_or_else(|| {
-                serde::de::Error::custom(
-                    "auto-resolve model alias requires 'provider' when 'match' is specified",
-                )
-            })?;
             ModelSpec::AutoResolve {
-                provider,
+                provider: raw.provider,
                 match_patterns,
                 exclude_patterns: raw.exclude.unwrap_or_default(),
             }
@@ -862,14 +862,14 @@ fn normalize_provider(slug: &str) -> String {
 /// Resolve an auto-resolve spec against the models cache.
 ///
 /// Algorithm:
-/// 1. Filter by provider (case-insensitive)
+/// 1. Filter by provider (case-insensitive) when specified
 /// 2. All match patterns must hit (AND)
 /// 3. No exclude patterns may hit (OR)
 /// 4. Skip entries ending with `-latest` (synthetic aliases)
 /// 5. Sort by newest release_date, then shortest ID, then lexical ID
 /// 6. Return all candidates
 pub fn auto_resolve_all<'a>(
-    provider: &str,
+    provider: Option<&str>,
     match_patterns: &[String],
     exclude_patterns: &[String],
     cache: &'a ModelsCache,
@@ -878,8 +878,8 @@ pub fn auto_resolve_all<'a>(
         .models
         .iter()
         .filter(|m| {
-            // Provider match (case-insensitive)
-            m.provider.eq_ignore_ascii_case(provider)
+            // Provider match (case-insensitive) — skip filter when provider is None
+            provider.map_or(true, |p| m.provider.eq_ignore_ascii_case(p))
         })
         .filter(|m| {
             // Skip -latest suffix (synthetic aliases)
@@ -913,14 +913,14 @@ pub fn auto_resolve_all<'a>(
 /// Resolve an auto-resolve spec against the models cache.
 ///
 /// Algorithm:
-/// 1. Filter by provider (case-insensitive)
+/// 1. Filter by provider (case-insensitive) when specified
 /// 2. All match patterns must hit (AND)
 /// 3. No exclude patterns may hit (OR)
 /// 4. Skip entries ending with `-latest` (synthetic aliases)
 /// 5. Sort by newest release_date, then shortest ID, then lexical ID
 /// 6. Pick first
 pub fn auto_resolve(
-    provider: &str,
+    provider: Option<&str>,
     match_patterns: &[String],
     exclude_patterns: &[String],
     cache: &ModelsCache,
@@ -1006,7 +1006,7 @@ pub fn resolve_with_alias_prefix_with_probe(
                 match_patterns,
                 exclude_patterns,
             } => {
-                for candidate in auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
+                for candidate in auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
                 {
                     if glob_match(&pattern, &candidate.id) {
                         deduped
@@ -1021,12 +1021,9 @@ pub fn resolve_with_alias_prefix_with_probe(
                 match_patterns,
                 exclude_patterns,
             } => {
-                let Some(provider) = provider
+                let provider = provider
                     .as_deref()
-                    .or_else(|| infer_provider_from_model_id(model))
-                else {
-                    continue;
-                };
+                    .or_else(|| infer_provider_from_model_id(model));
                 for candidate in auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
                 {
                     if glob_match(&pattern, &candidate.id) {
@@ -1261,7 +1258,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
                 autocompact: None,
                 autocompact_pct: None,
                 spec: ModelSpec::AutoResolve {
-                    provider: provider.to_string(),
+                    provider: Some(provider.to_string()),
                     match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
                     exclude_patterns: exclude.iter().map(|s| s.to_string()).collect(),
                 },
@@ -1646,8 +1643,20 @@ fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option
             match_patterns,
             exclude_patterns,
         } => {
-            let model_id = auto_resolve(provider, match_patterns, exclude_patterns, cache)?;
-            Some((model_id, provider.clone()))
+            let model_id = auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache)?;
+            // When provider is known from the alias, use it; otherwise look up
+            // the resolved model's provider in the cache.
+            let resolved_provider = provider
+                .clone()
+                .or_else(|| {
+                    cache
+                        .models
+                        .iter()
+                        .find(|m| m.id == model_id)
+                        .map(|m| m.provider.clone())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            Some((model_id, resolved_provider))
         }
     }
 }
@@ -1660,7 +1669,7 @@ fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
         } => provider
             .clone()
             .or_else(|| infer_provider_from_model_id(model).map(str::to_string)),
-        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }
 }
 
@@ -1669,7 +1678,7 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
         ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
             provider.clone()
         }
-        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }
     .map(|provider| provider.trim().to_ascii_lowercase())
 }
@@ -1693,7 +1702,7 @@ fn format_alias_resolution_for_diag(
             match_patterns,
             exclude_patterns,
         } => {
-            let resolved = auto_resolve(provider, match_patterns, exclude_patterns, cache);
+            let resolved = auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache);
             match resolved {
                 Some(model_id) => (format!("{source_name} → {model_id}"), Some(model_id)),
                 None => (format!("{source_name} → <unresolvable>"), None),
@@ -1968,7 +1977,7 @@ mod tests {
             ("claude-sonnet-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
         // Newest date wins
         assert_eq!(result, Some("claude-opus-4-20250514".to_string()));
     }
@@ -1982,7 +1991,7 @@ mod tests {
         ]);
 
         let result = auto_resolve(
-            "OpenAI",
+            Some("OpenAI"),
             &["gpt-*".to_string()],
             &["gpt-3*".to_string(), "gpt-4o*".to_string()],
             &cache,
@@ -1997,7 +2006,7 @@ mod tests {
             ("claude-opus-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
         // Should skip -latest even though it has a newer date
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
@@ -2009,7 +2018,7 @@ mod tests {
             fetched_at: None,
         };
 
-        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
         assert_eq!(result, None);
     }
 
@@ -2017,7 +2026,7 @@ mod tests {
     fn auto_resolve_no_match() {
         let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
 
-        let result = auto_resolve("OpenAI", &["gpt-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("OpenAI"), &["gpt-*".to_string()], &[], &cache);
         assert_eq!(result, None);
     }
 
@@ -2025,7 +2034,7 @@ mod tests {
     fn auto_resolve_provider_case_insensitive() {
         let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
 
-        let result = auto_resolve("anthropic", &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("anthropic"), &["claude-opus-*".to_string()], &[], &cache);
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
@@ -2036,7 +2045,7 @@ mod tests {
             ("claude-opus-4x", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve("Anthropic", &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
         // Same date — shorter ID wins
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
@@ -2048,7 +2057,7 @@ mod tests {
             ("claude-opus-4-a", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve("Anthropic", &["claude-opus-4-*".to_string()], &[], &cache);
+        let result = auto_resolve(Some("Anthropic"), &["claude-opus-4-*".to_string()], &[], &cache);
         // Same date + same length — lexical ID wins for deterministic ordering.
         assert_eq!(result, Some("claude-opus-4-a".to_string()));
     }
@@ -2064,7 +2073,7 @@ mod tests {
         ]);
 
         let result = auto_resolve_all(
-            "Anthropic",
+            Some("Anthropic"),
             &["claude-opus-*".to_string()],
             &["*opus-3".to_string()],
             &cache,
@@ -2104,7 +2113,7 @@ mod tests {
             autocompact: None,
             autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
-                provider: provider.to_string(),
+                provider: Some(provider.to_string()),
                 match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
                 exclude_patterns: exclude_patterns.iter().map(|s| s.to_string()).collect(),
             },
@@ -2742,7 +2751,7 @@ mod tests {
                 autocompact: None,
                 autocompact_pct: None,
                 spec: ModelSpec::AutoResolve {
-                    provider: "Anthropic".to_string(),
+                    provider: Some("Anthropic".to_string()),
                     match_patterns: vec!["claude-opus-*".to_string()],
                     exclude_patterns: vec![],
                 },
@@ -3030,7 +3039,7 @@ mod tests {
             autocompact: None,
             autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
-                provider: "openai".to_string(),
+                provider: Some("openai".to_string()),
                 match_patterns: vec!["gpt-5*".to_string()],
                 exclude_patterns: vec![],
             },
@@ -3230,7 +3239,7 @@ description = "Best reasoning"
                 match_patterns,
                 exclude_patterns,
             } => {
-                assert_eq!(provider, "Anthropic");
+                assert_eq!(provider.as_deref(), Some("Anthropic"));
                 assert_eq!(match_patterns, &["claude-opus-*"]);
                 assert_eq!(exclude_patterns, &["claude-opus-3*"]);
             }

@@ -91,7 +91,7 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
     match &alias.spec {
         models::ModelSpec::Pinned { provider, .. }
         | models::ModelSpec::PinnedWithMatch { provider, .. } => provider.clone(),
-        models::ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+        models::ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }
     .map(|provider| provider.trim().to_ascii_lowercase())
 }

@@ -860,7 +860,7 @@ fn collect_all_model_entries(
                 exclude_patterns,
             } => {
                 for matched in
-                    models::auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
+                    models::auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
                 {
                     append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
                 }
@@ -911,15 +911,13 @@ fn collect_all_model_entries(
                 let provider_for_discovery = provider
                     .as_deref()
                     .or_else(|| models::infer_provider_from_model_id(model));
-                if let Some(provider_for_discovery) = provider_for_discovery {
-                    for matched in models::auto_resolve_all(
-                        provider_for_discovery,
-                        match_patterns,
-                        exclude_patterns,
-                        cache,
-                    ) {
-                        append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
-                    }
+                for matched in models::auto_resolve_all(
+                    provider_for_discovery,
+                    match_patterns,
+                    exclude_patterns,
+                    cache,
+                ) {
+                    append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
                 }
             }
         }
@@ -957,7 +955,7 @@ fn collect_all_model_entries_static(
                 exclude_patterns,
             } => {
                 for matched in
-                    models::auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
+                    models::auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
                 {
                     let entry = by_model_id
                         .entry(matched.id.clone())
@@ -1009,18 +1007,16 @@ fn collect_all_model_entries_static(
                 let provider_for_discovery = provider
                     .as_deref()
                     .or_else(|| models::infer_provider_from_model_id(model));
-                if let Some(provider_for_discovery) = provider_for_discovery {
-                    for matched in models::auto_resolve_all(
-                        provider_for_discovery,
-                        match_patterns,
-                        exclude_patterns,
-                        cache,
-                    ) {
-                        let entry = by_model_id
-                            .entry(matched.id.clone())
-                            .or_insert_with(|| model_entry_for_cached_static(matched));
-                        append_alias_name(entry, alias_name);
-                    }
+                for matched in models::auto_resolve_all(
+                    provider_for_discovery,
+                    match_patterns,
+                    exclude_patterns,
+                    cache,
+                ) {
+                    let entry = by_model_id
+                        .entry(matched.id.clone())
+                        .or_insert_with(|| model_entry_for_cached_static(matched));
+                    append_alias_name(entry, alias_name);
                 }
             }
         }
@@ -1300,7 +1296,7 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
         ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
             provider.clone()
         }
-        ModelSpec::AutoResolve { provider, .. } => Some(provider.clone()),
+        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }
     .map(|provider| provider.trim().to_ascii_lowercase())
 }
@@ -2544,12 +2540,15 @@ fn format_spec(spec: &ModelSpec) -> serde_json::Value {
             match_patterns,
             exclude_patterns,
         } => {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "mode": "auto-resolve",
-                "provider": provider,
                 "match": match_patterns,
                 "exclude": exclude_patterns,
-            })
+            });
+            if let Some(provider) = provider {
+                obj["provider"] = serde_json::json!(provider);
+            }
+            obj
         }
     }
 }
@@ -2924,7 +2923,7 @@ description = "Old alias"
             autocompact: None,
             autocompact_pct: None,
             spec: ModelSpec::AutoResolve {
-                provider: provider.to_string(),
+                provider: Some(provider.to_string()),
                 match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
                 exclude_patterns: exclude_patterns.iter().map(|v| (*v).to_string()).collect(),
             },

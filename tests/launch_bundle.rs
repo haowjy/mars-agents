@@ -284,8 +284,8 @@ fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
 }
 
 #[test]
-fn build_launch_bundle_explicit_unknown_harness_model_path_fails_closed() {
-    routing::build_launch_bundle_explicit_unknown_harness_model_path_fails_closed();
+fn build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns() {
+    routing::build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns();
 }
 
 #[test]
@@ -423,6 +423,11 @@ fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fall
 #[test]
 fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
     routing::build_launch_bundle_unavailable_cli_harness_errors_without_pivoting();
+}
+
+#[test]
+fn build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing() {
+    routing::build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing();
 }
 
 #[test]

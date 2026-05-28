@@ -1134,6 +1134,69 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let cache_root = temp.path().join("mars-cache");
+    write_opencode_probe_cache(
+        &cache_root,
+        now_unix_secs(),
+        json!({
+            "providers": { "openai": true },
+            "model_slugs": ["openai/gpt-5"],
+            "provider_probe_success": true,
+            "model_probe_success": true,
+            "error": null
+        }),
+    );
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "opencode",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("passthrough")
+    );
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default()
+            == "profile model 'claude-opus-4-6' cannot run on cli harness 'opencode'; clearing model (harness override takes precedence)."
+    }));
+}
+
 pub(crate) fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
@@ -2772,7 +2835,7 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_fails_closed() {
+pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -2795,10 +2858,34 @@ Review code changes."#;
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().failure().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("cli harness `opencode` cannot run requested model"));
-    assert!(stderr.contains("no_model_match"));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
+    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+    assert_eq!(
+        bundle["routing"]["harness_model_source"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("passthrough")
+    );
+    assert_eq!(
+        bundle["provenance"]["match_evidence"].as_str(),
+        Some("passthrough")
+    );
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        let message = warning.as_str().unwrap_or_default();
+        message.contains("unknown-model-token")
+            && message.contains("cannot run on cli harness 'opencode'; clearing model")
+    }));
 }
 
 pub(crate) fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint()

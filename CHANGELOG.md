@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Launch-bundle fixed-harness routing now soft-fails `no_model_match` only when the harness comes from a higher-precedence source than the selected model (for example CLI harness overriding profile model), clears the model to passthrough routing, and emits a warning instead of failing hard.
+
 ## [0.7.4] - 2026-05-27
 
 ### Added

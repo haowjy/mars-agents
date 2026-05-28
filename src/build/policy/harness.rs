@@ -17,12 +17,19 @@ pub(super) struct HarnessResolution {
     pub(super) harness_order_position: Option<usize>,
     pub(super) candidates_tried: Vec<String>,
     pub(super) route_trace: routing::RoutingTrace,
+    /// Set to Some(()) when a soft-fail cleared the model so harness could proceed.
+    /// Downstream routing should treat model/provider fields as empty when this is Some.
+    pub(super) model_override: Option<()>,
     pub(super) is_experimental: bool,
     pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
 }
 
-pub(super) type HarnessEvidence<'a> = routing::RoutingEvidence<'a>;
+pub(super) struct HarnessEvidence<'a> {
+    pub(super) routing: routing::RoutingEvidence<'a>,
+    pub(super) model_token: &'a str,
+    pub(super) model_source: PolicySource,
+}
 
 pub(super) fn resolve_harness(
     input: &PolicyInput<'_>,
@@ -33,6 +40,7 @@ pub(super) fn resolve_harness(
     probe_resolver: &mut dyn routing::ProbeResolver,
 ) -> Result<HarnessResolution, MarsError> {
     let mut warnings = Vec::new();
+    let mut model_override: Option<()> = None;
 
     let profile_harness = input.profile.harness.as_ref().map(harness_kind_to_str);
     let overlay_harness = overlay
@@ -53,8 +61,10 @@ pub(super) fn resolve_harness(
         .filter(|decision| decision.source == PolicySource::SettingsModelPolicy)
         .cloned();
     let alias_harness = alias.and_then(|entry| entry.harness.as_deref());
-    let normalized_config_default_harness =
-        routing::normalize_config_default_harness(evidence.config_default_harness, &mut warnings);
+    let normalized_config_default_harness = routing::normalize_config_default_harness(
+        evidence.routing.config_default_harness,
+        &mut warnings,
+    );
     let model_from_cli = input.model_override.is_some();
     let mut selected_harness_order_position = None;
     let fixed_harness_selection = resolve_fixed_harness_selection(
@@ -67,94 +77,42 @@ pub(super) fn resolve_harness(
         settings_policy_harness,
         alias_harness,
     );
-    let (harness, candidates_tried, route_trace, unavailable_profile_harness) =
-        if let Some(selection) = fixed_harness_selection.clone() {
-            let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
-                evidence.provider_for_order,
-                &selection.value,
-            );
-            let mut fixed_input = routing_input_from_evidence(
-                &evidence,
-                normalized_config_default_harness.as_deref(),
-            );
-            fixed_input.provider_for_order = fixed_provider_for_order;
-            let fixed_assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
-                &fixed_input,
-                &selection.value,
-                probe_resolver,
-                crate::models::harness::native_harness_authenticated,
-            );
-            let fixed_route_trace = routing::trace_for_fixed_harness(
-                route_source_for_policy_source(selection.source),
-                &selection.value,
-                fixed_assessment.clone(),
-                Vec::new(),
-            );
-            if selection.source == PolicySource::Profile
-                && routing::acceptance::accept_route(
-                    &fixed_route_trace,
-                    evidence.installed_harnesses,
-                    routing::acceptance::MatchPolicy::InstalledOnly,
-                )
-                .is_err()
-            {
-                warnings.push(format!(
-                    "profile harness '{}' not installed; pivoting via model-policies",
-                    selection.value
-                ));
-                let trace = evaluate_candidates(
-                    &evidence,
-                    normalized_config_default_harness.as_deref(),
-                    probe_resolver,
-                );
-                selected_harness_order_position = trace.selected_harness_order_position();
-                warnings.extend(trace.selected_diagnostics().to_vec());
-                let unavailable = routing::acceptance::accept_route(
-                    &trace,
-                    evidence.installed_harnesses,
-                    routing::acceptance::MatchPolicy::InstalledOnly,
-                )
-                .err()
-                .map(|_| selection.value.clone());
-                let candidates_tried = trace.candidates_tried.clone();
-                (
-                    ResolvedField {
-                        value: trace.harness.clone(),
-                        source: trace.source.into(),
-                        matched_rule: None,
-                    },
-                    candidates_tried,
-                    trace,
-                    unavailable,
-                )
-            } else {
-                routing::acceptance::accept_assessment(&fixed_assessment).map_err(|rejection| {
-                    if rejection.is_not_installed() {
-                        unavailable_fixed_harness_error(
-                            selection.source.label(),
-                            &selection.value,
-                            evidence.installed_harnesses,
-                        )
-                    } else {
-                        let skip_reason = match rejection {
-                            routing::acceptance::RejectionReason::AssessmentFailed {
-                                ref skip_reason,
-                                ..
-                            } => skip_reason.as_deref(),
-                            _ => None,
-                        };
-                        fixed_harness_constraint_error(
-                            selection.source.label(),
-                            &selection.value,
-                            skip_reason,
-                        )
-                    }
-                })?;
-                let route_trace = fixed_route_trace;
-                let candidates_tried = route_trace.candidates_tried.clone();
-                (selection, candidates_tried, route_trace, None)
-            }
-        } else {
+    let (harness, candidates_tried, route_trace, unavailable_profile_harness) = if let Some(
+        selection,
+    ) =
+        fixed_harness_selection.clone()
+    {
+        let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
+            evidence.routing.provider_for_order,
+            &selection.value,
+        );
+        let mut fixed_input =
+            routing_input_from_evidence(&evidence, normalized_config_default_harness.as_deref());
+        fixed_input.provider_for_order = fixed_provider_for_order;
+        let fixed_assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
+            &fixed_input,
+            &selection.value,
+            probe_resolver,
+            crate::models::harness::native_harness_authenticated,
+        );
+        let mut fixed_route_trace = routing::trace_for_fixed_harness(
+            route_source_for_policy_source(selection.source),
+            &selection.value,
+            fixed_assessment.clone(),
+            Vec::new(),
+        );
+        if selection.source == PolicySource::Profile
+            && routing::acceptance::accept_route(
+                &fixed_route_trace,
+                evidence.routing.installed_harnesses,
+                routing::acceptance::MatchPolicy::InstalledOnly,
+            )
+            .is_err()
+        {
+            warnings.push(format!(
+                "profile harness '{}' not installed; pivoting via model-policies",
+                selection.value
+            ));
             let trace = evaluate_candidates(
                 &evidence,
                 normalized_config_default_harness.as_deref(),
@@ -162,6 +120,13 @@ pub(super) fn resolve_harness(
             );
             selected_harness_order_position = trace.selected_harness_order_position();
             warnings.extend(trace.selected_diagnostics().to_vec());
+            let unavailable = routing::acceptance::accept_route(
+                &trace,
+                evidence.routing.installed_harnesses,
+                routing::acceptance::MatchPolicy::InstalledOnly,
+            )
+            .err()
+            .map(|_| selection.value.clone());
             let candidates_tried = trace.candidates_tried.clone();
             (
                 ResolvedField {
@@ -171,15 +136,58 @@ pub(super) fn resolve_harness(
                 },
                 candidates_tried,
                 trace,
-                None,
+                unavailable,
             )
-        };
+        } else {
+            if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
+                fixed_route_trace = resolve_fixed_harness_rejection(
+                    rejection,
+                    selection.source,
+                    evidence.model_source,
+                    fixed_input,
+                    &selection.value,
+                    evidence.routing.installed_harnesses,
+                    probe_resolver,
+                )?;
+                warnings.push(format!(
+                    "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
+                    evidence.model_source.label(),
+                    evidence.model_token,
+                    selection.source.label(),
+                    selection.value
+                ));
+                model_override = Some(());
+            }
+            let route_trace = fixed_route_trace;
+            let candidates_tried = route_trace.candidates_tried.clone();
+            (selection, candidates_tried, route_trace, None)
+        }
+    } else {
+        let trace = evaluate_candidates(
+            &evidence,
+            normalized_config_default_harness.as_deref(),
+            probe_resolver,
+        );
+        selected_harness_order_position = trace.selected_harness_order_position();
+        warnings.extend(trace.selected_diagnostics().to_vec());
+        let candidates_tried = trace.candidates_tried.clone();
+        (
+            ResolvedField {
+                value: trace.harness.clone(),
+                source: trace.source.into(),
+                matched_rule: None,
+            },
+            candidates_tried,
+            trace,
+            None,
+        )
+    };
 
     if let Some(profile_harness) = unavailable_profile_harness {
         return Err(unavailable_profile_pivot_error(
             &profile_harness,
             &harness.value,
-            evidence.installed_harnesses,
+            evidence.routing.installed_harnesses,
         ));
     }
 
@@ -199,6 +207,7 @@ pub(super) fn resolve_harness(
         harness_order_position: selected_harness_order_position,
         candidates_tried,
         route_trace,
+        model_override,
         warnings,
     })
 }
@@ -269,7 +278,9 @@ fn routing_input_from_evidence<'a>(
     evidence: &'a HarnessEvidence<'_>,
     normalized_config_default_harness: Option<&'a str>,
 ) -> RoutingInput<'a> {
-    evidence.routing_input_with_config_default_harness(normalized_config_default_harness)
+    evidence
+        .routing
+        .routing_input_with_config_default_harness(normalized_config_default_harness)
 }
 
 fn evaluate_candidates(
@@ -295,6 +306,77 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
         PolicySource::Provider => routing::RouteSource::Provider,
         _ => routing::RouteSource::Provider,
     }
+}
+
+/// Classifies a fixed-harness assessment rejection into the appropriate outcome:
+/// soft-fail (returns the retry trace when harness outranks model), or a hard error
+/// (not-installed or constraint cannot be resolved).
+fn resolve_fixed_harness_rejection(
+    rejection: routing::acceptance::RejectionReason,
+    selection_source: PolicySource,
+    model_source: PolicySource,
+    fixed_input: RoutingInput<'_>,
+    requested_harness: &str,
+    installed_harnesses: &HashSet<String>,
+    probe_resolver: &mut dyn routing::ProbeResolver,
+) -> Result<routing::RoutingTrace, MarsError> {
+    if rejection.is_not_installed() {
+        return Err(unavailable_fixed_harness_error(
+            selection_source.label(),
+            requested_harness,
+            installed_harnesses,
+        ));
+    }
+    let skip_reason = match &rejection {
+        routing::acceptance::RejectionReason::AssessmentFailed { skip_reason, .. } => {
+            skip_reason.as_deref()
+        }
+        _ => None,
+    };
+    soft_fail_fixed_harness_no_model_match(
+        selection_source,
+        model_source,
+        skip_reason,
+        fixed_input,
+        requested_harness,
+        probe_resolver,
+    )
+    .ok_or_else(|| {
+        fixed_harness_constraint_error(selection_source.label(), requested_harness, skip_reason)
+    })
+}
+
+fn soft_fail_fixed_harness_no_model_match(
+    harness_source: PolicySource,
+    model_source: PolicySource,
+    skip_reason: Option<&str>,
+    fixed_input: RoutingInput<'_>,
+    requested_harness: &str,
+    probe_resolver: &mut dyn routing::ProbeResolver,
+) -> Option<routing::RoutingTrace> {
+    let should_retry = skip_reason == Some("no_model_match")
+        && harness_source.precedence_rank() > model_source.precedence_rank();
+    if !should_retry {
+        return None;
+    }
+
+    let mut passthrough_input = fixed_input;
+    passthrough_input.model_id = "";
+    let assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
+        &passthrough_input,
+        requested_harness,
+        probe_resolver,
+        crate::models::harness::native_harness_authenticated,
+    );
+    let route_trace = routing::trace_for_fixed_harness(
+        route_source_for_policy_source(harness_source),
+        requested_harness,
+        assessment.clone(),
+        Vec::new(),
+    );
+    routing::acceptance::accept_assessment(&assessment)
+        .ok()
+        .map(|_| route_trace)
 }
 
 fn unavailable_profile_pivot_error(
@@ -382,11 +464,15 @@ mod tests {
     }
 
     fn profile(harness: Option<HarnessKind>) -> AgentProfile {
+        profile_with_model(harness, None)
+    }
+
+    fn profile_with_model(harness: Option<HarnessKind>, model: Option<&str>) -> AgentProfile {
         AgentProfile {
             name: None,
             description: None,
             harness,
-            model: None,
+            model: model.map(str::to_string),
             mode: None,
             model_invocable: false,
             approval: None,
@@ -443,19 +529,46 @@ mod tests {
         harness_order: Option<&'a [String]>,
         installed_harnesses: &'a HashSet<String>,
     ) -> HarnessEvidence<'a> {
-        HarnessEvidence {
-            model_id: "gpt-5",
-            provider_for_order: Some("openai"),
-            provider_constraint: None,
-            settings_provider_order: None,
-            config_default_harness,
-            settings_harness_order: harness_order,
+        evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            None,
             installed_harnesses,
-            linked_harnesses: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
-            catalog_model_slugs: None,
+            config_default_harness,
+            harness_order,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evidence_for_model<'a>(
+        model_id: &'a str,
+        model_token: &'a str,
+        model_source: PolicySource,
+        provider_for_order: Option<&'a str>,
+        provider_constraint: Option<&'a str>,
+        installed_harnesses: &'a HashSet<String>,
+        config_default_harness: Option<&'a str>,
+        harness_order: Option<&'a [String]>,
+    ) -> HarnessEvidence<'a> {
+        HarnessEvidence {
+            routing: routing::RoutingEvidence {
+                model_id,
+                provider_for_order,
+                provider_constraint,
+                settings_provider_order: None,
+                config_default_harness,
+                settings_harness_order: harness_order,
+                installed_harnesses,
+                linked_harnesses: None,
+                opencode_probe_result: None,
+                pi_probe_result: None,
+                cursor_probe_result: None,
+                catalog_model_slugs: None,
+            },
+            model_token,
+            model_source,
         }
     }
 
@@ -584,25 +697,20 @@ mod tests {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
-        let opencode_probe = positive_opencode_probe();
         let mut probe_resolver = TestProbeResolver {
-            opencode: Some(opencode_probe.clone()),
+            opencode: Some(positive_opencode_probe()),
             ..Default::default()
         };
-        let evidence = HarnessEvidence {
-            model_id: "gpt-5",
-            provider_for_order: Some("openai"),
-            provider_constraint: None,
-            settings_provider_order: None,
-            config_default_harness: None,
-            settings_harness_order: None,
-            installed_harnesses: &installed,
-            linked_harnesses: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
-            catalog_model_slugs: None,
-        };
+        let evidence = evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            None,
+            &installed,
+            None,
+            None,
+        );
 
         let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect("harness should pivot to opencode");
@@ -671,20 +779,16 @@ mod tests {
         let profile = profile(None);
         let input = policy_input(&profile, None, Some("codex"));
         let mut probe_resolver = TestProbeResolver::default();
-        let evidence = HarnessEvidence {
-            model_id: "gpt-5",
-            provider_for_order: Some("openai"),
-            provider_constraint: Some("anthropic"),
-            settings_provider_order: None,
-            config_default_harness: None,
-            settings_harness_order: None,
-            installed_harnesses: &installed,
-            linked_harnesses: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
-            catalog_model_slugs: None,
-        };
+        let evidence = evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Alias,
+            Some("openai"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
+        );
 
         let error = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("incompatible provider constraint should fail");
@@ -744,5 +848,87 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("settings.default_harness `bogus` is invalid"))
         );
+    }
+
+    #[test]
+    fn cli_fixed_harness_clears_lower_precedence_profile_model_on_no_model_match() {
+        let installed = installed(&["opencode"]);
+        let profile = profile_with_model(Some(HarnessKind::Claude), Some("opus"));
+        let input = policy_input(&profile, None, Some("opencode"));
+        let mut probe_resolver = TestProbeResolver {
+            opencode: Some(positive_opencode_probe()),
+            ..Default::default()
+        };
+        let evidence = evidence_for_model(
+            "claude-opus-4-6",
+            "opus",
+            PolicySource::Profile,
+            Some("anthropic"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
+        );
+
+        let resolution = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect("cli harness should soft-fail model mismatch and continue");
+
+        assert_eq!(resolution.harness.value, "opencode");
+        assert!(resolution.warnings.iter().any(|warning| warning.contains(
+            "profile model 'opus' cannot run on cli harness 'opencode'; clearing model"
+        )));
+        assert!(resolution.model_override.is_some());
+    }
+
+    #[test]
+    fn cli_fixed_harness_and_cli_model_no_model_match_is_hard_error() {
+        let installed = installed(&["opencode"]);
+        let profile = profile(None);
+        let input = policy_input(&profile, Some("opus"), Some("opencode"));
+        let mut probe_resolver = TestProbeResolver {
+            opencode: Some(positive_opencode_probe()),
+            ..Default::default()
+        };
+        let evidence = evidence_for_model(
+            "claude-opus-4-6",
+            "opus",
+            PolicySource::Cli,
+            Some("anthropic"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
+        );
+
+        let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("same-precedence model mismatch must remain hard error");
+        assert!(err.to_string().contains("no_model_match"));
+    }
+
+    #[test]
+    fn fixed_harness_provider_constraint_unsatisfied_stays_hard_with_probe_match() {
+        let installed = installed(&["opencode"]);
+        let profile = profile_with_model(None, Some("gpt-5"));
+        let input = policy_input(&profile, None, Some("opencode"));
+        let mut probe_resolver = TestProbeResolver {
+            opencode: Some(positive_opencode_probe()),
+            ..Default::default()
+        };
+        let evidence = evidence_for_model(
+            "gpt-5",
+            "gpt-5",
+            PolicySource::Profile,
+            Some("openai"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
+        );
+
+        let err = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("provider constraint failures must remain hard even when probe matches");
+        let message = err.to_string();
+        assert!(message.contains("provider_constraint_unsatisfied"));
+        assert!(!message.contains("no_model_match"));
     }
 }

@@ -48,16 +48,9 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 
 ## Policy Resolution Pipeline
 
-```
-build_launch_bundle()                    → load EffectiveProjectConfig once
-                                        (fallback to default only when mars.toml is absent)
-models::merged_runtime_aliases()         → merged alias map (dependency + consumer overlays)
-models::ensure_fresh()                   → models.dev catalog (TTL-aware; not read-only)
-model::resolve_model()                   → alias → model_id + provider, or unset
-harness::resolve_harness()               → route selection, candidate eval (shared evaluator)
-execution::resolve_execution_policy()    → effort, approval, sandbox, autocompact
-runnable::resolve_routing()              → populate Routing (warnings always empty)
-```
+`resolve_policy()` resolves routing, execution, and provenance. Each field resolves
+independently — see [`policy/AGENTS.md`](policy/AGENTS.md) for the full pipeline,
+field independence, and cross-field precedence conflict handling.
 
 `resolve_policy` always runs `models::ensure_fresh` on `.mars/` (stale fallback may warn).
 CLI passes `ModelsRefreshControl` from `--refresh-models` / `--no-refresh-models` on
@@ -86,5 +79,6 @@ Alias `provider` → `harness_model` (bare native ids vs probe slugs): [`src/mod
 ## See Also
 
 - `.context/CONTEXT.md` — detailed contracts, warning semantics, ad-hoc guard
+- `policy/AGENTS.md` — policy resolution pipeline, field independence, cross-field precedence
 - `src/routing/AGENTS.md` — harness candidate evaluation
 - `src/cli/build.rs` — CLI arg definitions

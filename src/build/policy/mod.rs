@@ -9,6 +9,7 @@ use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, 
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
+use crate::routing;
 
 mod execution;
 mod harness;
@@ -89,6 +90,17 @@ impl PolicySource {
             Self::Default => "default",
             Self::ProfileHarnessOverride => "profile-harness-override",
             Self::Unset => "unset",
+        }
+    }
+
+    pub(super) fn precedence_rank(self) -> u8 {
+        match self {
+            Self::Cli => 5,
+            Self::Overlay | Self::OverlayModelPolicy => 4,
+            Self::Profile | Self::ProfileModelPolicy | Self::ProfileHarnessOverride => 3,
+            Self::SettingsModelPolicy | Self::Project | Self::Config => 2,
+            Self::Alias => 1,
+            Self::Unset | Self::ConfigOrder | Self::Provider | Self::Default => 0,
         }
     }
 }
@@ -214,7 +226,7 @@ pub fn resolve_policy(
         &cache,
     )?;
 
-    warnings.extend(resolved_model.warnings);
+    warnings.extend(resolved_model.warnings.iter().cloned());
     provenance.insert(
         "model_source".to_string(),
         resolved_model.model_source.label().to_string(),
@@ -244,19 +256,23 @@ pub fn resolve_policy(
             overlay,
             matched_policy.as_ref(),
             harness::HarnessEvidence {
-                model_id: &resolved_model.model,
-                provider_for_order: resolved_model.provider_for_order.as_deref(),
-                provider_constraint: resolved_model.provider_constraint.as_deref(),
-                settings_provider_order: effective_config.settings.provider_order.as_deref(),
-                config_default_harness: effective_config.settings.default_harness.as_deref(),
-                settings_harness_order: Some(harness_order),
-                installed_harnesses: &installed_harnesses,
-                linked_harnesses: (!linked_harnesses.is_empty())
-                    .then_some(linked_harnesses.as_slice()),
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
-                catalog_model_slugs: Some(catalog_slugs.as_slice()),
+                routing: routing::RoutingEvidence {
+                    model_id: &resolved_model.model,
+                    provider_for_order: resolved_model.provider_for_order.as_deref(),
+                    provider_constraint: resolved_model.provider_constraint.as_deref(),
+                    settings_provider_order: effective_config.settings.provider_order.as_deref(),
+                    config_default_harness: effective_config.settings.default_harness.as_deref(),
+                    settings_harness_order: Some(harness_order),
+                    installed_harnesses: &installed_harnesses,
+                    linked_harnesses: (!linked_harnesses.is_empty())
+                        .then_some(linked_harnesses.as_slice()),
+                    opencode_probe_result: None,
+                    pi_probe_result: None,
+                    cursor_probe_result: None,
+                    catalog_model_slugs: Some(catalog_slugs.as_slice()),
+                },
+                model_token: &resolved_model.model_token,
+                model_source: resolved_model.model_source,
             },
             &mut probe_resolver,
         )?
@@ -371,10 +387,25 @@ pub fn resolve_policy(
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
+    let (
+        effective_model,
+        effective_model_token,
+        effective_provider_constraint,
+        effective_provider_for_order,
+    ) = if harness_resolution.model_override.is_some() {
+        (String::new(), String::new(), None::<String>, None::<String>)
+    } else {
+        (
+            resolved_model.model.clone(),
+            resolved_model.model_token.clone(),
+            resolved_model.provider_constraint.clone(),
+            resolved_model.provider_for_order.clone(),
+        )
+    };
 
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
-        model: resolved_model.model.clone(),
-        model_token: resolved_model.model_token.clone(),
+        model: effective_model,
+        model_token: effective_model_token,
         harness: selected_harness.clone(),
         selection_kind: harness_resolution
             .route_trace
@@ -386,8 +417,8 @@ pub fn resolve_policy(
             .selected_match_evidence()
             .label()
             .to_string(),
-        provider_constraint: resolved_model.provider_constraint.as_deref(),
-        provider_for_order: resolved_model.provider_for_order.as_deref(),
+        provider_constraint: effective_provider_constraint.as_deref(),
+        provider_for_order: effective_provider_for_order.as_deref(),
         settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
         opencode_probe_result: opencode_probe_result.as_ref(),

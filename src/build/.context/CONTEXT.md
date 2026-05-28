@@ -178,6 +178,10 @@ to real warnings.
 
 ## Related docs
 
+- [policy/AGENTS.md](../policy/AGENTS.md) — policy resolution pipeline, field independence,
+  cross-field precedence conflict handling
+- [policy/.context/CONTEXT.md](../policy/.context/CONTEXT.md) — precedence ranks, soft-fail
+  contract, model_override mechanism
 - [src/models/AGENTS.md](../../models/AGENTS.md) — catalog `ensure_fresh`, `ModelsRefreshControl`
 - [src/routing/.context/CONTEXT.md](../../routing/.context/CONTEXT.md) — harness candidate
   evaluation, selection-kind vs match-evidence semantics, and `RouteDecisionReport`

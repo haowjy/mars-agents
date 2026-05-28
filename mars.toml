@@ -1,5 +1,10 @@
 [dependencies.meridian-dev-workflow]
-url = "https://github.com/meridian-flow/meridian-dev-workflow"
+url = "https://github.com/haowjy/meridian-dev-workflow"
 
 [settings]
+targets = [
+    ".pi",
+    ".claude",
+    ".cursor",
+]
 models_cache_ttl_hours = 24

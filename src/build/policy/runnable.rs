@@ -181,7 +181,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

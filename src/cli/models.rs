@@ -859,9 +859,12 @@ fn collect_all_model_entries(
                 match_patterns,
                 exclude_patterns,
             } => {
-                for matched in
-                    models::auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
-                {
+                for matched in models::auto_resolve_all(
+                    provider.as_deref(),
+                    match_patterns,
+                    exclude_patterns,
+                    cache,
+                ) {
                     append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
                 }
             }
@@ -954,9 +957,12 @@ fn collect_all_model_entries_static(
                 match_patterns,
                 exclude_patterns,
             } => {
-                for matched in
-                    models::auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
-                {
+                for matched in models::auto_resolve_all(
+                    provider.as_deref(),
+                    match_patterns,
+                    exclude_patterns,
+                    cache,
+                ) {
                     let entry = by_model_id
                         .entry(matched.id.clone())
                         .or_insert_with(|| model_entry_for_cached_static(matched));

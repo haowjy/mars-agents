@@ -1006,7 +1006,8 @@ pub fn resolve_with_alias_prefix_with_probe(
                 match_patterns,
                 exclude_patterns,
             } => {
-                for candidate in auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
+                for candidate in
+                    auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
                 {
                     if glob_match(&pattern, &candidate.id) {
                         deduped
@@ -1643,7 +1644,8 @@ fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option
             match_patterns,
             exclude_patterns,
         } => {
-            let model_id = auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache)?;
+            let model_id =
+                auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache)?;
             // When provider is known from the alias, use it; otherwise look up
             // the resolved model's provider in the cache.
             let resolved_provider = provider
@@ -1702,7 +1704,8 @@ fn format_alias_resolution_for_diag(
             match_patterns,
             exclude_patterns,
         } => {
-            let resolved = auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache);
+            let resolved =
+                auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache);
             match resolved {
                 Some(model_id) => (format!("{source_name} → {model_id}"), Some(model_id)),
                 None => (format!("{source_name} → <unresolvable>"), None),
@@ -1977,7 +1980,12 @@ mod tests {
             ("claude-sonnet-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("Anthropic"),
+            &["claude-opus-*".to_string()],
+            &[],
+            &cache,
+        );
         // Newest date wins
         assert_eq!(result, Some("claude-opus-4-20250514".to_string()));
     }
@@ -2006,7 +2014,12 @@ mod tests {
             ("claude-opus-4", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("Anthropic"),
+            &["claude-opus-*".to_string()],
+            &[],
+            &cache,
+        );
         // Should skip -latest even though it has a newer date
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
@@ -2018,7 +2031,12 @@ mod tests {
             fetched_at: None,
         };
 
-        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("Anthropic"),
+            &["claude-opus-*".to_string()],
+            &[],
+            &cache,
+        );
         assert_eq!(result, None);
     }
 
@@ -2034,7 +2052,12 @@ mod tests {
     fn auto_resolve_provider_case_insensitive() {
         let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
 
-        let result = auto_resolve(Some("anthropic"), &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("anthropic"),
+            &["claude-opus-*".to_string()],
+            &[],
+            &cache,
+        );
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
@@ -2045,7 +2068,12 @@ mod tests {
             ("claude-opus-4x", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(Some("Anthropic"), &["claude-opus-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("Anthropic"),
+            &["claude-opus-*".to_string()],
+            &[],
+            &cache,
+        );
         // Same date — shorter ID wins
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
@@ -2057,7 +2085,12 @@ mod tests {
             ("claude-opus-4-a", "Anthropic", Some("2025-03-01")),
         ]);
 
-        let result = auto_resolve(Some("Anthropic"), &["claude-opus-4-*".to_string()], &[], &cache);
+        let result = auto_resolve(
+            Some("Anthropic"),
+            &["claude-opus-4-*".to_string()],
+            &[],
+            &cache,
+        );
         // Same date + same length — lexical ID wins for deterministic ordering.
         assert_eq!(result, Some("claude-opus-4-a".to_string()));
     }

@@ -879,7 +879,7 @@ pub fn auto_resolve_all<'a>(
         .iter()
         .filter(|m| {
             // Provider match (case-insensitive) — skip filter when provider is None
-            provider.map_or(true, |p| m.provider.eq_ignore_ascii_case(p))
+            provider.is_none_or(|p| m.provider.eq_ignore_ascii_case(p))
         })
         .filter(|m| {
             // Skip -latest suffix (synthetic aliases)

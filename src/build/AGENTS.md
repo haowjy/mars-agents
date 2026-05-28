@@ -44,7 +44,7 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata,
 - `harness_model_source: "passthrough"` — expected behavior
 - `harness_model_confidence: "unknown"` — correct answer for passthrough harnesses
 
-`resolve_routing()` always returns `warnings: Vec::new()`. Route facts go to `routing.harness_model_source` and `routing.harness_model_confidence`.
+`resolve_routing()` emits warnings only for actionable degraded routing states (e.g. explicit harness could not match the configured model — model cleared, harness uses its default). Route facts go to `routing.harness_model_source` and `routing.harness_model_confidence`.
 
 ## Policy Resolution Pipeline
 

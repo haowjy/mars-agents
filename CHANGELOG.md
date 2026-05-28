@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `AutoResolve` model aliases no longer require `provider` when `match` is specified. When provider is omitted, resolution searches across all providers in the models cache.
+
+### Fixed
+- Cursor routing: when probe slugs don't contain the model but `provider_constraint` says `cursor`, return `Constrained` evidence instead of hard-rejecting with `no_model_match`. Stale probe cache no longer routes cursor models to Pi.
+
 ## [0.7.5] - 2026-05-28
 
 ### Fixed

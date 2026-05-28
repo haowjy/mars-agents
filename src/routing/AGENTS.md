@@ -69,7 +69,7 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 | Value | Meaning |
 |---|---|
 | `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
-| `Constrained` | Same as Confirmed, but provider_constraint was active |
+| `Constrained` | Same as Confirmed, but provider_constraint was active (includes cursor with provider constraint when probe can't confirm) |
 | `Passthrough` | Universal harness, Pi without probe, config-default fallback |
 | `None` | Rejected candidate |
 

@@ -15,7 +15,7 @@ auto_resolve() ← AutoResolve spec          harness detection
 ### Two Alias Modes
 
 - **Pinned**: `model = "claude-opus-4-6"` — explicit ID, no resolution needed
-- **AutoResolve**: `provider = "Anthropic"`, `match = ["opus"]` — glob matching against cached catalog, newest release date wins
+- **AutoResolve**: `match = ["opus"]` with optional `provider = "Anthropic"` — glob matching against cached catalog, newest release date wins. When provider is omitted, searches across all providers.
 
 ### Merge Precedence
 
@@ -72,7 +72,7 @@ Do not conflate env offline with flag-driven skip when debugging missing probe d
 
 ## Auto-Resolve Algorithm
 
-1. Filter by provider (case-insensitive)
+1. Filter by provider (case-insensitive) when specified; skip filter when provider is omitted
 2. All match patterns must hit (AND)
 3. No exclude patterns may hit (OR)
 4. Skip entries ending with `-latest` (synthetic aliases)

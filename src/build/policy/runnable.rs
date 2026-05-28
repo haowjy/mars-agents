@@ -1,9 +1,7 @@
 use crate::build::bundle::Routing;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
-use crate::models::harness_model::{
-    HarnessModelInput, pi_harness_model_requires_probe_slug, resolve_harness_model,
-};
+use crate::models::harness_model::{HarnessModelInput, resolve_harness_model};
 use crate::models::probes::cursor::{CursorEffortResolutionError, resolve_cursor_effort_slug};
 use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 use crate::routing::{MatchEvidence, RoutingTrace};
@@ -82,8 +80,26 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
         pi_probe: pi_probe_result,
     });
 
-    if pi_harness_model_requires_probe_slug(&harness, &selection_kind, &model, &runnable) {
-        return Err(fixed_pi_harness_model_error(&harness));
+    // When an explicit harness (fixed selection) can't probe-match the model,
+    // clear the model and warn instead of hard-erroring. The harness will
+    // use its own default model.
+    let mut model = model;
+    let mut model_token = model_token;
+    let mut warnings: Vec<String> = Vec::new();
+
+    let unmatched_fixed_harness = harness.eq_ignore_ascii_case("pi")
+        && selection_kind.eq_ignore_ascii_case("fixed")
+        && !model.trim().is_empty()
+        && runnable.source == RunnablePathSource::Passthrough
+        && !runnable.harness_model_id.contains('/');
+
+    if unmatched_fixed_harness {
+        warnings.push(format!(
+            "explicit harness `{harness}` could not match model `{model}`; \
+             clearing model so {harness} uses its default"
+        ));
+        model = String::new();
+        model_token = String::new();
     }
 
     let candidate_slugs = route_trace
@@ -93,19 +109,24 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
         .map(|assessment| assessment.candidate_slugs.clone())
         .unwrap_or_default();
 
+    let harness_model = if unmatched_fixed_harness {
+        String::new()
+    } else {
+        runnable.harness_model_id
+    };
+
     let mut routing = Routing {
         model,
         model_token,
         harness: harness.clone(),
         selection_kind,
         match_evidence,
-        harness_model: runnable.harness_model_id,
+        harness_model,
         harness_model_source: runnable.source.label().to_string(),
         harness_model_confidence: runnable.confidence.label().to_string(),
         candidate_slugs,
         route_trace: route_trace.to_report(),
     };
-    let warnings = Vec::new();
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
 
@@ -160,13 +181,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> Result<RoutingResoluti
     })
 }
 
-fn fixed_pi_harness_model_error(harness: &str) -> MarsError {
-    MarsError::Config(ConfigError::Invalid {
-        message: format!(
-            "cli harness `{harness}` cannot run requested model under model-first routing (no_model_match)"
-        ),
-    })
-}
 
 #[cfg(test)]
 mod tests {
@@ -256,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn pi_fixed_without_probe_slug_errors() {
+    fn pi_fixed_without_probe_slug_clears_model_and_warns() {
         let trace = RoutingTrace {
             source: crate::routing::RouteSource::Cli,
             selection_kind: SelectionKind::Fixed,
@@ -276,7 +290,7 @@ mod tests {
             }],
             diagnostics: Vec::new(),
         };
-        let err = match resolve_routing(RoutingInput {
+        let result = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gpt-5.4-mini".to_string(),
             harness: "pi".to_string(),
@@ -291,12 +305,20 @@ mod tests {
             cursor_probe_result: None,
             alias_resolution_failed: false,
             route_trace: trace,
-        }) {
-            Err(err) => err,
-            Ok(_) => panic!("fixed pi without probe slug should fail"),
-        };
+        })
+        .expect("fixed pi without probe slug should not error");
 
-        assert!(err.to_string().contains("no_model_match"));
+        assert_eq!(result.routing.harness, "pi");
+        assert!(
+            result.routing.model.is_empty(),
+            "model should be cleared when probe can't match"
+        );
+        assert!(
+            result.routing.harness_model.is_empty(),
+            "harness_model should be cleared when probe can't match"
+        );
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("could not match model"));
     }
 
     #[test]

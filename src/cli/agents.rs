@@ -1,6 +1,6 @@
 //! `mars agents` — list and inspect agents from the .mars/ canonical store.
 
-use crate::compiler::agents::{parse_agent_profile, parse_agent_content};
+use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
@@ -117,7 +117,12 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             println!("  no agents");
         } else {
             // Compute column widths
-            let name_w = entries.iter().map(|e| e.name.len()).max().unwrap_or(4).max(4);
+            let name_w = entries
+                .iter()
+                .map(|e| e.name.len())
+                .max()
+                .unwrap_or(4)
+                .max(4);
             let mode_w = entries
                 .iter()
                 .map(|e| e.mode.len())
@@ -126,7 +131,10 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .max(4);
             println!("{:<name_w$}  {:<mode_w$}  DESCRIPTION", "NAME", "MODE");
             for e in &entries {
-                println!("{:<name_w$}  {:<mode_w$}  {}", e.name, e.mode, e.description);
+                println!(
+                    "{:<name_w$}  {:<mode_w$}  {}",
+                    e.name, e.mode, e.description
+                );
             }
         }
     }

@@ -1,6 +1,6 @@
 //! `mars skills` — list and inspect skills from the .mars/ canonical store.
 
-use crate::compiler::skills::{parse_skill_profile, parse_skill_content};
+use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
@@ -105,10 +105,7 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             continue;
         }
 
-        let name = profile
-            .name
-            .clone()
-            .unwrap_or_else(|| dir_name(&disk_path));
+        let name = profile.name.clone().unwrap_or_else(|| dir_name(&disk_path));
         let description = profile.description.clone().unwrap_or_default();
 
         entries.push(SkillEntry {
@@ -127,7 +124,12 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         if entries.is_empty() {
             println!("  no skills");
         } else {
-            let name_w = entries.iter().map(|e| e.name.len()).max().unwrap_or(4).max(4);
+            let name_w = entries
+                .iter()
+                .map(|e| e.name.len())
+                .max()
+                .unwrap_or(4)
+                .max(4);
             let type_w = entries
                 .iter()
                 .map(|e| e.skill_type.len())

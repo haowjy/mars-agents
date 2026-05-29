@@ -39,13 +39,8 @@ model-invocable: false
 #[test]
 fn agents_list_json_envelope_and_fields() {
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[("orchestrator", AGENT_CONTENT)],
-        &[],
-    );
+    let project =
+        setup_synced_project(&dir, "proj", "src", &[("orchestrator", AGENT_CONTENT)], &[]);
 
     let output = mars()
         .args(["--json", "agents", "--root", project.to_str().unwrap()])
@@ -79,13 +74,8 @@ fn agents_list_json_envelope_and_fields() {
 #[test]
 fn agents_show_json_subagents_and_kebab_keys() {
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[("orchestrator", AGENT_CONTENT)],
-        &[],
-    );
+    let project =
+        setup_synced_project(&dir, "proj", "src", &[("orchestrator", AGENT_CONTENT)], &[]);
 
     let output = mars()
         .args([
@@ -109,7 +99,10 @@ fn agents_show_json_subagents_and_kebab_keys() {
         json["description"].is_string(),
         "'description' required:\n{stdout}"
     );
-    assert!(json["skills"].is_array(), "'skills' array required:\n{stdout}");
+    assert!(
+        json["skills"].is_array(),
+        "'skills' array required:\n{stdout}"
+    );
     assert!(
         json["subagents"].is_array(),
         "'subagents' array required:\n{stdout}"
@@ -139,13 +132,8 @@ fn agents_show_json_subagents_and_kebab_keys() {
 #[test]
 fn agents_show_not_found_exits_nonzero() {
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[("orchestrator", AGENT_CONTENT)],
-        &[],
-    );
+    let project =
+        setup_synced_project(&dir, "proj", "src", &[("orchestrator", AGENT_CONTENT)], &[]);
 
     let status = mars()
         .args([
@@ -173,13 +161,7 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
     // Regression guard: list previously emitted `model_invocable` (snake) while
     // show emitted `model-invocable` (kebab). Both must be kebab.
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[],
-        &[("planning", SKILL_CONTENT)],
-    );
+    let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
 
     let output = mars()
         .args(["--json", "skills", "--root", project.to_str().unwrap()])
@@ -211,8 +193,7 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
         "skills list MUST NOT emit 'model_invocable' (snake):\n{stdout}"
     );
     assert_eq!(
-        entry["model-invocable"],
-        false,
+        entry["model-invocable"], false,
         "'model-invocable' value for planning:\n{stdout}"
     );
 
@@ -226,13 +207,7 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
 fn skills_show_json_model_invocable_is_kebab_not_snake() {
     // Mirror of the list test — both endpoints must agree on kebab-case.
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[],
-        &[("planning", SKILL_CONTENT)],
-    );
+    let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
 
     let output = mars()
         .args([
@@ -261,8 +236,7 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
         "skills show MUST NOT emit 'model_invocable' (snake):\n{stdout}"
     );
     assert_eq!(
-        json["model-invocable"],
-        false,
+        json["model-invocable"], false,
         "'model-invocable' value:\n{stdout}"
     );
 
@@ -275,19 +249,16 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
         "'allowed-tools' key required (kebab):\n{stdout}"
     );
     assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
-    assert!(json["detail"].is_string(), "'detail' field required:\n{stdout}");
+    assert!(
+        json["detail"].is_string(),
+        "'detail' field required:\n{stdout}"
+    );
 }
 
 #[test]
 fn skills_show_not_found_exits_nonzero() {
     let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(
-        &dir,
-        "proj",
-        "src",
-        &[],
-        &[("planning", SKILL_CONTENT)],
-    );
+    let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
 
     let status = mars()
         .args([

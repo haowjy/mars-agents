@@ -533,9 +533,8 @@ fn agent_without_harness_is_universal() {
 
 #[test]
 fn subagents_list_parses() {
-    let (p, diags) = parse(
-        "---\nname: orchestrator\nsubagents:\n  - coder\n  - reviewer\n---\n# Orchestrator",
-    );
+    let (p, diags) =
+        parse("---\nname: orchestrator\nsubagents:\n  - coder\n  - reviewer\n---\n# Orchestrator");
     assert!(diags.is_empty());
     assert_eq!(p.subagents, vec!["coder", "reviewer"]);
 }

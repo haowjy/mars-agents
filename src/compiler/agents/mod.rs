@@ -1106,10 +1106,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // skills/subagents/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills();
-    let subagents = fm
-        .get("subagents")
-        .map(yaml_str_list)
-        .unwrap_or_default();
+    let subagents = fm.get("subagents").map(yaml_str_list).unwrap_or_default();
     let parsed_tools = fm
         .get("tools")
         .map(|value| parse_tools_field("tools", value, diags))

@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `mars list` / `mars list --status` / `mars why` / `mars doctor` showed every item N× (once per configured target). Used `canonical_flat_items()` for catalog views, `flat_items_for_target()` for divergence checks.
+- Overlay model override (`mars.local.toml`) with incompatible provider now pivots to a compatible harness instead of hard-failing. E.g. profile `harness: codex` + overlay `model: sonnet` → routes to `claude` harness.
+- Harness constraint error messages now include actionable fix suggestions.
+
 ## [0.7.6] - 2026-05-28
 
 ### Changed

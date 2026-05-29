@@ -140,27 +140,68 @@ pub(super) fn resolve_harness(
             )
         } else {
             if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
-                fixed_route_trace = resolve_fixed_harness_rejection(
-                    rejection,
-                    selection.source,
-                    evidence.model_source,
-                    fixed_input,
-                    &selection.value,
-                    evidence.routing.installed_harnesses,
-                    probe_resolver,
-                )?;
-                warnings.push(format!(
-                    "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
-                    evidence.model_source.label(),
-                    evidence.model_token,
-                    selection.source.label(),
-                    selection.value
-                ));
-                model_override = Some(());
+                // When the model source outranks the harness source and the
+                // harness fundamentally can't run the model (provider mismatch),
+                // pivot to candidate evaluation instead of hard-failing.
+                // E.g. profile says `harness: codex` but overlay sets `model: sonnet`
+                // — the overlay model (rank 4) outranks the profile harness (rank 3),
+                // so we should find a harness that can actually run the model.
+                if rejection.is_provider_constraint()
+                    && evidence.model_source.precedence_rank()
+                        > selection.source.precedence_rank()
+                {
+                    warnings.push(format!(
+                        "{} harness '{}' cannot run {} model '{}' (provider mismatch); pivoting to compatible harness",
+                        selection.source.label(),
+                        selection.value,
+                        evidence.model_source.label(),
+                        evidence.model_token,
+                    ));
+                    let trace = evaluate_candidates(
+                        &evidence,
+                        normalized_config_default_harness.as_deref(),
+                        probe_resolver,
+                    );
+                    selected_harness_order_position = trace.selected_harness_order_position();
+                    warnings.extend(trace.selected_diagnostics().to_vec());
+                    let candidates_tried = trace.candidates_tried.clone();
+                    (
+                        ResolvedField {
+                            value: trace.harness.clone(),
+                            source: trace.source.into(),
+                            matched_rule: None,
+                        },
+                        candidates_tried,
+                        trace,
+                        None,
+                    )
+                } else {
+                    fixed_route_trace = resolve_fixed_harness_rejection(
+                        rejection,
+                        selection.source,
+                        evidence.model_source,
+                        fixed_input,
+                        &selection.value,
+                        evidence.routing.installed_harnesses,
+                        probe_resolver,
+                    )?;
+                    warnings.push(format!(
+                        "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
+                        evidence.model_source.label(),
+                        evidence.model_token,
+                        selection.source.label(),
+                        selection.value
+                    ));
+                    model_override = Some(());
+                    let route_trace = fixed_route_trace;
+                    let candidates_tried = route_trace.candidates_tried.clone();
+                    (selection, candidates_tried, route_trace, None)
+                }
+            } else {
+                let route_trace = fixed_route_trace;
+                let candidates_tried = route_trace.candidates_tried.clone();
+                (selection, candidates_tried, route_trace, None)
             }
-            let route_trace = fixed_route_trace;
-            let candidates_tried = route_trace.candidates_tried.clone();
-            (selection, candidates_tried, route_trace, None)
         }
     } else {
         let trace = evaluate_candidates(
@@ -411,9 +452,23 @@ fn fixed_harness_constraint_error(
     skip_reason: Option<&str>,
 ) -> MarsError {
     let detail = skip_reason.unwrap_or("unavailable");
+    let hint = if detail == "provider_constraint_unsatisfied" {
+        format!(
+            ". The `{requested_harness}` harness cannot run this model's provider. \
+             Fix: override the harness (--harness <name>), change the model override, \
+             or remove the harness from the agent profile"
+        )
+    } else if detail == "no_model_match" {
+        format!(
+            ". The `{requested_harness}` harness does not recognize this model. \
+             Fix: check the model name or override the harness (--harness <name>)"
+        )
+    } else {
+        String::new()
+    };
     MarsError::Config(ConfigError::Invalid {
         message: format!(
-            "{source} harness `{requested_harness}` cannot run requested model under model-first routing ({detail})",
+            "{source} harness `{requested_harness}` cannot run the requested model ({detail}){hint}",
         ),
     })
 }
@@ -793,7 +848,7 @@ mod tests {
         let error = resolve_harness(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("incompatible provider constraint should fail");
         let message = error.to_string();
-        assert!(message.contains("cli harness `codex` cannot run requested model"));
+        assert!(message.contains("cli harness `codex` cannot run the requested model"));
         assert!(message.contains("provider_constraint_unsatisfied"));
     }
 
@@ -930,5 +985,40 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("provider_constraint_unsatisfied"));
         assert!(!message.contains("no_model_match"));
+    }
+
+    #[test]
+    fn overlay_model_pivots_away_from_profile_harness_on_provider_constraint() {
+        // Scenario: profile says harness=codex, overlay (mars.local.toml) overrides
+        // model to an Anthropic model. Overlay (rank 4) outranks profile (rank 3),
+        // so the harness should pivot to candidate evaluation instead of hard-failing.
+        let installed = installed(&["codex", "claude"]);
+        let profile = profile(Some(HarnessKind::Codex));
+        let input = policy_input(&profile, None, None);
+        let mut probe_resolver = TestProbeResolver::default();
+
+        // Overlay model source (rank 4) > profile harness (rank 3)
+        let overlay = AgentOverlay {
+            model: Some("claude-sonnet-4-6".to_string()),
+            ..Default::default()
+        };
+        let evidence = evidence_for_model(
+            "claude-sonnet-4-6",
+            "sonnet",
+            PolicySource::Overlay,
+            Some("anthropic"),
+            Some("anthropic"),
+            &installed,
+            None,
+            None,
+        );
+
+        let resolution =
+            resolve_harness(&input, None, Some(&overlay), None, evidence, &mut probe_resolver)
+                .expect("should pivot to claude instead of hard-failing");
+
+        assert_eq!(resolution.harness.value, "claude");
+        assert!(resolution.model_override.is_none(), "model should NOT be cleared");
+        assert!(resolution.warnings.iter().any(|w| w.contains("provider mismatch")));
     }
 }

@@ -32,6 +32,22 @@ impl RejectionReason {
     pub fn is_not_installed(&self) -> bool {
         matches!(self, Self::HarnessNotInstalled { .. })
     }
+
+    pub fn skip_reason(&self) -> Option<&str> {
+        match self {
+            Self::AssessmentFailed { skip_reason, .. } => skip_reason.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Whether the rejection is due to a provider constraint that makes the
+    /// harness fundamentally unable to run the requested model (e.g. codex
+    /// cannot run Anthropic models). Distinguished from `no_model_match` which
+    /// means the harness could potentially run the provider but doesn't
+    /// recognize the specific model slug.
+    pub fn is_provider_constraint(&self) -> bool {
+        self.skip_reason() == Some("provider_constraint_unsatisfied")
+    }
 }
 
 /// Check whether a routing trace meets the given acceptance policy.

@@ -367,6 +367,7 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
 /// Classifies a fixed-harness assessment rejection into the appropriate outcome:
 /// soft-fail (returns the retry trace when harness outranks model), or a hard error
 /// (not-installed or constraint cannot be resolved).
+#[allow(clippy::too_many_arguments)]
 fn resolve_fixed_harness_rejection<F>(
     rejection: routing::acceptance::RejectionReason,
     selection_source: PolicySource,

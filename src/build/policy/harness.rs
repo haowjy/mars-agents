@@ -681,6 +681,27 @@ mod tests {
         }
     }
 
+    /// Test wrapper: calls `resolve_harness` with auth defaulting to all-OK.
+    /// Tests that need custom auth behavior should call `resolve_harness` directly.
+    fn resolve_harness_test(
+        input: &PolicyInput<'_>,
+        alias: Option<&ModelAlias>,
+        overlay: Option<&AgentOverlay>,
+        matched_policy: Option<&MatchedModelPolicy>,
+        evidence: HarnessEvidence<'_>,
+        probe_resolver: &mut dyn routing::ProbeResolver,
+    ) -> Result<HarnessResolution, MarsError> {
+        resolve_harness(
+            input,
+            alias,
+            overlay,
+            matched_policy,
+            evidence,
+            probe_resolver,
+            |_| true,
+        )
+    }
+
     #[test]
     fn cli_override_is_explicit_and_skips_candidate_eval() {
         let installed = installed(&["codex", "pi"]);
@@ -688,14 +709,13 @@ mod tests {
         let input = policy_input(&profile, None, Some("pi"));
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             Some(&model_alias(Some("codex"))),
             None,
             None,
             evidence(None, None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("harness should resolve");
 
@@ -720,14 +740,13 @@ mod tests {
         let input = policy_input(&profile, Some("gptmini"), None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             Some(&model_alias(Some("opencode"))),
             None,
             None,
             evidence(None, None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("harness should resolve");
 
@@ -751,14 +770,13 @@ mod tests {
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             Some(&model_alias(Some("codex"))),
             None,
             None,
             evidence(None, None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("harness should resolve");
 
@@ -795,16 +813,9 @@ mod tests {
             None,
         );
 
-        let resolution = resolve_harness(
-            &input,
-            None,
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-            |_| true,
-        )
-        .expect("harness should pivot to opencode");
+        let resolution =
+            resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+                .expect("harness should pivot to opencode");
 
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
@@ -825,14 +836,13 @@ mod tests {
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             None,
             None,
             None,
             evidence(None, None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("profile harness should pivot to available candidates");
         assert_eq!(resolution.harness.value, "opencode");
@@ -850,14 +860,13 @@ mod tests {
         let input = policy_input(&profile, None, Some("claude"));
         let mut probe_resolver = TestProbeResolver::default();
 
-        let error = resolve_harness(
+        let error = resolve_harness_test(
             &input,
             Some(&model_alias(Some("codex"))),
             None,
             None,
             evidence(None, None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect_err("unavailable explicit harness should fail");
         let message = error.to_string();
@@ -883,16 +892,8 @@ mod tests {
             None,
         );
 
-        let error = resolve_harness(
-            &input,
-            None,
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-            |_| true,
-        )
-        .expect_err("incompatible provider constraint should fail");
+        let error = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("incompatible provider constraint should fail");
         let message = error.to_string();
         assert!(message.contains("cli harness `codex` cannot run the requested model"));
         assert!(message.contains("provider_constraint_unsatisfied"));
@@ -906,14 +907,13 @@ mod tests {
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             None,
             None,
             None,
             evidence(None, Some(&order), &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("harness should resolve");
 
@@ -934,14 +934,13 @@ mod tests {
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             None,
             None,
             None,
             evidence(Some("bogus"), None, &installed),
             &mut probe_resolver,
-            |_| true,
         )
         .expect("harness should resolve");
 
@@ -973,16 +972,9 @@ mod tests {
             None,
         );
 
-        let resolution = resolve_harness(
-            &input,
-            None,
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-            |_| true,
-        )
-        .expect("cli harness should soft-fail model mismatch and continue");
+        let resolution =
+            resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+                .expect("cli harness should soft-fail model mismatch and continue");
 
         assert_eq!(resolution.harness.value, "opencode");
         assert!(resolution.warnings.iter().any(|warning| warning.contains(
@@ -1011,16 +1003,8 @@ mod tests {
             None,
         );
 
-        let err = resolve_harness(
-            &input,
-            None,
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-            |_| true,
-        )
-        .expect_err("same-precedence model mismatch must remain hard error");
+        let err = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("same-precedence model mismatch must remain hard error");
         assert!(err.to_string().contains("no_model_match"));
     }
 
@@ -1044,16 +1028,8 @@ mod tests {
             None,
         );
 
-        let err = resolve_harness(
-            &input,
-            None,
-            None,
-            None,
-            evidence,
-            &mut probe_resolver,
-            |_| true,
-        )
-        .expect_err("provider constraint failures must remain hard even when probe matches");
+        let err = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("provider constraint failures must remain hard even when probe matches");
         let message = err.to_string();
         assert!(message.contains("provider_constraint_unsatisfied"));
         assert!(!message.contains("no_model_match"));
@@ -1085,14 +1061,13 @@ mod tests {
             None,
         );
 
-        let resolution = resolve_harness(
+        let resolution = resolve_harness_test(
             &input,
             None,
             Some(&overlay),
             None,
             evidence,
             &mut probe_resolver,
-            |_| true,
         )
         .expect("should pivot to claude instead of hard-failing");
 

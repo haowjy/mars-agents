@@ -588,7 +588,7 @@ description: |
   Explorer line two
 harness: codex
 model: gpt-5.3-codex
-approval: yolo
+approval: never
 sandbox: workspace-write
 tools: [Bash, Write, Edit]
 ---

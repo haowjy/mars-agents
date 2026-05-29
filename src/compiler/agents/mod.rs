@@ -97,7 +97,7 @@ pub enum ApprovalMode {
     Default,
     Auto,
     Confirm,
-    Yolo,
+    Never,
 }
 
 impl ApprovalMode {
@@ -106,7 +106,7 @@ impl ApprovalMode {
             "default" => Some(Self::Default),
             "auto" => Some(Self::Auto),
             "confirm" => Some(Self::Confirm),
-            "yolo" => Some(Self::Yolo),
+            "never" | "yolo" => Some(Self::Never),
             _ => None,
         }
     }
@@ -116,7 +116,7 @@ impl ApprovalMode {
             Self::Default => "default",
             Self::Auto => "auto",
             Self::Confirm => "confirm",
-            Self::Yolo => "yolo",
+            Self::Never => "never",
         }
     }
 }
@@ -355,6 +355,8 @@ pub enum AgentDiagnostic {
     },
     /// Deprecated `models:` field was found (use `model-overrides:` instead).
     LegacyModelsField,
+    /// Deprecated `approval: yolo` was found (use `approval: never` instead).
+    DeprecatedApprovalYolo,
     /// Unknown harness name — not one of claude/codex/opencode/pi.
     UnknownHarness { value: String },
     /// Non-overridable field appears inside an override block.
@@ -384,6 +386,9 @@ impl AgentDiagnostic {
             }
             AgentDiagnostic::LegacyModelsField => {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
+            }
+            AgentDiagnostic::DeprecatedApprovalYolo => {
+                "agent uses deprecated `approval: yolo`; use `approval: never` instead".to_string()
             }
             AgentDiagnostic::UnknownHarness { value } => {
                 format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi")
@@ -742,12 +747,15 @@ fn parse_override_fields(
             "approval" => {
                 if let Some(s) = v.as_str() {
                     if let Some(a) = ApprovalMode::from_str(s) {
+                        if s == "yolo" {
+                            diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
+                        }
                         out.approval = Some(a);
                     } else {
                         diags.push(AgentDiagnostic::InvalidFieldValue {
                             field: format!("{table_name}.approval"),
                             value: s.to_string(),
-                            allowed: "default, auto, confirm, yolo",
+                            allowed: "default, auto, confirm, never",
                         });
                     }
                 }
@@ -1008,12 +1016,15 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
         if let Some(a) = ApprovalMode::from_str(s) {
+            if s == "yolo" {
+                diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
+            }
             Some(a)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "approval".to_string(),
                 value: s.to_string(),
-                allowed: "default, auto, confirm, yolo",
+                allowed: "default, auto, confirm, never",
             });
             None
         }

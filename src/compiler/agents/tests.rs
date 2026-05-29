@@ -131,12 +131,22 @@ fn parses_effort_none_sentinel() {
 
 #[test]
 fn parses_approval_all_values() {
-    for s in ["default", "auto", "confirm", "yolo"] {
+    for s in ["default", "auto", "confirm", "never"] {
         let content = format!("---\napproval: {s}\n---\n");
         let (p, diags) = parse(&content);
         assert!(diags.is_empty(), "unexpected diags for approval={s}");
         assert!(p.approval.is_some());
     }
+}
+
+#[test]
+fn approval_yolo_parses_with_deprecation_warning() {
+    let content = "---\napproval: yolo\n---\n";
+    let (p, diags) = parse(content);
+    assert_eq!(p.approval, Some(ApprovalMode::Never));
+    assert_eq!(diags.len(), 1);
+    assert!(!diags[0].is_error());
+    assert!(diags[0].message().contains("deprecated"));
 }
 
 #[test]

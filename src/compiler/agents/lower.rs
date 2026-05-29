@@ -297,7 +297,7 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
             ApprovalMode::Default => None,
             ApprovalMode::Auto => Some("on-request"),
             ApprovalMode::Confirm => Some("untrusted"),
-            ApprovalMode::Yolo => Some("never"),
+            ApprovalMode::Never => Some("never"),
         }
     });
 

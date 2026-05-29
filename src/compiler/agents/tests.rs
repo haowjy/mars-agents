@@ -528,3 +528,21 @@ fn agent_without_harness_is_universal() {
     let (p, _) = parse("---\nname: planner\nmodel: gpt55\n---\n# Planner");
     assert!(p.harness.is_none());
 }
+
+// --- subagents field ---
+
+#[test]
+fn subagents_list_parses() {
+    let (p, diags) = parse(
+        "---\nname: orchestrator\nsubagents:\n  - coder\n  - reviewer\n---\n# Orchestrator",
+    );
+    assert!(diags.is_empty());
+    assert_eq!(p.subagents, vec!["coder", "reviewer"]);
+}
+
+#[test]
+fn subagents_absent_gives_empty_vec() {
+    let (p, diags) = parse("---\nname: solo\n---\n# Solo agent");
+    assert!(diags.is_empty());
+    assert!(p.subagents.is_empty());
+}

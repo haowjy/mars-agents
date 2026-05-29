@@ -110,6 +110,15 @@ impl ApprovalMode {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::Auto => "auto",
+            Self::Confirm => "confirm",
+            Self::Yolo => "yolo",
+        }
+    }
 }
 
 /// Sandbox mode field.
@@ -265,6 +274,7 @@ pub struct AgentProfile {
 
     // --- Tool fields ---
     pub skills: Vec<String>,
+    pub subagents: Vec<String>,
     pub tools: Vec<String>,
     pub tools_denied: Vec<String>,
     pub disallowed_tools: Vec<String>,
@@ -1094,8 +1104,12 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     };
 
-    // skills/tools/disallowed-tools/mcp-tools:
+    // skills/subagents/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills();
+    let subagents = fm
+        .get("subagents")
+        .map(yaml_str_list)
+        .unwrap_or_default();
     let parsed_tools = fm
         .get("tools")
         .map(|value| parse_tools_field("tools", value, diags))
@@ -1141,6 +1155,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         autocompact,
         autocompact_pct,
         skills,
+        subagents,
         tools,
         tools_denied,
         disallowed_tools,

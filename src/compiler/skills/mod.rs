@@ -10,6 +10,8 @@ use crate::frontmatter::{Frontmatter, FrontmatterError};
 pub struct SkillProfile {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub detail: Option<String>,
+    pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
     pub allowed_tools: Vec<String>,
@@ -172,6 +174,28 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
             allowed: "string",
         });
     }
+    let detail_raw = fm.get("detail");
+    let detail = detail_raw.and_then(Value::as_str).map(str::to_owned);
+    if let Some(raw) = detail_raw
+        && !raw.is_string()
+    {
+        diags.push(SkillDiagnostic::InvalidFieldType {
+            field: "detail".to_string(),
+            value: value_label(raw),
+            allowed: "string",
+        });
+    }
+    let skill_type_raw = fm.get("type");
+    let skill_type = skill_type_raw.and_then(Value::as_str).map(str::to_owned);
+    if let Some(raw) = skill_type_raw
+        && !raw.is_string()
+    {
+        diags.push(SkillDiagnostic::InvalidFieldType {
+            field: "type".to_string(),
+            value: value_label(raw),
+            allowed: "string",
+        });
+    }
     let metadata = fm.get("metadata").cloned();
 
     let (model_invocable, had_model_invocable_field) =
@@ -194,6 +218,8 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     SkillProfile {
         name,
         description,
+        detail,
+        skill_type,
         model_invocable,
         user_invocable,
         allowed_tools,
@@ -412,6 +438,46 @@ body",
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, .. } if field == "license"
+        )));
+    }
+
+    #[test]
+    fn detail_and_type_parse_from_frontmatter() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ndetail: Long description here\ntype: guardrail\n---\nbody",
+        );
+        assert!(d.is_empty());
+        assert_eq!(p.detail.as_deref(), Some("Long description here"));
+        assert_eq!(p.skill_type.as_deref(), Some("guardrail"));
+    }
+
+    #[test]
+    fn detail_and_type_absent_gives_none() {
+        let (p, d, _) = parse("---\nname: a\ndescription: b\n---\nbody");
+        assert!(d.is_empty());
+        assert!(p.detail.is_none());
+        assert!(p.skill_type.is_none());
+    }
+
+    #[test]
+    fn non_string_detail_emits_diagnostic() {
+        let (p, d, _) = parse("---\nname: a\ndescription: b\ndetail: 42\n---\nbody");
+        assert!(p.detail.is_none());
+        assert!(d.iter().any(|diag| matches!(
+            diag,
+            SkillDiagnostic::InvalidFieldType { field, allowed, .. }
+                if field == "detail" && *allowed == "string"
+        )));
+    }
+
+    #[test]
+    fn non_string_type_emits_diagnostic() {
+        let (p, d, _) = parse("---\nname: a\ndescription: b\ntype: [a, b]\n---\nbody");
+        assert!(p.skill_type.is_none());
+        assert!(d.iter().any(|diag| matches!(
+            diag,
+            SkillDiagnostic::InvalidFieldType { field, allowed, .. }
+                if field == "type" && *allowed == "string"
         )));
     }
 

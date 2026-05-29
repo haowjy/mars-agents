@@ -114,6 +114,7 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
+        &profile.subagents,
     )?;
 
     warnings.extend(prompt.warnings);

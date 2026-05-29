@@ -92,6 +92,7 @@ pub struct SupplementalDoc {
     pub name: String,
     pub content: String,
     pub skill_type: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

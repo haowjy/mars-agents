@@ -275,6 +275,7 @@ pub fn resolve_policy(
                 model_source: resolved_model.model_source,
             },
             &mut probe_resolver,
+            crate::models::harness::native_harness_authenticated,
         )?
     };
 

@@ -36,7 +36,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     // Check each locked item against .mars/ canonical store
     let mars_dir = ctx.project_root.join(".mars");
-    for (dest_path_str, item) in lock.flat_items() {
+    for (dest_path_str, item) in lock.canonical_flat_items() {
         let disk_path = dest_path_str.resolve(&mars_dir);
 
         // Check file exists
@@ -256,7 +256,7 @@ fn check_target_divergence(
     let mut divergence_count = 0;
 
     for target_name in targets {
-        for (dest_path, item) in lock.flat_items() {
+        for (dest_path, item) in lock.flat_items_for_target(target_name) {
             let relative_path = std::path::Path::new(target_name).join(dest_path.as_str());
             let target_path = project_root.join(&relative_path);
 
@@ -305,23 +305,34 @@ mod tests {
     use super::{check_legacy_agents_directory, check_target_divergence};
 
     /// Returns (key, LockedItemV2) for insertion into LockFile.items.
+    ///
+    /// Creates output records for `.mars` (canonical) plus any additional targets.
     fn make_locked_agent(
         name: &str,
         dest_path: &str,
         expected_content: &str,
+        extra_targets: &[&str],
     ) -> (String, crate::lock::LockedItemV2) {
         let expected_hash = crate::hash::hash_bytes(expected_content.as_bytes());
         let key = format!("agent/{name}");
+        let mut outputs = vec![crate::lock::OutputRecord {
+            target_root: ".mars".to_string(),
+            dest_path: dest_path.into(),
+            installed_checksum: expected_hash.clone().into(),
+        }];
+        for target in extra_targets {
+            outputs.push(crate::lock::OutputRecord {
+                target_root: (*target).to_string(),
+                dest_path: dest_path.into(),
+                installed_checksum: expected_hash.clone().into(),
+            });
+        }
         let item = crate::lock::LockedItemV2 {
             source: "test-source".into(),
             kind: crate::lock::ItemKind::Agent,
             version: None,
             source_checksum: expected_hash.clone().into(),
-            outputs: vec![crate::lock::OutputRecord {
-                target_root: ".mars".to_string(),
-                dest_path: dest_path.into(),
-                installed_checksum: expected_hash.into(),
-            }],
+            outputs,
         };
         (key, item)
     }
@@ -332,9 +343,19 @@ mod tests {
         let root = temp.path();
 
         let mut lock = crate::lock::LockFile::empty();
-        let (k, v) = make_locked_agent("missing", "agents/missing.md", "expected missing");
+        let (k, v) = make_locked_agent(
+            "missing",
+            "agents/missing.md",
+            "expected missing",
+            &[".agents"],
+        );
         lock.items.insert(k, v);
-        let (k, v) = make_locked_agent("modified", "agents/modified.md", "expected content");
+        let (k, v) = make_locked_agent(
+            "modified",
+            "agents/modified.md",
+            "expected content",
+            &[".agents"],
+        );
         lock.items.insert(k, v);
 
         fs::create_dir_all(root.join(".agents/agents")).expect("create target dir");
@@ -365,7 +386,12 @@ mod tests {
         let root = temp.path();
 
         let mut lock = crate::lock::LockFile::empty();
-        let (k, v) = make_locked_agent("test", "agents/test.md", "expected content");
+        let (k, v) = make_locked_agent(
+            "test",
+            "agents/test.md",
+            "expected content",
+            &[".agents", ".claude"],
+        );
         lock.items.insert(k, v);
 
         fs::create_dir_all(root.join(".agents/agents")).expect("create .agents tree");

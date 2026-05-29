@@ -2912,7 +2912,7 @@ harness = "codex""#;
 
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("alias harness `codex` cannot run requested model"));
+    assert!(stderr.contains("alias harness `codex` cannot run the requested model"));
     assert!(stderr.contains("provider_constraint_unsatisfied"));
 }
 

@@ -435,7 +435,7 @@ pub fn prune_orphans(
 ) -> Result<Vec<ActionOutcome>, MarsError> {
     let mut outcomes = Vec::new();
 
-    for (dest_path_str, locked_item) in lock.flat_items() {
+    for (dest_path_str, locked_item) in lock.canonical_flat_items() {
         if !target.items.contains_key(&dest_path_str) {
             let dest = removal_path(root, &dest_path_str, locked_item.kind);
             if dest.exists() {

@@ -39,7 +39,7 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
     let mut skills = Vec::new();
     let mut bootstrap = Vec::new();
 
-    for (dest_path, item) in lock.flat_items() {
+    for (dest_path, item) in lock.canonical_flat_items() {
         // Filter by source
         if let Some(ref filter_source) = args.source
             && item.source != *filter_source
@@ -158,7 +158,7 @@ fn run_status(
 ) -> Result<i32, MarsError> {
     let mut entries = Vec::new();
 
-    for (dest_path, item) in lock.flat_items() {
+    for (dest_path, item) in lock.canonical_flat_items() {
         if let Some(ref filter_source) = args.source
             && item.source != *filter_source
         {

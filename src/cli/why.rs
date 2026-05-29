@@ -32,7 +32,7 @@ pub fn run(args: &WhyArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
 
     // Find the item by name (try matching dest_path, name stem, or skill dir name)
     let mut found = None;
-    for (dest_path, item) in lock.flat_items() {
+    for (dest_path, item) in lock.canonical_flat_items() {
         let name_matches =
             dest_path.item_name(item.kind) == args.name || dest_path.as_str() == args.name;
 
@@ -101,7 +101,7 @@ fn find_referencing_agents(
 ) -> Vec<String> {
     let mut refs = Vec::new();
 
-    for (dest_path, item) in lock.flat_items() {
+    for (dest_path, item) in lock.canonical_flat_items() {
         if item.kind != ItemKind::Agent {
             continue;
         }

@@ -561,6 +561,7 @@ mod tests {
             autocompact: None,
             autocompact_pct: None,
             skills: Vec::new(),
+            subagents: Vec::new(),
             tools: Vec::new(),
             tools_denied: Vec::new(),
             disallowed_tools: Vec::new(),

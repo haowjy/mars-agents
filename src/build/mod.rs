@@ -114,6 +114,7 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
+        &profile.subagents,
     )?;
 
     warnings.extend(prompt.warnings);
@@ -156,6 +157,7 @@ fn empty_agent_profile() -> AgentProfile {
         autocompact: None,
         autocompact_pct: None,
         skills: Vec::new(),
+        subagents: Vec::new(),
         tools: Vec::new(),
         tools_denied: Vec::new(),
         disallowed_tools: Vec::new(),

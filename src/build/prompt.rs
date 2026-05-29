@@ -39,6 +39,7 @@ struct ParsedAgentInventory {
     mode: AgentMode,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn compile_prompt_surface(
     mars_dir: &Path,
     agent_body: &str,
@@ -47,6 +48,7 @@ pub fn compile_prompt_surface(
     harness_id: &str,
     selected_model_token: &str,
     canonical_model_id: &str,
+    subagents_filter: &[String],
 ) -> Result<PromptCompilation, MarsError> {
     let _ = (selected_model_token, canonical_model_id);
 
@@ -95,7 +97,7 @@ pub fn compile_prompt_surface(
         .map(|loaded| loaded.document.name.clone())
         .collect::<Vec<_>>();
 
-    let inventory_prompt = build_inventory_prompt(mars_dir, &mut warnings)?;
+    let inventory_prompt = build_inventory_prompt(mars_dir, subagents_filter, &mut warnings)?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
@@ -170,6 +172,7 @@ fn load_skill_document(
         name: skill_name.to_string(),
         content,
         skill_type,
+        detail: base_profile.detail.clone().unwrap_or_default(),
     }))
 }
 
@@ -261,6 +264,7 @@ fn compose_system_instruction(
 
 fn build_inventory_prompt(
     mars_dir: &Path,
+    subagents_filter: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<String, MarsError> {
     let agents_dir = mars_dir.join("agents");
@@ -304,6 +308,19 @@ fn build_inventory_prompt(
                 return Err(MarsError::Config(ConfigError::Invalid { message: err }));
             }
         }
+    }
+
+    if !subagents_filter.is_empty() {
+        primary_agents.retain(|agent| {
+            subagents_filter
+                .iter()
+                .any(|f| f.eq_ignore_ascii_case(&agent.name))
+        });
+        subagent_agents.retain(|agent| {
+            subagents_filter
+                .iter()
+                .any(|f| f.eq_ignore_ascii_case(&agent.name))
+        });
     }
 
     if primary_agents.is_empty() && subagent_agents.is_empty() {

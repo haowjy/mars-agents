@@ -300,7 +300,7 @@ fn approval_mode_to_str(mode: &ApprovalMode) -> &'static str {
         ApprovalMode::Default => "default",
         ApprovalMode::Auto => "auto",
         ApprovalMode::Confirm => "confirm",
-        ApprovalMode::Yolo => "yolo",
+        ApprovalMode::Never => "never",
     }
 }
 

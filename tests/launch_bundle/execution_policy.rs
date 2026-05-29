@@ -27,7 +27,7 @@ Review code changes."#;
         "--effort",
         "high",
         "--approval",
-        "yolo",
+        "never",
         "--sandbox",
         "danger-full-access",
     ]);
@@ -40,7 +40,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
     assert_eq!(
         bundle["execution_policy"]["approval"].as_str(),
-        Some("yolo")
+        Some("never")
     );
     assert_eq!(
         bundle["execution_policy"]["sandbox"].as_str(),
@@ -95,7 +95,7 @@ autocompact_pct = 55"#;
         "--agent",
         "reviewer",
         "--approval",
-        "yolo",
+        "never",
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
@@ -106,7 +106,7 @@ autocompact_pct = 55"#;
     assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
     assert_eq!(
         bundle["execution_policy"]["approval"].as_str(),
-        Some("yolo"),
+        Some("never"),
         "CLI approval must beat harness override",
     );
     assert_eq!(

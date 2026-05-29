@@ -9,6 +9,7 @@
 
 pub mod add;
 pub mod adopt;
+pub mod agents;
 pub mod build;
 pub mod cache;
 pub mod check;
@@ -25,6 +26,7 @@ pub mod remove;
 pub mod rename;
 pub mod repair;
 pub mod resolve_cmd;
+pub mod skills;
 pub mod sync;
 pub mod target;
 pub mod unlink;
@@ -182,6 +184,12 @@ pub enum Command {
 
     /// Build derived artifacts from static project state.
     Build(build::BuildArgs),
+
+    /// List and inspect agents.
+    Agents(agents::AgentsArgs),
+
+    /// List and inspect skills.
+    Skills(skills::SkillsArgs),
 }
 
 /// Dispatch a parsed CLI command to the appropriate handler and map errors to
@@ -284,6 +292,8 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Repair(args) => repair::run(args, ctx, json),
         Command::Models(args) => models::run(args, ctx, json),
         Command::Build(args) => build::run(args, ctx, json),
+        Command::Agents(args) => agents::run(args, ctx, json),
+        Command::Skills(args) => skills::run(args, ctx, json),
         // Root-free commands handled in dispatch_result — unreachable here
         Command::Init(_) | Command::Check(_) | Command::Cache(_) => unreachable!(),
     }

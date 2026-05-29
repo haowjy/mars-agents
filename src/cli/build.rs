@@ -63,7 +63,7 @@ enum ApprovalArg {
     Default,
     Auto,
     Confirm,
-    Yolo,
+    Never,
 }
 
 impl ApprovalArg {
@@ -72,7 +72,7 @@ impl ApprovalArg {
             Self::Default => "default",
             Self::Auto => "auto",
             Self::Confirm => "confirm",
-            Self::Yolo => "yolo",
+            Self::Never => "never",
         }
     }
 }

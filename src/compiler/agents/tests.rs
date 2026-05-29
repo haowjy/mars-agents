@@ -131,12 +131,22 @@ fn parses_effort_none_sentinel() {
 
 #[test]
 fn parses_approval_all_values() {
-    for s in ["default", "auto", "confirm", "yolo"] {
+    for s in ["default", "auto", "confirm", "never"] {
         let content = format!("---\napproval: {s}\n---\n");
         let (p, diags) = parse(&content);
         assert!(diags.is_empty(), "unexpected diags for approval={s}");
         assert!(p.approval.is_some());
     }
+}
+
+#[test]
+fn approval_yolo_parses_with_deprecation_warning() {
+    let content = "---\napproval: yolo\n---\n";
+    let (p, diags) = parse(content);
+    assert_eq!(p.approval, Some(ApprovalMode::Never));
+    assert_eq!(diags.len(), 1);
+    assert!(!diags[0].is_error());
+    assert!(diags[0].message().contains("deprecated"));
 }
 
 #[test]
@@ -527,4 +537,21 @@ fn empty_agent_has_no_diagnostics() {
 fn agent_without_harness_is_universal() {
     let (p, _) = parse("---\nname: planner\nmodel: gpt55\n---\n# Planner");
     assert!(p.harness.is_none());
+}
+
+// --- subagents field ---
+
+#[test]
+fn subagents_list_parses() {
+    let (p, diags) =
+        parse("---\nname: orchestrator\nsubagents:\n  - coder\n  - reviewer\n---\n# Orchestrator");
+    assert!(diags.is_empty());
+    assert_eq!(p.subagents, vec!["coder", "reviewer"]);
+}
+
+#[test]
+fn subagents_absent_gives_empty_vec() {
+    let (p, diags) = parse("---\nname: solo\n---\n# Solo agent");
+    assert!(diags.is_empty());
+    assert!(p.subagents.is_empty());
 }

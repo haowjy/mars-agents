@@ -140,13 +140,17 @@ pub(super) fn resolve_harness(
             )
         } else {
             if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
-                // When the model source outranks the harness source and the
-                // harness fundamentally can't run the model (provider mismatch),
-                // pivot to candidate evaluation instead of hard-failing.
-                // E.g. profile says `harness: codex` but overlay sets `model: sonnet`
-                // — the overlay model (rank 4) outranks the profile harness (rank 3),
-                // so we should find a harness that can actually run the model.
+                // When the model comes from a higher-precedence *configuration
+                // layer* (overlay/CLI) and the harness from a lower layer (profile),
+                // pivot to candidate evaluation instead of hard-failing on provider
+                // mismatch. E.g. profile says `harness: codex` but overlay sets
+                // `model: sonnet` — the overlay should win.
+                //
+                // Do NOT pivot when the harness comes from an alias — alias pairs
+                // model+harness intentionally, even if the model source (profile)
+                // technically outranks the alias harness.
                 if rejection.is_provider_constraint()
+                    && selection.source == PolicySource::Profile
                     && evidence.model_source.precedence_rank() > selection.source.precedence_rank()
                 {
                     warnings.push(format!(

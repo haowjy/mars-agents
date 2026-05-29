@@ -147,8 +147,7 @@ pub(super) fn resolve_harness(
                 // — the overlay model (rank 4) outranks the profile harness (rank 3),
                 // so we should find a harness that can actually run the model.
                 if rejection.is_provider_constraint()
-                    && evidence.model_source.precedence_rank()
-                        > selection.source.precedence_rank()
+                    && evidence.model_source.precedence_rank() > selection.source.precedence_rank()
                 {
                     warnings.push(format!(
                         "{} harness '{}' cannot run {} model '{}' (provider mismatch); pivoting to compatible harness",
@@ -1013,12 +1012,26 @@ mod tests {
             None,
         );
 
-        let resolution =
-            resolve_harness(&input, None, Some(&overlay), None, evidence, &mut probe_resolver)
-                .expect("should pivot to claude instead of hard-failing");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            Some(&overlay),
+            None,
+            evidence,
+            &mut probe_resolver,
+        )
+        .expect("should pivot to claude instead of hard-failing");
 
         assert_eq!(resolution.harness.value, "claude");
-        assert!(resolution.model_override.is_none(), "model should NOT be cleared");
-        assert!(resolution.warnings.iter().any(|w| w.contains("provider mismatch")));
+        assert!(
+            resolution.model_override.is_none(),
+            "model should NOT be cleared"
+        );
+        assert!(
+            resolution
+                .warnings
+                .iter()
+                .any(|w| w.contains("provider mismatch"))
+        );
     }
 }

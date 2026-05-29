@@ -794,9 +794,16 @@ mod tests {
             None,
         );
 
-        let resolution =
-            resolve_harness(&input, None, None, None, evidence, &mut probe_resolver, |_| true)
-                .expect("harness should pivot to opencode");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence,
+            &mut probe_resolver,
+            |_| true,
+        )
+        .expect("harness should pivot to opencode");
 
         assert_eq!(resolution.harness.value, "opencode");
         assert_eq!(resolution.harness.source, PolicySource::Provider);
@@ -875,9 +882,16 @@ mod tests {
             None,
         );
 
-        let error =
-            resolve_harness(&input, None, None, None, evidence, &mut probe_resolver, |_| true)
-                .expect_err("incompatible provider constraint should fail");
+        let error = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence,
+            &mut probe_resolver,
+            |_| true,
+        )
+        .expect_err("incompatible provider constraint should fail");
         let message = error.to_string();
         assert!(message.contains("cli harness `codex` cannot run the requested model"));
         assert!(message.contains("provider_constraint_unsatisfied"));
@@ -958,9 +972,16 @@ mod tests {
             None,
         );
 
-        let resolution =
-            resolve_harness(&input, None, None, None, evidence, &mut probe_resolver, |_| true)
-                .expect("cli harness should soft-fail model mismatch and continue");
+        let resolution = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence,
+            &mut probe_resolver,
+            |_| true,
+        )
+        .expect("cli harness should soft-fail model mismatch and continue");
 
         assert_eq!(resolution.harness.value, "opencode");
         assert!(resolution.warnings.iter().any(|warning| warning.contains(
@@ -989,9 +1010,16 @@ mod tests {
             None,
         );
 
-        let err =
-            resolve_harness(&input, None, None, None, evidence, &mut probe_resolver, |_| true)
-                .expect_err("same-precedence model mismatch must remain hard error");
+        let err = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence,
+            &mut probe_resolver,
+            |_| true,
+        )
+        .expect_err("same-precedence model mismatch must remain hard error");
         assert!(err.to_string().contains("no_model_match"));
     }
 
@@ -1015,9 +1043,16 @@ mod tests {
             None,
         );
 
-        let err =
-            resolve_harness(&input, None, None, None, evidence, &mut probe_resolver, |_| true)
-                .expect_err("provider constraint failures must remain hard even when probe matches");
+        let err = resolve_harness(
+            &input,
+            None,
+            None,
+            None,
+            evidence,
+            &mut probe_resolver,
+            |_| true,
+        )
+        .expect_err("provider constraint failures must remain hard even when probe matches");
         let message = err.to_string();
         assert!(message.contains("provider_constraint_unsatisfied"));
         assert!(!message.contains("no_model_match"));

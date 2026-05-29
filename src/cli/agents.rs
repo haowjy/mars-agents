@@ -67,12 +67,18 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let disk_path = dest_path.resolve(&mars_dir);
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
         };
 
         let fm = match frontmatter::parse(&content) {
             Ok(fm) => fm,
-            Err(_) => continue,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
         };
 
         let mut diags = Vec::new();

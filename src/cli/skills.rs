@@ -75,12 +75,18 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let skill_md = disk_path.join("SKILL.md");
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
+                continue;
+            }
         };
 
         let fm = match frontmatter::parse(&content) {
             Ok(fm) => fm,
-            Err(_) => continue,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
+                continue;
+            }
         };
 
         let mut diags = Vec::new();

@@ -10,7 +10,7 @@ pub mod lower;
 use serde_yaml::Value;
 
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
-use crate::frontmatter::{Frontmatter, FrontmatterError};
+use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
 // ---------------------------------------------------------------------------
 // Field enums
@@ -202,7 +202,7 @@ pub struct OverrideFields {
     pub autocompact_pct: Option<u8>,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
-    pub skills: Option<Vec<String>>,
+    pub skills: Option<SkillsSpec>,
     pub tools: Option<Vec<String>>,
     pub tools_denied: Option<Vec<String>>,
     pub disallowed_tools: Option<Vec<String>>,
@@ -273,7 +273,7 @@ pub struct AgentProfile {
     pub autocompact_pct: Option<u8>,
 
     // --- Tool fields ---
-    pub skills: Vec<String>,
+    pub skills: SkillsSpec,
     pub subagents: Vec<String>,
     pub tools: Vec<String>,
     pub tools_denied: Vec<String>,
@@ -295,7 +295,7 @@ pub struct EffectiveToolPolicy {
 }
 
 impl AgentProfile {
-    pub fn effective_skills(&self, harness: &HarnessKind) -> &[String] {
+    pub fn effective_skills(&self, harness: &HarnessKind) -> &SkillsSpec {
         self.harness_overrides
             .get(harness)
             .and_then(|entry| entry.skills.as_ref())
@@ -431,6 +431,25 @@ fn yaml_str_list(val: &Value) -> Vec<String> {
             .collect(),
         Value::String(s) => vec![s.clone()],
         _ => vec![],
+    }
+}
+
+fn parse_skills_spec(val: &Value) -> SkillsSpec {
+    match val {
+        Value::Mapping(mapping) => SkillsSpec {
+            load: mapping
+                .get(Value::String("load".to_string()))
+                .map(yaml_str_list)
+                .unwrap_or_default(),
+            available: mapping
+                .get(Value::String("available".to_string()))
+                .map(yaml_str_list)
+                .unwrap_or_default(),
+        },
+        _ => SkillsSpec {
+            load: yaml_str_list(val),
+            available: Vec::new(),
+        },
     }
 }
 
@@ -774,7 +793,7 @@ fn parse_override_fields(
                 }
             }
             "skills" => {
-                out.skills = Some(yaml_str_list(v));
+                out.skills = Some(parse_skills_spec(v));
             }
             "tools" => {
                 let parsed = parse_tools_field(&format!("{table_name}.tools"), v, diags);
@@ -1116,7 +1135,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     };
 
     // skills/subagents/tools/disallowed-tools/mcp-tools:
-    let skills = fm.skills();
+    let skills = fm.skills_structured();
     let subagents = fm.get("subagents").map(yaml_str_list).unwrap_or_default();
     let parsed_tools = fm
         .get("tools")

@@ -628,7 +628,7 @@ mod skill_surface_tests {
             effort: None,
             autocompact: None,
             autocompact_pct: None,
-            skills: Vec::new(),
+            skills: crate::frontmatter::SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Vec::new(),
             tools_denied: Vec::new(),

@@ -44,10 +44,80 @@ Review code changes."#;
     assert!(system_instruction.contains("Use this skill to reason about steps."));
     assert!(system_instruction.contains("# Report"));
     assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["planning"])
+        bundle["skills"]["loaded"][0]["name"].as_str(),
+        Some("planning")
     );
-    assert_eq!(bundle["skills_metadata"]["missing"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
+}
+
+pub(crate) fn build_launch_bundle_splits_loaded_and_available_skills() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+skills:
+  load: [dev_principles]
+  available: [planning, workspace]
+---
+Review code changes."#;
+    let dev_principles = "---\nname: dev_principles\ndescription: Core principles\ntype: principle\n---\nAlways be precise.";
+    let planning = "---\nname: planning\ndescription: Use when decomposing phased work.\ntype: reference\n---\nPlanning body should stay out of prompt.";
+    let workspace = "---\nname: workspace\ndescription: Use when other agents may have changes.\ntype: guardrail\n---\nWorkspace body should stay out of prompt.";
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[
+            ("dev_principles", dev_principles),
+            ("planning", planning),
+            ("workspace", workspace),
+        ],
+        "",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let loaded = bundle["skills"]["loaded"].as_array().unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0]["name"].as_str(), Some("dev_principles"));
+    assert_eq!(loaded[0]["skill_type"].as_str(), Some("principle"));
+    assert!(
+        loaded[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Always be precise.")
+    );
+
+    let available = bundle["skills"]["available"].as_array().unwrap();
+    assert_eq!(available.len(), 2);
+    assert_eq!(available[0]["name"].as_str(), Some("planning"));
+    assert_eq!(available[0]["skill_type"].as_str(), Some("reference"));
+    assert_eq!(
+        available[0]["description"].as_str(),
+        Some("Use when decomposing phased work.")
+    );
+    assert_eq!(available[1]["name"].as_str(), Some("workspace"));
+    assert_eq!(available[1]["skill_type"].as_str(), Some("guardrail"));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
+
+    let docs = bundle["prompt_surface"]["supplemental_documents"]
+        .as_array()
+        .expect("supplemental_documents should be an array");
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0]["name"].as_str(), Some("dev_principles"));
+
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .expect("system instruction should be string");
+    assert!(system_instruction.contains("# Skill: dev_principles"));
+    assert!(!system_instruction.contains("Planning body should stay out of prompt."));
+    assert!(!system_instruction.contains("Workspace body should stay out of prompt."));
 }
 
 pub(crate) fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
@@ -167,13 +237,16 @@ Review code changes."#;
     assert!(!system_instruction.contains("# Skill: planning"));
 
     assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["codex_skill"])
+        bundle["skills"]["loaded"][0]["name"].as_str(),
+        Some("codex_skill")
     );
-    assert_eq!(bundle["skills_metadata"]["missing"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
 }
 
-pub(crate) fn build_launch_bundle_skips_model_non_invocable_skills() {
+pub(crate) fn build_launch_bundle_loads_model_non_invocable_skills_when_explicit() {
+    // model-invocable gates global discovery, not explicit profile references.
+    // If the agent profile explicitly lists a skill, it loads regardless.
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -182,7 +255,7 @@ skills: [planning, hidden]
 ---
 Review code changes."#;
     let planning_skill = "---\nname: planning\ndescription: Plan tasks\ntype: reference\n---\nVisible skill content.";
-    let hidden_skill = "---\nname: hidden\ndescription: Hidden skill\nmodel-invocable: false\ntype: principle\n---\nShould not be present.";
+    let hidden_skill = "---\nname: hidden\ndescription: Hidden skill\nmodel-invocable: false\ntype: principle\n---\nExplicitly referenced content.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -201,19 +274,19 @@ Review code changes."#;
     let docs = bundle["prompt_surface"]["supplemental_documents"]
         .as_array()
         .expect("supplemental_documents should be an array");
-    assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"].as_str(), Some("planning"));
+    assert_eq!(docs.len(), 2);
 
-    assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["planning"])
-    );
-    assert_eq!(bundle["skills_metadata"]["missing"], serde_json::json!([]));
+    let loaded = bundle["skills"]["loaded"]
+        .as_array()
+        .expect("loaded should be an array");
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
 
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
         .expect("system instruction should be string");
-    assert!(!system_instruction.contains("Should not be present."));
+    assert!(system_instruction.contains("Explicitly referenced content."));
 }
 
 pub(crate) fn build_launch_bundle_includes_inventory_prompt_before_report_block() {
@@ -428,12 +501,16 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    let loaded_names = bundle["skills"]["loaded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|skill| skill["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(loaded_names, vec!["planning", "extra_skill"]);
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
     assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["planning", "extra_skill"])
-    );
-    assert_eq!(
-        bundle["skills_metadata"]["missing"],
+        bundle["skills"]["missing"],
         serde_json::json!(["missing_skill"])
     );
 

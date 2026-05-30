@@ -121,7 +121,7 @@ pub fn all() -> &'static [HarnessId] {
 }
 
 pub fn names() -> &'static [&'static str] {
-    &["claude", "pi", "codex", "opencode", "cursor"]
+    &["claude", "codex", "pi", "cursor", "opencode"]
 }
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {

@@ -206,34 +206,6 @@ pub fn model_resolves_to_harness(
     false
 }
 
-pub(crate) fn model_override_for_emission(
-    harness: &HarnessKind,
-    profile: &AgentProfile,
-    emission: &QualifiedEmission,
-    model_aliases: &IndexMap<String, ModelAlias>,
-    cursor_probe_slugs: &[String],
-) -> Option<String> {
-    match emission {
-        QualifiedEmission::DefaultModel => super::native_agents::native_model_override_for_harness(
-            harness,
-            profile,
-            model_aliases,
-            cursor_probe_slugs,
-        ),
-        QualifiedEmission::PolicyModel(token) => {
-            let mut profile_for_cursor = profile.clone();
-            profile_for_cursor.model = Some(token.clone());
-            super::native_agents::native_model_override_for_harness(
-                harness,
-                &profile_for_cursor,
-                model_aliases,
-                cursor_probe_slugs,
-            )
-            .or_else(|| Some(token.clone()))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

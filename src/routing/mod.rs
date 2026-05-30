@@ -397,10 +397,7 @@ where
         }
     } else if input.model_id.trim().is_empty() {
         filter_candidates_by_links(
-            models::harness::VALID_HARNESSES
-                .iter()
-                .map(|harness| (*harness).to_string())
-                .collect(),
+            crate::harness::registry::default_harness_order_names(),
             linked_harnesses_set.as_ref(),
         )
         .into_iter()
@@ -1238,6 +1235,18 @@ mod tests {
             cursor_probe_result,
             catalog_model_slugs,
         }
+    }
+
+    #[test]
+    fn empty_model_routing_prefers_default_harness_order() {
+        let installed = installed(&["cursor", "opencode"]);
+        let input = routing_input("", None, None, None, &installed, None, (None, None, None));
+
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+
+        assert_eq!(trace.harness, "cursor");
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
     }
 
     #[test]

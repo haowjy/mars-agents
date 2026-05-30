@@ -9,7 +9,7 @@ use crate::harness::host::{
 };
 use crate::harness::registry::{self, HarnessId};
 
-pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "opencode", "cursor"];
+pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "cursor", "opencode"];
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
     let resolver = PathExecutableResolver;

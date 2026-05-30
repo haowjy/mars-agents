@@ -417,7 +417,7 @@ fn qualifying_emissions(
                 ) else {
                     continue;
                 };
-                let model_override = agent_copy::model_override_for_emission(
+                let model_override = model_override_for_emission(
                     harness,
                     &agent.profile,
                     &emission,
@@ -564,6 +564,31 @@ pub(crate) fn native_model_override_for_harness(
     map_cursor_native_model(profile, aliases, cursor_probe_slugs)
 }
 
+pub(crate) fn model_override_for_emission(
+    harness: &crate::compiler::agents::HarnessKind,
+    profile: &crate::compiler::agents::AgentProfile,
+    emission: &agent_copy::QualifiedEmission,
+    model_aliases: &IndexMap<String, ModelAlias>,
+    cursor_probe_slugs: &[String],
+) -> Option<String> {
+    match emission {
+        agent_copy::QualifiedEmission::DefaultModel => {
+            native_model_override_for_harness(harness, profile, model_aliases, cursor_probe_slugs)
+        }
+        agent_copy::QualifiedEmission::PolicyModel(token) => {
+            let mut profile_for_cursor = profile.clone();
+            profile_for_cursor.model = Some(token.clone());
+            native_model_override_for_harness(
+                harness,
+                &profile_for_cursor,
+                model_aliases,
+                cursor_probe_slugs,
+            )
+            .or_else(|| Some(token.clone()))
+        }
+    }
+}
+
 fn map_cursor_native_model(
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, ModelAlias>,
@@ -685,10 +710,6 @@ pub(crate) fn materialize_native_agents_after_link(
         agent_copy_spec.as_ref(),
         input.mars_ctx.meridian_managed,
     );
-    if matches!(policy, AgentSurfacePolicy::SuppressAll) {
-        return (Vec::new(), Vec::new());
-    }
-
     let mars_dir = input.mars_ctx.project_root.join(".mars");
     let mars_agents = scan_mars_agents(&mars_dir, diag);
     let model_aliases = crate::models::merged_model_aliases(
@@ -710,21 +731,25 @@ pub(crate) fn materialize_native_agents_after_link(
     };
     let removed_native_outputs =
         reconcile_native_agent_surfaces(&reconcile_ctx, &mars_agents, diag);
-    let ownership_lock =
-        crate::lock::ownership_lock_after_target_sync(input.old_lock, input.target_outcomes);
-    let compile_ctx = NativeAgentCompileCtx {
-        project_root: &input.mars_ctx.project_root,
-        model_aliases: &model_aliases,
-        cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
-        old_lock: &ownership_lock,
-        harness_scope,
-        options: NativeAgentSurfaceCompileOptions {
-            force: input.force,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
-            dry_run: false,
-        },
+    let compiled_native_outputs = if matches!(policy, AgentSurfacePolicy::SuppressAll) {
+        Vec::new()
+    } else {
+        let ownership_lock =
+            crate::lock::ownership_lock_after_target_sync(input.old_lock, input.target_outcomes);
+        let compile_ctx = NativeAgentCompileCtx {
+            project_root: &input.mars_ctx.project_root,
+            model_aliases: &model_aliases,
+            cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
+            old_lock: &ownership_lock,
+            harness_scope,
+            options: NativeAgentSurfaceCompileOptions {
+                force: input.force,
+                collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
+                dry_run: false,
+            },
+        };
+        compile_native_agents(&compile_ctx, &policy, &mars_agents, diag)
     };
-    let compiled_native_outputs = compile_native_agents(&compile_ctx, &policy, &mars_agents, diag);
     (compiled_native_outputs, removed_native_outputs)
 }
 
@@ -944,6 +969,43 @@ mod tests {
             );
         }
         assert!(diag.drain().is_empty());
+    }
+
+    #[test]
+    fn link_suppress_all_reconciles_selective_native_target() {
+        let dir = TempDir::new().unwrap();
+
+        let mars_agents_dir = dir.path().join(".mars").join("agents");
+        std::fs::create_dir_all(&mars_agents_dir).unwrap();
+        std::fs::write(
+            mars_agents_dir.join("coder.md"),
+            "---\nname: coder\n---\n# Coder\n",
+        )
+        .unwrap();
+
+        let agents_dir = dir.path().join(".claude").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(agents_dir.join("coder.md"), "# Native\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
+        let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
+        let removed = reconcile_native_agent_surfaces(
+            &NativeAgentReconcileCtx {
+                policy: AgentSurfacePolicy::SuppressAll,
+                project_root: dir.path(),
+                model_aliases: &IndexMap::new(),
+                outcomes: &[],
+                old_lock: &lock,
+                dry_run: false,
+                selective_harness_scope: Some(&[HarnessKind::Claude]),
+            },
+            &mars_agents,
+            &mut diag,
+        );
+
+        assert!(!dir.path().join(".claude/agents/coder.md").exists());
+        assert!(!removed.is_empty());
     }
 
     #[test]

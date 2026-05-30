@@ -528,6 +528,7 @@ pub(crate) fn sync_targets(
     let target_outcomes_source = if matches!(
         agent_surface_policy,
         crate::compiler::AgentSurfacePolicy::SuppressAll
+            | crate::compiler::AgentSurfacePolicy::EmitSelective(_)
     ) {
         outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
         &outcomes

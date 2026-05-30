@@ -451,6 +451,8 @@ pub struct LocalSettings {
     pub provider_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_copy: Option<AgentCopyConfig>,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
 }
@@ -522,12 +524,24 @@ pub struct Settings {
     /// `MERIDIAN_MANAGED=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_copy: Option<AgentCopyConfig>,
     #[serde(
         default,
         rename = "model-policies",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub model_policies: Vec<ModelPolicyRule>,
+}
+
+/// Selective native agent emission under managed mode or `agent_emission = "never"`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCopyConfig {
+    #[serde(default)]
+    pub harnesses: Vec<String>,
+    #[serde(default)]
+    pub include_fanout: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -551,6 +565,7 @@ impl Default for Settings {
             harness_order: None,
             provider_order: None,
             agent_emission: None,
+            agent_copy: None,
             model_policies: Vec::new(),
         }
     }
@@ -1160,6 +1175,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.agent_emission changed during roundtrip ({:?} -> {:?})",
                 original.settings.agent_emission, reparsed.settings.agent_emission
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.agent_copy != original.settings.agent_copy {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.agent_copy changed during roundtrip ({:?} -> {:?})",
+                original.settings.agent_copy, reparsed.settings.agent_copy
             ),
         }
         .into());
@@ -2826,6 +2850,24 @@ models_cache_ttl_hours = 48
         )
         .unwrap();
         assert!(config.settings.agent_emission.is_none());
+    }
+
+    #[test]
+    fn settings_agent_copy_parses() {
+        let config: Config = toml::from_str(
+            r#"
+[settings]
+targets = [".claude"]
+
+[settings.agent_copy]
+harnesses = ["claude"]
+include_fanout = true
+"#,
+        )
+        .unwrap();
+        let agent_copy = config.settings.agent_copy.expect("agent_copy should parse");
+        assert_eq!(agent_copy.harnesses, vec!["claude".to_string()]);
+        assert!(agent_copy.include_fanout);
     }
 
     #[test]

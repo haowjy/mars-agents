@@ -73,22 +73,28 @@ fn link_target(
 
     let lock = crate::lock::load(&ctx.project_root)?;
     let outcomes = lock_items_as_sync_outcomes(&lock);
+    let mut diag = DiagnosticCollector::new();
+    let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
+        config.settings.agent_copy.as_ref(),
+        &config.settings.managed_targets(),
+        &mut diag,
+    );
     let agent_surface_policy = crate::compiler::agent_surface_policy(
         config.settings.agent_emission.as_ref(),
+        agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
     let suppressed_outcomes;
     let sync_outcomes = if matches!(
         agent_surface_policy,
         crate::compiler::AgentSurfacePolicy::SuppressAll
+            | crate::compiler::AgentSurfacePolicy::EmitSelective(_)
     ) {
         suppressed_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
         &suppressed_outcomes
     } else {
         &outcomes
     };
-
-    let mut diag = DiagnosticCollector::new();
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock: &lock,
         force,

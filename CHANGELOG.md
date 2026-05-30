@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `AGENTS.md`: clarify generated `mars.lock` is ignored local state and document `MERIDIAN_TASK_DIR` vs inherited `MERIDIAN_PROJECT_DIR` for nested Meridian commands.
+
 ## [0.7.11] - 2026-05-30
 
 ## [0.7.10] - 2026-05-30

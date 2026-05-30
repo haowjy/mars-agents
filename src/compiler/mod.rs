@@ -1281,6 +1281,21 @@ mod skill_surface_tests {
     fn reconcile_selective_keeps_lock_when_native_remove_fails() {
         use std::os::unix::fs::PermissionsExt;
 
+        struct RestoreDirPerms {
+            path: std::path::PathBuf,
+            mode: u32,
+        }
+
+        impl Drop for RestoreDirPerms {
+            fn drop(&mut self) {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &self.path,
+                    std::fs::Permissions::from_mode(self.mode),
+                );
+            }
+        }
+
         let dir = TempDir::new().unwrap();
         let mars_agents = dir.path().join(".mars").join("agents");
         std::fs::create_dir_all(&mars_agents).unwrap();
@@ -1294,7 +1309,12 @@ mod skill_surface_tests {
         std::fs::create_dir_all(&claude_agents).unwrap();
         let native_path = claude_agents.join("coder.md");
         std::fs::write(&native_path, "# Native\n").unwrap();
-        std::fs::set_permissions(&native_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        // Unlink permission is on the parent directory, not the file mode.
+        std::fs::set_permissions(&claude_agents, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let _restore_agents_dir = RestoreDirPerms {
+            path: claude_agents,
+            mode: 0o755,
+        };
 
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],

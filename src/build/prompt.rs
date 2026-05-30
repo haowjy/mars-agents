@@ -335,10 +335,15 @@ fn compose_system_instruction(
     // NOTE: meridian-cli recomposes this block independently in
     // `composition.py::_render_available_skills_block`. Keep format in sync.
     if !available_skills.is_empty() {
-        let mut avail_block =
-            String::from("# Available Skills\n\nNot yet loaded. Load proactively when the task fits.");
+        let mut avail_block = String::from(
+            "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",
+        );
         for (type_label, type_key, description) in &[
-            ("Principles", "principle", "Override other guidance when loaded."),
+            (
+                "Principles",
+                "principle",
+                "Override other guidance when loaded.",
+            ),
             (
                 "Guardrails",
                 "guardrail",

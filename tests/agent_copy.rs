@@ -673,6 +673,133 @@ path = "{}"
     );
 }
 
+const OPENCODE_HARNESS_AGENT: &str = r#"---
+name: integration-tester
+description: Runs integration tests
+harness: opencode
+model: kimi-k2
+---
+# Integration tester
+"#;
+
+#[test]
+fn link_opencode_ignores_claude_collision_in_other_target() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "src",
+        &[
+            ("coder", CLAUDE_HARNESS_AGENT),
+            ("integration-tester", OPENCODE_HARNESS_AGENT),
+        ],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+
+[settings.agent_copy]
+harnesses = ["claude", "opencode"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+    project
+        .child("mars.local.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+
+    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
+    fs::write(
+        project.path().join(".claude/agents/coder.md"),
+        "# hand-written native\n",
+    )
+    .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".opencode",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert!(
+        project
+            .child(".opencode/agents/integration-tester.md")
+            .exists(),
+        "link .opencode should materialize opencode native agent"
+    );
+    assert_eq!(
+        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
+        "# hand-written native\n",
+        "link .opencode must not touch or overwrite .claude collision"
+    );
+    assert!(
+        !lock_has_native_agent(&project, "coder"),
+        "link .opencode must not record .claude native output in lock"
+    );
+}
+
+#[test]
+fn agent_copy_sync_diff_does_not_materialize_native_or_lock() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = [".claude"]
+
+[settings.agent_copy]
+harnesses = ["claude"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    fs::create_dir_all(project.path().join(".mars/agents")).unwrap();
+    fs::write(
+        project.path().join(".mars/agents/coder.md"),
+        CLAUDE_HARNESS_AGENT,
+    )
+    .unwrap();
+
+    mars()
+        .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert!(
+        !project.child(".claude/agents/coder.md").exists(),
+        "sync --diff must not write selective native agent artifacts"
+    );
+    let lock_path = project.path().join("mars.lock");
+    assert!(
+        !lock_path.exists() || !lock_has_native_agent(&project, "coder"),
+        "sync --diff must not persist native agent output records in mars.lock"
+    );
+}
+
 #[test]
 fn link_does_not_persist_local_only_target_overlays() {
     let dir = TempDir::new().unwrap();

@@ -84,6 +84,7 @@ pub fn compile(
         outcomes: &outcomes,
         old_lock: &old_lock,
         dry_run: request.options.dry_run,
+        selective_harness_scope: None,
     };
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
     // Discovers MCP server and hook items from all packages, validates env refs,
@@ -237,6 +238,8 @@ struct NativeAgentReconcileCtx<'a> {
     outcomes: &'a [crate::sync::apply::ActionOutcome],
     old_lock: &'a crate::lock::LockFile,
     dry_run: bool,
+    /// When set (e.g. `mars link <target>`), selective reconcile only touches these harnesses.
+    selective_harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
 }
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
@@ -268,15 +271,14 @@ fn reconcile_native_agent_surfaces(
             ctx.dry_run,
             diag,
         ),
-        AgentSurfacePolicy::EmitSelective(spec) => reconcile_selective_native_agent_surfaces(
-            ctx.project_root,
-            ctx.mars_dir,
-            spec,
-            ctx.model_aliases,
-            ctx.old_lock,
-            ctx.dry_run,
-            diag,
-        ),
+        AgentSurfacePolicy::EmitSelective(spec) => {
+            use crate::compiler::agents::HarnessKind;
+            let harnesses = match ctx.selective_harness_scope {
+                Some(scope) => scope,
+                None => HarnessKind::all(),
+            };
+            reconcile_selective_native_agent_surfaces(ctx, spec, harnesses, diag)
+        }
         AgentSurfacePolicy::EmitAll => Vec::new(),
     };
 
@@ -425,24 +427,19 @@ fn remove_native_agent_shapes(
 }
 
 fn reconcile_selective_native_agent_surfaces(
-    project_root: &Path,
-    mars_dir: &Path,
+    ctx: &NativeAgentReconcileCtx<'_>,
     spec: &agent_copy::AgentCopySpec,
-    model_aliases: &IndexMap<String, crate::models::ModelAlias>,
-    old_lock: &crate::lock::LockFile,
-    dry_run: bool,
+    harnesses: &[crate::compiler::agents::HarnessKind],
     diag: &mut DiagnosticCollector,
 ) -> Vec<RemovedNativeOutput> {
-    use crate::compiler::agents::HarnessKind;
-
     let mut removed = Vec::new();
-    for agent in scan_mars_agents(mars_dir, diag) {
-        for harness in HarnessKind::all() {
+    for agent in scan_mars_agents(ctx.mars_dir, diag) {
+        for harness in harnesses {
             let qualifies = spec.harnesses.contains(harness)
                 && agent_copy::agent_qualifies_for_harness(
                     &agent.profile,
                     harness,
-                    model_aliases,
+                    ctx.model_aliases,
                     spec.include_fanout,
                 )
                 .is_some();
@@ -450,11 +447,11 @@ fn reconcile_selective_native_agent_surfaces(
                 continue;
             }
             removed.extend(remove_native_agent_shapes_for_harness(
-                project_root,
+                ctx.project_root,
                 &agent.agent_name,
                 harness,
-                old_lock,
-                dry_run,
+                ctx.old_lock,
+                ctx.dry_run,
                 diag,
             ));
         }
@@ -895,6 +892,10 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
+    let selective_harness_scope = match &policy {
+        AgentSurfacePolicy::EmitSelective(spec) => Some(spec.harnesses.as_slice()),
+        _ => None,
+    };
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
@@ -903,6 +904,7 @@ pub(crate) fn materialize_native_agents_after_link(
         outcomes: &[],
         old_lock: input.old_lock,
         dry_run: false,
+        selective_harness_scope,
     };
     let removed_native_outputs = reconcile_native_agent_surfaces(&reconcile_ctx, diag);
     let ownership_lock =
@@ -1214,6 +1216,7 @@ mod skill_surface_tests {
                 outcomes: &[agent_outcome("coder", ActionTaken::Removed)],
                 old_lock: &lock,
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );
@@ -1270,6 +1273,7 @@ mod skill_surface_tests {
                 outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
                 old_lock: &lock,
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );
@@ -1308,6 +1312,7 @@ mod skill_surface_tests {
                 outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
                 old_lock: &LockFile::empty(),
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );
@@ -1361,6 +1366,7 @@ mod skill_surface_tests {
                 outcomes: &[],
                 old_lock: &lock,
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );
@@ -1442,6 +1448,7 @@ mod skill_surface_tests {
                 outcomes: &[],
                 old_lock: &lock,
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );
@@ -1478,6 +1485,7 @@ mod skill_surface_tests {
                 outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
                 old_lock: &LockFile::empty(),
                 dry_run: false,
+                selective_harness_scope: None,
             },
             &mut diag,
         );

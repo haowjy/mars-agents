@@ -165,11 +165,12 @@ fn link_target(
         });
     }
 
+    let link_native_targets = vec![target_name.to_string()];
     let (compiled_native_outputs, removed_native_outputs) =
         crate::compiler::materialize_native_agents_after_link(
             &crate::compiler::NativeAgentLinkMaterializeCtx {
                 mars_ctx: ctx,
-                managed_targets: &runtime_targets,
+                managed_targets: &link_native_targets,
                 config: &config,
                 local: &local,
                 effective: &effective,

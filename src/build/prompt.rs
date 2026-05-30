@@ -335,25 +335,24 @@ fn compose_system_instruction(
     // NOTE: meridian-cli recomposes this block independently in
     // `composition.py::_render_available_skills_block`. Keep format in sync.
     if !available_skills.is_empty() {
-        let mut avail_block = String::from(
-            "# Available Skills\n\nThese skills are registered but not yet loaded. Load them when the situation calls for their guidance — they exist because this agent benefits from them regularly.",
-        );
+        let mut avail_block =
+            String::from("# Available Skills\n\nNot yet loaded. Load proactively when the task fits.");
         for (type_label, type_key, description) in &[
+            ("Principles", "principle", "Override other guidance when loaded."),
             (
-                "Principles",
-                "principle",
-                "Core operating constraints — override other guidance.",
+                "Guardrails",
+                "guardrail",
+                "Load before acting in sensitive areas.",
             ),
-            ("Guardrails", "guardrail", "Safety and quality boundaries."),
             (
                 "Mode-shift",
                 "mode-shift",
-                "Change operating posture when loaded.",
+                "Change how you operate when loaded.",
             ),
             (
                 "Checkpoint",
                 "checkpoint",
-                "Verification gates — load at decision points.",
+                "Load at decision points to verify before continuing.",
             ),
         ] {
             let skills: Vec<_> = available_skills

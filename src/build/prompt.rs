@@ -23,10 +23,17 @@ pub struct PromptCompilation {
 struct LoadedSkillDocument {
     requested_index: usize,
     document: SupplementalDoc,
+    /// Raw body without `# Skill: name` heading.
+    body: String,
+}
+
+struct LoadedSkillData {
+    document: SupplementalDoc,
+    body: String,
 }
 
 enum SkillLoadOutcome {
-    Loaded(SupplementalDoc),
+    Loaded(LoadedSkillData),
     Missing,
 }
 
@@ -70,10 +77,11 @@ pub fn compile_prompt_surface(
 
     for (requested_index, skill) in requested_load_skills.iter().enumerate() {
         match load_skill_document(mars_dir, skill, harness_id) {
-            Ok(SkillLoadOutcome::Loaded(document)) => {
+            Ok(SkillLoadOutcome::Loaded(data)) => {
                 loaded_documents.push(LoadedSkillDocument {
                     requested_index,
-                    document,
+                    document: data.document,
+                    body: data.body,
                 });
             }
             Ok(SkillLoadOutcome::Missing) => missing_skills.push(skill.clone()),
@@ -107,7 +115,7 @@ pub fn compile_prompt_surface(
         .map(|loaded| LoadedSkill {
             name: loaded.document.name.clone(),
             skill_type: loaded.document.skill_type.clone(),
-            content: loaded.document.content.clone(),
+            body: loaded.body.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -216,13 +224,17 @@ fn load_skill_document(
         .or_else(|| skill_type_from_frontmatter(&base_frontmatter));
     let skill_type = skill_type.unwrap_or_else(|| "reference".to_string());
 
-    let content = render_skill_content_block(skill_name, selected_frontmatter.body().trim());
+    let body = selected_frontmatter.body().trim().to_string();
+    let content = render_skill_content_block(skill_name, &body);
 
-    Ok(SkillLoadOutcome::Loaded(SupplementalDoc {
-        kind: "skill".to_string(),
-        name: skill_name.to_string(),
-        content,
-        skill_type,
+    Ok(SkillLoadOutcome::Loaded(LoadedSkillData {
+        document: SupplementalDoc {
+            kind: "skill".to_string(),
+            name: skill_name.to_string(),
+            content,
+            skill_type,
+        },
+        body,
     }))
 }
 

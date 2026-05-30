@@ -221,11 +221,9 @@ Integration tests under `tests/`. Prefer keeping changes localized to one module
 
 ## Pull Requests
 
-When creating or updating a GitHub PR, follow `.github/PULL_REQUEST_TEMPLATE.md`.
-Fill every section with the current branch state: why, goal, summary, work item,
-changes, verification, knowledge updates, spawn trace, release label guidance,
-post-merge automation, and cleanup. Keep the PR body current as the branch
-evolves; update it when verification, knowledge capture, risks, or scope changes.
+When creating or updating a GitHub PR, read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. Do not use any other PR body format. Sections: why, goal, summary, work item, changes, verification, knowledge updates, spawn trace, release label, cleanup. Keep the PR body current as the branch evolves.
+
+**Always set a `release:*` label before merging.** No label = no release. Forgetting the label means the work ships to main without a version bump — consumers won't get it until the next labeled PR triggers a release.
 
 ## Releasing
 

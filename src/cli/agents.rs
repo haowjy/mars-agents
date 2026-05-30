@@ -206,7 +206,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
                 "mode": mode_str,
                 "harness": harness_str,
                 "model": model_str,
-                "skills": profile.skills,
+                "skills": profile.skills.all(),
+                "skills_structured": profile.skills,
                 "subagents": profile.subagents,
                 "approval": approval_str,
                 "sandbox": sandbox_str,
@@ -225,7 +226,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             println!("approval:    {approval_str}");
             println!("sandbox:     {sandbox_str}");
             println!("effort:      {effort_str}");
-            print_str_list("skills", &profile.skills);
+            print_str_list("skills.load", &profile.skills.load);
+            print_str_list("skills.available", &profile.skills.available);
             print_str_list("subagents", &profile.subagents);
             print_str_list("tools", &profile.tools);
             print_str_list("disallowed-tools", &profile.disallowed_tools);

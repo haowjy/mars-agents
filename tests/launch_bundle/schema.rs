@@ -56,7 +56,7 @@ Review code changes.
 
     let bundle: Value = serde_json::from_str(&stdout).expect("launch-bundle should emit JSON");
 
-    assert_eq!(bundle["version"].as_u64(), Some(2));
+    assert_eq!(bundle["version"].as_u64(), Some(3));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
     assert_eq!(
         bundle["agent_body"].as_str(),
@@ -130,7 +130,7 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["version"].as_u64(), Some(2));
+    assert_eq!(bundle["version"].as_u64(), Some(3));
     assert!(bundle["agent"].is_null());
     assert_field_absent_or_null(&bundle, "agent_body");
     assert_eq!(
@@ -141,10 +141,9 @@ Review code changes."#;
     assert_eq!(bundle["tools"]["allowed"], serde_json::json!([]));
     assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
-    assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(Vec::<String>::new())
-    );
+    assert_eq!(bundle["skills"]["loaded"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
     assert_eq!(
         bundle["prompt_surface"]["supplemental_documents"],
         serde_json::json!(Vec::<Value>::new())
@@ -230,11 +229,12 @@ Review code changes."#;
 
     assert!(bundle["agent"].is_null());
     assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["planning"])
+        bundle["skills"]["loaded"][0]["name"].as_str(),
+        Some("planning")
     );
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
     assert_eq!(
-        bundle["skills_metadata"]["missing"],
+        bundle["skills"]["missing"],
         serde_json::json!(["missing_skill"])
     );
 

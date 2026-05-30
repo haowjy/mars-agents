@@ -15,7 +15,7 @@ pub struct LaunchBundle {
     pub prompt_surface: PromptSurface,
     pub scaffold_slots: ScaffoldSlots,
     pub tools: ToolsSpec,
-    pub skills_metadata: SkillsMetadata,
+    pub skills: Skills,
     pub provenance: BTreeMap<String, String>,
     pub warnings: Vec<String>,
 }
@@ -92,7 +92,6 @@ pub struct SupplementalDoc {
     pub name: String,
     pub content: String,
     pub skill_type: String,
-    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,7 +102,22 @@ pub struct ToolsSpec {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SkillsMetadata {
-    pub loaded: Vec<String>,
+pub struct Skills {
+    pub loaded: Vec<LoadedSkill>,
+    pub available: Vec<AvailableSkill>,
     pub missing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LoadedSkill {
+    pub name: String,
+    pub skill_type: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AvailableSkill {
+    pub name: String,
+    pub skill_type: String,
+    pub description: String,
 }

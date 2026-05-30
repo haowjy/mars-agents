@@ -188,14 +188,12 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
         }
 
         let description_str = profile.description.as_deref().unwrap_or("");
-        let detail_str = profile.detail.as_deref().unwrap_or("");
         let type_str = profile.skill_type.as_deref().unwrap_or("");
 
         if json {
             output::print_json(&serde_json::json!({
                 "name": skill_name,
                 "description": description_str,
-                "detail": detail_str,
                 "type": type_str,
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
@@ -204,7 +202,6 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
         } else {
             println!("name:          {skill_name}");
             println!("description:   {description_str}");
-            println!("detail:        {detail_str}");
             println!("type:          {type_str}");
             println!("model-invocable: {}", profile.model_invocable);
             println!("user-invocable:  {}", profile.user_invocable);

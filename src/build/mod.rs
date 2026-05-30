@@ -5,7 +5,7 @@ pub mod tool_normalize;
 
 use std::path::PathBuf;
 
-use bundle::{LaunchBundle, ScaffoldSlots, SkillsMetadata, ToolsSpec};
+use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_tool_for_harness};
@@ -14,8 +14,9 @@ use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
 use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
+use crate::frontmatter::SkillsSpec;
 
-pub const LAUNCH_BUNDLE_VERSION: u32 = 2;
+pub const LAUNCH_BUNDLE_VERSION: u32 = 3;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
@@ -134,8 +135,9 @@ pub fn build_launch_bundle(
         },
         scaffold_slots: ScaffoldSlots::placeholders(),
         tools: resolved_tools,
-        skills_metadata: SkillsMetadata {
+        skills: Skills {
             loaded: prompt.loaded_skills,
+            available: prompt.available_skills,
             missing: prompt.missing_skills,
         },
         provenance: policy.provenance,
@@ -156,7 +158,7 @@ fn empty_agent_profile() -> AgentProfile {
         effort: None,
         autocompact: None,
         autocompact_pct: None,
-        skills: Vec::new(),
+        skills: SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Vec::new(),
         tools_denied: Vec::new(),
@@ -260,9 +262,9 @@ enum ToolPolicyKind {
 fn resolve_effective_skills(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
-) -> Result<Vec<String>, MarsError> {
+) -> Result<SkillsSpec, MarsError> {
     let harness_kind = parse_harness_kind(harness)?;
-    Ok(profile.effective_skills(&harness_kind).to_vec())
+    Ok(profile.effective_skills(&harness_kind).clone())
 }
 
 fn parse_harness_kind(harness: &str) -> Result<HarnessKind, MarsError> {

@@ -14,7 +14,7 @@ resolve_policy() → Routing + ExecutionPolicy + Provenance
     ↓
 resolve_effective_skills() + compile_prompt_surface() + resolve_bundle_tools()
     ↓
-LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata, provenance, warnings}
+LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenance, warnings}
 ```
 
 ## Two Modes

@@ -250,8 +250,8 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
     );
     assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
     assert!(
-        json["detail"].is_string(),
-        "'detail' field required:\n{stdout}"
+        json.get("detail").is_none(),
+        "'detail' field should not be emitted:\n{stdout}"
     );
 }
 

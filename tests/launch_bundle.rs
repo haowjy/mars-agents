@@ -72,6 +72,11 @@ fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
 }
 
 #[test]
+fn build_launch_bundle_splits_loaded_and_available_skills() {
+    prompt_surface::build_launch_bundle_splits_loaded_and_available_skills();
+}
+
+#[test]
 fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
     prompt_surface::build_launch_bundle_uses_harness_variant_skill_for_codex();
 }
@@ -82,8 +87,8 @@ fn build_launch_bundle_uses_harness_override_skills_for_prompt_surface() {
 }
 
 #[test]
-fn build_launch_bundle_skips_model_non_invocable_skills() {
-    prompt_surface::build_launch_bundle_skips_model_non_invocable_skills();
+fn build_launch_bundle_loads_model_non_invocable_skills_when_explicit() {
+    prompt_surface::build_launch_bundle_loads_model_non_invocable_skills_when_explicit();
 }
 
 #[test]

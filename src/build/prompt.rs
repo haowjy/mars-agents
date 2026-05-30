@@ -335,8 +335,7 @@ fn compose_system_instruction(
     // NOTE: meridian-cli recomposes this block independently in
     // `composition.py::_render_available_skills_block`. Keep format in sync.
     if !available_skills.is_empty() {
-        let mut avail_block =
-            String::from("# Available Skills\n\nLoad these when needed.");
+        let mut avail_block = String::from("# Available Skills\n\nLoad these when needed.");
         for (type_label, type_key) in &[
             ("Principles", "principle"),
             ("Guardrails", "guardrail"),

@@ -380,7 +380,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "pi", "codex", "opencode", "cursor"])
+        json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
     assert!(stdout["route_trace"].is_object());
     assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
@@ -444,7 +444,7 @@ fn models_list_static_default_does_not_execute_harness_commands() {
     let bin_dir = install_tracing_harnesses(
         temp.path(),
         &marker_file,
-        &["claude", "codex", "pi", "opencode", "cursor"],
+        &["claude", "codex", "pi", "cursor", "opencode"],
     );
     fs::write(
         project_root.join("mars.toml"),
@@ -599,7 +599,7 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "pi", "codex", "opencode", "cursor"])
+        json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
 }
 
@@ -623,7 +623,7 @@ fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "pi", "codex", "opencode", "cursor"])
+        json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
 }
 
@@ -648,7 +648,7 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "pi", "codex", "opencode", "cursor"])
+        json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
 }
 
@@ -724,7 +724,7 @@ fn resolve_builtin_gemini_alias_uses_google_candidates_without_gemini_harness() 
     assert_ne!(stdout["harness"].as_str(), Some("gemini"));
     assert_eq!(
         stdout["harness_candidates"],
-        json!(["pi", "opencode", "cursor"])
+        json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
 }
 

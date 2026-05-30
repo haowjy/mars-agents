@@ -1354,7 +1354,8 @@ mod tests {
         assert_eq!(trace.selection_kind, SelectionKind::Auto);
         assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
         assert_eq!(trace.candidates_tried[0], "claude");
-        assert_eq!(trace.candidates_tried[1], "pi");
+        assert_eq!(trace.candidates_tried[1], "codex");
+        assert_eq!(trace.candidates_tried[2], "pi");
         assert_eq!(
             trace
                 .assessments
@@ -1565,7 +1566,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_direct_model_prefers_unknown_provider_ladder_and_pi_slug() {
+    fn bare_direct_model_uses_default_ladder_before_pi_probe_slug() {
         let installed = installed(&["codex", "pi", "opencode"]);
         let pi_probe = PiProbeResult {
             compatible: true,
@@ -1589,16 +1590,16 @@ mod tests {
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
 
-        assert_eq!(trace.harness, "pi");
+        assert_eq!(trace.harness, "codex");
         assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
-        assert_eq!(trace.candidates_tried, vec!["pi".to_string()]);
+        assert_eq!(trace.candidates_tried, vec!["claude", "codex"]);
         assert_eq!(
             trace
                 .assessments
                 .iter()
-                .find(|assessment| assessment.harness == "pi")
-                .and_then(|assessment| assessment.chosen_slug.as_deref()),
-            Some("openai-codex/gpt-5.4")
+                .find(|assessment| assessment.harness == "codex")
+                .and_then(|assessment| assessment.chosen_model.as_deref()),
+            Some("gpt-5.4")
         );
     }
 
@@ -1856,12 +1857,12 @@ mod tests {
 
     #[test]
     fn linked_constraints_apply_to_default_and_hardcoded_fallbacks() {
-        let installed = installed(&["codex"]);
+        let installed = installed(&["claude"]);
         let linked_harnesses = vec!["claude".to_string()];
 
         let with_config_default = routing_input(
-            "gpt-5",
-            Some("openai"),
+            "claude-opus-4-7",
+            Some("anthropic"),
             None,
             Some("pi"),
             &installed,
@@ -1875,7 +1876,10 @@ mod tests {
             SelectionKind::LinkedFallback
         );
         assert_eq!(with_default_trace.harness, "claude");
-        assert_eq!(with_default_trace.candidates_tried, vec!["claude"]);
+        assert_eq!(
+            with_default_trace.candidates_tried,
+            vec!["claude", "claude"]
+        );
         assert!(with_default_trace.diagnostics.iter().any(|diagnostic| {
             diagnostic.contains(
                 "settings.default_harness is excluded by known linked harness constraints",
@@ -1883,8 +1887,8 @@ mod tests {
         }));
 
         let without_config_default = routing_input(
-            "gpt-5",
-            Some("openai"),
+            "claude-opus-4-7",
+            Some("anthropic"),
             None,
             None,
             &installed,

@@ -3259,7 +3259,10 @@ description = "Old alias"
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].harness, None);
         assert_eq!(rows[0].harness_source, HarnessSource::Unavailable);
-        assert_eq!(rows[0].harness_candidates, vec!["pi", "opencode", "cursor"]);
+        assert_eq!(
+            rows[0].harness_candidates,
+            vec!["claude", "codex", "pi", "cursor", "opencode"]
+        );
     }
 
     #[test]

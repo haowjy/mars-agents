@@ -824,7 +824,10 @@ mod tests {
             resolution.route_trace.selected_match_evidence(),
             MatchEvidence::Confirmed
         );
-        assert_eq!(resolution.candidates_tried, vec!["codex", "pi", "opencode"]);
+        assert_eq!(
+            resolution.candidates_tried,
+            vec!["codex", "claude", "pi", "cursor", "opencode"]
+        );
         assert!(resolution.warnings.iter().any(|warning| {
             warning == "profile harness 'claude' not installed; pivoting via model-policies"
         }));

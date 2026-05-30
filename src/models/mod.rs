@@ -2185,7 +2185,7 @@ mod tests {
         assert_eq!(resolved.provider, "anthropic");
         assert_eq!(
             resolved.harness_candidates,
-            vec!["claude", "pi", "opencode", "cursor"]
+            vec!["claude", "codex", "pi", "cursor", "opencode"]
         );
 
         let installed = harness::detect_installed_harnesses();
@@ -2736,7 +2736,7 @@ mod tests {
         assert_eq!(entry.provider, "openai");
         assert_eq!(
             entry.harness_candidates,
-            vec!["codex", "pi", "opencode", "cursor"]
+            vec!["codex", "claude", "pi", "cursor", "opencode"]
         );
     }
 

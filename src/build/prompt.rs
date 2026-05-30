@@ -23,10 +23,17 @@ pub struct PromptCompilation {
 struct LoadedSkillDocument {
     requested_index: usize,
     document: SupplementalDoc,
+    /// Raw body without `# Skill: name` heading.
+    body: String,
+}
+
+struct LoadedSkillData {
+    document: SupplementalDoc,
+    body: String,
 }
 
 enum SkillLoadOutcome {
-    Loaded(SupplementalDoc),
+    Loaded(LoadedSkillData),
     Missing,
 }
 
@@ -70,10 +77,11 @@ pub fn compile_prompt_surface(
 
     for (requested_index, skill) in requested_load_skills.iter().enumerate() {
         match load_skill_document(mars_dir, skill, harness_id) {
-            Ok(SkillLoadOutcome::Loaded(document)) => {
+            Ok(SkillLoadOutcome::Loaded(data)) => {
                 loaded_documents.push(LoadedSkillDocument {
                     requested_index,
-                    document,
+                    document: data.document,
+                    body: data.body,
                 });
             }
             Ok(SkillLoadOutcome::Missing) => missing_skills.push(skill.clone()),
@@ -107,7 +115,7 @@ pub fn compile_prompt_surface(
         .map(|loaded| LoadedSkill {
             name: loaded.document.name.clone(),
             skill_type: loaded.document.skill_type.clone(),
-            content: loaded.document.content.clone(),
+            body: loaded.body.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -216,13 +224,17 @@ fn load_skill_document(
         .or_else(|| skill_type_from_frontmatter(&base_frontmatter));
     let skill_type = skill_type.unwrap_or_else(|| "reference".to_string());
 
-    let content = render_skill_content_block(skill_name, selected_frontmatter.body().trim());
+    let body = selected_frontmatter.body().trim().to_string();
+    let content = render_skill_content_block(skill_name, &body);
 
-    Ok(SkillLoadOutcome::Loaded(SupplementalDoc {
-        kind: "skill".to_string(),
-        name: skill_name.to_string(),
-        content,
-        skill_type,
+    Ok(SkillLoadOutcome::Loaded(LoadedSkillData {
+        document: SupplementalDoc {
+            kind: "skill".to_string(),
+            name: skill_name.to_string(),
+            content,
+            skill_type,
+        },
+        body,
     }))
 }
 
@@ -335,25 +347,43 @@ fn compose_system_instruction(
     // NOTE: meridian-cli recomposes this block independently in
     // `composition.py::_render_available_skills_block`. Keep format in sync.
     if !available_skills.is_empty() {
-        let mut avail_block = String::from("# Available Skills\n\nLoad these when needed.");
-        for (type_label, type_key) in &[
-            ("Principles", "principle"),
-            ("Guardrails", "guardrail"),
-            ("Mode-shift", "mode-shift"),
-            ("Checkpoint", "checkpoint"),
+        let mut avail_block = String::from(
+            "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",
+        );
+        for (type_label, type_key, description) in &[
+            (
+                "Principles",
+                "principle",
+                "Override other guidance when loaded.",
+            ),
+            (
+                "Guardrails",
+                "guardrail",
+                "Load before acting in sensitive areas.",
+            ),
+            (
+                "Mode-shift",
+                "mode-shift",
+                "Change how you operate when loaded.",
+            ),
+            (
+                "Checkpoint",
+                "checkpoint",
+                "Load at decision points to verify before continuing.",
+            ),
         ] {
             let skills: Vec<_> = available_skills
                 .iter()
                 .filter(|s| s.skill_type == *type_key)
                 .collect();
             if !skills.is_empty() {
-                avail_block.push_str(&format!("\n\n## {type_label}"));
+                avail_block.push_str(&format!("\n\n## {type_label}\n{description}"));
                 for skill in skills {
                     avail_block.push_str(&format!("\n- {}", skill.name));
                 }
             }
         }
-        // Remaining (reference and unknown types)
+        // Remaining types: each gets its own heading, no description.
         let other_skills: Vec<_> = available_skills
             .iter()
             .filter(|s| {
@@ -364,9 +394,25 @@ fn compose_system_instruction(
             })
             .collect();
         if !other_skills.is_empty() {
-            avail_block.push('\n');
-            for skill in other_skills {
-                avail_block.push_str(&format!("\n- {}", skill.name));
+            let mut seen_types: Vec<&str> = Vec::new();
+            for s in &other_skills {
+                if !seen_types.contains(&s.skill_type.as_str()) {
+                    seen_types.push(&s.skill_type);
+                }
+            }
+            for type_key in &seen_types {
+                let group: Vec<_> = other_skills
+                    .iter()
+                    .filter(|s| s.skill_type == *type_key)
+                    .collect();
+                let mut capitalized = type_key.to_string();
+                if let Some(first) = capitalized.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                avail_block.push_str(&format!("\n\n## {capitalized}"));
+                for skill in group {
+                    avail_block.push_str(&format!("\n- {}", skill.name));
+                }
             }
         }
         blocks.push(avail_block);

@@ -112,7 +112,8 @@ pub struct Skills {
 pub struct LoadedSkill {
     pub name: String,
     pub skill_type: String,
-    pub content: String,
+    /// Raw skill body without heading. Consumers render headings themselves.
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

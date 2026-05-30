@@ -88,7 +88,7 @@ Review code changes."#;
     assert_eq!(loaded[0]["name"].as_str(), Some("dev_principles"));
     assert_eq!(loaded[0]["skill_type"].as_str(), Some("principle"));
     assert!(
-        loaded[0]["content"]
+        loaded[0]["body"]
             .as_str()
             .unwrap()
             .contains("Always be precise.")

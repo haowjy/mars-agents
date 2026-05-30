@@ -61,6 +61,17 @@ pub struct ModelAlias {
     pub spec: ModelSpec,
 }
 
+impl ModelAlias {
+    pub fn pinned_model_id(&self) -> Option<&str> {
+        match &self.spec {
+            ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+                Some(model.as_str())
+            }
+            ModelSpec::AutoResolve { .. } => None,
+        }
+    }
+}
+
 /// How a model alias resolves to a concrete model ID.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelSpec {

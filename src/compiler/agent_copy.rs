@@ -124,7 +124,7 @@ fn policy_qualifies(
         }
         ModelPolicyMatchType::Model => {
             for (alias_name, alias) in model_aliases {
-                if pinned_model_id(alias).as_deref() == Some(policy.match_value.as_str())
+                if alias.pinned_model_id() == Some(policy.match_value.as_str())
                     && alias_resolves_to_harness(alias, target_harness)
                 {
                     return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
@@ -133,7 +133,7 @@ fn policy_qualifies(
         }
         ModelPolicyMatchType::ModelGlob => {
             for (alias_name, alias) in model_aliases {
-                let Some(model_id) = pinned_model_id(alias) else {
+                let Some(model_id) = alias.pinned_model_id() else {
                     continue;
                 };
                 if crate::models::glob_match(&policy.match_value, &model_id)
@@ -146,15 +146,6 @@ fn policy_qualifies(
     }
 
     None
-}
-
-fn pinned_model_id(alias: &ModelAlias) -> Option<String> {
-    match &alias.spec {
-        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
-            Some(model.clone())
-        }
-        ModelSpec::AutoResolve { .. } => None,
-    }
 }
 
 fn alias_resolves_to_harness(alias: &ModelAlias, target_harness: &HarnessKind) -> bool {

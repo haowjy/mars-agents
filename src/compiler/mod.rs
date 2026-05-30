@@ -790,7 +790,7 @@ fn map_cursor_native_model(
     }
 
     let alias = aliases.get(token);
-    let model_id = alias.and_then(pinned_model_id).unwrap_or(token);
+    let model_id = alias.and_then(|a| a.pinned_model_id()).unwrap_or(token);
     let effort = cursor_effective_effort(profile, alias).unwrap_or("medium");
     if cursor_probe_slugs.is_empty() {
         return None;
@@ -807,14 +807,6 @@ fn map_cursor_native_model(
     }
 
     None
-}
-
-fn pinned_model_id(alias: &crate::models::ModelAlias) -> Option<&str> {
-    match &alias.spec {
-        crate::models::ModelSpec::Pinned { model, .. }
-        | crate::models::ModelSpec::PinnedWithMatch { model, .. } => Some(model.as_str()),
-        crate::models::ModelSpec::AutoResolve { .. } => None,
-    }
 }
 
 fn cursor_effective_effort<'a>(

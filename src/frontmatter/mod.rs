@@ -163,6 +163,14 @@ impl Frontmatter {
         self.has_frontmatter
     }
 
+    /// All frontmatter keys as strings.
+    pub fn keys(&self) -> Vec<String> {
+        self.yaml
+            .keys()
+            .filter_map(|k| k.as_str().map(str::to_owned))
+            .collect()
+    }
+
     /// Serialize back to full markdown.
     pub fn render(&self) -> String {
         if !self.has_frontmatter && self.yaml.is_empty() {

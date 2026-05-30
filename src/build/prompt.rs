@@ -128,6 +128,7 @@ pub fn compile_prompt_surface(
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
+        &available_skills,
         &inventory_prompt,
         REPORT_INSTRUCTION,
     );
@@ -308,6 +309,7 @@ fn render_skill_content_block(skill_name: &str, body: &str) -> String {
 fn compose_system_instruction(
     agent_body: &str,
     supplemental_documents: &[SupplementalDoc],
+    available_skills: &[AvailableSkill],
     inventory_prompt: &str,
     report_instruction: &str,
 ) -> String {
@@ -318,11 +320,57 @@ fn compose_system_instruction(
         blocks.push(format!("# Agent Profile\n\n{body}"));
     }
 
+    // Auto-loaded skills: full content, already sorted by type priority
+    // (principles first, then guardrails, then others).
+    // Each skill has its own `# Skill: name` heading — no intermediate
+    // wrapper headings that would break markdown hierarchy.
     for doc in supplemental_documents {
         let content = doc.content.trim();
         if !content.is_empty() {
             blocks.push(content.to_string());
         }
+    }
+
+    // Available skills: names only, grouped by type.
+    // NOTE: meridian-cli recomposes this block independently in
+    // `composition.py::_render_available_skills_block`. Keep format in sync.
+    if !available_skills.is_empty() {
+        let mut avail_block =
+            String::from("# Available Skills\n\nLoad these when needed.");
+        for (type_label, type_key) in &[
+            ("Principles", "principle"),
+            ("Guardrails", "guardrail"),
+            ("Mode-shift", "mode-shift"),
+            ("Checkpoint", "checkpoint"),
+        ] {
+            let skills: Vec<_> = available_skills
+                .iter()
+                .filter(|s| s.skill_type == *type_key)
+                .collect();
+            if !skills.is_empty() {
+                avail_block.push_str(&format!("\n\n## {type_label}"));
+                for skill in skills {
+                    avail_block.push_str(&format!("\n- {}", skill.name));
+                }
+            }
+        }
+        // Remaining (reference and unknown types)
+        let other_skills: Vec<_> = available_skills
+            .iter()
+            .filter(|s| {
+                s.skill_type != "principle"
+                    && s.skill_type != "guardrail"
+                    && s.skill_type != "mode-shift"
+                    && s.skill_type != "checkpoint"
+            })
+            .collect();
+        if !other_skills.is_empty() {
+            avail_block.push_str("\n");
+            for skill in other_skills {
+                avail_block.push_str(&format!("\n- {}", skill.name));
+            }
+        }
+        blocks.push(avail_block);
     }
 
     let inventory = inventory_prompt.trim();
@@ -331,16 +379,6 @@ fn compose_system_instruction(
     }
 
     blocks.push(report_instruction.to_string());
-
-    for doc in supplemental_documents
-        .iter()
-        .filter(|doc| doc.skill_type == "principle")
-    {
-        let content = doc.content.trim();
-        if !content.is_empty() {
-            blocks.push(content.to_string());
-        }
-    }
 
     blocks.join("\n\n")
 }

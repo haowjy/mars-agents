@@ -395,19 +395,33 @@ Review code changes."#;
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
         .expect("system instruction should be string");
-    let first_principle_index = system_instruction
+
+    // Skills are sorted by type priority (principle first, then guardrail, then reference)
+    // but without wrapper headings — each skill keeps its own `# Skill:` heading.
+    let principle_index = system_instruction
         .find("# Skill: principle_a")
         .expect("system instruction should include principle skill");
+    let guardrail_index = system_instruction
+        .find("# Skill: guardrail_a")
+        .expect("system instruction should include guardrail skill");
+    let reference_a_index = system_instruction
+        .find("# Skill: reference_a")
+        .expect("system instruction should include reference skill");
     let report_index = system_instruction
         .find("# Report")
         .expect("system instruction should include report block");
-    assert!(first_principle_index < report_index);
 
-    let second_principle_relative = system_instruction[(report_index + "# Report".len())..]
-        .find("# Skill: principle_a")
-        .expect("system instruction should include trailing principle bookend");
-    let second_principle_index = report_index + "# Report".len() + second_principle_relative;
-    assert!(second_principle_index > report_index);
+    // Order: principle -> guardrail -> reference -> report
+    assert!(principle_index < guardrail_index);
+    assert!(guardrail_index < reference_a_index);
+    assert!(reference_a_index < report_index);
+
+    // No principle bookend after report
+    let after_report = &system_instruction[(report_index + "# Report".len())..];
+    assert!(
+        !after_report.contains("Principle body."),
+        "principle bookend should no longer appear after report"
+    );
 }
 
 pub(crate) fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
@@ -571,9 +585,7 @@ Review code changes."#;
         "# Report\n\n",
         "**IMPORTANT - Your final assistant message must be the run report.**\n\n",
         "Provide a plain markdown report in your final assistant message.\n\n",
-        "Include: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.\n\n",
-        "# Skill: principle_a\n\n",
-        "Principle body."
+        "Include: what was done, key decisions made, files created/modified, verification results, and any issues or blockers."
     );
     assert_eq!(system_instruction, expected);
 }

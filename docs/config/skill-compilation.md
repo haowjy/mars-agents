@@ -44,6 +44,36 @@ One-line summary. Shown in `mars list` and passed through to native artifacts.
 
 ---
 
+### `type`
+
+| | |
+|---|---|
+| Type | string (free-form) |
+| Required | no |
+| Default | `reference` |
+
+Classifies the skill for prompt-assembly ordering and `mars skills` filtering. `type` is **not** a restricted enum — any string is accepted and preserved.
+
+Mars uses it for exactly two things:
+
+1. **Sort priority during prompt assembly.** Loaded skills are ordered by tier so higher-priority guidance lands first:
+
+   | `type` | Priority |
+   |---|---|
+   | `principle` | 0 (first) |
+   | `guardrail` | 1 |
+   | `reference`, any other value, or unset | 2 (last) |
+
+2. **Filtering.** `mars skills list --type <value>` matches `type` by exact string.
+
+A skill with no `type` defaults to `reference`. Custom values (e.g. `type: workflow`) are accepted, sort at priority 2, and stay filterable by their exact string — but they gain no behavior beyond `reference`.
+
+```yaml
+type: principle
+```
+
+---
+
 ### `model-invocable`
 
 | | |
@@ -122,6 +152,24 @@ metadata:
 ```
 
 ---
+
+## Unknown Fields
+
+Skill frontmatter fields not listed above are **passed through** to all native targets unchanged. Mars preserves unrecognized fields verbatim during lowering — harness-specific fields like Claude Code's `argument-hint` and `arguments` survive compilation and reach the target artifact.
+
+This means you can add harness-native fields directly to your skill frontmatter and they will appear in the compiled output for every target. Mars does not validate or interpret them — it copies the YAML value as-is.
+
+```yaml
+---
+name: my-skill
+description: Does a thing
+argument-hint: "What should I review?"
+arguments:
+  - name: target
+    description: File or directory to review
+    required: true
+---
+```
 
 ## Per-Harness Lowering
 

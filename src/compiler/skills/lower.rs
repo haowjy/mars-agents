@@ -67,6 +67,12 @@ fn insert_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
     }
 }
 
+fn insert_passthrough(yaml: &mut Mapping, profile: &SkillProfile) {
+    for (key, value) in &profile.passthrough_fields {
+        yaml.insert(yk(key), value.clone());
+    }
+}
+
 fn user_invocation_disabled(profile: &SkillProfile) -> bool {
     let _was_explicitly_set = profile.had_user_invocable_field;
     !profile.user_invocable
@@ -115,6 +121,7 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
     }
     insert_allowed_tools(&mut yaml, profile);
     insert_metadata(&mut yaml, profile);
+    insert_passthrough(&mut yaml, profile);
     LoweredOutput {
         bytes: render(yaml, body),
         lossy_fields: vec![],
@@ -131,6 +138,7 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
         );
     }
     insert_metadata(&mut yaml, profile);
+    insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Codex));
@@ -148,6 +156,7 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
     insert_metadata(&mut yaml, profile);
+    insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if !profile.model_invocable {
         lossy_fields.push(dropped("model-invocable", SkillHarness::OpenCode));
@@ -172,6 +181,7 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
     }
     insert_allowed_tools(&mut yaml, profile);
     insert_metadata(&mut yaml, profile);
+    insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Pi));
@@ -189,6 +199,7 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
         yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
     }
     insert_metadata(&mut yaml, profile);
+    insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Cursor));
@@ -261,7 +272,8 @@ mod tests {
         assert!(!out.contains("allow_implicit_invocation"));
         assert!(out.contains("license: MIT"));
         assert!(out.contains("owner: team"));
-        assert!(!out.contains("extra:"));
+        // Unknown fields pass through to all targets
+        assert!(out.contains("extra: stripped"));
         assert!(lowered.lossy_fields.is_empty());
     }
 

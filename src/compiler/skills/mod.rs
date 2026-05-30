@@ -21,6 +21,8 @@ pub struct SkillProfile {
     /// true when the source frontmatter explicitly set `user-invocable`
     pub had_user_invocable_field: bool,
     pub has_frontmatter: bool,
+    /// Frontmatter fields not recognized by mars — passed through to all targets.
+    pub passthrough_fields: Vec<(String, Value)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,18 +152,26 @@ fn parse_invocability_bool(
 }
 
 pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -> SkillProfile {
+    // Track which keys we consume so passthrough = all keys minus consumed.
+    // This avoids a static list that drifts when new fields are added.
+    let mut consumed_keys: Vec<&str> = Vec::new();
+
+    consumed_keys.push("name");
     let name_raw = fm.get("name");
     let name = name_raw.and_then(Value::as_str).map(str::to_owned);
+    consumed_keys.push("description");
     let description_raw = fm.get("description");
     let description = description_raw.and_then(Value::as_str).map(str::to_owned);
     if fm.has_frontmatter() {
         validate_required_string("name", name_raw, diags);
         validate_required_string("description", description_raw, diags);
     }
+    consumed_keys.push("allowed-tools");
     let allowed_tools = fm
         .get("allowed-tools")
         .map(|v| yaml_str_list("allowed-tools", v, diags))
         .unwrap_or_default();
+    consumed_keys.push("license");
     let license_raw = fm.get("license");
     let license = license_raw.and_then(Value::as_str).map(str::to_owned);
     if let Some(raw) = license_raw
@@ -173,6 +183,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
             allowed: "string",
         });
     }
+    consumed_keys.push("type");
     let skill_type_raw = fm.get("type");
     let skill_type = skill_type_raw.and_then(Value::as_str).map(str::to_owned);
     if let Some(raw) = skill_type_raw
@@ -184,10 +195,13 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
             allowed: "string",
         });
     }
+    consumed_keys.push("metadata");
     let metadata = fm.get("metadata").cloned();
 
+    consumed_keys.push("model-invocable");
     let (model_invocable, had_model_invocable_field) =
         parse_invocability_bool("model-invocable", fm.get("model-invocable"), diags);
+    consumed_keys.push("user-invocable");
     let (user_invocable, had_user_invocable_field) =
         parse_invocability_bool("user-invocable", fm.get("user-invocable"), diags);
 
@@ -196,12 +210,21 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         "disable-model-invocation",
         "allow_implicit_invocation",
     ] {
+        consumed_keys.push(field);
         if fm.get(field).is_some() {
             diags.push(SkillDiagnostic::RemovedField {
                 field: field.to_string(),
             });
         }
     }
+
+    // Passthrough = all frontmatter keys we didn't consume above.
+    let passthrough_fields = fm
+        .keys()
+        .into_iter()
+        .filter(|k| !consumed_keys.contains(&k.as_str()))
+        .filter_map(|k| fm.get(&k).map(|v| (k.clone(), v.clone())))
+        .collect::<Vec<_>>();
 
     SkillProfile {
         name,
@@ -215,6 +238,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         had_model_invocable_field,
         had_user_invocable_field,
         has_frontmatter: fm.has_frontmatter(),
+        passthrough_fields,
     }
 }
 

@@ -11,7 +11,9 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 
 use super::SourceProvider;
 use super::package::PendingSource;
-use super::types::{ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy};
+use super::types::{
+    ResolveMode, ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy,
+};
 
 /// Resolve a single source to a concrete version/ref.
 pub(crate) fn resolve_single_source(
@@ -39,6 +41,7 @@ pub(crate) fn resolve_single_source(
                     locked_source_for_pending(pending, locked, selection_policy, diag)?
                 }
             };
+            let fetch_upgrade_metadata = matches!(options.mode, ResolveMode::Upgrade { .. });
             resolve_git_source(
                 &pending.name,
                 &git.url,
@@ -49,6 +52,7 @@ pub(crate) fn resolve_single_source(
                 provider,
                 locked_source,
                 selection_policy,
+                fetch_upgrade_metadata,
                 diag,
             )
         }
@@ -357,6 +361,7 @@ pub(crate) fn resolve_git_source(
     provider: &dyn SourceProvider,
     locked_source: Option<&LockedSource>,
     selection_policy: VersionSelectionPolicy,
+    fetch_upgrade_metadata: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(ResolvedRef, Option<Version>), MarsError> {
     let has_latest_constraint = constraints
@@ -474,7 +479,11 @@ pub(crate) fn resolve_git_source(
             diag,
         ) {
             Ok(resolved) => {
-                let latest = latest_version_metadata(name, url, provider, diag);
+                let latest = if fetch_upgrade_metadata {
+                    latest_version_metadata(name, url, provider, diag)
+                } else {
+                    None
+                };
                 return Ok((resolved, latest));
             }
             Err(MarsError::LockedCommitUnreachable {

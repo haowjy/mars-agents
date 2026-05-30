@@ -780,18 +780,15 @@ pub fn build(
 
 /// Lock view for native emission immediately after target sync.
 ///
-/// Merges the lock that would be written for the current apply pass with
-/// per-target sync outputs so `copy_decision` treats freshly synced paths as
-/// managed without treating skipped collisions as owned.
+/// Layers per-target sync outputs on the persisted lock so `copy_decision`
+/// treats freshly synced paths as managed without treating skipped collisions
+/// as owned. Full lock rebuild happens in `finalize()`; this path only needs
+/// target-sync deltas for ownership checks.
 pub fn ownership_lock_for_native_emission(
-    graph: &crate::resolve::ResolvedGraph,
-    applied: &crate::sync::apply::ApplyResult,
     old_lock: &LockFile,
     target_outcomes: &[crate::target_sync::TargetSyncOutcome],
-) -> Result<LockFile, MarsError> {
-    let mut lock = build(graph, applied, old_lock, BTreeMap::new())?;
-    apply_target_sync_outputs(&mut lock, target_outcomes);
-    Ok(lock)
+) -> LockFile {
+    ownership_lock_after_target_sync(old_lock, target_outcomes)
 }
 
 /// Lock view for native emission after `mars link` target sync.

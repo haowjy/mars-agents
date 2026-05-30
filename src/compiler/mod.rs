@@ -109,12 +109,8 @@ pub fn compile(
     let native_ownership_lock = if request.options.dry_run {
         &old_lock
     } else {
-        ownership_lock = crate::lock::ownership_lock_for_native_emission(
-            &synced.applied.planned.targeted.resolved.graph,
-            &synced.applied.applied,
-            &old_lock,
-            &synced.target_outcomes,
-        )?;
+        ownership_lock =
+            crate::lock::ownership_lock_for_native_emission(&old_lock, &synced.target_outcomes);
         &ownership_lock
     };
     let native_compile_ctx = NativeAgentCompileCtx {

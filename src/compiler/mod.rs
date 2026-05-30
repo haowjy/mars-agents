@@ -96,9 +96,6 @@ pub fn compile(
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
     };
-    synced.removed_native_outputs =
-        native_agents::reconcile_native_agent_surfaces(&native_reconcile_ctx, &mars_agents, diag);
-
     let ownership_lock;
     let native_ownership_lock = if request.options.dry_run {
         old_lock
@@ -110,22 +107,30 @@ pub fn compile(
         );
         &ownership_lock
     };
-    let native_compile_ctx = native_agents::NativeAgentCompileCtx {
-        project_root: &ctx.project_root,
-        model_aliases: &model_aliases,
-        cursor_probe_slugs: &cursor_probe_slugs,
-        old_lock: native_ownership_lock,
-        harness_scope: None,
-        options: native_agents::NativeAgentSurfaceCompileOptions {
-            force: request.options.force,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: request.options.dry_run,
-        },
+    let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
+        None
+    } else {
+        Some(native_agents::NativeAgentCompileCtx {
+            project_root: &ctx.project_root,
+            model_aliases: &model_aliases,
+            cursor_probe_slugs: &cursor_probe_slugs,
+            old_lock: native_ownership_lock,
+            harness_scope: None,
+            options: native_agents::NativeAgentSurfaceCompileOptions {
+                force: request.options.force,
+                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                dry_run: request.options.dry_run,
+            },
+        })
     };
-    synced.compiled_native_outputs = native_agents::compile_native_agents(
-        &native_compile_ctx,
+    (
+        synced.compiled_native_outputs,
+        synced.removed_native_outputs,
+    ) = native_agents::run_native_agent_post_sync_lifecycle(
+        &native_reconcile_ctx,
         &agent_surface_policy,
         &mars_agents,
+        native_compile_ctx.as_ref(),
         diag,
     );
 

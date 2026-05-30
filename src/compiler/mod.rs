@@ -123,6 +123,7 @@ pub fn compile(
         model_aliases: &model_aliases,
         cursor_probe_slugs: &cursor_probe_slugs,
         old_lock: native_ownership_lock,
+        harness_scope: None,
         options: NativeAgentSurfaceCompileOptions {
             force: request.options.force,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -510,6 +511,7 @@ struct NativeAgentCompileCtx<'a> {
     model_aliases: &'a IndexMap<String, crate::models::ModelAlias>,
     cursor_probe_slugs: &'a [String],
     old_lock: &'a crate::lock::LockFile,
+    harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
     options: NativeAgentSurfaceCompileOptions,
 }
 
@@ -545,6 +547,12 @@ fn selective_surface_compile(
 
     for agent in scan_mars_agents(ctx.mars_dir, diag) {
         for harness in &spec.harnesses {
+            if ctx
+                .harness_scope
+                .is_some_and(|scope| !scope.contains(harness))
+            {
+                continue;
+            }
             let Some(emission) = agent_copy::agent_qualifies_for_harness(
                 &agent.profile,
                 harness,
@@ -607,6 +615,12 @@ fn dual_surface_compile(
         let Some(harness) = &agent.profile.harness else {
             continue;
         };
+        if ctx
+            .harness_scope
+            .is_some_and(|scope| !scope.contains(harness))
+        {
+            continue;
+        }
 
         let model_override = native_model_override_for_harness(
             harness,
@@ -892,10 +906,18 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
-    let selective_harness_scope = match &policy {
-        AgentSurfacePolicy::EmitSelective(spec) => Some(spec.harnesses.as_slice()),
-        _ => None,
-    };
+    let link_harness_scope: Vec<_> = input
+        .target_outcomes
+        .iter()
+        .filter_map(|outcome| {
+            crate::compiler::agents::HarnessKind::all()
+                .iter()
+                .find(|harness| harness.target_dir() == outcome.target)
+                .cloned()
+        })
+        .collect();
+    let link_harness_scope = (!link_harness_scope.is_empty()).then_some(link_harness_scope);
+    let harness_scope = link_harness_scope.as_deref();
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
@@ -904,7 +926,7 @@ pub(crate) fn materialize_native_agents_after_link(
         outcomes: &[],
         old_lock: input.old_lock,
         dry_run: false,
-        selective_harness_scope,
+        selective_harness_scope: harness_scope,
     };
     let removed_native_outputs = reconcile_native_agent_surfaces(&reconcile_ctx, diag);
     let ownership_lock =
@@ -915,6 +937,7 @@ pub(crate) fn materialize_native_agents_after_link(
         model_aliases: &model_aliases,
         cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
         old_lock: &ownership_lock,
+        harness_scope,
         options: NativeAgentSurfaceCompileOptions {
             force: input.force,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,

@@ -832,6 +832,121 @@ path = "{}"
 }
 
 #[test]
+fn link_non_native_target_ignores_selective_native_collision() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+
+[settings.agent_copy]
+harnesses = ["claude"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+    project
+        .child("mars.local.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+
+    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
+    fs::write(
+        project.path().join(".claude/agents/coder.md"),
+        "# hand-written native\n",
+    )
+    .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
+        "# hand-written native\n",
+        "link .agents must not touch .claude selective native collision"
+    );
+    assert!(!lock_has_native_agent(&project, "coder"));
+}
+
+#[test]
+fn link_non_native_target_ignores_emit_all_native_collision() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+agent_emission = "never"
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, None);
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+agent_emission = "always"
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
+    fs::write(
+        project.path().join(".claude/agents/coder.md"),
+        "# hand-written native\n",
+    )
+    .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".agents",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
+        "# hand-written native\n",
+        "link .agents must not touch .claude EmitAll native collision"
+    );
+    assert!(!lock_has_native_agent(&project, "coder"));
+}
+
+#[test]
 fn agent_copy_sync_diff_does_not_materialize_native_or_lock() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);

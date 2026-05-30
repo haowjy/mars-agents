@@ -884,6 +884,20 @@ pub(crate) fn materialize_native_agents_after_link(
         return (Vec::new(), Vec::new());
     }
 
+    let link_harness_scope: Vec<_> = input
+        .target_outcomes
+        .iter()
+        .filter_map(|outcome| {
+            HarnessKind::all()
+                .iter()
+                .find(|harness| harness.target_dir() == outcome.target)
+                .cloned()
+        })
+        .collect();
+    if link_harness_scope.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         input.effective.settings.agent_copy.as_ref(),
         input.managed_targets,
@@ -906,18 +920,7 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
-    let link_harness_scope: Vec<_> = input
-        .target_outcomes
-        .iter()
-        .filter_map(|outcome| {
-            crate::compiler::agents::HarnessKind::all()
-                .iter()
-                .find(|harness| harness.target_dir() == outcome.target)
-                .cloned()
-        })
-        .collect();
-    let link_harness_scope = (!link_harness_scope.is_empty()).then_some(link_harness_scope);
-    let harness_scope = link_harness_scope.as_deref();
+    let harness_scope = Some(link_harness_scope.as_slice());
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,

@@ -102,21 +102,26 @@ fn link_target(
         &mut diag,
     )?;
 
-    let suppressed_outcomes;
-    let sync_outcomes = if matches!(
-        agent_surface_policy,
-        crate::compiler::AgentSurfacePolicy::SuppressAll
-            | crate::compiler::AgentSurfacePolicy::EmitSelective(_)
-    ) {
-        suppressed_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
-        &suppressed_outcomes
-    } else {
-        &outcomes
+    let filtered_outcomes;
+    let orphan_preserve_paths;
+    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy {
+        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+            filtered_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
+            (&filtered_outcomes, None)
+        }
+        crate::compiler::AgentSurfacePolicy::EmitSelective(spec) => {
+            orphan_preserve_paths =
+                crate::compiler::selective_native_orphan_preserve_paths(&lock, spec);
+            filtered_outcomes = crate::compiler::omit_agent_outcomes(&outcomes);
+            (&filtered_outcomes, Some(&orphan_preserve_paths))
+        }
+        crate::compiler::AgentSurfacePolicy::EmitAll => (&outcomes, None),
     };
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock: &lock,
         force,
         collision_hint: CollisionAdoptHint::LinkForce,
+        orphan_preserve_paths: orphan_preserve,
     };
     let target_outcomes = crate::target_sync::sync_managed_targets(
         &ctx.project_root,
@@ -170,11 +175,27 @@ fn link_target(
                 effective: &effective,
                 graph: &graph,
                 old_lock: &lock,
+                target_outcomes: &target_outcomes,
                 force,
             },
             &mut diag,
         );
     diagnostics.extend(diag.drain());
+
+    if !force
+        && diagnostics
+            .iter()
+            .any(|d| d.code == "target-unmanaged-collision")
+    {
+        return Err(MarsError::Link {
+            target: target_name.to_string(),
+            message: format!(
+                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
+                 run `{}` to adopt",
+                managed_cmd(&format!("mars link {target_name} --force")),
+            ),
+        });
+    }
 
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);

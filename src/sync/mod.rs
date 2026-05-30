@@ -526,22 +526,27 @@ pub(crate) fn sync_targets(
         .managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
-    let outcomes;
-    let target_outcomes_source = if matches!(
-        agent_surface_policy,
-        crate::compiler::AgentSurfacePolicy::SuppressAll
-            | crate::compiler::AgentSurfacePolicy::EmitSelective(_)
-    ) {
-        outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
-        &outcomes
-    } else {
-        &applied.applied.outcomes
+    let filtered_outcomes;
+    let orphan_preserve_paths;
+    let (target_outcomes_source, orphan_preserve) = match &agent_surface_policy {
+        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+            filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
+            (&filtered_outcomes, None)
+        }
+        crate::compiler::AgentSurfacePolicy::EmitSelective(spec) => {
+            orphan_preserve_paths =
+                crate::compiler::selective_native_orphan_preserve_paths(old_lock, spec);
+            filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
+            (&filtered_outcomes, Some(&orphan_preserve_paths))
+        }
+        crate::compiler::AgentSurfacePolicy::EmitAll => (&applied.applied.outcomes, None),
     };
 
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock,
         force: request.options.force,
         collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+        orphan_preserve_paths: orphan_preserve,
     };
     let target_outcomes = crate::target_sync::sync_managed_targets(
         &ctx.project_root,

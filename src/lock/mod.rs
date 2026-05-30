@@ -778,6 +778,35 @@ pub fn build(
     })
 }
 
+/// Lock view for native emission immediately after target sync.
+///
+/// Merges the lock that would be written for the current apply pass with
+/// per-target sync outputs so `copy_decision` treats freshly synced paths as
+/// managed without treating skipped collisions as owned.
+pub fn ownership_lock_for_native_emission(
+    graph: &crate::resolve::ResolvedGraph,
+    applied: &crate::sync::apply::ApplyResult,
+    old_lock: &LockFile,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) -> Result<LockFile, MarsError> {
+    let mut lock = build(graph, applied, old_lock, BTreeMap::new())?;
+    apply_target_sync_outputs(&mut lock, target_outcomes);
+    Ok(lock)
+}
+
+/// Lock view for native emission after `mars link` target sync.
+///
+/// The persisted lock already reflects canonical items; only target-sync outputs
+/// from the link pass need to be layered on for ownership checks.
+pub fn ownership_lock_after_target_sync(
+    old_lock: &LockFile,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) -> LockFile {
+    let mut lock = old_lock.clone();
+    apply_target_sync_outputs(&mut lock, target_outcomes);
+    lock
+}
+
 /// Merge per-target sync results into a built lock file.
 pub fn apply_target_sync_outputs(
     lock: &mut LockFile,
@@ -1500,6 +1529,27 @@ installed_checksum = "sha256:222"
             }],
         );
         assert!(lock.contains_output(".claude", "agents/alias-name.md"));
+    }
+
+    #[test]
+    fn ownership_lock_after_target_sync_layers_synced_outputs() {
+        let lock = sample_lock();
+        let view = ownership_lock_after_target_sync(
+            &lock,
+            &[crate::target_sync::TargetSyncOutcome {
+                target: ".cursor".to_string(),
+                items_synced: 1,
+                items_removed: 0,
+                errors: Vec::new(),
+                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
+                    dest_path: "agents/coder.md".to_string(),
+                    installed_checksum: "sha256:cursor".into(),
+                }],
+                removed_dest_paths: Vec::new(),
+            }],
+        );
+        assert!(view.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
     }
 
     #[test]

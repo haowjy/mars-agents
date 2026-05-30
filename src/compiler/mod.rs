@@ -85,19 +85,6 @@ pub fn compile(
         old_lock: &old_lock,
         dry_run: request.options.dry_run,
     };
-    let native_compile_ctx = NativeAgentCompileCtx {
-        project_root: &ctx.project_root,
-        mars_dir: &mars_dir,
-        model_aliases: &model_aliases,
-        cursor_probe_slugs: &cursor_probe_slugs,
-        old_lock: &old_lock,
-        options: NativeAgentSurfaceCompileOptions {
-            force: request.options.force,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: request.options.dry_run,
-        },
-    };
-
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
     // Discovers MCP server and hook items from all packages, validates env refs,
     // detects collisions, and writes per-target config entries via adapters.
@@ -106,8 +93,8 @@ pub fn compile(
         config_entries::compile_config_entries(ctx, &applied, request.options.dry_run, diag);
 
     // Phase 6: copy from canonical store to managed target directories.
-    // Native reconcile/compile run after target sync so selective mode's
-    // suppressed canonical agent outcomes cannot delete freshly emitted natives.
+    // Under EmitSelective, agent outcomes are omitted from target sync; native
+    // reconcile + selective compile own harness agent surfaces afterward.
     let mut synced = sync_targets(
         ctx,
         applied,
@@ -117,6 +104,30 @@ pub fn compile(
     );
     synced.config_entries = config_entry_records;
     synced.removed_native_outputs = reconcile_native_agent_surfaces(&native_reconcile_ctx, diag);
+    let ownership_lock;
+    let native_ownership_lock = if request.options.dry_run {
+        &old_lock
+    } else {
+        ownership_lock = crate::lock::ownership_lock_for_native_emission(
+            &synced.applied.planned.targeted.resolved.graph,
+            &synced.applied.applied,
+            &old_lock,
+            &synced.target_outcomes,
+        )?;
+        &ownership_lock
+    };
+    let native_compile_ctx = NativeAgentCompileCtx {
+        project_root: &ctx.project_root,
+        mars_dir: &mars_dir,
+        model_aliases: &model_aliases,
+        cursor_probe_slugs: &cursor_probe_slugs,
+        old_lock: native_ownership_lock,
+        options: NativeAgentSurfaceCompileOptions {
+            force: request.options.force,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: request.options.dry_run,
+        },
+    };
     synced.compiled_native_outputs = match &native_reconcile_ctx.policy {
         AgentSurfacePolicy::EmitAll => dual_surface_compile(&native_compile_ctx, diag),
         AgentSurfacePolicy::EmitSelective(spec) => {
@@ -157,8 +168,8 @@ pub fn agent_surface_policy(
     }
 }
 
-/// Convert agent outcomes into removals so target sync can remain a pure
-/// materializer with no knowledge of managed-mode policy.
+/// Convert agent outcomes into removals so target sync removes canonical agent
+/// surfaces under `SuppressAll`.
 pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
     outcomes
         .iter()
@@ -170,6 +181,51 @@ pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome>
             outcome
         })
         .collect()
+}
+
+/// Drop agent outcomes from target sync under `EmitSelective`.
+///
+/// Native agent surfaces are owned by reconcile + selective compile, not target
+/// sync. Skipped outcomes are unsafe here because target sync may copy canonical
+/// agents when the destination is missing.
+pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
+    outcomes
+        .iter()
+        .filter(|outcome| outcome.item_id.kind != crate::lock::ItemKind::Agent)
+        .cloned()
+        .collect()
+}
+
+/// Lock-recorded native agent paths to keep during selective target-sync orphan cleanup.
+///
+/// Reconcile removes stale natives after target sync; this only prevents target
+/// sync from deleting still-managed native outputs before selective compile runs.
+pub fn selective_native_orphan_preserve_paths(
+    old_lock: &crate::lock::LockFile,
+    spec: &agent_copy::AgentCopySpec,
+) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut preserved: HashMap<String, HashSet<String>> = HashMap::new();
+    for harness in &spec.harnesses {
+        let target = harness.target_dir();
+        for dest_path in old_lock.output_dest_paths_for_target(target) {
+            if is_native_agent_dest_path(&dest_path) {
+                preserved
+                    .entry(target.to_string())
+                    .or_default()
+                    .insert(dest_path.to_string());
+            }
+        }
+    }
+    preserved
+}
+
+fn is_native_agent_dest_path(dest_rel: &str) -> bool {
+    let Some(name) = dest_rel.strip_prefix("agents/") else {
+        return false;
+    };
+    name.ends_with(".md") || name.ends_with(".toml")
 }
 
 /// Inputs for native harness agent reconcile (removals outside target sync).
@@ -798,6 +854,7 @@ pub(crate) struct NativeAgentLinkMaterializeCtx<'a> {
     pub effective: &'a crate::config::EffectiveConfig,
     pub graph: &'a crate::resolve::ResolvedGraph,
     pub old_lock: &'a crate::lock::LockFile,
+    pub target_outcomes: &'a [crate::target_sync::TargetSyncOutcome],
     pub force: bool,
 }
 
@@ -848,12 +905,14 @@ pub(crate) fn materialize_native_agents_after_link(
         dry_run: false,
     };
     let removed_native_outputs = reconcile_native_agent_surfaces(&reconcile_ctx, diag);
+    let ownership_lock =
+        crate::lock::ownership_lock_after_target_sync(input.old_lock, input.target_outcomes);
     let compile_ctx = NativeAgentCompileCtx {
         project_root: &input.mars_ctx.project_root,
         mars_dir: &mars_dir,
         model_aliases: &model_aliases,
         cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
-        old_lock: input.old_lock,
+        old_lock: &ownership_lock,
         options: NativeAgentSurfaceCompileOptions {
             force: input.force,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
@@ -911,6 +970,42 @@ mod skill_surface_tests {
         assert_eq!(
             agent_surface_policy(Some(&AgentEmission::Never), None, false),
             AgentSurfacePolicy::SuppressAll
+        );
+    }
+
+    #[test]
+    fn omit_agent_outcomes_drops_agents_only() {
+        let outcomes = vec![
+            agent_outcome("coder", ActionTaken::Installed),
+            ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Skill,
+                    name: ItemName::from("plan"),
+                },
+                dest_path: DestPath::from("skills/plan"),
+                action: ActionTaken::Installed,
+                source_name: "test-source".into(),
+                source_checksum: None,
+                installed_checksum: None,
+            },
+        ];
+        let filtered = omit_agent_outcomes(&outcomes);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].item_id.kind, ItemKind::Skill);
+    }
+
+    #[test]
+    fn selective_orphan_preserve_paths_include_native_lock_records() {
+        let spec = agent_copy::AgentCopySpec {
+            harnesses: vec![HarnessKind::Claude],
+            include_fanout: false,
+        };
+        let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
+        let preserved = selective_native_orphan_preserve_paths(&lock, &spec);
+        assert!(
+            preserved
+                .get(".claude")
+                .is_some_and(|paths| paths.contains("agents/coder.md"))
         );
     }
 

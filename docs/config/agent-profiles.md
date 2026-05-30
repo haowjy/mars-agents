@@ -274,6 +274,24 @@ skills: [dev-principles, shared-workspace]
 
 ---
 
+### `subagents`
+
+| | |
+|---|---|
+| Type | string[] |
+| Required | no |
+| Default | empty |
+
+The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and uses it during prompt assembly to filter the spawnable-agent **inventory** injected into the system prompt — only listed agents are advertised as spawn options. Meridian reads the same list at spawn time to scope the agent's spawnable roster.
+
+Like `model-policies` and `fanout`, `subagents` is Meridian-oriented metadata — preserved in `.mars/` for runtime consumers, with no harness-native field equivalent.
+
+```yaml
+subagents: [explorer, reviewer, coder]
+```
+
+---
+
 ### `tools`
 
 | | |

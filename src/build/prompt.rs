@@ -371,7 +371,7 @@ fn compose_system_instruction(
                 }
             }
         }
-        // Remaining (reference and unknown types)
+        // Remaining types: each gets its own heading, no description.
         let other_skills: Vec<_> = available_skills
             .iter()
             .filter(|s| {
@@ -382,9 +382,25 @@ fn compose_system_instruction(
             })
             .collect();
         if !other_skills.is_empty() {
-            avail_block.push('\n');
-            for skill in other_skills {
-                avail_block.push_str(&format!("\n- {}", skill.name));
+            let mut seen_types: Vec<&str> = Vec::new();
+            for s in &other_skills {
+                if !seen_types.contains(&s.skill_type.as_str()) {
+                    seen_types.push(&s.skill_type);
+                }
+            }
+            for type_key in &seen_types {
+                let group: Vec<_> = other_skills
+                    .iter()
+                    .filter(|s| s.skill_type == *type_key)
+                    .collect();
+                let mut capitalized = type_key.to_string();
+                if let Some(first) = capitalized.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                avail_block.push_str(&format!("\n\n## {capitalized}"));
+                for skill in group {
+                    avail_block.push_str(&format!("\n- {}", skill.name));
+                }
             }
         }
         blocks.push(avail_block);

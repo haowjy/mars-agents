@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::build::bundle::SupplementalDoc;
+use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};
 use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::error::{ConfigError, MarsError};
-use crate::frontmatter::Frontmatter;
+use crate::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
 
@@ -14,7 +14,8 @@ pub struct PromptCompilation {
     pub system_instruction: String,
     pub supplemental_documents: Vec<SupplementalDoc>,
     pub inventory_prompt: String,
-    pub loaded_skills: Vec<String>,
+    pub loaded_skills: Vec<LoadedSkill>,
+    pub available_skills: Vec<AvailableSkill>,
     pub missing_skills: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -27,7 +28,12 @@ struct LoadedSkillDocument {
 enum SkillLoadOutcome {
     Loaded(SupplementalDoc),
     Missing,
-    SkippedModelInvocableFalse,
+}
+
+#[derive(Debug, Clone)]
+enum AvailableSkillOutcome {
+    Available(AvailableSkill),
+    Missing,
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +49,7 @@ struct ParsedAgentInventory {
 pub fn compile_prompt_surface(
     mars_dir: &Path,
     agent_body: &str,
-    profile_skills: &[String],
+    profile_skills: &SkillsSpec,
     extra_skills: &[String],
     harness_id: &str,
     selected_model_token: &str,
@@ -52,13 +58,17 @@ pub fn compile_prompt_surface(
 ) -> Result<PromptCompilation, MarsError> {
     let _ = (selected_model_token, canonical_model_id);
 
-    let requested_skills = requested_skill_order(profile_skills, extra_skills);
+    let requested_load_skills = requested_skill_order(&profile_skills.load, extra_skills);
+    let requested_available_skills = requested_available_skill_order(
+        &profile_skills.available,
+        requested_load_skills.iter().map(String::as_str),
+    );
 
     let mut loaded_documents = Vec::new();
     let mut missing_skills = Vec::new();
     let mut warnings = Vec::new();
 
-    for (requested_index, skill) in requested_skills.iter().enumerate() {
+    for (requested_index, skill) in requested_load_skills.iter().enumerate() {
         match load_skill_document(mars_dir, skill, harness_id) {
             Ok(SkillLoadOutcome::Loaded(document)) => {
                 loaded_documents.push(LoadedSkillDocument {
@@ -67,7 +77,7 @@ pub fn compile_prompt_surface(
                 });
             }
             Ok(SkillLoadOutcome::Missing) => missing_skills.push(skill.clone()),
-            Ok(SkillLoadOutcome::SkippedModelInvocableFalse) => {}
+
             Err(err) => {
                 warnings.push(err);
                 missing_skills.push(skill.clone());
@@ -94,8 +104,25 @@ pub fn compile_prompt_surface(
 
     let loaded_skills = loaded_documents
         .iter()
-        .map(|loaded| loaded.document.name.clone())
+        .map(|loaded| LoadedSkill {
+            name: loaded.document.name.clone(),
+            skill_type: loaded.document.skill_type.clone(),
+            content: loaded.document.content.clone(),
+        })
         .collect::<Vec<_>>();
+
+    let mut available_skills = Vec::new();
+    for skill in &requested_available_skills {
+        match resolve_available_skill(mars_dir, skill, harness_id) {
+            Ok(AvailableSkillOutcome::Available(skill)) => available_skills.push(skill),
+            Ok(AvailableSkillOutcome::Missing) => missing_skills.push(skill.clone()),
+
+            Err(err) => {
+                warnings.push(err);
+                missing_skills.push(skill.clone());
+            }
+        }
+    }
 
     let inventory_prompt = build_inventory_prompt(mars_dir, subagents_filter, &mut warnings)?;
     let system_instruction = compose_system_instruction(
@@ -110,6 +137,7 @@ pub fn compile_prompt_surface(
         supplemental_documents,
         inventory_prompt,
         loaded_skills,
+        available_skills,
         missing_skills,
         warnings,
     })
@@ -129,6 +157,29 @@ fn requested_skill_order(profile_skills: &[String], extra_skills: &[String]) -> 
         }
     }
 
+    ordered
+}
+
+fn requested_available_skill_order<'a>(
+    available_skills: &[String],
+    loaded_skills: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut blocked = loaded_skills
+        .map(|name| name.trim().to_string())
+        .collect::<HashSet<_>>();
+    blocked.remove("");
+
+    let mut seen = HashSet::new();
+    let mut ordered = Vec::new();
+    for name in available_skills {
+        let normalized = name.trim();
+        if normalized.is_empty() || blocked.contains(normalized) {
+            continue;
+        }
+        if seen.insert(normalized.to_string()) {
+            ordered.push(normalized.to_string());
+        }
+    }
     ordered
 }
 
@@ -152,10 +203,9 @@ fn load_skill_document(
         return Ok(SkillLoadOutcome::Missing);
     }
 
-    let (base_profile, base_frontmatter) = parse_skill_file(skill_name, &base_skill_path)?;
-    if !base_profile.model_invocable {
-        return Ok(SkillLoadOutcome::SkippedModelInvocableFalse);
-    }
+    // model-invocable gates global discovery, not explicit profile references.
+    // If the agent profile lists a skill, it loads regardless.
+    let (_base_profile, base_frontmatter) = parse_skill_file(skill_name, &base_skill_path)?;
 
     let selected_skill_path =
         harness_skill_variant_path(&skill_dir, harness_id).unwrap_or(base_skill_path);
@@ -172,7 +222,40 @@ fn load_skill_document(
         name: skill_name.to_string(),
         content,
         skill_type,
-        detail: base_profile.detail.clone().unwrap_or_default(),
+    }))
+}
+
+fn resolve_available_skill(
+    mars_dir: &Path,
+    skill_name: &str,
+    harness_id: &str,
+) -> Result<AvailableSkillOutcome, String> {
+    let skill_dir = mars_dir.join("skills").join(skill_name);
+    let base_skill_path = skill_dir.join("SKILL.md");
+    if !base_skill_path.is_file() {
+        return Ok(AvailableSkillOutcome::Missing);
+    }
+
+    // model-invocable gates global discovery, not explicit profile references.
+    let (base_profile, base_frontmatter) = parse_skill_file(skill_name, &base_skill_path)?;
+
+    let selected_skill_path =
+        harness_skill_variant_path(&skill_dir, harness_id).unwrap_or(base_skill_path);
+    let (selected_profile, selected_frontmatter) =
+        parse_skill_file(skill_name, &selected_skill_path)?;
+
+    let skill_type = skill_type_from_frontmatter(&selected_frontmatter)
+        .or_else(|| skill_type_from_frontmatter(&base_frontmatter))
+        .unwrap_or_else(|| "reference".to_string());
+    let description = selected_profile
+        .description
+        .or(base_profile.description)
+        .unwrap_or_default();
+
+    Ok(AvailableSkillOutcome::Available(AvailableSkill {
+        name: skill_name.to_string(),
+        skill_type,
+        description,
     }))
 }
 

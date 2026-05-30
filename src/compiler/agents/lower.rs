@@ -83,8 +83,8 @@ impl<'a> Effective<'a> {
             .or(self.profile.sandbox.as_ref())
     }
 
-    fn skills(&self) -> &[String] {
-        self.profile.effective_skills(self.harness)
+    fn skills(&self) -> Vec<String> {
+        self.profile.effective_skills(self.harness).all()
     }
 
     fn tools(&self) -> &[String] {

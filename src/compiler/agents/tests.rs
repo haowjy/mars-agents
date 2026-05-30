@@ -232,7 +232,8 @@ fn parses_skills_tools_disallowed_mcp() {
     let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write]\ndisallowed-tools: [Agent]\nmcp-tools: [server]\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    assert_eq!(p.skills, vec!["review", "dev-principles"]);
+    assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
+    assert!(p.skills.available.is_empty());
     assert_eq!(p.tools, vec!["Bash", "Write"]);
     assert!(p.tools_denied.is_empty());
     assert_eq!(p.disallowed_tools, vec!["Agent"]);
@@ -274,13 +275,26 @@ fn effective_skills_use_harness_override_replacement() {
     assert!(diags.is_empty());
 
     assert_eq!(
-        p.effective_skills(&HarnessKind::Codex),
-        &vec!["codex-only".to_string()]
+        p.effective_skills(&HarnessKind::Codex).load,
+        vec!["codex-only".to_string()]
     );
     assert_eq!(
-        p.effective_skills(&HarnessKind::Claude),
-        &vec!["base".to_string()]
+        p.effective_skills(&HarnessKind::Claude).load,
+        vec!["base".to_string()]
     );
+}
+
+#[test]
+fn parses_structured_skills_and_override() {
+    let content = "---\nskills:\n  load: [dev-principles]\n  available: [planning, spawn]\nharness-overrides:\n  codex:\n    skills:\n      load: [codex-principles]\n      available: [codex-planning]\n---\n";
+    let (p, diags) = parse(content);
+    assert!(diags.is_empty());
+
+    assert_eq!(p.skills.load, vec!["dev-principles"]);
+    assert_eq!(p.skills.available, vec!["planning", "spawn"]);
+    let codex = p.effective_skills(&HarnessKind::Codex);
+    assert_eq!(codex.load, vec!["codex-principles"]);
+    assert_eq!(codex.available, vec!["codex-planning"]);
 }
 
 #[test]

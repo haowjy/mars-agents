@@ -106,6 +106,7 @@ mod tests {
     use super::*;
 
     use crate::compiler::agents::{AgentProfile, HarnessOverrides};
+    use crate::frontmatter::SkillsSpec;
 
     fn empty_profile() -> AgentProfile {
         AgentProfile {
@@ -120,7 +121,7 @@ mod tests {
             effort: None,
             autocompact: None,
             autocompact_pct: None,
-            skills: Vec::new(),
+            skills: SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Vec::new(),
             tools_denied: Vec::new(),

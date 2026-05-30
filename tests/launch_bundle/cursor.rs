@@ -156,9 +156,10 @@ harness = "cursor""#;
         Some("experimental")
     );
     assert_eq!(
-        bundle["skills_metadata"]["loaded"],
-        serde_json::json!(["cursor_skill"])
+        bundle["skills"]["loaded"][0]["name"].as_str(),
+        Some("cursor_skill")
     );
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
     assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
     assert_eq!(
         bundle["tools"]["disallowed"],

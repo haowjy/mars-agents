@@ -9,6 +9,31 @@ pub struct Frontmatter {
     has_frontmatter: bool,
 }
 
+/// Structured agent skill references.
+///
+/// A flat `skills: [a, b]` list is represented as all `load` entries for
+/// backward compatibility. A structured `skills: { load: [...], available: [...] }`
+/// keeps the two launch-bundle channels separate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SkillsSpec {
+    pub load: Vec<String>,
+    pub available: Vec<String>,
+}
+
+impl SkillsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.load.is_empty() && self.available.is_empty()
+    }
+
+    pub fn all(&self) -> Vec<String> {
+        self.load
+            .iter()
+            .chain(self.available.iter())
+            .cloned()
+            .collect()
+    }
+}
+
 /// Errors from frontmatter parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum FrontmatterError {
@@ -80,18 +105,30 @@ impl Frontmatter {
         })
     }
 
-    /// Read the `skills` list.
+    /// Read all referenced skills as a flat list (`load` followed by `available`).
     pub fn skills(&self) -> Vec<String> {
-        self.get("skills")
-            .and_then(Value::as_sequence)
-            .map(|skills| {
-                skills
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.skills_structured().all()
+    }
+
+    /// Read `skills` in structured load/available form.
+    pub fn skills_structured(&self) -> SkillsSpec {
+        match self.get("skills") {
+            Some(Value::Mapping(mapping)) => SkillsSpec {
+                load: mapping
+                    .get(yaml_key("load"))
+                    .map(yaml_str_list)
+                    .unwrap_or_default(),
+                available: mapping
+                    .get(yaml_key("available"))
+                    .map(yaml_str_list)
+                    .unwrap_or_default(),
+            },
+            Some(value) => SkillsSpec {
+                load: yaml_str_list(value),
+                available: Vec::new(),
+            },
+            None => SkillsSpec::default(),
+        }
     }
 
     /// Replace the `skills` list.
@@ -156,17 +193,9 @@ pub fn rewrite_skills(
     renames: &IndexMap<String, String>,
 ) -> IndexSet<String> {
     let mut renamed = IndexSet::new();
-    let mut skills = fm.skills();
-
-    for skill in &mut skills {
-        if let Some(new_name) = renames.get(skill.as_str()) {
-            renamed.insert(skill.clone());
-            *skill = new_name.clone();
-        }
-    }
-
-    if !renamed.is_empty() {
-        fm.set_skills(skills);
+    let key = yaml_key("skills");
+    if let Some(value) = fm.yaml.get_mut(&key) {
+        rewrite_skill_value(value, renames, &mut renamed);
     }
 
     renamed
@@ -183,6 +212,52 @@ pub fn rewrite_content_skills(
         Ok(None)
     } else {
         Ok(Some(fm.render()))
+    }
+}
+
+fn yaml_str_list(val: &Value) -> Vec<String> {
+    match val {
+        Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        Value::String(s) => vec![s.clone()],
+        _ => vec![],
+    }
+}
+
+fn rewrite_skill_value(
+    value: &mut Value,
+    renames: &IndexMap<String, String>,
+    renamed: &mut IndexSet<String>,
+) {
+    match value {
+        Value::Sequence(seq) => {
+            for item in seq {
+                let Some(skill) = item.as_str() else {
+                    continue;
+                };
+                if let Some(new_name) = renames.get(skill) {
+                    renamed.insert(skill.to_string());
+                    *item = Value::String(new_name.clone());
+                }
+            }
+        }
+        Value::String(skill) => {
+            if let Some(new_name) = renames.get(skill.as_str()) {
+                renamed.insert(skill.clone());
+                *skill = new_name.clone();
+            }
+        }
+        Value::Mapping(mapping) => {
+            for field in ["load", "available"] {
+                if let Some(child) = mapping.get_mut(yaml_key(field)) {
+                    rewrite_skill_value(child, renames, renamed);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -255,6 +330,31 @@ mod tests {
         let input = "---\nskills: [plan, review]\n---\nbody";
         let fm = Frontmatter::parse(input).unwrap();
         assert_eq!(fm.skills(), vec!["plan", "review"]);
+        assert_eq!(fm.skills_structured().load, vec!["plan", "review"]);
+        assert!(fm.skills_structured().available.is_empty());
+    }
+
+    #[test]
+    fn parse_structured_skills() {
+        let input = "---\nskills:\n  load: [principles]\n  available:\n    - planning\n    - spawn\n---\nbody";
+        let fm = Frontmatter::parse(input).unwrap();
+        assert_eq!(fm.skills(), vec!["principles", "planning", "spawn"]);
+        assert_eq!(fm.skills_structured().load, vec!["principles"]);
+        assert_eq!(fm.skills_structured().available, vec!["planning", "spawn"]);
+    }
+
+    #[test]
+    fn rewrite_structured_skills_preserves_split() {
+        let input = "---\nskills:\n  load: [plan]\n  available: [review]\n---\nbody\n";
+        let renames = IndexMap::from([
+            ("plan".to_string(), "plan__org".to_string()),
+            ("review".to_string(), "review__org".to_string()),
+        ]);
+
+        let rewritten = rewrite_content_skills(input, &renames).unwrap().unwrap();
+        let fm = Frontmatter::parse(&rewritten).unwrap();
+        assert_eq!(fm.skills_structured().load, vec!["plan__org"]);
+        assert_eq!(fm.skills_structured().available, vec!["review__org"]);
     }
 
     #[test]

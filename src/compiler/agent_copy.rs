@@ -136,7 +136,7 @@ fn policy_qualifies(
                 let Some(model_id) = alias.pinned_model_id() else {
                     continue;
                 };
-                if crate::models::glob_match(&policy.match_value, &model_id)
+                if crate::models::glob_match(&policy.match_value, model_id)
                     && alias_resolves_to_harness(alias, target_harness)
                 {
                     return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
@@ -214,7 +214,7 @@ pub(crate) fn model_override_for_emission(
     cursor_probe_slugs: &[String],
 ) -> Option<String> {
     match emission {
-        QualifiedEmission::DefaultModel => super::native_model_override_for_harness(
+        QualifiedEmission::DefaultModel => super::native_agents::native_model_override_for_harness(
             harness,
             profile,
             model_aliases,
@@ -223,7 +223,7 @@ pub(crate) fn model_override_for_emission(
         QualifiedEmission::PolicyModel(token) => {
             let mut profile_for_cursor = profile.clone();
             profile_for_cursor.model = Some(token.clone());
-            super::native_model_override_for_harness(
+            super::native_agents::native_model_override_for_harness(
                 harness,
                 &profile_for_cursor,
                 model_aliases,

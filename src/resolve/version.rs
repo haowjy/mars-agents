@@ -354,6 +354,7 @@ fn resolve_untagged_source(
 }
 
 /// Resolve a git source: list versions, intersect constraints, select version.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_git_source(
     name: &SourceName,
     url: &SourceUrl,

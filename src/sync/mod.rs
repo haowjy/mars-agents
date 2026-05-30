@@ -126,7 +126,7 @@ pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
-    pub compiled_native_outputs: Vec<(String, String, ContentHash)>,
+    pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
 }
 

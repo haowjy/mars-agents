@@ -798,6 +798,16 @@ pub fn apply_target_sync_outputs(
     }
 }
 
+/// Native harness output recorded in the lock for a canonical `.mars` agent item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledNativeOutput {
+    /// Canonical `.mars` dest path for the owning agent (e.g. `agents/coder.md`).
+    pub owner_canonical_dest_path: String,
+    pub target_root: String,
+    pub dest_path: String,
+    pub installed_checksum: ContentHash,
+}
+
 /// Drop native harness output records removed by native agent reconcile.
 pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
     for (target_root, dest_path) in records {
@@ -806,12 +816,15 @@ pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, Str
 }
 
 /// Record native harness outputs produced by dual-surface compile.
-pub fn apply_compiled_native_outputs(
-    lock: &mut LockFile,
-    records: &[(String, String, ContentHash)],
-) {
-    for (target_root, dest_path, installed_checksum) in records {
-        upsert_target_output(lock, target_root, dest_path, installed_checksum);
+pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNativeOutput]) {
+    for record in records {
+        upsert_native_output_on_owner(
+            lock,
+            &record.owner_canonical_dest_path,
+            &record.target_root,
+            &record.dest_path,
+            &record.installed_checksum,
+        );
     }
 }
 
@@ -840,6 +853,48 @@ fn upsert_target_output(
         item.outputs.push(OutputRecord {
             target_root: target_root.to_string(),
             dest_path: dest,
+            installed_checksum: installed_checksum.clone(),
+        });
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        return;
+    }
+}
+
+fn upsert_native_output_on_owner(
+    lock: &mut LockFile,
+    owner_canonical_dest_path: &str,
+    target_root: &str,
+    native_dest_path: &str,
+    installed_checksum: &ContentHash,
+) {
+    let native_dest = DestPath::from(native_dest_path);
+    for item in lock.items.values_mut() {
+        let owns_canonical = item.outputs.iter().any(|output| {
+            output.target_root == CANONICAL_TARGET_ROOT
+                && crate::target::dest_paths_equivalent(
+                    output.dest_path.as_str(),
+                    owner_canonical_dest_path,
+                )
+        });
+        if !owns_canonical {
+            continue;
+        }
+
+        if let Some(output) = item.outputs.iter_mut().find(|output| {
+            output.target_root == target_root
+                && crate::target::dest_paths_equivalent(output.dest_path.as_str(), native_dest_path)
+        }) {
+            output.installed_checksum = installed_checksum.clone();
+            return;
+        }
+
+        item.outputs.push(OutputRecord {
+            target_root: target_root.to_string(),
+            dest_path: native_dest,
             installed_checksum: installed_checksum.clone(),
         });
         item.outputs.sort_by(|a, b| {
@@ -1400,6 +1455,51 @@ installed_checksum = "sha256:222"
             });
         assert!(lock.contains_output(".cursor", "agents/coder.md"));
         assert!(!lock.contains_output(".cursor", "agents/missing.md"));
+    }
+
+    #[test]
+    fn apply_compiled_native_outputs_upserts_codex_native_by_canonical_owner() {
+        let mut lock = sample_lock();
+        apply_compiled_native_outputs(
+            &mut lock,
+            &[CompiledNativeOutput {
+                owner_canonical_dest_path: "agents/coder.md".to_string(),
+                target_root: ".codex".to_string(),
+                dest_path: "agents/coder.toml".to_string(),
+                installed_checksum: "sha256:codex".into(),
+            }],
+        );
+        assert!(lock.contains_output(".codex", "agents/coder.toml"));
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+    }
+
+    #[test]
+    fn apply_compiled_native_outputs_upserts_when_frontmatter_name_differs_from_filename() {
+        let mut lock = sample_lock();
+        lock.items.insert(
+            "agent/alias-name".to_string(),
+            LockedItemV2 {
+                source: "base".into(),
+                kind: ItemKind::Agent,
+                version: Some("v1.0.0".into()),
+                source_checksum: "sha256:alias-src".into(),
+                outputs: vec![OutputRecord {
+                    target_root: ".mars".to_string(),
+                    dest_path: "agents/on-disk-stem.md".into(),
+                    installed_checksum: "sha256:alias-mars".into(),
+                }],
+            },
+        );
+        apply_compiled_native_outputs(
+            &mut lock,
+            &[CompiledNativeOutput {
+                owner_canonical_dest_path: "agents/on-disk-stem.md".to_string(),
+                target_root: ".claude".to_string(),
+                dest_path: "agents/alias-name.md".to_string(),
+                installed_checksum: "sha256:claude-native".into(),
+            }],
+        );
+        assert!(lock.contains_output(".claude", "agents/alias-name.md"));
     }
 
     #[test]

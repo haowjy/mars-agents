@@ -67,19 +67,19 @@ fn link_target(
     let local = crate::config::load_local(&ctx.project_root)?;
     let (effective, _) =
         crate::config::merge_with_root(config.clone(), local.clone(), &ctx.project_root)?;
-    let mut targets = effective.settings.managed_targets();
-    if !targets.iter().any(|target| target == target_name) {
-        targets.push(target_name.to_string());
-    }
+    let mut runtime_targets = effective.settings.managed_targets();
+    let mut persisted_targets = config.settings.managed_targets();
+    ensure_target_list_contains(&mut runtime_targets, target_name);
+    ensure_target_list_contains(&mut persisted_targets, target_name);
 
-    let settings_changed = config.settings.targets.as_ref() != Some(&targets);
+    let settings_changed = config.settings.targets.as_ref() != Some(&persisted_targets);
 
     let lock = crate::lock::load(&ctx.project_root)?;
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
         effective.settings.agent_copy.as_ref(),
-        &targets,
+        &runtime_targets,
         &mut diag,
     );
     let agent_surface_policy = crate::compiler::agent_surface_policy(
@@ -87,6 +87,21 @@ fn link_target(
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
+
+    let cache = crate::source::GlobalCache::new()?;
+    let source_provider = crate::sync::provider::RealSourceProvider {
+        cache: &cache,
+        project_root: &ctx.project_root,
+    };
+    let resolve_options = crate::resolve::ResolveOptions::sync();
+    let graph = crate::resolve::resolve(
+        &effective,
+        &source_provider,
+        Some(&lock),
+        &resolve_options,
+        &mut diag,
+    )?;
+
     let suppressed_outcomes;
     let sync_outcomes = if matches!(
         agent_surface_policy,
@@ -145,24 +160,11 @@ fn link_target(
         });
     }
 
-    let cache = crate::source::GlobalCache::new()?;
-    let source_provider = crate::sync::provider::RealSourceProvider {
-        cache: &cache,
-        project_root: &ctx.project_root,
-    };
-    let resolve_options = crate::resolve::ResolveOptions::sync();
-    let graph = crate::resolve::resolve(
-        &effective,
-        &source_provider,
-        Some(&lock),
-        &resolve_options,
-        &mut diag,
-    )?;
     let (compiled_native_outputs, removed_native_outputs) =
         crate::compiler::materialize_native_agents_after_link(
             &crate::compiler::NativeAgentLinkMaterializeCtx {
                 mars_ctx: ctx,
-                managed_targets: &targets,
+                managed_targets: &runtime_targets,
                 config: &config,
                 local: &local,
                 effective: &effective,
@@ -172,6 +174,7 @@ fn link_target(
             },
             &mut diag,
         );
+    diagnostics.extend(diag.drain());
 
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
@@ -181,7 +184,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
-        config.settings.targets = Some(targets);
+        config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;
     }
 
@@ -205,6 +208,12 @@ fn link_target(
     }
 
     Ok(0)
+}
+
+fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {
+    if !targets.iter().any(|target| target == target_name) {
+        targets.push(target_name.to_string());
+    }
 }
 
 fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> {

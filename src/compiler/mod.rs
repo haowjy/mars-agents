@@ -180,6 +180,8 @@ struct NativeAgentReconcileCtx<'a> {
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
 pub(crate) type RemovedNativeOutput = (String, String);
 
+pub use crate::lock::CompiledNativeOutput;
+
 /// Reconcile native harness agent artifacts written outside target sync.
 ///
 /// Under `SuppressAll`, removes lowered artifacts for all harness-bound agents
@@ -238,6 +240,7 @@ fn reconcile_native_agent_surfaces(
 
 struct MarsCanonicalAgent {
     agent_name: String,
+    canonical_dest_path: String,
     profile: crate::compiler::agents::AgentProfile,
     fm: crate::frontmatter::Frontmatter,
 }
@@ -280,11 +283,17 @@ fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) -> Vec<Mars
             }
         };
 
-        let agent_name = profile.name.as_deref().unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-        });
+        let canonical_file_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let canonical_dest_path = format!("agents/{canonical_file_stem}.md");
+        let agent_name = profile
+            .name
+            .as_deref()
+            .unwrap_or(&canonical_file_stem)
+            .to_string();
         for d in &agent_diags {
             if d.is_error() {
                 diag.warn(
@@ -300,7 +309,8 @@ fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) -> Vec<Mars
         }
 
         agents.push(MarsCanonicalAgent {
-            agent_name: agent_name.to_string(),
+            agent_name,
+            canonical_dest_path,
             profile,
             fm,
         });
@@ -449,6 +459,7 @@ struct NativeAgentEmit<'a> {
     fm: &'a crate::frontmatter::Frontmatter,
     body: &'a str,
     agent_name: &'a str,
+    canonical_dest_path: &'a str,
     model_override: Option<&'a str>,
 }
 
@@ -463,7 +474,7 @@ fn selective_surface_compile(
     ctx: &NativeAgentCompileCtx<'_>,
     spec: &agent_copy::AgentCopySpec,
     diag: &mut DiagnosticCollector,
-) -> Vec<(String, String, crate::types::ContentHash)> {
+) -> Vec<CompiledNativeOutput> {
     let emit_ctx = NativeAgentEmitCtx {
         project_root: ctx.project_root,
         old_lock: ctx.old_lock,
@@ -495,6 +506,7 @@ fn selective_surface_compile(
                     fm: &agent.fm,
                     body: agent.fm.body(),
                     agent_name: &agent.agent_name,
+                    canonical_dest_path: &agent.canonical_dest_path,
                     model_override: model_override.as_deref(),
                 },
                 &emit_ctx,
@@ -521,7 +533,7 @@ fn selective_surface_compile(
 fn dual_surface_compile(
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
-) -> Vec<(String, String, crate::types::ContentHash)> {
+) -> Vec<CompiledNativeOutput> {
     let emit_ctx = NativeAgentEmitCtx {
         project_root: ctx.project_root,
         old_lock: ctx.old_lock,
@@ -548,6 +560,7 @@ fn dual_surface_compile(
                 fm: &agent.fm,
                 body: agent.fm.body(),
                 agent_name: &agent.agent_name,
+                canonical_dest_path: &agent.canonical_dest_path,
                 model_override: model_override.as_deref(),
             },
             &emit_ctx,
@@ -562,7 +575,7 @@ fn emit_lowered_native_agent(
     agent: &NativeAgentEmit<'_>,
     ctx: &NativeAgentEmitCtx<'_>,
     diag: &mut DiagnosticCollector,
-    records: &mut Vec<(String, String, crate::types::ContentHash)>,
+    records: &mut Vec<CompiledNativeOutput>,
 ) {
     use crate::compiler::agents::lower::lower_for_harness;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
@@ -651,7 +664,12 @@ fn emit_lowered_native_agent(
         );
     } else {
         let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
-        records.push((target_dir.to_string(), dest_rel, checksum));
+        records.push(CompiledNativeOutput {
+            owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
+            target_root: target_dir.to_string(),
+            dest_path: dest_rel,
+            installed_checksum: checksum,
+        });
     }
 }
 
@@ -779,10 +797,7 @@ pub(crate) struct NativeAgentLinkMaterializeCtx<'a> {
 pub(crate) fn materialize_native_agents_after_link(
     input: &NativeAgentLinkMaterializeCtx<'_>,
     diag: &mut DiagnosticCollector,
-) -> (
-    Vec<(String, String, crate::types::ContentHash)>,
-    Vec<RemovedNativeOutput>,
-) {
+) -> (Vec<CompiledNativeOutput>, Vec<RemovedNativeOutput>) {
     use crate::compiler::agents::HarnessKind;
 
     if !input

@@ -38,6 +38,11 @@ fn lock_has_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -
     lock.contains_output(".claude", &format!("agents/{agent}.md"))
 }
 
+fn lock_has_codex_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
+    let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
+    lock.contains_output(".codex", &format!("agents/{agent}.toml"))
+}
+
 fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -> String {
     fs::read_to_string(
         project
@@ -358,5 +363,92 @@ path = "{}"
     assert!(
         lock_has_native_agent(&project, "coder"),
         "link should record native agent output in mars.lock"
+    );
+}
+
+#[test]
+fn agent_copy_link_lock_tracks_codex_native_output() {
+    const CODEX_AGENT: &str = r#"---
+name: explorer
+description: Codex explorer
+harness: codex
+model: gpt-5.3-codex
+---
+# Explorer
+"#;
+
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("explorer", CODEX_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+
+[settings.agent_copy]
+harnesses = ["codex"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+
+    mars()
+        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert!(
+        project.child(".codex/agents/explorer.toml").exists(),
+        "mars link .codex should materialize codex native agent"
+    );
+    assert!(
+        lock_has_codex_native_agent(&project, "explorer"),
+        "link should record codex native output against canonical .mars owner"
+    );
+}
+
+#[test]
+fn link_does_not_persist_local_only_target_overlays() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_with_settings(
+        &dir,
+        r#"
+[settings]
+targets = [".claude"]
+"#,
+        CLAUDE_HARNESS_AGENT,
+        None,
+    );
+    project
+        .child("mars.local.toml")
+        .write_str("[settings]\ntargets = [\".claude\", \".codex\"]\n")
+        .unwrap();
+
+    mars()
+        .args([
+            "link",
+            ".opencode",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mars_toml = fs::read_to_string(project.child("mars.toml").path()).unwrap();
+    assert!(
+        mars_toml.contains(".opencode"),
+        "shared mars.toml should include newly linked target"
+    );
+    assert!(
+        !mars_toml.contains(".codex"),
+        "shared mars.toml must not persist mars.local.toml-only targets"
     );
 }

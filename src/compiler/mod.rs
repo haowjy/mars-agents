@@ -73,37 +73,29 @@ pub fn compile(
     );
     let mars_dir = ctx.project_root.join(".mars");
     let model_aliases = merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
-    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
-    let removed_native_outputs = reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            policy: agent_surface_policy.clone(),
-            project_root: &ctx.project_root,
-            mars_dir: &mars_dir,
-            model_aliases: &model_aliases,
-            outcomes: &applied.applied.outcomes,
-            old_lock,
-            dry_run: request.options.dry_run,
-        },
-        diag,
-    );
-    let compile_ctx = NativeAgentCompileCtx {
+    let old_lock = applied.planned.targeted.resolved.loaded.old_lock.clone();
+    let outcomes = applied.applied.outcomes.clone();
+    let cursor_probe_slugs = cached_cursor_probe_slugs_for_native_agents();
+    let native_reconcile_ctx = NativeAgentReconcileCtx {
+        policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
         mars_dir: &mars_dir,
         model_aliases: &model_aliases,
-        cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
-        old_lock,
+        outcomes: &outcomes,
+        old_lock: &old_lock,
+        dry_run: request.options.dry_run,
+    };
+    let native_compile_ctx = NativeAgentCompileCtx {
+        project_root: &ctx.project_root,
+        mars_dir: &mars_dir,
+        model_aliases: &model_aliases,
+        cursor_probe_slugs: &cursor_probe_slugs,
+        old_lock: &old_lock,
         options: NativeAgentSurfaceCompileOptions {
             force: request.options.force,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: request.options.dry_run,
         },
-    };
-    let compiled_native_outputs = match agent_surface_policy {
-        AgentSurfacePolicy::EmitAll => dual_surface_compile(&compile_ctx, diag),
-        AgentSurfacePolicy::EmitSelective(ref spec) => {
-            selective_surface_compile(&compile_ctx, spec, diag)
-        }
-        AgentSurfacePolicy::SuppressAll => Vec::new(),
     };
 
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
@@ -114,10 +106,24 @@ pub fn compile(
         config_entries::compile_config_entries(ctx, &applied, request.options.dry_run, diag);
 
     // Phase 6: copy from canonical store to managed target directories.
-    let mut synced = sync_targets(ctx, applied, request, agent_surface_policy, diag);
+    // Native reconcile/compile run after target sync so selective mode's
+    // suppressed canonical agent outcomes cannot delete freshly emitted natives.
+    let mut synced = sync_targets(
+        ctx,
+        applied,
+        request,
+        native_reconcile_ctx.policy.clone(),
+        diag,
+    );
     synced.config_entries = config_entry_records;
-    synced.compiled_native_outputs = compiled_native_outputs;
-    synced.removed_native_outputs = removed_native_outputs;
+    synced.removed_native_outputs = reconcile_native_agent_surfaces(&native_reconcile_ctx, diag);
+    synced.compiled_native_outputs = match &native_reconcile_ctx.policy {
+        AgentSurfacePolicy::EmitAll => dual_surface_compile(&native_compile_ctx, diag),
+        AgentSurfacePolicy::EmitSelective(spec) => {
+            selective_surface_compile(&native_compile_ctx, spec, diag)
+        }
+        AgentSurfacePolicy::SuppressAll => Vec::new(),
+    };
 
     // Phase 7: write lock file, build report.
     finalize(ctx, synced, request, diag)
@@ -415,22 +421,24 @@ fn remove_native_agent_shapes_for_harness(
         if !old_lock.contains_output(target, &dest_rel) {
             continue;
         }
-        removed.push((target.to_string(), dest_rel.clone()));
         let native_path = project_root
             .join(target)
             .join("agents")
             .join(format!("{agent_name}.{extension}"));
-        if !native_path.exists() && native_path.symlink_metadata().is_err() {
+        let absent = !native_path.exists() && native_path.symlink_metadata().is_err();
+        if absent {
+            removed.push((target.to_string(), dest_rel));
             continue;
         }
         if dry_run {
             continue;
         }
-        if let Err(e) = crate::reconcile::fs_ops::safe_remove(&native_path) {
-            diag.warn(
+        match crate::reconcile::fs_ops::safe_remove(&native_path) {
+            Ok(()) => removed.push((target.to_string(), dest_rel)),
+            Err(e) => diag.warn(
                 "native-agent-remove",
                 format!("could not remove {}: {e}", native_path.display()),
-            );
+            ),
         }
     }
     removed
@@ -854,8 +862,8 @@ pub(crate) fn materialize_native_agents_after_link(
     };
     let compiled_native_outputs = match policy {
         AgentSurfacePolicy::EmitAll => dual_surface_compile(&compile_ctx, diag),
-        AgentSurfacePolicy::EmitSelective(ref spec) => {
-            selective_surface_compile(&compile_ctx, spec, diag)
+        AgentSurfacePolicy::EmitSelective(spec) => {
+            selective_surface_compile(&compile_ctx, &spec, diag)
         }
         AgentSurfacePolicy::SuppressAll => Vec::new(),
     };
@@ -1265,6 +1273,74 @@ mod skill_surface_tests {
         assert!(
             !dir.path().join(".claude/agents/coder.md").exists(),
             "openai-bound model should not qualify for claude selective reconcile"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reconcile_selective_keeps_lock_when_native_remove_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let mars_agents = dir.path().join(".mars").join("agents");
+        std::fs::create_dir_all(&mars_agents).unwrap();
+        std::fs::write(
+            mars_agents.join("coder.md"),
+            "---\nname: coder\nmodel: opus\n---\n# Coder\n",
+        )
+        .unwrap();
+
+        let claude_agents = dir.path().join(".claude").join("agents");
+        std::fs::create_dir_all(&claude_agents).unwrap();
+        let native_path = claude_agents.join("coder.md");
+        std::fs::write(&native_path, "# Native\n").unwrap();
+        std::fs::set_permissions(&native_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let spec = agent_copy::AgentCopySpec {
+            harnesses: vec![HarnessKind::Claude],
+            include_fanout: false,
+        };
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "opus".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-opus-4-6".to_string(),
+                    provider: Some("openai".to_string()),
+                },
+            },
+        );
+
+        let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
+        let mut diag = DiagnosticCollector::new();
+        let removed = reconcile_native_agent_surfaces(
+            &NativeAgentReconcileCtx {
+                policy: AgentSurfacePolicy::EmitSelective(spec),
+                project_root: dir.path(),
+                mars_dir: &dir.path().join(".mars"),
+                model_aliases: &aliases,
+                outcomes: &[],
+                old_lock: &lock,
+                dry_run: false,
+            },
+            &mut diag,
+        );
+
+        assert!(native_path.exists());
+        assert!(
+            !removed
+                .iter()
+                .any(|(target, path)| target == ".claude" && path == "agents/coder.md"),
+            "failed delete must not drop lock ownership for .claude/agents/coder.md"
+        );
+        assert!(
+            diag.drain().iter().any(|d| d.code == "native-agent-remove"),
+            "failed delete should warn"
         );
     }
 

@@ -189,6 +189,46 @@ path = "{}"
 }
 
 #[test]
+fn agent_copy_steady_state_survives_consecutive_syncs() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_with_settings(
+        &dir,
+        r#"
+[settings]
+targets = [".claude"]
+
+[settings.agent_copy]
+harnesses = ["claude"]
+"#,
+        CLAUDE_HARNESS_AGENT,
+        Some("1"),
+    );
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists()
+    );
+    assert!(lock_has_native_agent(&project, "coder"));
+
+    sync_project(&project, Some("1"));
+
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists(),
+        "second selective sync must not delete native agent emitted on first sync"
+    );
+    assert!(
+        lock_has_native_agent(&project, "coder"),
+        "second selective sync must keep native agent lock record"
+    );
+}
+
+#[test]
 fn agent_copy_stale_native_removed_when_config_cleared() {
     let dir = TempDir::new().unwrap();
     let project = setup_with_settings(

@@ -116,16 +116,66 @@ fn policy_qualifies(
         return None;
     }
 
-    let token = match policy.match_type {
-        ModelPolicyMatchType::Model | ModelPolicyMatchType::Alias => &policy.match_value,
-        ModelPolicyMatchType::ModelGlob => return None,
-    };
-
-    if model_resolves_to_harness(token, target_harness, model_aliases) {
-        return Some(QualifiedEmission::PolicyModel(policy.match_value.clone()));
+    match policy.match_type {
+        ModelPolicyMatchType::Alias => {
+            if model_resolves_to_harness(&policy.match_value, target_harness, model_aliases) {
+                return Some(QualifiedEmission::PolicyModel(policy.match_value.clone()));
+            }
+        }
+        ModelPolicyMatchType::Model => {
+            for (alias_name, alias) in model_aliases {
+                if pinned_model_id(alias).as_deref() == Some(policy.match_value.as_str())
+                    && alias_resolves_to_harness(alias, target_harness)
+                {
+                    return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
+                }
+            }
+        }
+        ModelPolicyMatchType::ModelGlob => {
+            for (alias_name, alias) in model_aliases {
+                let Some(model_id) = pinned_model_id(alias) else {
+                    continue;
+                };
+                if crate::models::glob_match(&policy.match_value, &model_id)
+                    && alias_resolves_to_harness(alias, target_harness)
+                {
+                    return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
+                }
+            }
+        }
     }
 
     None
+}
+
+fn pinned_model_id(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+            Some(model.clone())
+        }
+        ModelSpec::AutoResolve { .. } => None,
+    }
+}
+
+fn alias_resolves_to_harness(alias: &ModelAlias, target_harness: &HarnessKind) -> bool {
+    if let Some(ref harness_name) = alias.harness {
+        return HarnessKind::from_str(harness_name).as_ref() == Some(target_harness);
+    }
+
+    let provider = match &alias.spec {
+        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
+            provider.as_deref()
+        }
+        ModelSpec::AutoResolve { provider, .. } => provider.as_deref(),
+    };
+
+    if let Some(provider) = provider
+        && let Some(native) = registry::native_harness_for_provider(provider)
+    {
+        return HarnessKind::from_harness_id(native) == *target_harness;
+    }
+
+    false
 }
 
 fn policy_override_harness(policy: &ModelPolicyRule) -> Option<HarnessKind> {
@@ -298,6 +348,70 @@ mod tests {
         );
         let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
             .expect("policy should qualify");
+        assert!(matches!(
+            emission,
+            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
+        ));
+    }
+
+    #[test]
+    fn model_policy_qualifies_by_pinned_model_id() {
+        let mut profile = empty_profile();
+        profile.model_policies.push(ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Model,
+            match_value: "claude-sonnet-4-6".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        });
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "sonnet".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-sonnet-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                },
+            },
+        );
+        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
+            .expect("model policy should qualify");
+        assert!(matches!(
+            emission,
+            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
+        ));
+    }
+
+    #[test]
+    fn model_glob_policy_qualifies_by_pinned_model_id() {
+        let mut profile = empty_profile();
+        profile.model_policies.push(ModelPolicyRule {
+            match_type: ModelPolicyMatchType::ModelGlob,
+            match_value: "claude-sonnet-*".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        });
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "sonnet".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-sonnet-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                },
+            },
+        );
+        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
+            .expect("model-glob policy should qualify");
         assert!(matches!(
             emission,
             QualifiedEmission::PolicyModel(ref m) if m == "sonnet"

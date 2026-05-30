@@ -364,7 +364,7 @@ fn compose_system_instruction(
             })
             .collect();
         if !other_skills.is_empty() {
-            avail_block.push_str("\n");
+            avail_block.push('\n');
             for skill in other_skills {
                 avail_block.push_str(&format!("\n- {}", skill.name));
             }

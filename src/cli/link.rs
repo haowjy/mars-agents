@@ -63,8 +63,11 @@ fn link_target(
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let mut config = crate::config::load(&ctx.project_root)?;
-    let mut targets = config.settings.managed_targets();
+    let config = crate::config::load(&ctx.project_root)?;
+    let local = crate::config::load_local(&ctx.project_root)?;
+    let (effective, _) =
+        crate::config::merge_with_root(config.clone(), local.clone(), &ctx.project_root)?;
+    let mut targets = effective.settings.managed_targets();
     if !targets.iter().any(|target| target == target_name) {
         targets.push(target_name.to_string());
     }
@@ -75,12 +78,12 @@ fn link_target(
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
-        config.settings.agent_copy.as_ref(),
-        &config.settings.managed_targets(),
+        effective.settings.agent_copy.as_ref(),
+        &targets,
         &mut diag,
     );
     let agent_surface_policy = crate::compiler::agent_surface_policy(
-        config.settings.agent_emission.as_ref(),
+        effective.settings.agent_emission.as_ref(),
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
@@ -142,11 +145,42 @@ fn link_target(
         });
     }
 
+    let cache = crate::source::GlobalCache::new()?;
+    let source_provider = crate::sync::provider::RealSourceProvider {
+        cache: &cache,
+        project_root: &ctx.project_root,
+    };
+    let resolve_options = crate::resolve::ResolveOptions::sync();
+    let graph = crate::resolve::resolve(
+        &effective,
+        &source_provider,
+        Some(&lock),
+        &resolve_options,
+        &mut diag,
+    )?;
+    let (compiled_native_outputs, removed_native_outputs) =
+        crate::compiler::materialize_native_agents_after_link(
+            &crate::compiler::NativeAgentLinkMaterializeCtx {
+                mars_ctx: ctx,
+                managed_targets: &targets,
+                config: &config,
+                local: &local,
+                effective: &effective,
+                graph: &graph,
+                old_lock: &lock,
+                force,
+            },
+            &mut diag,
+        );
+
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
+    crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
+    crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs);
     crate::lock::write(&ctx.project_root, &new_lock)?;
 
     if settings_changed {
+        let mut config = config;
         config.settings.targets = Some(targets);
         crate::config::save(&ctx.project_root, &config)?;
     }
@@ -177,7 +211,10 @@ fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> 
     (target_name == ".agents").then(|| Diagnostic {
         level: DiagnosticLevel::Warning,
         code: "deprecated-agents-target",
-        message: "`.agents` is a deprecated link target. Run `mars unlink .agents` to remove it. Skills are now emitted to native harness dirs automatically.".to_string(),
+        message: format!(
+            "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
+            managed_cmd("mars unlink .agents"),
+        ),
         context: Some("link target".to_string()),
         category: Some(DiagnosticCategory::Compatibility),
     })

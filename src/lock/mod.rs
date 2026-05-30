@@ -798,6 +798,13 @@ pub fn apply_target_sync_outputs(
     }
 }
 
+/// Drop native harness output records removed by native agent reconcile.
+pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
+    for (target_root, dest_path) in records {
+        remove_target_output(lock, target_root, dest_path);
+    }
+}
+
 /// Record native harness outputs produced by dual-surface compile.
 pub fn apply_compiled_native_outputs(
     lock: &mut LockFile,

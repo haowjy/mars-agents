@@ -127,6 +127,7 @@ pub(crate) struct SyncedState {
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
     pub compiled_native_outputs: Vec<(String, String, ContentHash)>,
+    pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
 }
 
 /// Execute the unified sync pipeline.
@@ -510,6 +511,7 @@ pub(crate) fn sync_targets(
             target_outcomes: Vec::new(),
             config_entries: BTreeMap::new(),
             compiled_native_outputs: Vec::new(),
+            removed_native_outputs: Vec::new(),
         };
     }
 
@@ -555,6 +557,7 @@ pub(crate) fn sync_targets(
         target_outcomes,
         config_entries: BTreeMap::new(),
         compiled_native_outputs: Vec::new(),
+        removed_native_outputs: Vec::new(),
     }
 }
 
@@ -588,6 +591,7 @@ pub(crate) fn finalize(
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
+        crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
         crate::lock::write(project_root, &new_lock)?;
 

@@ -67,22 +67,14 @@ pub fn compile(
         diag,
     );
     let agent_surface_policy = agent_surface_policy(
-        applied
-            .planned
-            .targeted
-            .resolved
-            .loaded
-            .config
-            .settings
-            .agent_emission
-            .as_ref(),
+        effective_settings.agent_emission.as_ref(),
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
     let mars_dir = ctx.project_root.join(".mars");
     let model_aliases = merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
-    reconcile_native_agent_surfaces(
+    let removed_native_outputs = reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
             policy: agent_surface_policy.clone(),
             project_root: &ctx.project_root,
@@ -125,6 +117,7 @@ pub fn compile(
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy, diag);
     synced.config_entries = config_entry_records;
     synced.compiled_native_outputs = compiled_native_outputs;
+    synced.removed_native_outputs = removed_native_outputs;
 
     // Phase 7: write lock file, build report.
     finalize(ctx, synced, request, diag)
@@ -184,6 +177,9 @@ struct NativeAgentReconcileCtx<'a> {
     dry_run: bool,
 }
 
+/// Lock output paths removed by native agent reconcile (target_root, dest_path).
+pub(crate) type RemovedNativeOutput = (String, String);
+
 /// Reconcile native harness agent artifacts written outside target sync.
 ///
 /// Under `SuppressAll`, removes lowered artifacts for all harness-bound agents
@@ -192,35 +188,33 @@ struct NativeAgentReconcileCtx<'a> {
 /// for agents removed from the canonical store. Removed agents can no longer be
 /// inspected for their previous `harness:`, so removal checks every native
 /// harness filename shape.
+///
+/// Returns `(target_root, dest_path)` pairs to drop from the new lock.
 fn reconcile_native_agent_surfaces(
     ctx: &NativeAgentReconcileCtx<'_>,
     diag: &mut DiagnosticCollector,
-) {
+) -> Vec<RemovedNativeOutput> {
     use crate::lock::ItemKind;
 
-    match &ctx.policy {
-        AgentSurfacePolicy::SuppressAll => {
-            remove_current_native_agent_surfaces(
-                ctx.project_root,
-                ctx.mars_dir,
-                ctx.old_lock,
-                ctx.dry_run,
-                diag,
-            );
-        }
-        AgentSurfacePolicy::EmitSelective(spec) => {
-            reconcile_selective_native_agent_surfaces(
-                ctx.project_root,
-                ctx.mars_dir,
-                spec,
-                ctx.model_aliases,
-                ctx.old_lock,
-                ctx.dry_run,
-                diag,
-            );
-        }
-        AgentSurfacePolicy::EmitAll => {}
-    }
+    let mut removed = match &ctx.policy {
+        AgentSurfacePolicy::SuppressAll => remove_current_native_agent_surfaces(
+            ctx.project_root,
+            ctx.mars_dir,
+            ctx.old_lock,
+            ctx.dry_run,
+            diag,
+        ),
+        AgentSurfacePolicy::EmitSelective(spec) => reconcile_selective_native_agent_surfaces(
+            ctx.project_root,
+            ctx.mars_dir,
+            spec,
+            ctx.model_aliases,
+            ctx.old_lock,
+            ctx.dry_run,
+            diag,
+        ),
+        AgentSurfacePolicy::EmitAll => Vec::new(),
+    };
 
     for outcome in ctx.outcomes {
         if outcome.item_id.kind != ItemKind::Agent
@@ -230,30 +224,33 @@ fn reconcile_native_agent_surfaces(
         }
 
         let agent_name = outcome.dest_path.item_name(ItemKind::Agent);
-        remove_native_agent_shapes(
+        removed.extend(remove_native_agent_shapes(
             ctx.project_root,
             &agent_name,
             ctx.old_lock,
             ctx.dry_run,
             diag,
-        );
+        ));
     }
+
+    removed
 }
 
-fn remove_current_native_agent_surfaces(
-    project_root: &Path,
-    mars_dir: &Path,
-    old_lock: &crate::lock::LockFile,
-    dry_run: bool,
-    diag: &mut DiagnosticCollector,
-) {
+struct MarsCanonicalAgent {
+    agent_name: String,
+    profile: crate::compiler::agents::AgentProfile,
+    fm: crate::frontmatter::Frontmatter,
+}
+
+fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) -> Vec<MarsCanonicalAgent> {
     use crate::compiler::agents::parse_agent_content;
 
     let agents_dir = mars_dir.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return;
+        return Vec::new();
     };
 
+    let mut agents = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_none_or(|ext| ext != "md") {
@@ -264,7 +261,7 @@ fn remove_current_native_agent_surfaces(
             Ok(c) => c,
             Err(e) => {
                 diag.warn(
-                    "native-agent-remove-read",
+                    "native-agent-read",
                     format!("could not read {}: {e}", path.display()),
                 );
                 continue;
@@ -272,11 +269,11 @@ fn remove_current_native_agent_surfaces(
         };
 
         let mut agent_diags = Vec::new();
-        let (profile, _fm) = match parse_agent_content(&content, &mut agent_diags) {
+        let (profile, fm) = match parse_agent_content(&content, &mut agent_diags) {
             Ok(r) => r,
             Err(e) => {
                 diag.warn(
-                    "native-agent-remove-parse",
+                    "native-agent-parse",
                     format!("could not parse {}: {e}", path.display()),
                 );
                 continue;
@@ -288,8 +285,48 @@ fn remove_current_native_agent_surfaces(
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
         });
-        remove_native_agent_shapes(project_root, agent_name, old_lock, dry_run, diag);
+        for d in &agent_diags {
+            if d.is_error() {
+                diag.warn(
+                    "agent-schema-error",
+                    format!("agent `{agent_name}`: {}", d.message()),
+                );
+            } else {
+                diag.warn(
+                    "agent-schema-warning",
+                    format!("agent `{agent_name}`: {}", d.message()),
+                );
+            }
+        }
+
+        agents.push(MarsCanonicalAgent {
+            agent_name: agent_name.to_string(),
+            profile,
+            fm,
+        });
     }
+
+    agents
+}
+
+fn remove_current_native_agent_surfaces(
+    project_root: &Path,
+    mars_dir: &Path,
+    old_lock: &crate::lock::LockFile,
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) -> Vec<RemovedNativeOutput> {
+    let mut removed = Vec::new();
+    for agent in scan_mars_agents(mars_dir, diag) {
+        removed.extend(remove_native_agent_shapes(
+            project_root,
+            &agent.agent_name,
+            old_lock,
+            dry_run,
+            diag,
+        ));
+    }
+    removed
 }
 
 fn remove_native_agent_shapes(
@@ -298,34 +335,21 @@ fn remove_native_agent_shapes(
     old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
-) {
+) -> Vec<RemovedNativeOutput> {
     use crate::compiler::agents::HarnessKind;
 
+    let mut removed = Vec::new();
     for harness in HarnessKind::all() {
-        let target = harness.target_dir();
-        for extension in ["md", "toml"] {
-            let dest_rel = format!("agents/{agent_name}.{extension}");
-            if !old_lock.contains_output(target, &dest_rel) {
-                continue;
-            }
-            let native_path = project_root
-                .join(target)
-                .join("agents")
-                .join(format!("{agent_name}.{extension}"));
-            if !native_path.exists() && native_path.symlink_metadata().is_err() {
-                continue;
-            }
-            if dry_run {
-                continue;
-            }
-            if let Err(e) = crate::reconcile::fs_ops::safe_remove(&native_path) {
-                diag.warn(
-                    "native-agent-remove",
-                    format!("could not remove {}: {e}", native_path.display()),
-                );
-            }
-        }
+        removed.extend(remove_native_agent_shapes_for_harness(
+            project_root,
+            agent_name,
+            harness,
+            old_lock,
+            dry_run,
+            diag,
+        ));
     }
+    removed
 }
 
 fn reconcile_selective_native_agent_surfaces(
@@ -336,53 +360,15 @@ fn reconcile_selective_native_agent_surfaces(
     old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
-) {
-    use crate::compiler::agents::{HarnessKind, parse_agent_content};
+) -> Vec<RemovedNativeOutput> {
+    use crate::compiler::agents::HarnessKind;
 
-    let agents_dir = mars_dir.join("agents");
-    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "md") {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                diag.warn(
-                    "native-agent-remove-read",
-                    format!("could not read {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        let mut agent_diags = Vec::new();
-        let (profile, _) = match parse_agent_content(&content, &mut agent_diags) {
-            Ok(r) => r,
-            Err(e) => {
-                diag.warn(
-                    "native-agent-remove-parse",
-                    format!("could not parse {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        let agent_name = profile.name.as_deref().unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-        });
-
+    let mut removed = Vec::new();
+    for agent in scan_mars_agents(mars_dir, diag) {
         for harness in HarnessKind::all() {
             let qualifies = spec.harnesses.contains(harness)
                 && agent_copy::agent_qualifies_for_harness(
-                    &profile,
+                    &agent.profile,
                     harness,
                     model_aliases,
                     spec.include_fanout,
@@ -391,16 +377,17 @@ fn reconcile_selective_native_agent_surfaces(
             if qualifies {
                 continue;
             }
-            remove_native_agent_shapes_for_harness(
+            removed.extend(remove_native_agent_shapes_for_harness(
                 project_root,
-                agent_name,
+                &agent.agent_name,
                 harness,
                 old_lock,
                 dry_run,
                 diag,
-            );
+            ));
         }
     }
+    removed
 }
 
 fn remove_native_agent_shapes_for_harness(
@@ -410,13 +397,15 @@ fn remove_native_agent_shapes_for_harness(
     old_lock: &crate::lock::LockFile,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
-) {
+) -> Vec<RemovedNativeOutput> {
+    let mut removed = Vec::new();
     let target = harness.target_dir();
     for extension in ["md", "toml"] {
         let dest_rel = format!("agents/{agent_name}.{extension}");
         if !old_lock.contains_output(target, &dest_rel) {
             continue;
         }
+        removed.push((target.to_string(), dest_rel.clone()));
         let native_path = project_root
             .join(target)
             .join("agents")
@@ -434,6 +423,7 @@ fn remove_native_agent_shapes_for_harness(
             );
         }
     }
+    removed
 }
 
 struct NativeAgentSurfaceCompileOptions {
@@ -474,70 +464,17 @@ fn selective_surface_compile(
     spec: &agent_copy::AgentCopySpec,
     diag: &mut DiagnosticCollector,
 ) -> Vec<(String, String, crate::types::ContentHash)> {
-    use crate::compiler::agents::parse_agent_content;
-
     let emit_ctx = NativeAgentEmitCtx {
         project_root: ctx.project_root,
         old_lock: ctx.old_lock,
         options: &ctx.options,
     };
-    let agents_dir = ctx.mars_dir.join("agents");
-    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return Vec::new();
-    };
     let mut records = Vec::new();
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "md") {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                diag.warn(
-                    "dual-surface-read",
-                    format!("could not read {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        let mut agent_diags = Vec::new();
-        let (profile, fm) = match parse_agent_content(&content, &mut agent_diags) {
-            Ok(r) => r,
-            Err(e) => {
-                diag.warn(
-                    "dual-surface-parse",
-                    format!("could not parse {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        let agent_name = profile.name.as_deref().unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-        });
-        for d in &agent_diags {
-            if d.is_error() {
-                diag.warn(
-                    "agent-schema-error",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            } else {
-                diag.warn(
-                    "agent-schema-warning",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            }
-        }
-
+    for agent in scan_mars_agents(ctx.mars_dir, diag) {
         for harness in &spec.harnesses {
             let Some(emission) = agent_copy::agent_qualifies_for_harness(
-                &profile,
+                &agent.profile,
                 harness,
                 ctx.model_aliases,
                 spec.include_fanout,
@@ -546,7 +483,7 @@ fn selective_surface_compile(
             };
             let model_override = agent_copy::model_override_for_emission(
                 harness,
-                &profile,
+                &agent.profile,
                 &emission,
                 ctx.model_aliases,
                 ctx.cursor_probe_slugs,
@@ -554,10 +491,10 @@ fn selective_surface_compile(
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness,
-                    profile: &profile,
-                    fm: &fm,
-                    body: fm.body(),
-                    agent_name,
+                    profile: &agent.profile,
+                    fm: &agent.fm,
+                    body: agent.fm.body(),
+                    agent_name: &agent.agent_name,
                     model_override: model_override.as_deref(),
                 },
                 &emit_ctx,
@@ -585,89 +522,32 @@ fn dual_surface_compile(
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<(String, String, crate::types::ContentHash)> {
-    use crate::compiler::agents::parse_agent_content;
-
     let emit_ctx = NativeAgentEmitCtx {
         project_root: ctx.project_root,
         old_lock: ctx.old_lock,
         options: &ctx.options,
     };
-    let agents_dir = ctx.mars_dir.join("agents");
-    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return Vec::new();
-    };
     let mut records = Vec::new();
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(ext) = path.extension() else {
-            continue;
-        };
-        if ext != "md" {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                diag.warn(
-                    "dual-surface-read",
-                    format!("could not read {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        let mut agent_diags = Vec::new();
-        let (profile, fm) = match parse_agent_content(&content, &mut agent_diags) {
-            Ok(r) => r,
-            Err(e) => {
-                diag.warn(
-                    "dual-surface-parse",
-                    format!("could not parse {}: {e}", path.display()),
-                );
-                continue;
-            }
-        };
-
-        // Emit agent-level diagnostics (validation errors, legacy fields)
-        let agent_name = profile.name.as_deref().unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-        });
-        for d in &agent_diags {
-            if d.is_error() {
-                diag.warn(
-                    "agent-schema-error",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            } else {
-                diag.warn(
-                    "agent-schema-warning",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            }
-        }
-
+    for agent in scan_mars_agents(ctx.mars_dir, diag) {
         // If no harness:, this is a universal agent — only .mars/ canonical output, done.
-        let Some(harness) = &profile.harness else {
+        let Some(harness) = &agent.profile.harness else {
             continue;
         };
 
         let model_override = native_model_override_for_harness(
             harness,
-            &profile,
+            &agent.profile,
             ctx.model_aliases,
             ctx.cursor_probe_slugs,
         );
         emit_lowered_native_agent(
             &NativeAgentEmit {
                 harness,
-                profile: &profile,
-                fm: &fm,
-                body: fm.body(),
-                agent_name,
+                profile: &agent.profile,
+                fm: &agent.fm,
+                body: agent.fm.body(),
+                agent_name: &agent.agent_name,
                 model_override: model_override.as_deref(),
             },
             &emit_ctx,
@@ -684,18 +564,15 @@ fn emit_lowered_native_agent(
     diag: &mut DiagnosticCollector,
     records: &mut Vec<(String, String, crate::types::ContentHash)>,
 ) {
-    use crate::compiler::agents::lower::{lower_for_harness, lower_for_harness_with_model};
+    use crate::compiler::agents::lower::lower_for_harness;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
-    let lowered = match agent.model_override {
-        Some(model) => lower_for_harness_with_model(
-            agent.harness,
-            agent.profile,
-            agent.fm,
-            agent.body,
-            Some(model),
-        ),
-        None => lower_for_harness(agent.harness, agent.profile, agent.fm, agent.body),
+    let lowered = if let Some(model) = agent.model_override {
+        let mut profile = agent.profile.clone();
+        profile.model = Some(model.to_string());
+        lower_for_harness(agent.harness, &profile, agent.fm, agent.body)
+    } else {
+        lower_for_harness(agent.harness, agent.profile, agent.fm, agent.body)
     };
 
     for lf in &lowered.lossy_fields {
@@ -884,6 +761,90 @@ fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
         "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
         _ => None,
     }
+}
+
+/// Inputs for native harness agent materialization after `mars link`.
+pub(crate) struct NativeAgentLinkMaterializeCtx<'a> {
+    pub mars_ctx: &'a crate::types::MarsContext,
+    pub managed_targets: &'a [String],
+    pub config: &'a crate::config::Config,
+    pub local: &'a crate::config::LocalConfig,
+    pub effective: &'a crate::config::EffectiveConfig,
+    pub graph: &'a crate::resolve::ResolvedGraph,
+    pub old_lock: &'a crate::lock::LockFile,
+    pub force: bool,
+}
+
+/// Reconcile and compile native harness agents after `mars link` (same path as sync).
+pub(crate) fn materialize_native_agents_after_link(
+    input: &NativeAgentLinkMaterializeCtx<'_>,
+    diag: &mut DiagnosticCollector,
+) -> (
+    Vec<(String, String, crate::types::ContentHash)>,
+    Vec<RemovedNativeOutput>,
+) {
+    use crate::compiler::agents::HarnessKind;
+
+    if !input
+        .managed_targets
+        .iter()
+        .any(|target| HarnessKind::all().iter().any(|h| h.target_dir() == target))
+    {
+        return (Vec::new(), Vec::new());
+    }
+
+    let agent_copy_spec = agent_copy::build_agent_copy_spec(
+        input.effective.settings.agent_copy.as_ref(),
+        input.managed_targets,
+        diag,
+    );
+    let policy = agent_surface_policy(
+        input.effective.settings.agent_emission.as_ref(),
+        agent_copy_spec.as_ref(),
+        input.mars_ctx.meridian_managed,
+    );
+    if matches!(policy, AgentSurfacePolicy::SuppressAll) {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mars_dir = input.mars_ctx.project_root.join(".mars");
+    let model_aliases = crate::models::merged_model_aliases(
+        input.graph,
+        input.effective,
+        input.config,
+        input.local,
+        diag,
+    );
+    let reconcile_ctx = NativeAgentReconcileCtx {
+        policy: policy.clone(),
+        project_root: &input.mars_ctx.project_root,
+        mars_dir: &mars_dir,
+        model_aliases: &model_aliases,
+        outcomes: &[],
+        old_lock: input.old_lock,
+        dry_run: false,
+    };
+    let removed_native_outputs = reconcile_native_agent_surfaces(&reconcile_ctx, diag);
+    let compile_ctx = NativeAgentCompileCtx {
+        project_root: &input.mars_ctx.project_root,
+        mars_dir: &mars_dir,
+        model_aliases: &model_aliases,
+        cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
+        old_lock: input.old_lock,
+        options: NativeAgentSurfaceCompileOptions {
+            force: input.force,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
+            dry_run: false,
+        },
+    };
+    let compiled_native_outputs = match policy {
+        AgentSurfacePolicy::EmitAll => dual_surface_compile(&compile_ctx, diag),
+        AgentSurfacePolicy::EmitSelective(ref spec) => {
+            selective_surface_compile(&compile_ctx, spec, diag)
+        }
+        AgentSurfacePolicy::SuppressAll => Vec::new(),
+    };
+    (compiled_native_outputs, removed_native_outputs)
 }
 
 #[cfg(test)]

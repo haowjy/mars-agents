@@ -16,6 +16,18 @@ Use the active work item on **that** product before writing design notes or hand
 Code for mars-agents itself still lives in `~/gitrepos/mars-agents` (and
 `mars-agents.worktrees/<slug>/` when using a worktree).
 
+Inside Meridian-managed sessions, spawns resolve a logical task dir:
+`MERIDIAN_TASK_DIR` points at the checkout where source work happens, while
+`MERIDIAN_PROJECT_DIR` remains anchored to the parent control repo for state,
+profiles, and context. Nested `meridian ...` commands use project-root
+resolution, where `MERIDIAN_PROJECT_DIR` wins over CWD. When invoking Meridian
+from this repo or a mars task dir, pass the root explicitly:
+
+```bash
+meridian -C "$MERIDIAN_TASK_DIR" mars sync
+meridian -C ~/gitrepos/mars-agents session log <ref>
+```
+
 Cursor orchestration: `~/cursor-dev` (`/product-lead`, `work-coordination` skill).
 
 ## Target Support Status
@@ -33,7 +45,10 @@ Cursor orchestration: `~/cursor-dev` (`/product-lead`, `work-coordination` skill
 
 **Mars must NEVER delete files it didn't create.** Orphan cleanup, removals, and overwrites in a linked target require a lock `OutputRecord` for that exact `(target_root, dest_path)` pair. A path tracked only under `.mars` does not authorize mutation under `.cursor` or other targets. Never scan-and-delete-unknown.
 
-The lock file (`mars.lock`) is the authority on what mars manages **per target**. Untracked local content in a linked target is preserved unless explicitly adopted — see `src/target_sync/.context/CONTEXT.md`.
+The local lock file (`mars.lock`) is the runtime authority on what mars manages
+**per target**, but it is generated state and should not be tracked. Untracked
+local content in a linked target is preserved unless explicitly adopted — see
+`src/target_sync/.context/CONTEXT.md`.
 
 ### Atomic writes
 
@@ -59,7 +74,7 @@ macOS, Linux, and Windows must all work. Prefer cross-platform Rust/std tooling 
 ## Architecture
 
 ```
-mars.toml + mars.lock (committed, project root)
+mars.toml (committed project config) + local mars.lock (generated, ignored)
         ↓ mars sync
     .mars/ (canonical store, gitignored)
         ↓ copy to each target
@@ -68,7 +83,10 @@ mars.toml + mars.lock (committed, project root)
 
 - **`.mars/`** — canonical content store. Gitignored. Rebuilt by `mars sync` from lock + sources. Contains resolved content (`agents/`, `skills/`), merge base cache (`cache/bases/`), models cache (`models-cache.json`), sync lock.
 - **Target directories** — mars copies managed items into these from `.mars/`. They may contain non-mars content. Mars tracks what it put there via the lock. Configured via `settings.targets` in mars.toml, defaults to `[".agents"]`.
-- **`.mars/` is NOT the source of truth** — it's a cache. The committed targets + `mars.lock` are the authority. On fresh clone (no `.mars/`), `mars sync` rebuilds the cache from sources.
+- **`.mars/` is NOT the source of truth** — it's a cache. The committed
+  targets + generated local `mars.lock` are the runtime authority. On fresh
+  clone (no `.mars/`/`mars.lock`), `mars sync` rebuilds local state from
+  `mars.toml` and sources.
 
 ## Sync Pipeline
 

@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Native agent lifecycle out of `compiler/mod.rs`; one canonical scan; sync + link share post-target lifecycle.
 - Native agent compile emits pinned model IDs for model aliases; raw and unpinned aliases still pass through.
 - Lock-replay sync skips latest tag lookup unless upgrading.
+- `AGENTS.md`: clarify generated `mars.lock` is ignored local state and document `MERIDIAN_TASK_DIR` vs inherited `MERIDIAN_PROJECT_DIR` for nested Meridian commands.
 
 ### Fixed
 - First-sync native ownership seeds from apply outcomes.

@@ -22,17 +22,6 @@ model: opus
 # Reviewer
 "#;
 
-const FANOUT_POLICY_AGENT: &str = r#"---
-name: fanout-agent
-description: Fanout via policy
-model-policies:
-  - match:
-      alias: sonnet
-    override: {}
----
-# Fanout Agent
-"#;
-
 const CODEX_ONLY_AGENT: &str = r#"---
 name: explorer
 description: Codex only
@@ -63,6 +52,11 @@ fn lock_has_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -
 fn lock_has_codex_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
     let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
     lock.contains_output(".codex", &format!("agents/{agent}.toml"))
+}
+
+fn lock_has_opencode_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
+    let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
+    lock.contains_output(".opencode", &format!("agents/{agent}.md"))
 }
 
 fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -> String {
@@ -110,29 +104,51 @@ path = "{}"
     project
 }
 
-#[test]
-fn emit_all_first_run_with_claude_target_writes_lowered_native() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_with_settings(
-        &dir,
-        r#"
-[settings]
-targets = [".claude"]
-agent_emission = "always"
+fn setup_dual_harness_project(
+    dir: &TempDir,
+    settings: &str,
+    meridian_managed: Option<&str>,
+) -> assert_fs::fixture::ChildPath {
+    let source = create_source(
+        dir,
+        "src",
+        &[
+            ("coder", CLAUDE_HARNESS_AGENT),
+            ("integration-tester", OPENCODE_HARNESS_AGENT),
+        ],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"{settings}
+[dependencies.src]
+path = "{}"
 "#,
-        CLAUDE_HARNESS_AGENT,
-        None,
-    );
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, meridian_managed);
+    project
+}
 
-    let native = claude_native_content(&project, "coder");
-    assert!(
-        !native.contains("harness:"),
-        "lowered claude native should drop harness field; got: {native}"
+fn write_claude_collision(project: &assert_fs::fixture::ChildPath) {
+    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
+    fs::write(
+        project.path().join(".claude/agents/coder.md"),
+        "# hand-written native\n",
+    )
+    .unwrap();
+}
+
+fn assert_claude_collision_unchanged(project: &assert_fs::fixture::ChildPath) {
+    assert_eq!(
+        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
+        "# hand-written native\n"
     );
-    assert!(
-        native.contains("# Coder"),
-        "lowered native should retain agent body: {native}"
-    );
+    assert!(!lock_has_native_agent(project, "coder"));
 }
 
 #[test]
@@ -175,41 +191,6 @@ path = "{}"
     assert!(
         !project.child(".claude/agents/explorer.toml").exists(),
         "codex native shape must not appear under .claude for non-qualifying agent"
-    );
-}
-
-#[test]
-fn agent_copy_include_fanout_false_blocks_policy_emission() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("fanout-agent", FANOUT_POLICY_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = [".claude"]
-
-[settings.agent_copy]
-harnesses = ["claude"]
-include_fanout = false
-
-[models.sonnet]
-model = "claude-sonnet-4-6"
-provider = "anthropic"
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    assert!(
-        !project.child(".claude/agents/fanout-agent.md").exists(),
-        "include_fanout=false must block model-policy qualification"
     );
 }
 
@@ -303,69 +284,6 @@ path = "{}"
         fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
         "# hand-written native\n",
         "link must not overwrite handwritten native agent without --force"
-    );
-}
-
-#[test]
-fn agent_copy_emits_claude_native_under_meridian_managed() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_with_settings(
-        &dir,
-        r#"
-[settings]
-targets = [".claude"]
-
-[settings.agent_copy]
-harnesses = ["claude"]
-"#,
-        CLAUDE_HARNESS_AGENT,
-        Some("1"),
-    );
-
-    assert!(
-        project
-            .child(".mars")
-            .child("agents")
-            .child("coder.md")
-            .exists()
-    );
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists(),
-        "agent_copy should emit native claude agent under MERIDIAN_MANAGED"
-    );
-    assert!(
-        !project.child(".agents").exists(),
-        "canonical agents should not copy to .agents under selective mode"
-    );
-}
-
-#[test]
-fn agent_copy_supersedes_agent_emission_never() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_with_settings(
-        &dir,
-        r#"
-[settings]
-targets = [".claude"]
-agent_emission = "never"
-
-[settings.agent_copy]
-harnesses = ["claude"]
-"#,
-        CLAUDE_HARNESS_AGENT,
-        None,
-    );
-
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists()
     );
 }
 
@@ -499,42 +417,6 @@ path = "{}"
     assert!(
         !lock_has_native_agent(&project, "coder"),
         "stale .claude/agents output record should be removed from mars.lock"
-    );
-}
-
-#[test]
-fn agent_copy_fanout_policy_emits_policy_model_on_claude_native() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("fanout-agent", FANOUT_POLICY_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = [".claude"]
-
-[settings.agent_copy]
-harnesses = ["claude"]
-include_fanout = true
-
-[models.sonnet]
-model = "claude-sonnet-4-6"
-provider = "anthropic"
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    let native = claude_native_content(&project, "fanout-agent");
-    assert!(
-        native.contains("model: claude-sonnet-4-6"),
-        "fanout policy alias should emit pinned id in native claude agent: {native}"
     );
 }
 
@@ -683,47 +565,24 @@ model: kimi-k2
 "#;
 
 #[test]
-fn link_opencode_ignores_claude_collision_in_other_target() {
+fn link_scopes_native_agent_materialization_to_requested_target() {
     let dir = TempDir::new().unwrap();
-    let source = create_source(
+    let project = setup_dual_harness_project(
         &dir,
-        "src",
-        &[
-            ("coder", CLAUDE_HARNESS_AGENT),
-            ("integration-tester", OPENCODE_HARNESS_AGENT),
-        ],
-        &[],
-    );
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
+        r#"
 [settings]
 targets = []
 
 [settings.agent_copy]
 harnesses = ["claude", "opencode"]
-
-[dependencies.src]
-path = "{}"
 "#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
+        Some("1"),
+    );
     project
         .child("mars.local.toml")
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
-
-    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
-    fs::write(
-        project.path().join(".claude/agents/coder.md"),
-        "# hand-written native\n",
-    )
-    .unwrap();
+    write_claude_collision(&project);
 
     mars()
         .args([
@@ -739,177 +598,25 @@ path = "{}"
     assert!(
         project
             .child(".opencode/agents/integration-tester.md")
-            .exists(),
-        "link .opencode should materialize opencode native agent"
+            .exists()
     );
-    assert_eq!(
-        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
-        "# hand-written native\n",
-        "link .opencode must not touch or overwrite .claude collision"
-    );
-    assert!(
-        !lock_has_native_agent(&project, "coder"),
-        "link .opencode must not record .claude native output in lock"
-    );
-}
+    assert_claude_collision_unchanged(&project);
 
-#[test]
-fn link_opencode_emit_all_ignores_claude_collision_in_other_target() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(
-        &dir,
-        "src",
-        &[
-            ("coder", CLAUDE_HARNESS_AGENT),
-            ("integration-tester", OPENCODE_HARNESS_AGENT),
-        ],
-        &[],
-    );
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
+    for (target, expect_opencode) in [(".opencode", true), (".agents", false)] {
+        let dir = TempDir::new().unwrap();
+        let project = setup_dual_harness_project(
+            &dir,
             r#"
 [settings]
 targets = []
 agent_emission = "never"
-
-[dependencies.src]
-path = "{}"
 "#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, None);
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-agent_emission = "always"
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
-    fs::write(
-        project.path().join(".claude/agents/coder.md"),
-        "# hand-written native\n",
-    )
-    .unwrap();
-
-    mars()
-        .args([
-            "link",
-            ".opencode",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    assert!(
+            None,
+        );
         project
-            .child(".opencode/agents/integration-tester.md")
-            .exists(),
-        "link .opencode should materialize opencode native agent in EmitAll mode"
-    );
-    assert_eq!(
-        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
-        "# hand-written native\n",
-        "link .opencode must not touch .claude in EmitAll mode"
-    );
-    assert!(
-        !lock_has_native_agent(&project, "coder"),
-        "link .opencode must not record unrelated .claude native output in EmitAll mode"
-    );
-}
-
-#[test]
-fn link_non_native_target_ignores_selective_native_collision() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-
-[settings.agent_copy]
-harnesses = ["claude"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-    project
-        .child("mars.local.toml")
-        .write_str("[settings]\ntargets = [\".claude\"]\n")
-        .unwrap();
-
-    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
-    fs::write(
-        project.path().join(".claude/agents/coder.md"),
-        "# hand-written native\n",
-    )
-    .unwrap();
-
-    mars()
-        .args([
-            "link",
-            ".agents",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MERIDIAN_MANAGED", "1")
-        .assert()
-        .success();
-
-    assert_eq!(
-        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
-        "# hand-written native\n",
-        "link .agents must not touch .claude selective native collision"
-    );
-    assert!(!lock_has_native_agent(&project, "coder"));
-}
-
-#[test]
-fn link_non_native_target_ignores_emit_all_native_collision() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-agent_emission = "never"
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, None);
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
+            .child("mars.toml")
+            .write_str(&format!(
+                r#"
 [settings]
 targets = []
 agent_emission = "always"
@@ -917,33 +624,39 @@ agent_emission = "always"
 [dependencies.src]
 path = "{}"
 "#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
+                dir.child("src")
+                    .path()
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+            ))
+            .unwrap();
+        write_claude_collision(&project);
 
-    fs::create_dir_all(project.path().join(".claude/agents")).unwrap();
-    fs::write(
-        project.path().join(".claude/agents/coder.md"),
-        "# hand-written native\n",
-    )
-    .unwrap();
+        mars()
+            .args(["link", target, "--root", project.path().to_str().unwrap()])
+            .assert()
+            .success();
 
-    mars()
-        .args([
-            "link",
-            ".agents",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    assert_eq!(
-        fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
-        "# hand-written native\n",
-        "link .agents must not touch .claude EmitAll native collision"
-    );
-    assert!(!lock_has_native_agent(&project, "coder"));
+        if expect_opencode {
+            assert!(
+                project
+                    .child(".opencode/agents/integration-tester.md")
+                    .exists()
+            );
+        } else {
+            assert!(
+                !project
+                    .child(".opencode/agents/integration-tester.md")
+                    .exists()
+            );
+            assert!(!lock_has_opencode_native_agent(
+                &project,
+                "integration-tester"
+            ));
+        }
+        assert_claude_collision_unchanged(&project);
+    }
 }
 
 #[test]

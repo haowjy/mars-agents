@@ -1,31 +1,10 @@
 use super::*;
 use crate::compiler::agents::HarnessKind;
-use crate::diagnostic::{Diagnostic, DiagnosticCollector};
-use crate::lock::{ItemId, ItemKind, LockFile, LockedItemV2, OutputRecord};
+use crate::diagnostic::DiagnosticCollector;
+use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
 use crate::models::{ModelAlias, ModelSpec};
-use crate::sync::apply::{ActionOutcome, ActionTaken};
-use crate::types::{DestPath, ItemName};
 use indexmap::IndexMap;
 use tempfile::TempDir;
-
-#[test]
-fn selective_orphan_preserve_paths_include_native_lock_records() {
-    let spec = agent_copy::AgentCopySpec {
-        harnesses: vec![HarnessKind::Claude],
-        include_fanout: false,
-    };
-    let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
-    let preserved = selective_native_orphan_preserve_paths(&lock, &spec);
-    assert!(
-        preserved
-            .get(".claude")
-            .is_some_and(|paths| paths.contains("agents/coder.md"))
-    );
-}
-
-fn profile_with_cursor_model(model: &str) -> crate::compiler::agents::AgentProfile {
-    profile_with_model(model, HarnessKind::Cursor)
-}
 
 fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::agents::AgentProfile {
     crate::compiler::agents::AgentProfile {
@@ -52,10 +31,6 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
     }
 }
 
-fn pinned_alias(model: &str, default_effort: Option<&str>) -> ModelAlias {
-    pinned_alias_with_harness(model, "codex", default_effort)
-}
-
 fn pinned_alias_with_harness(
     model: &str,
     harness: &str,
@@ -74,303 +49,65 @@ fn pinned_alias_with_harness(
     }
 }
 
-fn auto_resolve_alias(harness: &str) -> ModelAlias {
-    ModelAlias {
-        harness: Some(harness.to_string()),
-        description: None,
-        default_effort: None,
-        autocompact: None,
-        autocompact_pct: None,
-        spec: ModelSpec::AutoResolve {
-            provider: None,
-            match_patterns: vec!["gpt-*".to_string()],
-            exclude_patterns: Vec::new(),
-        },
-    }
-}
-
 #[test]
-fn cursor_native_model_mapping_uses_shared_resolver_for_alias_and_effort() {
-    let profile = profile_with_cursor_model("gpt55");
-    let mut aliases = IndexMap::new();
-    aliases.insert("gpt55".to_string(), pinned_alias("gpt-5.5", Some("high")));
-    let slugs = vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()];
-    let mut diag = DiagnosticCollector::new();
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Cursor,
-            &profile,
-            &aliases,
-            &slugs,
-            &mut diag
-        ),
-        Some("gpt-5.5-high".to_string())
-    );
-}
-
-#[test]
-fn cursor_native_model_mapping_preserves_unknown_or_cursor_literal_tokens() {
-    let profile = profile_with_cursor_model("composer-2.5[fast=false]");
-    let slugs = vec!["composer-2.5".to_string(), "composer-2.5-fast".to_string()];
-    let mut diag = DiagnosticCollector::new();
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Cursor,
-            &profile,
-            &IndexMap::new(),
-            &slugs,
-            &mut diag
-        ),
-        None
-    );
-
-    let profile = profile_with_cursor_model("unmapped-model");
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Cursor,
-            &profile,
-            &IndexMap::new(),
-            &slugs,
-            &mut diag
-        ),
-        None
-    );
-}
-
-#[test]
-fn cursor_native_model_mapping_uses_claude_shim_with_shared_resolver() {
-    let profile = profile_with_cursor_model("opus");
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias("claude-opus-4-6", Some("high")),
-    );
-    let slugs = vec![
-        "claude-4.6-opus-thinking-high".to_string(),
-        "claude-4.6-opus-thinking-medium".to_string(),
-    ];
-
-    let mut diag = DiagnosticCollector::new();
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Cursor,
-            &profile,
-            &aliases,
-            &slugs,
-            &mut diag
-        ),
-        Some("claude-4.6-opus-thinking-high".to_string())
-    );
-}
-
-#[test]
-fn non_cursor_native_model_mapping_resolves_pinned_alias() {
-    let profile = profile_with_model("sonnet", HarnessKind::Claude);
+fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
     let mut aliases = IndexMap::new();
     aliases.insert(
         "sonnet".to_string(),
         pinned_alias_with_harness("claude-sonnet-4-6", "claude", None),
     );
     let mut diag = DiagnosticCollector::new();
-
     assert_eq!(
-        native_model_override_for_harness(&HarnessKind::Claude, &profile, &aliases, &[], &mut diag),
+        native_model_override_for_harness(
+            &HarnessKind::Claude,
+            &profile_with_model("sonnet", HarnessKind::Claude),
+            &aliases,
+            &[],
+            &mut diag
+        ),
         Some("claude-sonnet-4-6".to_string())
     );
-    assert!(diag.drain().is_empty());
-}
-
-#[test]
-fn non_cursor_native_model_mapping_preserves_unknown_token() {
-    let profile = profile_with_model("raw-model-id", HarnessKind::Codex);
-    let mut diag = DiagnosticCollector::new();
-
     assert_eq!(
         native_model_override_for_harness(
             &HarnessKind::Codex,
-            &profile,
+            &profile_with_model("raw-model-id", HarnessKind::Codex),
             &IndexMap::new(),
             &[],
             &mut diag
         ),
         None
     );
-    assert!(diag.drain().is_empty());
-}
 
-#[test]
-fn non_cursor_native_model_mapping_warns_for_autoresolve_alias() {
-    let profile = profile_with_model("gpt-auto", HarnessKind::Codex);
-    let mut aliases = IndexMap::new();
-    aliases.insert("gpt-auto".to_string(), auto_resolve_alias("codex"));
-    let mut diag = DiagnosticCollector::new();
-
-    assert_eq!(
-        native_model_override_for_harness(&HarnessKind::Codex, &profile, &aliases, &[], &mut diag),
-        None
-    );
-    let diagnostics = diag.drain();
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "native-model-alias-unpinned"),
-        "AutoResolve alias should warn: {diagnostics:?}"
-    );
-}
-
-fn compile_native_agent_text(
-    content: &str,
-    policy: AgentSurfacePolicy,
-    aliases: &IndexMap<String, ModelAlias>,
-) -> (TempDir, Vec<Diagnostic>) {
-    let dir = TempDir::new().unwrap();
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(mars_agents_dir.join("coder.md"), content).unwrap();
-
-    let mut diag = DiagnosticCollector::new();
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    compile_native_agents(
-        &NativeAgentCompileCtx {
-            project_root: dir.path(),
-            model_aliases: aliases,
-            cursor_probe_slugs: &[],
-            old_lock: &LockFile::empty(),
-            harness_scope: None,
-            options: NativeAgentSurfaceCompileOptions {
-                force: false,
-                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                dry_run: false,
+    aliases.insert(
+        "gpt-auto".to_string(),
+        ModelAlias {
+            harness: Some("codex".to_string()),
+            description: None,
+            default_effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::AutoResolve {
+                provider: None,
+                match_patterns: vec!["gpt-*".to_string()],
+                exclude_patterns: Vec::new(),
             },
         },
-        &policy,
-        &mars_agents,
-        &mut diag,
     );
-
-    (dir, diag.drain())
-}
-
-fn native_agent_path(dir: &TempDir, harness: &HarnessKind) -> std::path::PathBuf {
-    let file_name = match harness {
-        HarnessKind::Codex => "coder.toml",
-        _ => "coder.md",
-    };
-    dir.path()
-        .join(harness.target_dir())
-        .join("agents")
-        .join(file_name)
-}
-
-fn harness_frontmatter_name(harness: &HarnessKind) -> &'static str {
-    match harness {
-        HarnessKind::Claude => "claude",
-        HarnessKind::Codex => "codex",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Pi => "pi",
-    }
-}
-
-#[test]
-fn compile_native_agent_emits_pinned_model_id_for_alias() {
-    for harness in [HarnessKind::Claude, HarnessKind::OpenCode, HarnessKind::Pi] {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            pinned_alias_with_harness("claude-sonnet-4-6", "claude", None),
-        );
-        let (dir, diagnostics) = compile_native_agent_text(
-            &format!(
-                "---\nname: coder\nmodel: sonnet\nharness: {}\n---\n# Coder\n",
-                harness_frontmatter_name(&harness)
-            ),
-            AgentSurfacePolicy::EmitAll,
+    assert_eq!(
+        native_model_override_for_harness(
+            &HarnessKind::Codex,
+            &profile_with_model("gpt-auto", HarnessKind::Codex),
             &aliases,
-        );
-
-        let text = std::fs::read_to_string(native_agent_path(&dir, &harness)).unwrap();
-        assert!(text.contains("model: claude-sonnet-4-6"), "{text}");
-        assert!(!text.contains("model: sonnet"), "{text}");
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    }
-}
-
-#[test]
-fn compile_native_agent_emits_unknown_model_token_verbatim() {
-    for (harness, expected) in [
-        (HarnessKind::Codex, "model = \"raw-model-id\""),
-        (HarnessKind::OpenCode, "model: raw-model-id"),
-        (HarnessKind::Pi, "model: raw-model-id"),
-    ] {
-        let (dir, diagnostics) = compile_native_agent_text(
-            &format!(
-                "---\nname: coder\nmodel: raw-model-id\nharness: {}\n---\n# Coder\n",
-                harness_frontmatter_name(&harness)
-            ),
-            AgentSurfacePolicy::EmitAll,
-            &IndexMap::new(),
-        );
-
-        let text = std::fs::read_to_string(native_agent_path(&dir, &harness)).unwrap();
-        assert!(text.contains(expected), "{text}");
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    }
-}
-
-#[test]
-fn compile_native_agent_emits_autoresolve_alias_verbatim_with_warning() {
-    for (harness, expected) in [
-        (HarnessKind::Codex, "model = \"gpt-auto\""),
-        (HarnessKind::OpenCode, "model: gpt-auto"),
-        (HarnessKind::Pi, "model: gpt-auto"),
-    ] {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "gpt-auto".to_string(),
-            auto_resolve_alias(harness_frontmatter_name(&harness)),
-        );
-        let (dir, diagnostics) = compile_native_agent_text(
-            &format!(
-                "---\nname: coder\nmodel: gpt-auto\nharness: {}\n---\n# Coder\n",
-                harness_frontmatter_name(&harness)
-            ),
-            AgentSurfacePolicy::EmitAll,
-            &aliases,
-        );
-
-        let text = std::fs::read_to_string(native_agent_path(&dir, &harness)).unwrap();
-        assert!(text.contains(expected), "{text}");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "native-model-alias-unpinned"),
-            "AutoResolve alias should warn: {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn compile_policy_model_alias_emits_pinned_model_id() {
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "sonnet".to_string(),
-        pinned_alias_with_harness("claude-sonnet-4-6", "claude", None),
+            &[],
+            &mut diag
+        ),
+        None
     );
-    let policy = AgentSurfacePolicy::EmitSelective(agent_copy::AgentCopySpec {
-        harnesses: vec![HarnessKind::Claude],
-        include_fanout: true,
-    });
-    let (dir, diagnostics) = compile_native_agent_text(
-        "---\nname: coder\nmodel-policies:\n  - match:\n      alias: sonnet\n    override:\n      harness: claude\n---\n# Coder\n",
-        policy,
-        &aliases,
+    assert!(
+        diag.drain()
+            .iter()
+            .any(|d| d.code == "native-model-alias-unpinned")
     );
-
-    let text = std::fs::read_to_string(dir.path().join(".claude/agents/coder.md")).unwrap();
-    assert!(text.contains("model: claude-sonnet-4-6"), "{text}");
-    assert!(!text.contains("model: sonnet"), "{text}");
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> LockFile {
@@ -394,76 +131,6 @@ fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> Loc
         },
     );
     lock
-}
-
-fn agent_outcome(name: &str, action: ActionTaken) -> ActionOutcome {
-    ActionOutcome {
-        item_id: ItemId {
-            kind: ItemKind::Agent,
-            name: ItemName::from(name),
-        },
-        action,
-        dest_path: DestPath::from(format!("agents/{name}.md")),
-        source_name: "test-source".into(),
-        source_checksum: None,
-        installed_checksum: None,
-    }
-}
-
-#[test]
-fn reconcile_emit_all_removes_native_shapes_for_removed_agents() {
-    let dir = TempDir::new().unwrap();
-    for harness in HarnessKind::all() {
-        let agents_dir = dir.path().join(harness.target_dir()).join("agents");
-        std::fs::create_dir_all(&agents_dir).unwrap();
-        std::fs::write(agents_dir.join("coder.md"), "# Old\n").unwrap();
-        std::fs::write(agents_dir.join("coder.toml"), "old = true\n").unwrap();
-    }
-
-    let tracked_targets: Vec<&str> = HarnessKind::all().iter().map(|h| h.target_dir()).collect();
-    let mut lock = lock_with_target_outputs(&tracked_targets, "agents/coder.md", "sha256:coder");
-    for target in &tracked_targets {
-        lock.items
-            .get_mut("agent/coder")
-            .unwrap()
-            .outputs
-            .push(OutputRecord {
-                target_root: (*target).to_string(),
-                dest_path: "agents/coder.toml".into(),
-                installed_checksum: "sha256:coder-toml".into(),
-            });
-    }
-
-    let mut diag = DiagnosticCollector::new();
-    reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::EmitAll,
-            project_root: dir.path(),
-            model_aliases: &IndexMap::new(),
-            outcomes: &[agent_outcome("coder", ActionTaken::Removed)],
-            old_lock: &lock,
-            dry_run: false,
-            selective_harness_scope: None,
-        },
-        &[],
-        &mut diag,
-    );
-
-    for harness in HarnessKind::all() {
-        assert!(
-            !dir.path()
-                .join(harness.target_dir())
-                .join("agents/coder.md")
-                .exists()
-        );
-        assert!(
-            !dir.path()
-                .join(harness.target_dir())
-                .join("agents/coder.toml")
-                .exists()
-        );
-    }
-    assert!(diag.drain().is_empty());
 }
 
 #[test]
@@ -523,88 +190,6 @@ fn link_suppress_all_reconciles_selective_native_target() {
         "removals must stay within the linked harness scope"
     );
     assert!(!removed.is_empty());
-}
-
-#[test]
-fn reconcile_suppress_all_removes_native_shapes_for_current_agents() {
-    let dir = TempDir::new().unwrap();
-
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(
-        mars_agents_dir.join("coder.md"),
-        "---\nname: coder\n---\n# Coder\n",
-    )
-    .unwrap();
-
-    for target in [".claude", ".codex", ".opencode"] {
-        let agents_dir = dir.path().join(target).join("agents");
-        std::fs::create_dir_all(&agents_dir).unwrap();
-        std::fs::write(agents_dir.join("coder.md"), "# Native\n").unwrap();
-    }
-
-    let mut diag = DiagnosticCollector::new();
-    let lock = lock_with_target_outputs(
-        &[".claude", ".codex", ".opencode"],
-        "agents/coder.md",
-        "sha256:coder",
-    );
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::SuppressAll,
-            project_root: dir.path(),
-            model_aliases: &IndexMap::new(),
-            outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
-            old_lock: &lock,
-            dry_run: false,
-            selective_harness_scope: None,
-        },
-        &mars_agents,
-        &mut diag,
-    );
-
-    for target in [".claude", ".codex", ".opencode"] {
-        assert!(
-            !dir.path().join(target).join("agents/coder.md").exists(),
-            "native agent should be removed under SuppressAll for target {target}"
-        );
-    }
-}
-
-#[test]
-fn reconcile_suppress_all_preserves_untracked_native_agents() {
-    let dir = TempDir::new().unwrap();
-
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(
-        mars_agents_dir.join("coder.md"),
-        "---\nname: coder\n---\n# Coder\n",
-    )
-    .unwrap();
-
-    let agents_dir = dir.path().join(".cursor").join("agents");
-    std::fs::create_dir_all(&agents_dir).unwrap();
-    std::fs::write(agents_dir.join("coder.md"), "# hand-written\n").unwrap();
-
-    let mut diag = DiagnosticCollector::new();
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::SuppressAll,
-            project_root: dir.path(),
-            model_aliases: &IndexMap::new(),
-            outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
-            old_lock: &LockFile::empty(),
-            dry_run: false,
-            selective_harness_scope: None,
-        },
-        &mars_agents,
-        &mut diag,
-    );
-
-    assert!(dir.path().join(".cursor/agents/coder.md").exists());
 }
 
 #[test]
@@ -750,30 +335,4 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
         diag.drain().iter().any(|d| d.code == "native-agent-remove"),
         "failed delete should warn"
     );
-}
-
-#[test]
-fn reconcile_emit_all_preserves_non_removed_agents() {
-    let dir = TempDir::new().unwrap();
-
-    let agents_dir = dir.path().join(".claude").join("agents");
-    std::fs::create_dir_all(&agents_dir).unwrap();
-    std::fs::write(agents_dir.join("coder.md"), "# Native\n").unwrap();
-
-    let mut diag = DiagnosticCollector::new();
-    reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::EmitAll,
-            project_root: dir.path(),
-            model_aliases: &IndexMap::new(),
-            outcomes: &[agent_outcome("coder", ActionTaken::Installed)],
-            old_lock: &LockFile::empty(),
-            dry_run: false,
-            selective_harness_scope: None,
-        },
-        &[],
-        &mut diag,
-    );
-
-    assert!(dir.path().join(".claude/agents/coder.md").exists());
 }

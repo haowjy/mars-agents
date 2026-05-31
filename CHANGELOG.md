@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - One default harness order (`claude`, `codex`, `pi`, `cursor`, `opencode`) drives provider candidate order and empty-model routing.
 - Native agent lifecycle out of `compiler/mod.rs`; one canonical scan; sync + link share post-target lifecycle.
+- Native agent compile emits pinned model IDs for model aliases; raw and unpinned aliases still pass through.
 - Lock-replay sync skips latest tag lookup unless upgrading.
 
 ### Fixed

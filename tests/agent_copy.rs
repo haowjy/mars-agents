@@ -248,11 +248,11 @@ path = "{}"
 
     let native = claude_native_content(&project, "policy-picker");
     assert!(
-        native.contains("model: sonnet"),
-        "first qualifying model-policy match_value should win: {native}"
+        native.contains("model: claude-sonnet-4-6"),
+        "first qualifying model-policy should emit pinned id: {native}"
     );
     assert!(
-        !native.contains("model: opus"),
+        !native.contains("model: claude-opus-4-6"),
         "later qualifying policies must not override the first: {native}"
     );
 }
@@ -533,8 +533,8 @@ path = "{}"
 
     let native = claude_native_content(&project, "fanout-agent");
     assert!(
-        native.contains("model: sonnet"),
-        "fanout policy match_value should appear in native claude agent: {native}"
+        native.contains("model: claude-sonnet-4-6"),
+        "fanout policy alias should emit pinned id in native claude agent: {native}"
     );
 }
 

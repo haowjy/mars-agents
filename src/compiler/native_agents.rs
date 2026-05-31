@@ -365,7 +365,7 @@ pub(crate) fn compile_native_agents(
     let mut records = Vec::new();
 
     for agent in mars_agents {
-        for (harness, model_override) in qualifying_emissions(agent, policy, ctx) {
+        for (harness, model_override) in qualifying_emissions(agent, policy, ctx, diag) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
@@ -390,6 +390,7 @@ fn qualifying_emissions(
     agent: &MarsCanonicalAgent,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
+    diag: &mut DiagnosticCollector,
 ) -> Vec<(crate::compiler::agents::HarnessKind, Option<String>)> {
     use crate::compiler::agents::HarnessKind;
 
@@ -412,6 +413,7 @@ fn qualifying_emissions(
                 &agent.profile,
                 ctx.model_aliases,
                 ctx.cursor_probe_slugs,
+                diag,
             );
             vec![(harness.clone(), model_override)]
         }
@@ -435,6 +437,7 @@ fn qualifying_emissions(
                     &emission,
                     ctx.model_aliases,
                     ctx.cursor_probe_slugs,
+                    diag,
                 );
                 emissions.push((harness.clone(), model_override));
             }
@@ -449,16 +452,16 @@ fn emit_lowered_native_agent(
     diag: &mut DiagnosticCollector,
     records: &mut Vec<CompiledNativeOutput>,
 ) {
-    use crate::compiler::agents::lower::lower_for_harness;
+    use crate::compiler::agents::lower::lower_for_harness_with_model;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
-    let lowered = if let Some(model) = agent.model_override {
-        let mut profile = agent.profile.clone();
-        profile.model = Some(model.to_string());
-        lower_for_harness(agent.harness, &profile, agent.fm, agent.body)
-    } else {
-        lower_for_harness(agent.harness, agent.profile, agent.fm, agent.body)
-    };
+    let lowered = lower_for_harness_with_model(
+        agent.harness,
+        agent.profile,
+        agent.fm,
+        agent.body,
+        agent.model_override,
+    );
 
     for lf in &lowered.lossy_fields {
         use crate::compiler::agents::lower::Lossiness;
@@ -569,11 +572,27 @@ pub(crate) fn native_model_override_for_harness(
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, ModelAlias>,
     cursor_probe_slugs: &[String],
+    diag: &mut DiagnosticCollector,
 ) -> Option<String> {
-    if !matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
+    let token = profile.model.as_deref()?;
+    if matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
+        return map_cursor_native_model(profile, aliases, cursor_probe_slugs);
+    }
+    if token.contains('[') {
         return None;
     }
-    map_cursor_native_model(profile, aliases, cursor_probe_slugs)
+    let alias = aliases.get(token)?;
+    if let Some(pinned) = alias.pinned_model_id() {
+        return Some(pinned.to_string());
+    }
+    diag.warn(
+        "native-model-alias-unpinned",
+        format!(
+            "native agent compile: alias `{token}` has no pinned model id for {}; emitting alias verbatim",
+            harness.target_dir()
+        ),
+    );
+    None
 }
 
 pub(crate) fn model_override_for_emission(
@@ -582,19 +601,25 @@ pub(crate) fn model_override_for_emission(
     emission: &agent_copy::QualifiedEmission,
     model_aliases: &IndexMap<String, ModelAlias>,
     cursor_probe_slugs: &[String],
+    diag: &mut DiagnosticCollector,
 ) -> Option<String> {
     match emission {
-        agent_copy::QualifiedEmission::DefaultModel => {
-            native_model_override_for_harness(harness, profile, model_aliases, cursor_probe_slugs)
-        }
+        agent_copy::QualifiedEmission::DefaultModel => native_model_override_for_harness(
+            harness,
+            profile,
+            model_aliases,
+            cursor_probe_slugs,
+            diag,
+        ),
         agent_copy::QualifiedEmission::PolicyModel(token) => {
-            let mut profile_for_cursor = profile.clone();
-            profile_for_cursor.model = Some(token.clone());
+            let mut profile_for_policy = profile.clone();
+            profile_for_policy.model = Some(token.clone());
             native_model_override_for_harness(
                 harness,
-                &profile_for_cursor,
+                &profile_for_policy,
                 model_aliases,
                 cursor_probe_slugs,
+                diag,
             )
             .or_else(|| Some(token.clone()))
         }

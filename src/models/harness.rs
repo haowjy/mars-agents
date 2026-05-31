@@ -9,7 +9,7 @@ use crate::harness::host::{
 };
 use crate::harness::registry::{self, HarnessId};
 
-pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "opencode", "cursor"];
+pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "cursor", "opencode"];
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
     let resolver = PathExecutableResolver;
@@ -103,19 +103,28 @@ mod tests {
     #[test]
     fn candidates_for_known_provider() {
         let candidates = harness_candidates_for_provider("openai");
-        assert_eq!(candidates, vec!["codex", "pi", "opencode", "cursor"]);
+        assert_eq!(
+            candidates,
+            vec!["codex", "claude", "pi", "cursor", "opencode"]
+        );
     }
 
     #[test]
-    fn candidates_for_anthropic_use_pi_first_fallback_chain() {
+    fn candidates_for_anthropic_native_first_then_default_order() {
         let candidates = harness_candidates_for_provider("anthropic");
-        assert_eq!(candidates, vec!["claude", "pi", "opencode", "cursor"]);
+        assert_eq!(
+            candidates,
+            vec!["claude", "codex", "pi", "cursor", "opencode"]
+        );
     }
 
     #[test]
     fn candidates_for_unknown_provider() {
         let candidates = harness_candidates_for_provider("unknown");
-        assert_eq!(candidates, vec!["pi", "opencode", "cursor"]);
+        assert_eq!(
+            candidates,
+            vec!["claude", "codex", "pi", "cursor", "opencode"]
+        );
     }
 
     #[test]

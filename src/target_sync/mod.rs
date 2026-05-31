@@ -5,7 +5,7 @@
 //!
 //! All targets are managed outputs — they get copies (not symlinks) of .mars/ content.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
@@ -53,6 +53,8 @@ pub struct TargetSyncContext<'a> {
     pub old_lock: &'a LockFile,
     pub force: bool,
     pub collision_hint: CollisionAdoptHint,
+    /// Managed native agent paths to exempt from orphan cleanup (selective mode).
+    pub orphan_preserve_paths: Option<&'a HashMap<String, HashSet<String>>>,
 }
 
 /// Sync all managed targets from .mars/ canonical store.
@@ -305,6 +307,12 @@ fn sync_one_target(
                 }
             }
         }
+    }
+
+    if let Some(preserve) = ctx.orphan_preserve_paths
+        && let Some(paths) = preserve.get(target_name)
+    {
+        expected_paths.extend(paths.iter().cloned());
     }
 
     let orphan_removed = cleanup_orphans(
@@ -561,6 +569,7 @@ mod tests {
             old_lock,
             force,
             collision_hint: CollisionAdoptHint::SyncForce,
+            orphan_preserve_paths: None,
         }
     }
 
@@ -724,6 +733,50 @@ mod tests {
         assert_eq!(results[0].items_removed, 1);
         assert!(!target.join("agents/coder.md").exists());
         assert!(results[0].errors.is_empty());
+    }
+
+    #[test]
+    fn selective_orphan_preserve_keeps_native_agent_without_agent_outcomes() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# Native").unwrap();
+
+        let old_lock = lock_with_target_outputs(".claude", &[("agents/coder.md", "sha256:native")]);
+        let mut preserve = HashMap::new();
+        preserve.insert(
+            ".claude".to_string(),
+            HashSet::from(["agents/coder.md".to_string()]),
+        );
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &[],
+            &TargetSyncContext {
+                old_lock: &old_lock,
+                force: false,
+                collision_hint: CollisionAdoptHint::SyncForce,
+                orphan_preserve_paths: Some(&preserve),
+            },
+            &mut diag,
+        );
+
+        assert!(target.join("agents/coder.md").exists());
+        assert_eq!(results[0].items_removed, 0);
+        assert!(
+            !results[0]
+                .removed_dest_paths
+                .iter()
+                .any(|path| path == "agents/coder.md"),
+            "selective steady-state must not remove managed native agent before compile"
+        );
     }
 
     #[test]

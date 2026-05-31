@@ -124,7 +124,12 @@ impl<'a> Effective<'a> {
 ///
 /// `harness-overrides.claude` values are merged into top-level fields
 /// before lowering (D42 — compile-time merge).
-pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) -> LoweredOutput {
+pub fn lower_to_claude(
+    profile: &AgentProfile,
+    _fm: &Frontmatter,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
     let eff = Effective::new(profile, &HarnessKind::Claude);
     let mut lossy = Vec::new();
 
@@ -141,8 +146,8 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
     if let Some(desc) = &profile.description {
         yaml.insert(yk("description"), yv(desc));
     }
-    // model — exact (alias preserved; Claude resolves it)
-    if let Some(model) = &profile.model {
+    // model — exact (compile-time alias resolution may supply model_override)
+    if let Some(model) = model_override.or(profile.model.as_deref()) {
         yaml.insert(yk("model"), yv(model));
     }
     // skills — exact (Claude reads skills natively from .claude/skills/)
@@ -279,7 +284,11 @@ pub fn lower_to_claude(profile: &AgentProfile, _fm: &Frontmatter, body: &str) ->
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
 ///   mcp-tools (approximate), mode, autocompact, model-policies, fanout
 /// - Merged: harness-overrides.codex applied to top-level fields before lowering
-pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
+pub fn lower_to_codex(
+    profile: &AgentProfile,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
     let eff = Effective::new(profile, &HarnessKind::Codex);
     let mut lossy = Vec::new();
     let target = "Codex";
@@ -399,7 +408,7 @@ pub fn lower_to_codex(profile: &AgentProfile, body: &str) -> LoweredOutput {
     let doc = CodexAgentToml {
         name: profile.name.as_deref(),
         description: profile.description.as_deref(),
-        model: profile.model.as_deref(),
+        model: model_override.or(profile.model.as_deref()),
         model_reasoning_effort: effort_str,
         sandbox_mode: sandbox_str,
         approval_policy,
@@ -431,6 +440,7 @@ fn lower_to_opencode_like(
     body: &str,
     harness: HarnessKind,
     target: &str,
+    model_override: Option<&str>,
 ) -> LoweredOutput {
     let eff = Effective::new(profile, &harness);
     let mut lossy = Vec::new();
@@ -445,9 +455,7 @@ fn lower_to_opencode_like(
     if let Some(desc) = &profile.description {
         yaml.insert(yk("description"), yv(desc));
     }
-    if let Some(model) = &profile.model {
-        // OpenCode uses provider/model format — pass through alias as-is for V0;
-        // full resolution requires the model catalog (out of scope for Phase 3).
+    if let Some(model) = model_override.or(profile.model.as_deref()) {
         yaml.insert(yk("model"), yv(model));
     }
     // mode — approximate (OpenCode has a mode concept: primary/subagent)
@@ -568,8 +576,18 @@ fn lower_to_opencode_like(
     }
 }
 
-pub fn lower_to_opencode(profile: &AgentProfile, body: &str) -> LoweredOutput {
-    lower_to_opencode_like(profile, body, HarnessKind::OpenCode, "OpenCode")
+pub fn lower_to_opencode(
+    profile: &AgentProfile,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
+    lower_to_opencode_like(
+        profile,
+        body,
+        HarnessKind::OpenCode,
+        "OpenCode",
+        model_override,
+    )
 }
 
 fn normalize_cursor_description(description: &str) -> String {
@@ -721,13 +739,6 @@ fn lower_to_cursor_with_model(
     }
 }
 
-/// Lower an agent profile to Cursor-native markdown format.
-///
-/// Cursor lowering preserves only Cursor-native fields plus the markdown body.
-pub fn lower_to_cursor(profile: &AgentProfile, body: &str) -> LoweredOutput {
-    lower_to_cursor_with_model(profile, body, None)
-}
-
 // ---------------------------------------------------------------------------
 // Pi native artifact
 // ---------------------------------------------------------------------------
@@ -737,7 +748,11 @@ pub fn lower_to_cursor(profile: &AgentProfile, body: &str) -> LoweredOutput {
 /// Pi's format is similar to OpenCode: markdown + YAML frontmatter with a
 /// minimal subset of fields. Per agent-compilation-mapping.md §6, all policy
 /// fields are dropped.
-pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
+pub fn lower_to_pi(
+    profile: &AgentProfile,
+    body: &str,
+    model_override: Option<&str>,
+) -> LoweredOutput {
     let mut lossy = Vec::new();
     let target = "Pi";
 
@@ -751,7 +766,7 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
     if let Some(desc) = &profile.description {
         yaml.insert(yk("description"), yv(desc));
     }
-    if let Some(model) = &profile.model {
+    if let Some(model) = model_override.or(profile.model.as_deref()) {
         yaml.insert(yk("model"), yv(model));
     }
     // mode — approximate
@@ -871,15 +886,6 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str) -> LoweredOutput {
 ///
 /// Returns `None` for unknown harnesses (should not happen if the profile was
 /// validated, but guards against future harness additions).
-pub fn lower_for_harness(
-    harness: &HarnessKind,
-    profile: &AgentProfile,
-    fm: &Frontmatter,
-    body: &str,
-) -> LoweredOutput {
-    lower_for_harness_with_model(harness, profile, fm, body, None)
-}
-
 pub fn lower_for_harness_with_model(
     harness: &HarnessKind,
     profile: &AgentProfile,
@@ -888,14 +894,11 @@ pub fn lower_for_harness_with_model(
     model_override: Option<&str>,
 ) -> LoweredOutput {
     match harness {
-        HarnessKind::Claude => lower_to_claude(profile, fm, body),
-        HarnessKind::Codex => lower_to_codex(profile, body),
-        HarnessKind::OpenCode => lower_to_opencode(profile, body),
-        HarnessKind::Cursor => match model_override {
-            Some(model) => lower_to_cursor_with_model(profile, body, Some(model)),
-            None => lower_to_cursor(profile, body),
-        },
-        HarnessKind::Pi => lower_to_pi(profile, body),
+        HarnessKind::Claude => lower_to_claude(profile, fm, body, model_override),
+        HarnessKind::Codex => lower_to_codex(profile, body, model_override),
+        HarnessKind::OpenCode => lower_to_opencode(profile, body, model_override),
+        HarnessKind::Cursor => lower_to_cursor_with_model(profile, body, model_override),
+        HarnessKind::Pi => lower_to_pi(profile, body, model_override),
     }
 }
 
@@ -917,7 +920,7 @@ mod tests {
         let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools: [Bash, Write]\n---\n# Coder\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
-        let out = lower_to_claude(&profile, &fm, body);
+        let out = lower_to_claude(&profile, &fm, body, None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: coder"), "name missing: {text}");
         assert!(
@@ -934,7 +937,7 @@ mod tests {
     fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
         let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
+        let out = lower_to_claude(&profile, &fm, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(!text.contains("approval:"), "approval leaked: {text}");
         assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
@@ -963,7 +966,7 @@ mod tests {
     fn claude_harness_override_applied_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
+        let out = lower_to_claude(&profile, &fm, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("override-skill"),
@@ -979,7 +982,7 @@ mod tests {
     fn claude_harness_override_replaces_mcp_tools() {
         let content = "---\nname: r\nharness: claude\nmcp-tools: [plugin:base]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
+        let out = lower_to_claude(&profile, &fm, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("mcp-tools"),
@@ -993,7 +996,7 @@ mod tests {
     fn claude_meridian_only_fields_dropped() {
         let content = "---\nname: r\nharness: claude\nmodel-policies:\n  - match:\n      model: gpt55\n    override:\n      harness: codex\nfanout:\n  - alias: opus\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body());
+        let out = lower_to_claude(&profile, &fm, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("model-policies:"),
@@ -1016,7 +1019,7 @@ mod tests {
     fn codex_lowering_produces_top_level_toml() {
         let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\napproval: auto\n---\n# Coder\nYou code.";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("[agent]"),
@@ -1053,7 +1056,7 @@ mod tests {
     fn codex_lowering_drops_skills_and_tools() {
         let content = "---\nname: r\nharness: codex\nskills: [review]\ntools: [Bash]\ndisallowed-tools: [Agent]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         let dropped: Vec<_> = out
             .lossy_fields
             .iter()
@@ -1069,7 +1072,7 @@ mod tests {
     fn codex_harness_override_applied() {
         let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("model_reasoning_effort = \"high\""),
@@ -1085,7 +1088,7 @@ mod tests {
     fn codex_mcp_lossiness_uses_effective_override() {
         let content = "---\nname: r\nharness: codex\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         assert!(
             !out.lossy_fields
                 .iter()
@@ -1102,7 +1105,7 @@ mod tests {
     fn codex_native_config_lossiness_uses_matching_override() {
         let content = "---\nname: r\nharness-overrides:\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         assert!(
             out.lossy_fields.iter().any(|field| {
                 field.field == "native-config"
@@ -1121,7 +1124,7 @@ mod tests {
     fn codex_lowering_multiline_instructions_are_parseable() {
         let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body());
+        let out = lower_to_codex(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
 
@@ -1144,7 +1147,7 @@ mod tests {
     fn opencode_lowering_preserves_name_description_model_mode() {
         let content = "---\nname: r\ndescription: Reviewer\nmodel: gpt55\nmode: primary\nharness: opencode\n---\n# Reviewer\nbody";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_opencode(&profile, fm.body());
+        let out = lower_to_opencode(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: r"), "name missing");
         assert!(text.contains("description: Reviewer"), "desc missing");
@@ -1157,7 +1160,7 @@ mod tests {
         let content = "---\nname: r\nharness: cursor\ntools: [Read]\nmcp-tools: [plugin:base]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
-        let opencode = lower_to_opencode(&profile, fm.body());
+        let opencode = lower_to_opencode(&profile, fm.body(), None);
         assert!(
             !opencode
                 .lossy_fields
@@ -1173,7 +1176,7 @@ mod tests {
             "opencode override should clear mcp lossiness",
         );
 
-        let cursor = lower_to_cursor(&profile, fm.body());
+        let cursor = lower_to_cursor_with_model(&profile, fm.body(), None);
         assert!(
             cursor
                 .lossy_fields
@@ -1203,7 +1206,7 @@ mod tests {
         let content = "---\nname: cursor-agent\ndescription: |\n  Cursor agent\n  with   lots\t of\n  whitespace\nharness: cursor\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
-        let out = lower_to_cursor(&profile, fm.body());
+        let out = lower_to_cursor_with_model(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(
@@ -1223,10 +1226,51 @@ mod tests {
     fn pi_lowering_preserves_name_description_model() {
         let content = "---\nname: pi-agent\ndescription: Pi agent\nmodel: gpt55\nharness: pi\n---\n# Pi\nbody";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_pi(&profile, fm.body());
+        let out = lower_to_pi(&profile, fm.body(), None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: pi-agent"), "name missing");
         assert!(text.contains("description: Pi agent"), "desc missing");
+    }
+
+    #[test]
+    fn lower_for_harness_with_model_override_emits_pinned_id_for_claude_and_codex() {
+        let claude_content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# Coder\nbody";
+        let (claude_profile, claude_fm, _) = profile_from(claude_content);
+        let claude_out = lower_for_harness_with_model(
+            &HarnessKind::Claude,
+            &claude_profile,
+            &claude_fm,
+            claude_fm.body(),
+            Some("o3"),
+        );
+        let claude_text = String::from_utf8(claude_out.bytes).unwrap();
+        assert!(
+            claude_text.contains("model: o3"),
+            "claude override: {claude_text}"
+        );
+        assert!(
+            !claude_text.contains("model: gpt55"),
+            "alias should not leak when override set: {claude_text}"
+        );
+
+        let codex_content = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
+        let (codex_profile, codex_fm, _) = profile_from(codex_content);
+        let codex_out = lower_for_harness_with_model(
+            &HarnessKind::Codex,
+            &codex_profile,
+            &codex_fm,
+            codex_fm.body(),
+            Some("o3"),
+        );
+        let codex_text = String::from_utf8(codex_out.bytes).unwrap();
+        assert!(
+            codex_text.contains("model = \"o3\""),
+            "codex override: {codex_text}"
+        );
+        assert!(
+            !codex_text.contains("model = \"gpt55\""),
+            "alias should not leak when override set: {codex_text}"
+        );
     }
 
     // --- 3.3: Dispatch ---
@@ -1236,14 +1280,14 @@ mod tests {
         let content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body().to_string();
-        let out = lower_for_harness(&HarnessKind::Claude, &profile, &fm, &body);
+        let out = lower_for_harness_with_model(&HarnessKind::Claude, &profile, &fm, &body, None);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("---"), "not markdown format");
 
         let content2 = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
         let (profile2, fm2, _) = profile_from(content2);
         let body2 = fm2.body().to_string();
-        let out2 = lower_for_harness(&HarnessKind::Codex, &profile2, &fm2, &body2);
+        let out2 = lower_for_harness_with_model(&HarnessKind::Codex, &profile2, &fm2, &body2, None);
         let text2 = String::from_utf8(out2.bytes).unwrap();
         assert!(text2.contains("name = \"coder\""), "not TOML format");
         assert!(
@@ -1253,7 +1297,8 @@ mod tests {
 
         let content3 = "---\nname: cursor-agent\nmodel: gpt55\nharness: cursor\n---\n# body";
         let (profile3, fm3, _) = profile_from(content3);
-        let out3 = lower_for_harness(&HarnessKind::Cursor, &profile3, &fm3, fm3.body());
+        let out3 =
+            lower_for_harness_with_model(&HarnessKind::Cursor, &profile3, &fm3, fm3.body(), None);
         let text3 = String::from_utf8(out3.bytes).unwrap();
         assert!(
             text3.contains("name: cursor-agent"),

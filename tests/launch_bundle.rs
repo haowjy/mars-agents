@@ -169,8 +169,8 @@ fn build_launch_bundle_prefers_pi_over_opencode_even_with_positive_opencode_cach
 }
 
 #[test]
-fn build_launch_bundle_prefers_opencode_before_cursor_when_both_installed() {
-    routing::build_launch_bundle_prefers_opencode_before_cursor_when_both_installed();
+fn build_launch_bundle_prefers_cursor_before_opencode_when_both_installed() {
+    routing::build_launch_bundle_prefers_cursor_before_opencode_when_both_installed();
 }
 
 #[test]

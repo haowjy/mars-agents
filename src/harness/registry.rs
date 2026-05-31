@@ -45,16 +45,13 @@ pub struct HarnessDescriptor {
     pub class: HarnessClass,
 }
 
-pub const UNKNOWN_PROVIDER_FALLBACK_ORDER: &[HarnessId] =
-    &[HarnessId::Pi, HarnessId::OpenCode, HarnessId::Cursor];
-
 /// Default launch-bundle harness try order when `settings.harness_order` is unset.
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
-    HarnessId::Pi,
     HarnessId::Codex,
-    HarnessId::OpenCode,
+    HarnessId::Pi,
     HarnessId::Cursor,
+    HarnessId::OpenCode,
 ];
 
 pub fn default_harness_order_names() -> Vec<String> {
@@ -124,7 +121,7 @@ pub fn all() -> &'static [HarnessId] {
 }
 
 pub fn names() -> &'static [&'static str] {
-    &["claude", "pi", "codex", "opencode", "cursor"]
+    &["claude", "codex", "pi", "cursor", "opencode"]
 }
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
@@ -171,24 +168,22 @@ pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
 }
 
 pub fn provider_candidate_order(provider: &str) -> Vec<HarnessId> {
-    let normalized = provider.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "anthropic" => vec![
-            HarnessId::Claude,
-            HarnessId::Pi,
-            HarnessId::OpenCode,
-            HarnessId::Cursor,
-        ],
-        "openai" => vec![
-            HarnessId::Codex,
-            HarnessId::Pi,
-            HarnessId::OpenCode,
-            HarnessId::Cursor,
-        ],
-        "google" | "meta" | "mistral" | "deepseek" | "cohere" => {
-            UNKNOWN_PROVIDER_FALLBACK_ORDER.to_vec()
+    derive_provider_candidate_order(native_harness_for_provider(provider))
+}
+
+fn derive_provider_candidate_order(native_harness: Option<HarnessId>) -> Vec<HarnessId> {
+    match native_harness {
+        Some(native) => {
+            let mut order = vec![native];
+            order.extend(
+                DEFAULT_HARNESS_ORDER
+                    .iter()
+                    .copied()
+                    .filter(|harness| *harness != native),
+            );
+            order
         }
-        _ => UNKNOWN_PROVIDER_FALLBACK_ORDER.to_vec(),
+        None => DEFAULT_HARNESS_ORDER.to_vec(),
     }
 }
 
@@ -211,28 +206,22 @@ mod tests {
     }
 
     #[test]
-    fn provider_candidate_order_is_canonical() {
+    fn provider_candidate_order_derives_from_default_harness_order() {
         assert_eq!(
             provider_candidate_order("openai"),
-            vec![
-                HarnessId::Codex,
-                HarnessId::Pi,
-                HarnessId::OpenCode,
-                HarnessId::Cursor,
-            ]
+            derive_provider_candidate_order(Some(HarnessId::Codex))
         );
         assert_eq!(
             provider_candidate_order("anthropic"),
-            vec![
-                HarnessId::Claude,
-                HarnessId::Pi,
-                HarnessId::OpenCode,
-                HarnessId::Cursor,
-            ]
+            derive_provider_candidate_order(Some(HarnessId::Claude))
         );
         assert_eq!(
             provider_candidate_order("unknown"),
-            vec![HarnessId::Pi, HarnessId::OpenCode, HarnessId::Cursor,]
+            derive_provider_candidate_order(None)
+        );
+        assert_eq!(
+            provider_candidate_order("google"),
+            DEFAULT_HARNESS_ORDER.to_vec()
         );
     }
 

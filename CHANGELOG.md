@@ -4,8 +4,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `[settings.agent_copy]` — under `MERIDIAN_MANAGED=1` or `agent_emission = "never"`, selectively emit qualifying agents to native harness folders (e.g. `.claude/agents/`) by model→harness binding; `include_fanout` checks profile `model-policies`. Overrides blanket suppression; `agent_emission = "always"` still emits all.
+
 ### Changed
+- One default harness order (`claude`, `codex`, `pi`, `cursor`, `opencode`) drives provider candidate order and empty-model routing.
+- Native agent lifecycle out of `compiler/mod.rs`; one canonical scan; sync + link share post-target lifecycle.
+- Native agent compile emits pinned model IDs for model aliases; raw and unpinned aliases still pass through.
+- Lock-replay sync skips latest tag lookup unless upgrading.
 - `AGENTS.md`: clarify generated `mars.lock` is ignored local state and document `MERIDIAN_TASK_DIR` vs inherited `MERIDIAN_PROJECT_DIR` for nested Meridian commands.
+
+### Fixed
+- First-sync native ownership seeds from apply outcomes.
+- `mars link` SuppressAll native reconcile scoped to linked harness only.
 
 ## [0.7.11] - 2026-05-30
 

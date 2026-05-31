@@ -778,6 +778,146 @@ pub fn build(
     })
 }
 
+/// Lock view for native emission immediately after apply + target sync.
+///
+/// Seeds canonical `.mars` items from the current apply pass, then layers
+/// per-target sync outputs so `copy_decision` treats freshly synced paths as
+/// managed. Full lock rebuild happens in `finalize()`; this path avoids a
+/// graph walk while still covering first-sync agents absent from `old_lock`.
+pub fn ownership_lock_for_native_emission(
+    old_lock: &LockFile,
+    apply_outcomes: &[crate::sync::apply::ActionOutcome],
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) -> LockFile {
+    let mut lock = old_lock.clone();
+    apply_apply_outcomes_to_lock(&mut lock, old_lock, apply_outcomes);
+    apply_target_sync_outputs(&mut lock, target_outcomes);
+    lock
+}
+
+/// Lock view for native emission after `mars link` target sync.
+///
+/// The persisted lock already reflects canonical items; only target-sync outputs
+/// from the link pass need to be layered on for ownership checks.
+pub fn ownership_lock_after_target_sync(
+    old_lock: &LockFile,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) -> LockFile {
+    let mut lock = old_lock.clone();
+    apply_target_sync_outputs(&mut lock, target_outcomes);
+    lock
+}
+
+/// Merge current apply outcomes into a lock view for ownership checks.
+///
+/// Write actions upsert canonical `.mars` outputs; removals drop the item;
+/// skipped/kept entries carry forward from `old_lock` when the clone lacks them.
+pub fn apply_apply_outcomes_to_lock(
+    lock: &mut LockFile,
+    old_lock: &LockFile,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+) {
+    use crate::sync::apply::ActionTaken;
+
+    let old_lock_index = LockIndex::new(old_lock);
+    for outcome in outcomes {
+        match outcome.action {
+            ActionTaken::Removed => {
+                lock.items.shift_remove(&item_key(&outcome.item_id));
+            }
+            ActionTaken::Skipped => {
+                let key = item_key(&outcome.item_id);
+                if lock.items.contains_key(&key) {
+                    continue;
+                }
+                if let Some(old_item) = old_lock.items.get(&key) {
+                    lock.items.insert(key, old_item.clone());
+                } else if let Some(flat) =
+                    old_lock_index.find_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                {
+                    let key = format!("{}/{}", flat.kind, outcome.dest_path.item_name(flat.kind));
+                    lock.items.entry(key).or_insert_with(|| LockedItemV2 {
+                        source: flat.source,
+                        kind: flat.kind,
+                        version: flat.version,
+                        source_checksum: flat.source_checksum,
+                        outputs: vec![OutputRecord {
+                            target_root: CANONICAL_TARGET_ROOT.to_string(),
+                            dest_path: flat.dest_path,
+                            installed_checksum: flat.installed_checksum,
+                        }],
+                    });
+                }
+            }
+            ActionTaken::Kept => {
+                let key = item_key(&outcome.item_id);
+                if let Some(old_item) = old_lock.items.get(&key) {
+                    lock.items.insert(key, old_item.clone());
+                } else if let Some(flat) =
+                    old_lock_index.find_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                {
+                    let key = format!("{}/{}", flat.kind, outcome.dest_path.item_name(flat.kind));
+                    lock.items.entry(key).or_insert_with(|| LockedItemV2 {
+                        source: flat.source,
+                        kind: flat.kind,
+                        version: flat.version,
+                        source_checksum: flat.source_checksum,
+                        outputs: vec![OutputRecord {
+                            target_root: CANONICAL_TARGET_ROOT.to_string(),
+                            dest_path: flat.dest_path,
+                            installed_checksum: flat.installed_checksum,
+                        }],
+                    });
+                }
+            }
+            ActionTaken::Installed
+            | ActionTaken::Updated
+            | ActionTaken::Merged
+            | ActionTaken::Conflicted => {
+                if outcome.dest_path.as_str().is_empty() {
+                    continue;
+                }
+                let Some(source_checksum) = outcome
+                    .source_checksum
+                    .as_ref()
+                    .filter(|checksum| !checksum_is_empty(checksum))
+                else {
+                    continue;
+                };
+                let Some(installed_checksum) = outcome
+                    .installed_checksum
+                    .as_ref()
+                    .filter(|checksum| !checksum_is_empty(checksum))
+                else {
+                    continue;
+                };
+
+                let source_name = if outcome.source_name.as_ref().is_empty() {
+                    SourceName::from("")
+                } else {
+                    outcome.source_name.clone()
+                };
+
+                let key = item_key(&outcome.item_id);
+                lock.items.insert(
+                    key,
+                    LockedItemV2 {
+                        source: source_name,
+                        kind: outcome.item_id.kind,
+                        version: None,
+                        source_checksum: source_checksum.clone(),
+                        outputs: vec![OutputRecord {
+                            target_root: CANONICAL_TARGET_ROOT.to_string(),
+                            dest_path: outcome.dest_path.clone(),
+                            installed_checksum: installed_checksum.clone(),
+                        }],
+                    },
+                );
+            }
+        }
+    }
+}
+
 /// Merge per-target sync results into a built lock file.
 pub fn apply_target_sync_outputs(
     lock: &mut LockFile,
@@ -798,13 +938,33 @@ pub fn apply_target_sync_outputs(
     }
 }
 
+/// Native harness output recorded in the lock for a canonical `.mars` agent item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledNativeOutput {
+    /// Canonical `.mars` dest path for the owning agent (e.g. `agents/coder.md`).
+    pub owner_canonical_dest_path: String,
+    pub target_root: String,
+    pub dest_path: String,
+    pub installed_checksum: ContentHash,
+}
+
+/// Drop native harness output records removed by native agent reconcile.
+pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
+    for (target_root, dest_path) in records {
+        remove_target_output(lock, target_root, dest_path);
+    }
+}
+
 /// Record native harness outputs produced by dual-surface compile.
-pub fn apply_compiled_native_outputs(
-    lock: &mut LockFile,
-    records: &[(String, String, ContentHash)],
-) {
-    for (target_root, dest_path, installed_checksum) in records {
-        upsert_target_output(lock, target_root, dest_path, installed_checksum);
+pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNativeOutput]) {
+    for record in records {
+        upsert_native_output_on_owner(
+            lock,
+            &record.owner_canonical_dest_path,
+            &record.target_root,
+            &record.dest_path,
+            &record.installed_checksum,
+        );
     }
 }
 
@@ -833,6 +993,48 @@ fn upsert_target_output(
         item.outputs.push(OutputRecord {
             target_root: target_root.to_string(),
             dest_path: dest,
+            installed_checksum: installed_checksum.clone(),
+        });
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        return;
+    }
+}
+
+fn upsert_native_output_on_owner(
+    lock: &mut LockFile,
+    owner_canonical_dest_path: &str,
+    target_root: &str,
+    native_dest_path: &str,
+    installed_checksum: &ContentHash,
+) {
+    let native_dest = DestPath::from(native_dest_path);
+    for item in lock.items.values_mut() {
+        let owns_canonical = item.outputs.iter().any(|output| {
+            output.target_root == CANONICAL_TARGET_ROOT
+                && crate::target::dest_paths_equivalent(
+                    output.dest_path.as_str(),
+                    owner_canonical_dest_path,
+                )
+        });
+        if !owns_canonical {
+            continue;
+        }
+
+        if let Some(output) = item.outputs.iter_mut().find(|output| {
+            output.target_root == target_root
+                && crate::target::dest_paths_equivalent(output.dest_path.as_str(), native_dest_path)
+        }) {
+            output.installed_checksum = installed_checksum.clone();
+            return;
+        }
+
+        item.outputs.push(OutputRecord {
+            target_root: target_root.to_string(),
+            dest_path: native_dest,
             installed_checksum: installed_checksum.clone(),
         });
         item.outputs.sort_by(|a, b| {
@@ -900,7 +1102,7 @@ mod tests {
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use crate::sync::apply::{ActionOutcome, ActionTaken, ApplyResult};
-    use crate::types::{SourceId, SourceUrl};
+    use crate::types::{ItemName, SourceId, SourceUrl};
     use tempfile::TempDir;
 
     fn sample_lock() -> LockFile {
@@ -1393,6 +1595,106 @@ installed_checksum = "sha256:222"
             });
         assert!(lock.contains_output(".cursor", "agents/coder.md"));
         assert!(!lock.contains_output(".cursor", "agents/missing.md"));
+    }
+
+    #[test]
+    fn apply_compiled_native_outputs_upserts_codex_native_by_canonical_owner() {
+        let mut lock = sample_lock();
+        apply_compiled_native_outputs(
+            &mut lock,
+            &[CompiledNativeOutput {
+                owner_canonical_dest_path: "agents/coder.md".to_string(),
+                target_root: ".codex".to_string(),
+                dest_path: "agents/coder.toml".to_string(),
+                installed_checksum: "sha256:codex".into(),
+            }],
+        );
+        assert!(lock.contains_output(".codex", "agents/coder.toml"));
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+    }
+
+    #[test]
+    fn apply_compiled_native_outputs_upserts_when_frontmatter_name_differs_from_filename() {
+        let mut lock = sample_lock();
+        lock.items.insert(
+            "agent/alias-name".to_string(),
+            LockedItemV2 {
+                source: "base".into(),
+                kind: ItemKind::Agent,
+                version: Some("v1.0.0".into()),
+                source_checksum: "sha256:alias-src".into(),
+                outputs: vec![OutputRecord {
+                    target_root: ".mars".to_string(),
+                    dest_path: "agents/on-disk-stem.md".into(),
+                    installed_checksum: "sha256:alias-mars".into(),
+                }],
+            },
+        );
+        apply_compiled_native_outputs(
+            &mut lock,
+            &[CompiledNativeOutput {
+                owner_canonical_dest_path: "agents/on-disk-stem.md".to_string(),
+                target_root: ".claude".to_string(),
+                dest_path: "agents/alias-name.md".to_string(),
+                installed_checksum: "sha256:claude-native".into(),
+            }],
+        );
+        assert!(lock.contains_output(".claude", "agents/alias-name.md"));
+    }
+
+    #[test]
+    fn ownership_lock_for_native_emission_seeds_new_apply_outcomes() {
+        let old_lock = LockFile::empty();
+        let apply_outcomes = vec![ActionOutcome {
+            item_id: ItemId {
+                kind: ItemKind::Agent,
+                name: ItemName::from("coder"),
+            },
+            action: ActionTaken::Installed,
+            dest_path: "agents/coder.md".into(),
+            source_name: "base".into(),
+            source_checksum: Some("sha256:src".into()),
+            installed_checksum: Some("sha256:mars".into()),
+        }];
+        let view = ownership_lock_for_native_emission(
+            &old_lock,
+            &apply_outcomes,
+            &[crate::target_sync::TargetSyncOutcome {
+                target: ".cursor".to_string(),
+                items_synced: 1,
+                items_removed: 0,
+                errors: Vec::new(),
+                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
+                    dest_path: "agents/coder.md".to_string(),
+                    installed_checksum: "sha256:cursor".into(),
+                }],
+                removed_dest_paths: Vec::new(),
+            }],
+        );
+        assert!(view.contains_output(".mars", "agents/coder.md"));
+        assert!(view.contains_output(".cursor", "agents/coder.md"));
+        assert!(!old_lock.contains_output(".mars", "agents/coder.md"));
+    }
+
+    #[test]
+    fn ownership_lock_after_target_sync_layers_synced_outputs() {
+        let lock = sample_lock();
+        let view = ownership_lock_after_target_sync(
+            &lock,
+            &[crate::target_sync::TargetSyncOutcome {
+                target: ".cursor".to_string(),
+                items_synced: 1,
+                items_removed: 0,
+                errors: Vec::new(),
+                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
+                    dest_path: "agents/coder.md".to_string(),
+                    installed_checksum: "sha256:cursor".into(),
+                }],
+                removed_dest_paths: Vec::new(),
+            }],
+        );
+        assert!(view.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
     }
 
     #[test]

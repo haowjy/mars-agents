@@ -61,6 +61,17 @@ pub struct ModelAlias {
     pub spec: ModelSpec,
 }
 
+impl ModelAlias {
+    pub fn pinned_model_id(&self) -> Option<&str> {
+        match &self.spec {
+            ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+                Some(model.as_str())
+            }
+            ModelSpec::AutoResolve { .. } => None,
+        }
+    }
+}
+
 /// How a model alias resolves to a concrete model ID.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelSpec {
@@ -2185,7 +2196,7 @@ mod tests {
         assert_eq!(resolved.provider, "anthropic");
         assert_eq!(
             resolved.harness_candidates,
-            vec!["claude", "pi", "opencode", "cursor"]
+            vec!["claude", "codex", "pi", "cursor", "opencode"]
         );
 
         let installed = harness::detect_installed_harnesses();
@@ -2736,7 +2747,7 @@ mod tests {
         assert_eq!(entry.provider, "openai");
         assert_eq!(
             entry.harness_candidates,
-            vec!["codex", "pi", "opencode", "cursor"]
+            vec!["codex", "claude", "pi", "cursor", "opencode"]
         );
     }
 
@@ -3417,7 +3428,7 @@ match = ["claude-opus-*"]
 
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, cursor, opencode"));
     }
 
     #[test]

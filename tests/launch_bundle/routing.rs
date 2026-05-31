@@ -107,7 +107,7 @@ model = "gpt-5""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex")
+        Some("claude,codex")
     );
 }
 
@@ -159,7 +159,7 @@ model = "gpt-5""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex")
+        Some("claude,codex")
     );
 }
 
@@ -256,7 +256,7 @@ default_harness = "pi""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
     assert_eq!(
         bundle["routing"]["harness_model"].as_str(),
@@ -447,7 +447,7 @@ default_harness = "invalid-harness""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -494,7 +494,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -1516,7 +1516,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1546,7 +1546,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1584,7 +1584,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1618,7 +1618,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1649,7 +1649,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1699,7 +1699,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1752,7 +1752,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1793,11 +1793,11 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi")
+        Some("claude,codex,pi")
     );
 }
 
-pub(crate) fn build_launch_bundle_prefers_opencode_before_cursor_when_both_installed() {
+pub(crate) fn build_launch_bundle_prefers_cursor_before_opencode_when_both_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -1831,10 +1831,10 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode")
+        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -1879,7 +1879,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -2238,7 +2238,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -2264,8 +2264,11 @@ Review code changes."#;
         }),
     );
 
+    let extra_toml = r#"[settings]
+harness_order = ["opencode", "cursor"]"#;
+
     let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
@@ -2283,7 +2286,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode")
+        Some("opencode")
     );
 }
 
@@ -2487,7 +2490,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,codex,opencode,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 

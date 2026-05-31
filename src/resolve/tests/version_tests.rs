@@ -160,12 +160,53 @@ fn locked_version_preferred_when_satisfies_constraint() {
     // Should prefer locked version 1.1.0 over unlocked latest-compatible 1.2.0.
     assert_eq!(node.resolved_ref.version, Some(Version::new(1, 1, 0)));
     assert_eq!(node.resolved_ref.commit.as_deref(), Some("abc"));
-    assert_eq!(
-        node.latest_version,
-        Some(Version::new(1, 2, 0)),
-        "normal lock replay should still report newest available version metadata"
+    assert!(
+        node.latest_version.is_none(),
+        "normal lock replay should not list remote tags for upgrade metadata"
     );
-    assert_eq!(provider.list_versions_count("https://example.com/a.git"), 1);
+    assert_eq!(provider.list_versions_count("https://example.com/a.git"), 0);
+}
+
+#[test]
+fn upgrade_lock_replay_fetches_latest_version_metadata_for_non_targets() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 5, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(2, 0, 0), (2, 5, 0)]);
+    provider.add_source("a", tree_a, None);
+    provider.add_source("b", tree_b, None);
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("^1.0"))),
+        ("b", git_spec("https://example.com/b.git", Some("^2.0"))),
+    ]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "b".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/b.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v2.0.0".into()),
+            commit: Some("b-locked-sha".into()),
+            tree_hash: None,
+        },
+    );
+
+    let options = ResolveOptions::upgrade(HashSet::from(["a".into()]), false);
+    let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
+    assert_eq!(
+        graph.nodes["b"].latest_version,
+        Some(Version::new(2, 5, 0)),
+        "upgrade should still fetch latest metadata for lock-replayed non-targets"
+    );
+    assert_eq!(provider.list_versions_count("https://example.com/b.git"), 1);
 }
 
 #[test]

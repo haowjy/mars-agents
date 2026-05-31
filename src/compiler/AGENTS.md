@@ -1,6 +1,8 @@
 # src/compiler/ — Package Compilation Pipeline
 
-Compiles resolved packages into target state. 9 submodules, ~6900 lines.
+Compiles resolved packages into target state. 11 submodules, ~2100 lines in compiler
+core (`mod.rs`, `native_agents.rs`) plus per-lane modules (agents, skills, config
+entries, hooks, MCP, variants, visibility).
 
 ## Mental Model
 
@@ -23,6 +25,21 @@ finalize()         ← write lock, build report
 
 The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and produces `SyncReport`.
 
+## Module Map
+
+- `mod.rs` (304 lines) — orchestration: `compile()` entry point, stages, lock finalization
+- `native_agents.rs` (814 lines) — native harness surface lifecycle: scan, reconcile, compile,
+  emit, link-materialize. Extracted from `mod.rs` (was 1522 lines).
+- `agent_copy.rs` — selective emission when `settings.agent_copy` is configured;
+  `agent_qualifies_for_harness()`, `model_resolves_to_harness()`, `QualifiedEmission` enum
+- `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
+- `skills/` — universal skill schema + native lowering with variant layouts
+- `config_entries/` — MCP servers and hooks from packages → target config files
+- `mcp/` — MCP server item discovery, env-ref validation, collision detection
+- `hooks/` — hook item discovery, event validation, ordering, lossiness classification
+- `variants/` — skill variant layout validation, indexing, projection
+- `visibility/` — D1/D10 propagation rules
+
 ## Dual-Surface Compilation
 
 Under `EmitAll` policy (standalone mars), harness-bound agents are compiled to both:
@@ -30,6 +47,16 @@ Under `EmitAll` policy (standalone mars), harness-bound agents are compiled to b
 2. `<target>/agents/` — harness-native format (e.g., `.claude/agents/coder.md`)
 
 Under `SuppressAll` (Meridian-managed), native artifacts are removed.
+
+### Model Alias Resolution at Compile Time
+
+When lowering a universal agent profile to a native harness format, model aliases like
+`opus46` are resolved to pinned model IDs (e.g., `claude-opus-4-6`) at compile time.
+This is necessary because native harnesses (Claude Code, Codex) don't understand the
+alias system. Resolution happens in `native_model_override_for_harness()` in
+`native_agents.rs` — it consults the merged alias registry and supplies a
+`model_override` to the lowerer. `AutoResolve` tokens (containing `[`) and unpinned
+aliases pass through verbatim with a warning.
 
 ### Agent Surface Policy
 
@@ -43,7 +70,10 @@ Under `SuppressAll` (Meridian-managed), native artifacts are removed.
 ## Agent Compilation (`agents/`)
 
 - `mod.rs` — schema parser, `AgentProfile` from YAML frontmatter + markdown body
-- `lower.rs` — per-harness lowering with lossiness tracking
+- `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept an
+  optional `model_override: Option<&str>` parameter. `lower_for_harness_with_model()`
+  dispatches to the correct lowerer with the resolved model override, ensuring
+  emitted native artifacts carry pinned model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 
 ### Non-Overridable Fields

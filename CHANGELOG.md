@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Git upgrade hints adapt canonical `github.com/org/repo` identities back to fetchable remotes before `git ls-remote`.
+
 ## [0.7.13] - 2026-06-02
 
 ### Changed

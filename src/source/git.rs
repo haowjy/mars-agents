@@ -12,9 +12,6 @@ use crate::types::CommitHash;
 use super::archive;
 use super::git_cli;
 
-// Re-export for backward compatibility
-pub use git_cli::{ls_remote_head, ls_remote_tags};
-
 /// Options controlling git fetch behavior.
 #[derive(Debug, Clone, Default)]
 pub struct FetchOptions {
@@ -46,6 +43,22 @@ pub(crate) fn parse_semver_tag(tag: &str) -> Option<semver::Version> {
     semver::Version::parse(version_str).ok()
 }
 
+/// Return a Git-CLI-fetchable remote URL from a source URL or canonical identity.
+///
+/// Source identities intentionally canonicalize GitHub/GitLab HTTPS URLs to
+/// `host/owner/repo` for equality. Git needs an actual remote locator, so adapt
+/// that shorthand at the boundary before running `git ls-remote`, `clone`, or
+/// `fetch`.
+pub(crate) fn normalize_git_remote_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("github.com/") || lower.starts_with("gitlab.com/") {
+        format!("https://{trimmed}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedVersion {
     pub tag: Option<String>,
@@ -60,7 +73,7 @@ fn resolve_version(
 ) -> Result<ResolvedVersion, MarsError> {
     if let Some(version_req) = version_req {
         if let Some(requested_version) = parse_semver_tag(version_req) {
-            let tags = git_cli::ls_remote_tags(url)?;
+            let tags = ls_remote_tags(url)?;
             let selected = tags
                 .into_iter()
                 .find(|tag| tag.tag == version_req || tag.version == requested_version)
@@ -76,7 +89,7 @@ fn resolve_version(
             });
         }
 
-        let sha = git_cli::ls_remote_ref(url, version_req)?;
+        let sha = ls_remote_ref(url, version_req)?;
         return Ok(ResolvedVersion {
             tag: None,
             version: None,
@@ -84,7 +97,7 @@ fn resolve_version(
         });
     }
 
-    let tags = git_cli::ls_remote_tags(url)?;
+    let tags = ls_remote_tags(url)?;
     if let Some(selected) = tags.last() {
         return Ok(ResolvedVersion {
             tag: Some(selected.tag.clone()),
@@ -97,7 +110,7 @@ fn resolve_version(
         "no-releases",
         format!("no releases found for {url}, using latest commit from default branch"),
     );
-    let sha = git_cli::ls_remote_head(url)?;
+    let sha = ls_remote_head(url)?;
     Ok(ResolvedVersion {
         tag: None,
         version: None,
@@ -122,7 +135,22 @@ fn should_use_github_archive(url: &str) -> bool {
 }
 
 pub fn list_versions(url: &str, _cache: &GlobalCache) -> Result<Vec<AvailableVersion>, MarsError> {
-    git_cli::ls_remote_tags(url)
+    ls_remote_tags(url)
+}
+
+fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
+    let remote_url = normalize_git_remote_url(url);
+    git_cli::ls_remote_ref(&remote_url, reference)
+}
+
+pub(crate) fn ls_remote_head(url: &str) -> Result<String, MarsError> {
+    let remote_url = normalize_git_remote_url(url);
+    git_cli::ls_remote_head(&remote_url)
+}
+
+pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
+    let remote_url = normalize_git_remote_url(url);
+    git_cli::ls_remote_tags(&remote_url)
 }
 
 pub fn fetch(
@@ -133,18 +161,19 @@ pub fn fetch(
     options: &FetchOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let mut resolved = resolve_version(url, version_req, diag)?;
+    let remote_url = normalize_git_remote_url(url);
+    let mut resolved = resolve_version(&remote_url, version_req, diag)?;
     if let Some(preferred_commit) = options.preferred_commit.as_ref() {
         resolved.sha = preferred_commit.to_string();
     }
 
-    let tree_path = if should_use_github_archive(url) {
-        match archive::fetch_archive(url, &resolved.sha, cache) {
+    let tree_path = if should_use_github_archive(&remote_url) {
+        match archive::fetch_archive(&remote_url, &resolved.sha, cache) {
             Ok(path) => path,
             Err(MarsError::Http { status: 404, .. }) if options.preferred_commit.is_some() => {
                 return Err(MarsError::LockedCommitUnreachable {
                     commit: resolved.sha.clone(),
-                    url: url.to_string(),
+                    url: remote_url,
                 });
             }
             Err(err) => return Err(err),
@@ -158,12 +187,12 @@ pub fn fetch(
             None
         };
 
-        match git_cli::fetch_git_clone(url, resolved.tag.as_deref(), checkout_sha, cache) {
+        match git_cli::fetch_git_clone(&remote_url, resolved.tag.as_deref(), checkout_sha, cache) {
             Ok(path) => path,
             Err(MarsError::GitCli { .. }) if options.preferred_commit.is_some() => {
                 return Err(MarsError::LockedCommitUnreachable {
                     commit: resolved.sha.clone(),
-                    url: url.to_string(),
+                    url: remote_url,
                 });
             }
             Err(err) => return Err(err),
@@ -187,24 +216,25 @@ pub fn fetch_commit(
     cache: &GlobalCache,
     _diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let tree_path = if should_use_github_archive(url) {
-        match archive::fetch_archive(url, commit, cache) {
+    let remote_url = normalize_git_remote_url(url);
+    let tree_path = if should_use_github_archive(&remote_url) {
+        match archive::fetch_archive(&remote_url, commit, cache) {
             Ok(path) => path,
             Err(MarsError::Http { status: 404, .. }) => {
                 return Err(MarsError::LockedCommitUnreachable {
                     commit: commit.to_string(),
-                    url: url.to_string(),
+                    url: remote_url,
                 });
             }
             Err(err) => return Err(err),
         }
     } else {
-        match git_cli::fetch_git_clone(url, None, Some(commit), cache) {
+        match git_cli::fetch_git_clone(&remote_url, None, Some(commit), cache) {
             Ok(path) => path,
             Err(MarsError::GitCli { .. }) => {
                 return Err(MarsError::LockedCommitUnreachable {
                     commit: commit.to_string(),
-                    url: url.to_string(),
+                    url: remote_url,
                 });
             }
             Err(err) => return Err(err),
@@ -536,6 +566,34 @@ mod tests {
     fn is_github_host_rejects_other_hosts() {
         assert!(!is_github_host("https://gitlab.com/org/repo"));
         assert!(!is_github_host("git@source.example.com:org/repo.git"));
+    }
+
+    #[test]
+    fn normalize_git_remote_url_makes_known_host_identity_fetchable() {
+        assert_eq!(
+            normalize_git_remote_url("github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+        assert_eq!(
+            normalize_git_remote_url("gitlab.com/group/repo"),
+            "https://gitlab.com/group/repo"
+        );
+    }
+
+    #[test]
+    fn normalize_git_remote_url_preserves_explicit_locators() {
+        assert_eq!(
+            normalize_git_remote_url("https://github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+        assert_eq!(
+            normalize_git_remote_url("git@github.com:org/repo.git"),
+            "git@github.com:org/repo.git"
+        );
+        assert_eq!(
+            normalize_git_remote_url("git.example.com/org/repo"),
+            "git.example.com/org/repo"
+        );
     }
 
     #[test]

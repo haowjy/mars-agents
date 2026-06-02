@@ -224,22 +224,13 @@ mod tests {
     }
 
     fn default_options() -> SyncOptions {
-        SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        }
+        SyncOptions::default()
     }
 
     fn force_options() -> SyncOptions {
         SyncOptions {
             force: true,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
+            ..SyncOptions::default()
         }
     }
 

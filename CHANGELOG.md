@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `mars sync` upgrade hint now checks locked transitive dependencies, so stale compatible packages pulled through dependency ranges surface before `mars upgrade`.
+
 ## [0.7.12] - 2026-05-31
 
 ### Added
@@ -13,7 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - One default harness order (`claude`, `codex`, `pi`, `cursor`, `opencode`) drives provider candidate order and empty-model routing.
 - Native agent lifecycle out of `compiler/mod.rs`; one canonical scan; sync + link share post-target lifecycle.
 - Native agent compile emits pinned model IDs for model aliases; raw and unpinned aliases still pass through.
-- Lock-replay sync skips latest tag lookup unless upgrading.
+- Lock-replay sync skips latest tag lookup unless upgrading or emitting the post-sync upgrade hint.
 - `AGENTS.md`: clarify generated `mars.lock` is ignored local state and document `MERIDIAN_TASK_DIR` vs inherited `MERIDIAN_PROJECT_DIR` for nested Meridian commands.
 
 ### Fixed

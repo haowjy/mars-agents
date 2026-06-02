@@ -101,13 +101,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 name: name.clone(),
                 entry,
             }),
-            options: SyncOptions {
-                force: false,
-                dry_run: false,
-                frozen: false,
-                refresh_models: false,
-                no_refresh_models: false,
-            },
+            options: SyncOptions::default(),
         };
 
         let report = crate::sync::execute(ctx, &request)?;
@@ -124,13 +118,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
-        options: SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        },
+        options: SyncOptions::default(),
     };
 
     let report = crate::sync::execute(ctx, &request)?;

@@ -457,6 +457,7 @@ mod tests {
             nodes,
             order,
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,

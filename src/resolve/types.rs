@@ -23,6 +23,8 @@ pub struct ResolvedGraph {
     pub order: Vec<SourceName>,
     /// All filter constraints collected for each source (direct + transitive).
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
+    /// All version constraints collected for each source (direct + transitive).
+    pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
 }
 
 /// A single node in the resolved graph.

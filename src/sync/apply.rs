@@ -553,13 +553,7 @@ mod tests {
             }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert_eq!(result.outcomes.len(), 1);
@@ -595,13 +589,7 @@ mod tests {
             actions: vec![PlannedAction::Install { target }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         let installed_checksum = result.outcomes[0].installed_checksum.as_ref().unwrap();
@@ -634,13 +622,7 @@ mod tests {
             actions: vec![PlannedAction::Overwrite { target }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Updated));
@@ -663,13 +645,7 @@ mod tests {
         let plan = SyncPlan {
             actions: vec![PlannedAction::Install { target }],
         };
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
 
@@ -706,13 +682,7 @@ mod tests {
             actions: vec![PlannedAction::Remove { locked }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
@@ -743,13 +713,7 @@ mod tests {
             actions: vec![PlannedAction::Remove { locked }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
@@ -777,13 +741,7 @@ mod tests {
         let plan = SyncPlan {
             actions: vec![PlannedAction::Remove { locked }],
         };
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
@@ -812,13 +770,7 @@ mod tests {
         let plan = SyncPlan {
             actions: vec![PlannedAction::Remove { locked }],
         };
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
@@ -844,11 +796,8 @@ mod tests {
         };
 
         let options = SyncOptions {
-            force: false,
             dry_run: true,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
+            ..SyncOptions::default()
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -880,13 +829,7 @@ mod tests {
             }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Skipped));
@@ -918,13 +861,7 @@ mod tests {
             }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Kept));
@@ -974,13 +911,7 @@ mod tests {
             actions: vec![PlannedAction::Install { target }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
@@ -1039,13 +970,7 @@ mod tests {
             actions: vec![PlannedAction::Install { target }],
         };
 
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
 
         execute(root.path(), &plan, &options, &bases_dir).unwrap();
 

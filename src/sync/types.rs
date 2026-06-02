@@ -13,6 +13,8 @@ pub struct SyncOptions {
     pub refresh_models: bool,
     /// Skip automatic models cache refresh.
     pub no_refresh_models: bool,
+    /// Fetch version metadata so sync can report available upgrades.
+    pub check_upgrades: bool,
 }
 
 #[cfg(test)]

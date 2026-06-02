@@ -2,6 +2,8 @@
 //!
 //! Bridges the resolver's trait-based interface to the concrete source module.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::Manifest;
@@ -10,6 +12,7 @@ use crate::error::MarsError;
 use crate::resolve::{ManifestReader, SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
 use crate::types::CommitHash;
+use crate::types::SourceUrl;
 
 /// Real source provider that delegates to the source module.
 ///
@@ -18,6 +21,17 @@ use crate::types::CommitHash;
 pub(crate) struct RealSourceProvider<'a> {
     pub cache: &'a GlobalCache,
     pub project_root: &'a Path,
+    version_cache: RefCell<HashMap<SourceUrl, Vec<AvailableVersion>>>,
+}
+
+impl<'a> RealSourceProvider<'a> {
+    pub(crate) fn new(cache: &'a GlobalCache, project_root: &'a Path) -> Self {
+        Self {
+            cache,
+            project_root,
+            version_cache: RefCell::new(HashMap::new()),
+        }
+    }
 }
 
 impl VersionLister for RealSourceProvider<'_> {
@@ -25,7 +39,14 @@ impl VersionLister for RealSourceProvider<'_> {
         &self,
         url: &crate::types::SourceUrl,
     ) -> Result<Vec<AvailableVersion>, MarsError> {
-        source::list_versions(url, self.cache)
+        if let Some(available) = self.version_cache.borrow().get(url) {
+            return Ok(available.clone());
+        }
+        let available = source::list_versions(url, self.cache)?;
+        self.version_cache
+            .borrow_mut()
+            .insert(url.clone(), available.clone());
+        Ok(available)
     }
 }
 

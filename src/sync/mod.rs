@@ -7,6 +7,7 @@ pub mod provider;
 pub mod rewrite;
 pub mod target;
 pub mod types;
+mod upgrades;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
@@ -100,6 +101,7 @@ pub(crate) struct LoadedConfig {
 pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
+    pub upgrades_available: usize,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
@@ -212,10 +214,7 @@ pub(crate) fn resolve_graph(
     validate_targets(&request.resolution, &loaded.effective)?;
 
     let cache = GlobalCache::new()?;
-    let source_provider = provider::RealSourceProvider {
-        cache: &cache,
-        project_root: &ctx.project_root,
-    };
+    let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
     let graph = crate::resolve::resolve(
         &loaded.effective,
@@ -224,6 +223,11 @@ pub(crate) fn resolve_graph(
         &resolve_options,
         diag,
     )?;
+    let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
+        0
+    } else {
+        upgrades::count_compatible_upgrades(&graph, &source_provider, diag)
+    };
 
     let bump_entries = planned_bump_entries(&loaded.config, &graph, &request.resolution);
     if !bump_entries.is_empty() {
@@ -243,7 +247,11 @@ pub(crate) fn resolve_graph(
         diag,
     );
 
-    Ok(ResolvedState { loaded, graph })
+    Ok(ResolvedState {
+        loaded,
+        graph,
+        upgrades_available,
+    })
 }
 
 /// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
@@ -665,22 +673,7 @@ pub(crate) fn finalize(
         .resolved
         .loaded
         .dependency_changes;
-    let effective = &state.applied.planned.targeted.resolved.loaded.effective;
-    let upgrades_available = if request.options.frozen {
-        0
-    } else {
-        graph
-            .nodes
-            .values()
-            .filter(|node| {
-                effective.dependencies.contains_key(&node.source_name)
-                    && matches!(
-                        (&node.resolved_ref.version, &node.latest_version),
-                        (Some(resolved), Some(latest)) if latest > resolved
-                    )
-            })
-            .count()
-    };
+    let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
 
     Ok(SyncReport {
         applied: state.applied.applied,
@@ -1017,6 +1010,7 @@ mod tests {
                 nodes,
                 order,
                 filters: std::collections::HashMap::new(),
+                version_constraints: std::collections::HashMap::new(),
             },
             EffectiveConfig {
                 dependencies: config_dependencies,
@@ -1087,6 +1081,7 @@ mod tests {
             nodes,
             order,
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         }
     }
 
@@ -1099,11 +1094,8 @@ mod tests {
             },
             mutation: None,
             options: SyncOptions {
-                force: false,
-                dry_run: false,
                 frozen: true,
-                refresh_models: false,
-                no_refresh_models: false,
+                ..SyncOptions::default()
             },
         };
 
@@ -1120,11 +1112,8 @@ mod tests {
                 name: "base".into(),
             }),
             options: SyncOptions {
-                force: false,
-                dry_run: false,
                 frozen: true,
-                refresh_models: false,
-                no_refresh_models: false,
+                ..SyncOptions::default()
             },
         };
 
@@ -1328,11 +1317,8 @@ mod tests {
                 entry: path_dependency_entry(source.path()),
             }),
             options: SyncOptions {
-                force: false,
                 dry_run: true,
-                frozen: false,
-                refresh_models: false,
-                no_refresh_models: false,
+                ..SyncOptions::default()
             },
         };
 
@@ -1375,13 +1361,7 @@ mod tests {
 
         // Create plan
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         assert_eq!(sync_plan.actions.len(), 2);
         for action in &sync_plan.actions {
@@ -1423,13 +1403,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1581,13 +1555,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1623,13 +1591,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1675,13 +1637,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1706,10 +1662,7 @@ mod tests {
 
         let force_options = SyncOptions {
             force: true,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
+            ..SyncOptions::default()
         };
         let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
         assert!(matches!(
@@ -1749,13 +1702,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1811,11 +1758,8 @@ mod tests {
 
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let dry_options = SyncOptions {
-            force: false,
             dry_run: true,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
+            ..SyncOptions::default()
         };
 
         let sync_plan = create_sync_plan(&sync_diff, &dry_options, &cache_dir);
@@ -1842,13 +1786,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
@@ -1889,13 +1827,7 @@ mod tests {
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
-        let options = SyncOptions {
-            force: false,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-        };
+        let options = SyncOptions::default();
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
             apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();

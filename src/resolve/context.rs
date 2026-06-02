@@ -182,6 +182,7 @@ impl ResolverContext {
             nodes,
             order,
             filters: self.materialization_filters,
+            version_constraints: self.version_constraints,
         }
     }
 }

@@ -1239,7 +1239,9 @@ version = "v1.0.0"
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
-        .success();
+        .success()
+        .stderr(predicate::str::contains("1 upgrade available"))
+        .stderr(predicate::str::contains("mars upgrade"));
 
     assert_eq!(
         lock_dependency_version(project.path(), "shared"),

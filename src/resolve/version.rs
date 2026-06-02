@@ -163,10 +163,7 @@ fn latest_version_metadata(
     diag: &mut DiagnosticCollector,
 ) -> Option<Version> {
     match provider.list_versions(url) {
-        Ok(available) => available
-            .iter()
-            .max_by(|a, b| a.version.cmp(&b.version))
-            .map(|v| v.version.clone()),
+        Ok(available) => latest_available_version(&available),
         Err(err) => {
             diag.warn(
                 "latest-version-unavailable",
@@ -177,6 +174,13 @@ fn latest_version_metadata(
             None
         }
     }
+}
+
+fn latest_available_version(available: &[AvailableVersion]) -> Option<Version> {
+    available
+        .iter()
+        .max_by(|a, b| a.version.cmp(&b.version))
+        .map(|v| v.version.clone())
 }
 
 fn replay_locked_semver_commit(
@@ -505,10 +509,7 @@ pub(crate) fn resolve_git_source(
 
     // List available versions
     let available = provider.list_versions(url)?;
-    let latest = available
-        .iter()
-        .max_by(|a, b| a.version.cmp(&b.version))
-        .map(|v| v.version.clone());
+    let latest = latest_available_version(&available);
 
     if available.is_empty() {
         return resolve_untagged_source(

@@ -40,7 +40,7 @@ For keyed overlay tables:
 
 Present only in source packages — repos that other projects depend on via `mars add`. Consumer projects that just install agents/skills from external packages do not need this section.
 
-To keep project-local agents and skills without publishing, use `.mars-src/` instead. See [local-development.md](local-development.md#mars-src----project-local-agents-and-skills).
+To keep project-local agents and skills without publishing, use `.mars-src/` instead. See [local-development.md](../dev/local-development.md#mars-src----project-local-agents-and-skills).
 
 ```toml
 [package]
@@ -174,6 +174,10 @@ agent_emission = "auto"
 min_mars_version = "0.12.0"
 models_cache_ttl_hours = 24
 
+[settings.agent_copy]
+harnesses = ["claude"]
+include_fanout = false
+
 [settings.model_visibility]
 include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
 exclude = ["*-preview*", "*-latest"]         # Then hide these
@@ -184,6 +188,7 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 | `targets` | string[] | unset | Managed target directories copied from `.mars/` |
 | `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
+| `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
 | `models_cache_ttl_hours` | integer | `24` | Model catalog cache TTL; `0` forces refresh |
 | `default_harness` | string | unset | Default harness for launch routing when profile/alias/provider cannot resolve one |
@@ -191,6 +196,15 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
+
+`[settings.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `harnesses` | string[] | `[]` | Harnesses to receive selective native agent copies; each harness target must also be an effective managed target |
+| `include_fanout` | bool | `false` | Also qualify agents through matching `model-policies` / fanout rules |
+
+Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
 ## Model Visibility
 

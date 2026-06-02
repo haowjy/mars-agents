@@ -1,12 +1,12 @@
 # Agent Compilation
 
-During `mars sync`, agents are compiled to two surfaces: a canonical full-fidelity artifact in `.mars/agents/`, and — when the agent declares `harness:` — a native artifact in the corresponding harness directory (`.claude/agents/`, `.codex/agents/`, etc.).
+During `mars sync`, every agent is compiled to a canonical full-fidelity artifact in `.mars/agents/`. Native harness artifacts (`.claude/agents/`, `.codex/agents/`, etc.) are emitted when native agent emission policy allows them: normally for agents that declare `harness:`, or selectively through `[settings.agent_copy]`.
 
 ## The Two Surfaces
 
 Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `harness:` is set. This is the canonical compiled output: all frontmatter fields preserved, body unchanged. Meridian reads from here at spawn time.
 
-When `harness:` is set, a second artifact is emitted in the harness-native directory:
+When native emission selects an agent for a harness, a second artifact is emitted in the harness-native directory:
 
 | `harness:` value | Native artifact |
 |---|---|
@@ -18,7 +18,7 @@ When `harness:` is set, a second artifact is emitted in the harness-native direc
 
 Harness-native artifacts are format-translated and field-stripped. They serve as agent discovery surfaces for harness-native invocation (e.g. `codex --agent coder`). Meridian always uses the `.mars/` artifact for its own spawn logic and applies all policy fields through its own projection layer.
 
-Universal agents (no `harness:`) are installed to `.mars/agents/` only and can be launched by Meridian against any harness.
+Universal agents (no `harness:`) are installed to `.mars/agents/` only by default and can be launched by Meridian against any harness. `[settings.agent_copy]` can still create a native copy when the agent qualifies through its `model:` alias or, with `include_fanout = true`, its `model-policies`.
 
 ## Emission Control
 
@@ -35,9 +35,29 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed: Meridian manages harness-native agent loading itself and doesn't want mars-compiled artifacts competing with its runtime projection. Set `agent_emission = "always"` to override this.
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Set `agent_emission = "always"` to emit all native artifacts.
 
-When emission is disabled (via `never` or `MERIDIAN_MANAGED=1` with `auto`), mars removes any previously-emitted native artifacts for harness-bound agents currently in `.mars/agents/`.
+Use `[settings.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
+
+```toml
+[settings]
+targets = [".claude"]
+agent_emission = "never"  # optional
+
+[settings.agent_copy]
+harnesses = ["claude"]
+include_fanout = false
+```
+
+Each harness in `harnesses` must also have an effective managed target (from
+`settings.targets`, or legacy `managed_root` when `targets` is unset). Mars
+then emits only agents that qualify for that harness: profiles with a
+matching `harness:`, profiles whose `model:` alias resolves to that harness,
+and, when `include_fanout = true`, matching `model-policies`. This is the
+intentional path for Claude-native `Agent()` copies while Meridian still owns
+normal delegation through `.mars/agents/`.
+
+When a native artifact is not emitted because emission is disabled or selective copy does not qualify it, mars removes the previously-emitted native artifact for agents currently in `.mars/agents/`.
 
 This cleanup only removes the native artifact for the agent's current `harness:` value. If an agent previously targeted a different harness, the old native artifact may remain stale; run `mars sync` after changing an agent's harness to clean up the previous target.
 

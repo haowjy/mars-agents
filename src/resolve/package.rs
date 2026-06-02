@@ -150,8 +150,8 @@ pub(crate) fn resolve_package_bottom_up(
                 _ => false, // Latest or no existing ref → must run full check
             };
 
-            if !skip || options.fetch_upgrade_metadata {
-                let (new_ref, metadata) = resolve_single_source(
+            if !skip {
+                let (new_ref, latest_version) = resolve_single_source(
                     pending_src,
                     provider,
                     locked,
@@ -178,18 +178,11 @@ pub(crate) fn resolve_package_bottom_up(
                         pending_src.name.clone(),
                         new_ref,
                         new_rooted,
-                        metadata,
+                        latest_version,
                     );
                     return Err(MarsError::ResolutionRestartNeeded {
                         package: pending_src.name.to_string(),
                     });
-                }
-
-                if options.fetch_upgrade_metadata
-                    && let Some(package) = ctx.registry_mut().get_mut(&pending_src.name)
-                {
-                    package.node.latest_version = metadata.latest_version;
-                    package.node.latest_compatible_version = metadata.latest_compatible_version;
                 }
             }
         }
@@ -239,14 +232,14 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let (resolved_ref, metadata, rooted_ref) =
-        if let Some((override_ref, override_rooted, override_metadata)) =
+    let (resolved_ref, latest_version, rooted_ref) =
+        if let Some((override_ref, override_rooted, override_latest_version)) =
             ctx.version_override(&pending_src.name).cloned()
         {
             // Use pre-computed ref and latest-version metadata from prior pass.
-            (override_ref, override_metadata, override_rooted)
+            (override_ref, override_latest_version, override_rooted)
         } else {
-            let (ref_, metadata) = resolve_single_source(
+            let (ref_, latest) = resolve_single_source(
                 pending_src,
                 provider,
                 locked,
@@ -259,7 +252,7 @@ pub(crate) fn resolve_package_bottom_up(
                 &ref_.tree_path,
                 pending_src.subpath.as_ref(),
             )?;
-            (ref_, metadata, rooted)
+            (ref_, latest, rooted)
         };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
@@ -286,8 +279,7 @@ pub(crate) fn resolve_package_bottom_up(
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
                 resolved_ref,
-                latest_version: metadata.latest_version,
-                latest_compatible_version: metadata.latest_compatible_version,
+                latest_version,
                 manifest,
                 deps,
             },

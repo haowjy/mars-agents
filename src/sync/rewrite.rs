@@ -193,6 +193,7 @@ mod tests {
             nodes: IndexMap::new(),
             order: vec![],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
 
         rewrite_skill_refs(&mut target, &renames, &graph).unwrap();
@@ -244,6 +245,7 @@ mod tests {
             nodes: IndexMap::new(),
             order: vec![],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
 
         rewrite_skill_refs(&mut target, &renames, &graph).unwrap();
@@ -366,7 +368,6 @@ mod tests {
                     tree_path: dir.path().to_path_buf(),
                 },
                 latest_version: None,
-                latest_compatible_version: None,
                 manifest: None,
                 deps: vec!["source-b".into()],
             },
@@ -375,6 +376,7 @@ mod tests {
             nodes,
             order: vec!["source-a".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
 
         rewrite_skill_refs(&mut target, &renames, &graph).unwrap();

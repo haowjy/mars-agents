@@ -373,10 +373,7 @@ fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, Stri
     let effective = crate::config::merge(publish_config, crate::config::LocalConfig::default())?;
 
     let cache = GlobalCache::new()?;
-    let provider = RealSourceProvider {
-        cache: &cache,
-        project_root: base,
-    };
+    let provider = RealSourceProvider::new(&cache, base);
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let options = ResolveOptions::default(); // no lock, not frozen, not maximizing
 

@@ -121,12 +121,8 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions {
-            force: false,
             dry_run: true,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-            check_upgrades: false,
+            ..SyncOptions::default()
         },
     };
 

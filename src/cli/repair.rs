@@ -36,11 +36,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         mutation: None,
         options: SyncOptions {
             force: true,
-            dry_run: false,
-            frozen: false,
-            refresh_models: false,
-            no_refresh_models: false,
-            check_upgrades: false,
+            ..SyncOptions::default()
         },
     };
 

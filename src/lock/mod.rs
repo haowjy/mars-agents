@@ -1828,7 +1828,6 @@ dest_path = "agents/coder.md"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 latest_version: None,
-                latest_compatible_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -1853,7 +1852,6 @@ dest_path = "agents/coder.md"
                     tree_path: PathBuf::from("/tmp/cache/local"),
                 },
                 latest_version: None,
-                latest_compatible_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -1863,6 +1861,7 @@ dest_path = "agents/coder.md"
             nodes,
             order: vec![git_name.clone(), path_name.clone()],
             filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
 
@@ -1941,7 +1940,6 @@ dest_path = "agents/coder.md"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 latest_version: None,
-                latest_compatible_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -1951,6 +1949,7 @@ dest_path = "agents/coder.md"
             nodes,
             order: vec![source_name.clone()],
             filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
         let new_lock = build(
@@ -1972,6 +1971,7 @@ dest_path = "agents/coder.md"
             nodes: IndexMap::new(),
             order: Vec::new(),
             filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
         let old_lock = LockFile {
@@ -2044,6 +2044,7 @@ dest_path = "agents/coder.md"
             nodes: IndexMap::new(),
             order: Vec::new(),
             filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let old_lock = LockFile::empty();
         let applied = ApplyResult {
@@ -2169,6 +2170,7 @@ dest_path = "hooks/pre-push/hook.sh"
             nodes: IndexMap::new(),
             order: Vec::new(),
             filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let old_lock = LockFile {
             version: LOCK_VERSION,

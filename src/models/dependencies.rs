@@ -188,7 +188,6 @@ mod tests {
                 tree_path: canonical,
             },
             latest_version: None,
-            latest_compatible_version: None,
             manifest: with_models.then(|| manifest_with_models(name)),
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }
@@ -235,6 +234,7 @@ mod tests {
             nodes,
             order: vec!["a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         // Direct siblings follow consumer declaration order, not graph insertion order.
         let config = effective_config_with_decl_order(&["b", "a"]);
@@ -254,6 +254,7 @@ mod tests {
             nodes,
             order: vec!["d".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -273,6 +274,7 @@ mod tests {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -290,6 +292,7 @@ mod tests {
             nodes,
             order: vec!["d".into(), "a".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         // D is declared after A, but topological ordering must still emit D first.
         let config = effective_config_with_decl_order(&["a", "d"]);
@@ -310,6 +313,7 @@ mod tests {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 

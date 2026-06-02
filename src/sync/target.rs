@@ -413,7 +413,6 @@ mod tests {
                         tree_path: tree.path().to_path_buf(),
                     },
                     latest_version: None,
-                    latest_compatible_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -458,6 +457,7 @@ mod tests {
             nodes,
             order,
             filters: std::collections::HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,

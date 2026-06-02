@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-06-02
+
 ### Changed
 - `mars sync` upgrade hint now checks locked transitive dependencies, so stale compatible packages pulled through dependency ranges surface before `mars upgrade`.
 

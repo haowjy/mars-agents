@@ -93,6 +93,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         },
     };
     let report = crate::sync::execute(ctx, &request)?;

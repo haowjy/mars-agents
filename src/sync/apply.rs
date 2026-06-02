@@ -559,6 +559,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -601,6 +602,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -640,6 +642,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -669,6 +672,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -712,6 +716,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -749,6 +754,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -783,6 +789,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -818,6 +825,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -849,6 +857,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -886,6 +895,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -924,6 +934,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -980,6 +991,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
@@ -1045,6 +1057,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         execute(root.path(), &plan, &options, &bases_dir).unwrap();

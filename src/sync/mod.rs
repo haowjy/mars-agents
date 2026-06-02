@@ -216,7 +216,11 @@ pub(crate) fn resolve_graph(
         cache: &cache,
         project_root: &ctx.project_root,
     };
-    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
+    let resolve_options = to_resolve_options(
+        &request.resolution,
+        request.options.frozen,
+        request.options.check_upgrades,
+    );
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -665,19 +669,17 @@ pub(crate) fn finalize(
         .resolved
         .loaded
         .dependency_changes;
-    let effective = &state.applied.planned.targeted.resolved.loaded.effective;
-    let upgrades_available = if request.options.frozen {
+    let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
         0
     } else {
         graph
             .nodes
             .values()
             .filter(|node| {
-                effective.dependencies.contains_key(&node.source_name)
-                    && matches!(
-                        (&node.resolved_ref.version, &node.latest_version),
-                        (Some(resolved), Some(latest)) if latest > resolved
-                    )
+                matches!(
+                    (&node.resolved_ref.version, &node.latest_compatible_version),
+                    (Some(resolved), Some(latest)) if latest > resolved
+                )
             })
             .count()
     };
@@ -741,12 +743,13 @@ fn validate_targets(
     Ok(())
 }
 
-fn to_resolve_options(mode: &ResolutionMode, frozen: bool) -> ResolveOptions {
+fn to_resolve_options(mode: &ResolutionMode, frozen: bool, check_upgrades: bool) -> ResolveOptions {
     if frozen {
         return ResolveOptions::frozen();
     }
 
     match mode {
+        ResolutionMode::Normal if check_upgrades => ResolveOptions::sync_with_upgrade_metadata(),
         ResolutionMode::Normal => ResolveOptions::sync(),
         ResolutionMode::Maximize { targets, bump } => {
             ResolveOptions::upgrade(targets.clone(), *bump)
@@ -988,6 +991,7 @@ mod tests {
                         tree_path: tree_path.clone(),
                     },
                     latest_version: None,
+                    latest_compatible_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -1076,6 +1080,7 @@ mod tests {
                         tree_path: PathBuf::from(format!("/tmp/{name}")),
                     },
                     latest_version: None,
+                    latest_compatible_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -1104,6 +1109,7 @@ mod tests {
                 frozen: true,
                 refresh_models: false,
                 no_refresh_models: false,
+                check_upgrades: false,
             },
         };
 
@@ -1125,6 +1131,7 @@ mod tests {
                 frozen: true,
                 refresh_models: false,
                 no_refresh_models: false,
+                check_upgrades: false,
             },
         };
 
@@ -1333,6 +1340,7 @@ mod tests {
                 frozen: false,
                 refresh_models: false,
                 no_refresh_models: false,
+                check_upgrades: false,
             },
         };
 
@@ -1381,6 +1389,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         assert_eq!(sync_plan.actions.len(), 2);
@@ -1429,6 +1438,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1587,6 +1597,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1629,6 +1640,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1681,6 +1693,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1710,6 +1723,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
         assert!(matches!(
@@ -1755,6 +1769,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1816,6 +1831,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
 
         let sync_plan = create_sync_plan(&sync_diff, &dry_options, &cache_dir);
@@ -1848,6 +1864,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =
@@ -1895,6 +1912,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         };
         let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
         let result =

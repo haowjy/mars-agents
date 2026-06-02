@@ -12,7 +12,7 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 use super::SourceProvider;
 use super::package::PendingSource;
 use super::types::{
-    ResolveMode, ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy,
+    ResolveOptions, ResolvedNode, VersionConstraint, VersionMetadata, VersionSelectionPolicy,
 };
 
 /// Resolve a single source to a concrete version/ref.
@@ -23,14 +23,14 @@ pub(crate) fn resolve_single_source(
     options: &ResolveOptions,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
     diag: &mut DiagnosticCollector,
-) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+) -> Result<(ResolvedRef, VersionMetadata), MarsError> {
     let selection_policy = options.version_selection_policy(&pending.name);
     match &pending.spec {
         crate::config::SourceSpec::Path(path) => {
             // Path sources: no version resolution, just use the path
             provider
                 .fetch_path(path, pending.name.as_ref(), diag)
-                .map(|resolved_ref| (resolved_ref, None))
+                .map(|resolved_ref| (resolved_ref, VersionMetadata::default()))
         }
         crate::config::SourceSpec::Git(git) => {
             // Lock is consulted for normal sync and frozen lock-exact mode; upgrade
@@ -41,7 +41,7 @@ pub(crate) fn resolve_single_source(
                     locked_source_for_pending(pending, locked, selection_policy, diag)?
                 }
             };
-            let fetch_upgrade_metadata = matches!(options.mode, ResolveMode::Upgrade { .. });
+            let fetch_upgrade_metadata = options.fetch_upgrade_metadata;
             resolve_git_source(
                 &pending.name,
                 &git.url,
@@ -156,17 +156,18 @@ fn semver_constraints_satisfied(version: &Version, constraints: &[(&str, &Versio
     constraints.iter().all(|(_, req)| req.matches(version))
 }
 
-fn latest_version_metadata(
+fn version_metadata(
     name: &SourceName,
     url: &SourceUrl,
+    constraints: &[(&str, &VersionReq)],
     provider: &dyn SourceProvider,
     diag: &mut DiagnosticCollector,
-) -> Option<Version> {
+) -> VersionMetadata {
     match provider.list_versions(url) {
-        Ok(available) => available
-            .iter()
-            .max_by(|a, b| a.version.cmp(&b.version))
-            .map(|v| v.version.clone()),
+        Ok(available) => VersionMetadata {
+            latest_version: latest_available_version(&available),
+            latest_compatible_version: latest_compatible_version(&available, constraints),
+        },
         Err(err) => {
             diag.warn(
                 "latest-version-unavailable",
@@ -174,9 +175,27 @@ fn latest_version_metadata(
                     "resolved `{name}` from lock replay but could not list current versions for upgrade metadata ({url}): {err}"
                 ),
             );
-            None
+            VersionMetadata::default()
         }
     }
+}
+
+fn latest_available_version(available: &[AvailableVersion]) -> Option<Version> {
+    available
+        .iter()
+        .max_by(|a, b| a.version.cmp(&b.version))
+        .map(|v| v.version.clone())
+}
+
+fn latest_compatible_version(
+    available: &[AvailableVersion],
+    constraints: &[(&str, &VersionReq)],
+) -> Option<Version> {
+    available
+        .iter()
+        .filter(|available| semver_constraints_satisfied(&available.version, constraints))
+        .max_by(|a, b| a.version.cmp(&b.version))
+        .map(|v| v.version.clone())
 }
 
 fn replay_locked_semver_commit(
@@ -214,7 +233,7 @@ fn resolve_ref_pin_source(
     locked_source: Option<&LockedSource>,
     selection_policy: VersionSelectionPolicy,
     diag: &mut DiagnosticCollector,
-) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+) -> Result<(ResolvedRef, VersionMetadata), MarsError> {
     let locked_commit = locked_source.and_then(|source| source.commit.as_deref());
     let locked_selector = locked_source.and_then(|source| source.version.as_deref());
     let selector_matches_lock = locked_selector.is_some_and(|selector| selector == ref_name);
@@ -266,7 +285,10 @@ fn resolve_ref_pin_source(
 
     if let Some(commit) = preferred_commit {
         return match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
-            Ok(resolved_ref) => Ok((annotate_refpin_resolution(resolved_ref, ref_name), None)),
+            Ok(resolved_ref) => Ok((
+                annotate_refpin_resolution(resolved_ref, ref_name),
+                VersionMetadata::default(),
+            )),
             Err(err @ MarsError::LockedCommitUnreachable { .. })
                 if selection_policy == VersionSelectionPolicy::LockOnly =>
             {
@@ -284,7 +306,12 @@ fn resolve_ref_pin_source(
                 );
                 provider
                     .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
-                    .map(|resolved_ref| (annotate_refpin_resolution(resolved_ref, ref_name), None))
+                    .map(|resolved_ref| {
+                        (
+                            annotate_refpin_resolution(resolved_ref, ref_name),
+                            VersionMetadata::default(),
+                        )
+                    })
             }
             Err(err) => Err(err),
         };
@@ -292,7 +319,12 @@ fn resolve_ref_pin_source(
 
     provider
         .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
-        .map(|resolved_ref| (annotate_refpin_resolution(resolved_ref, ref_name), None))
+        .map(|resolved_ref| {
+            (
+                annotate_refpin_resolution(resolved_ref, ref_name),
+                VersionMetadata::default(),
+            )
+        })
 }
 
 fn resolve_untagged_source(
@@ -303,7 +335,7 @@ fn resolve_untagged_source(
     locked_commit_unreachable: bool,
     selection_policy: VersionSelectionPolicy,
     diag: &mut DiagnosticCollector,
-) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+) -> Result<(ResolvedRef, VersionMetadata), MarsError> {
     // No semver tags → treat as "latest commit", with locked-commit replay.
     let preferred_commit = match selection_policy {
         VersionSelectionPolicy::LatestOnly => None,
@@ -325,7 +357,7 @@ fn resolve_untagged_source(
     };
     if let Some(commit) = preferred_commit {
         match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
-            Ok(resolved) => return Ok((resolved, None)),
+            Ok(resolved) => return Ok((resolved, VersionMetadata::default())),
             Err(err @ MarsError::LockedCommitUnreachable { .. })
                 if selection_policy == VersionSelectionPolicy::LockOnly =>
             {
@@ -343,14 +375,14 @@ fn resolve_untagged_source(
                 );
                 return provider
                     .fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)
-                    .map(|resolved_ref| (resolved_ref, None));
+                    .map(|resolved_ref| (resolved_ref, VersionMetadata::default()));
             }
             Err(err) => return Err(err),
         }
     }
 
     let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)?;
-    Ok((resolved, None))
+    Ok((resolved, VersionMetadata::default()))
 }
 
 /// Resolve a git source: list versions, intersect constraints, select version.
@@ -364,7 +396,7 @@ pub(crate) fn resolve_git_source(
     selection_policy: VersionSelectionPolicy,
     fetch_upgrade_metadata: bool,
     diag: &mut DiagnosticCollector,
-) -> Result<(ResolvedRef, Option<Version>), MarsError> {
+) -> Result<(ResolvedRef, VersionMetadata), MarsError> {
     let has_latest_constraint = constraints
         .iter()
         .any(|(_, constraint)| matches!(constraint, VersionConstraint::Latest));
@@ -445,7 +477,7 @@ pub(crate) fn resolve_git_source(
             locked_version_raw,
             diag,
         )?;
-        return Ok((resolved, None));
+        return Ok((resolved, VersionMetadata::default()));
     }
 
     if selection_policy == VersionSelectionPolicy::LockOnly
@@ -460,7 +492,7 @@ pub(crate) fn resolve_git_source(
                 ),
             })?;
         let resolved = provider.fetch_git_commit(url, locked_commit, name.as_ref(), diag)?;
-        return Ok((resolved, None));
+        return Ok((resolved, VersionMetadata::default()));
     }
 
     let mut locked_commit_unreachable = false;
@@ -480,12 +512,12 @@ pub(crate) fn resolve_git_source(
             diag,
         ) {
             Ok(resolved) => {
-                let latest = if fetch_upgrade_metadata {
-                    latest_version_metadata(name, url, provider, diag)
+                let metadata = if fetch_upgrade_metadata {
+                    version_metadata(name, url, &semver_reqs, provider, diag)
                 } else {
-                    None
+                    VersionMetadata::default()
                 };
-                return Ok((resolved, latest));
+                return Ok((resolved, metadata));
             }
             Err(MarsError::LockedCommitUnreachable {
                 commit,
@@ -505,10 +537,10 @@ pub(crate) fn resolve_git_source(
 
     // List available versions
     let available = provider.list_versions(url)?;
-    let latest = available
-        .iter()
-        .max_by(|a, b| a.version.cmp(&b.version))
-        .map(|v| v.version.clone());
+    let metadata = VersionMetadata {
+        latest_version: latest_available_version(&available),
+        latest_compatible_version: latest_compatible_version(&available, &semver_reqs),
+    };
 
     if available.is_empty() {
         return resolve_untagged_source(
@@ -552,7 +584,7 @@ pub(crate) fn resolve_git_source(
     };
 
     match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit, diag) {
-        Ok(resolved) => Ok((resolved, latest)),
+        Ok(resolved) => Ok((resolved, metadata)),
         Err(err @ MarsError::LockedCommitUnreachable { .. })
             if selection_policy == VersionSelectionPolicy::LockOnly =>
         {
@@ -570,7 +602,7 @@ pub(crate) fn resolve_git_source(
             );
             provider
                 .fetch_git_version(url, selected, name.as_ref(), None, diag)
-                .map(|resolved_ref| (resolved_ref, latest))
+                .map(|resolved_ref| (resolved_ref, metadata))
         }
         Err(err) => Err(err),
     }

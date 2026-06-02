@@ -230,6 +230,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         }
     }
 
@@ -240,6 +241,7 @@ mod tests {
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         }
     }
 

@@ -188,6 +188,7 @@ mod tests {
                 tree_path: canonical,
             },
             latest_version: None,
+            latest_compatible_version: None,
             manifest: with_models.then(|| manifest_with_models(name)),
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }

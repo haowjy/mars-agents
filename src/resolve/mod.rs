@@ -226,10 +226,10 @@ pub fn resolve(
     };
 
     // Version overrides carried across restarts:
-    // package → (correct ref, correct rooted, latest_version metadata).
+    // package → (correct ref, correct rooted, version metadata).
     let mut version_overrides: HashMap<
         SourceName,
-        (ResolvedRef, RootedSourceRef, Option<semver::Version>),
+        (ResolvedRef, RootedSourceRef, VersionMetadata),
     > = HashMap::new();
     // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
@@ -265,8 +265,7 @@ pub fn resolve(
         match bottom_up_result {
             Err(MarsError::ResolutionRestartNeeded { package }) => {
                 // Read the override info before discarding ctx.
-                let Some((pkg_name, new_ref, new_rooted, latest_version)) =
-                    ctx.take_pending_restart()
+                let Some((pkg_name, new_ref, new_rooted, metadata)) = ctx.take_pending_restart()
                 else {
                     return Err(MarsError::Internal(format!(
                         "missing pending restart payload for `{package}`"
@@ -291,7 +290,7 @@ pub fn resolve(
                     }));
                 }
                 history.push(new_ref.clone());
-                version_overrides.insert(pkg_name, (new_ref, new_rooted, latest_version));
+                version_overrides.insert(pkg_name, (new_ref, new_rooted, metadata));
                 // Discard ctx and retry with updated overrides.
                 continue;
             }

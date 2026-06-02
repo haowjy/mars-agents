@@ -413,6 +413,7 @@ mod tests {
                         tree_path: tree.path().to_path_buf(),
                     },
                     latest_version: None,
+                    latest_compatible_version: None,
                     manifest: None,
                     deps: vec![],
                 },

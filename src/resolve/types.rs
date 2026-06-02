@@ -33,10 +33,17 @@ pub struct ResolvedNode {
     pub rooted_ref: RootedSourceRef,
     pub resolved_ref: ResolvedRef,
     pub latest_version: Option<Version>,
+    pub latest_compatible_version: Option<Version>,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
     pub deps: Vec<SourceName>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct VersionMetadata {
+    pub latest_version: Option<Version>,
+    pub latest_compatible_version: Option<Version>,
 }
 
 /// Source checkout provenance and rooted package boundary.
@@ -298,12 +305,14 @@ pub enum ResolveMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
+    pub fetch_upgrade_metadata: bool,
 }
 
 impl Default for ResolveOptions {
     fn default() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            fetch_upgrade_metadata: false,
         }
     }
 }
@@ -323,12 +332,21 @@ impl ResolveOptions {
     pub fn sync() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            fetch_upgrade_metadata: false,
+        }
+    }
+
+    pub fn sync_with_upgrade_metadata() -> Self {
+        Self {
+            mode: ResolveMode::Sync,
+            fetch_upgrade_metadata: true,
         }
     }
 
     pub fn frozen() -> Self {
         Self {
             mode: ResolveMode::Frozen,
+            fetch_upgrade_metadata: false,
         }
     }
 
@@ -338,6 +356,7 @@ impl ResolveOptions {
                 targets,
                 bump_direct_constraints,
             },
+            fetch_upgrade_metadata: true,
         }
     }
 

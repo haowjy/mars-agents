@@ -35,6 +35,7 @@ pub struct SyncArgs {
 
 /// Run `mars sync`.
 pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let no_upgrade_hint = args.no_upgrade_hint || no_upgrade_hint_from_env();
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -44,12 +45,12 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             frozen: args.frozen,
             refresh_models: args.refresh_models,
             no_refresh_models: args.no_refresh_models,
+            check_upgrades: !no_upgrade_hint,
         },
     };
 
     let report = crate::sync::execute(ctx, &request)?;
 
-    let no_upgrade_hint = args.no_upgrade_hint || no_upgrade_hint_from_env();
     output::print_sync_report(&report, json, no_upgrade_hint);
 
     if report.has_conflicts() { Ok(1) } else { Ok(0) }

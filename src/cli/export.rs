@@ -126,6 +126,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             frozen: false,
             refresh_models: false,
             no_refresh_models: false,
+            check_upgrades: false,
         },
     };
 

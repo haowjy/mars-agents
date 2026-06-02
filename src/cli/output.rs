@@ -335,7 +335,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
             stderr,
             "  ℹ {} {noun} available — run `{cmd}` to update",
             report.upgrades_available,
-            cmd = managed_cmd("mars upgrade --bump"),
+            cmd = managed_cmd("mars upgrade"),
         );
         let _ = stderr.reset();
     }

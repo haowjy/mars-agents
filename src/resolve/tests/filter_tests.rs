@@ -41,6 +41,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
             rooted_ref: dummy_rooted_ref(),
             resolved_ref: dummy_ref("dep"),
             latest_version: None,
+            latest_compatible_version: None,
             manifest: None,
             deps: Vec::new(),
         },

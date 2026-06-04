@@ -1235,7 +1235,10 @@ mod tests {
 
         // sandbox must not appear in the emitted YAML artifact
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("sandbox:"), "sandbox leaked into artifact: {text}");
+        assert!(
+            !text.contains("sandbox:"),
+            "sandbox leaked into artifact: {text}"
+        );
 
         // lossiness must be Approximate, not Dropped
         let field = out
@@ -1265,7 +1268,10 @@ mod tests {
 
         // approval must not appear in the emitted YAML artifact
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("approval:"), "approval leaked into artifact: {text}");
+        assert!(
+            !text.contains("approval:"),
+            "approval leaked into artifact: {text}"
+        );
 
         // lossiness must be Approximate, not Dropped
         let field = out

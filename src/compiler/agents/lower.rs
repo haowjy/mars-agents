@@ -634,19 +634,26 @@ fn lower_to_cursor_with_model(
         });
     }
 
-    // Unsupported policy fields retain existing lossiness behavior.
+    // approval — approximate: auto maps to --force, yolo to --yolo; confirm has no Cursor
+    // equivalent and falls back to default.
     if eff.approval().is_some() {
         lossy.push(LossyField {
             field: "approval".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::Approximate {
+                note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
+            },
         });
     }
+    // sandbox — approximate: Cursor only supports enabled/disabled; workspace-write and
+    // danger-full-access both map to --sandbox disabled.
     if eff.sandbox().is_some() {
         lossy.push(LossyField {
             field: "sandbox".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::Approximate {
+                note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
+            },
         });
     }
     if !eff.tools().is_empty() {
@@ -1218,6 +1225,66 @@ mod tests {
             !text.contains("description: |\n"),
             "block description should be flattened: {text}"
         );
+    }
+
+    #[test]
+    fn cursor_sandbox_is_approximate_not_dropped() {
+        let content = "---\nname: r\nharness: cursor\nsandbox: read-only\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_cursor_with_model(&profile, fm.body(), None);
+
+        // sandbox must not appear in the emitted YAML artifact
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("sandbox:"), "sandbox leaked into artifact: {text}");
+
+        // lossiness must be Approximate, not Dropped
+        let field = out
+            .lossy_fields
+            .iter()
+            .find(|f| f.field == "sandbox")
+            .expect("sandbox should appear in lossy_fields");
+        assert_eq!(field.target, "Cursor");
+        assert!(
+            matches!(field.classification, Lossiness::Approximate { .. }),
+            "expected Approximate, got {:?}",
+            field.classification
+        );
+        if let Lossiness::Approximate { note } = field.classification {
+            assert!(
+                note.contains("workspace-write") && note.contains("disabled"),
+                "note should document workspace-write mapping: {note}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_approval_is_approximate_not_dropped() {
+        let content = "---\nname: r\nharness: cursor\napproval: auto\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_cursor_with_model(&profile, fm.body(), None);
+
+        // approval must not appear in the emitted YAML artifact
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("approval:"), "approval leaked into artifact: {text}");
+
+        // lossiness must be Approximate, not Dropped
+        let field = out
+            .lossy_fields
+            .iter()
+            .find(|f| f.field == "approval")
+            .expect("approval should appear in lossy_fields");
+        assert_eq!(field.target, "Cursor");
+        assert!(
+            matches!(field.classification, Lossiness::Approximate { .. }),
+            "expected Approximate, got {:?}",
+            field.classification
+        );
+        if let Lossiness::Approximate { note } = field.classification {
+            assert!(
+                note.contains("--force") && note.contains("--yolo"),
+                "note should document --force/--yolo mapping: {note}"
+            );
+        }
     }
 
     // --- 3.3: Pi lowering ---

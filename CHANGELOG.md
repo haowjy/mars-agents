@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Cursor compilation: `sandbox` and `approval` classified as `Approximate` (was `Dropped`). Cursor supports `--sandbox enabled/disabled` and `--force`/`--yolo` CLI flags; runtime projection is in meridian-cli.
+
+### Fixed
+- Compilation matrix docs: Cursor sandbox/approval tables and lossiness matrix updated to match code.
+
 ## [0.7.14] - 2026-06-02
 
 ### Fixed

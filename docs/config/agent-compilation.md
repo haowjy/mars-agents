@@ -195,8 +195,8 @@ YAML frontmatter + markdown body.
 | `skills` | `skills:` | exact |
 | `mode` | `mode:` | approximate |
 | body | body | exact |
-| `approval` | dropped | dropped |
-| `sandbox` | dropped | dropped |
+| `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
+| `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
@@ -206,6 +206,26 @@ YAML frontmatter + markdown body.
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
 | `harness-overrides.cursor.native-config` | dropped | meridian-only |
+
+**Approval value mapping:**
+
+| `approval:` | Cursor CLI |
+|---|---|
+| `default` | (omitted) |
+| `auto` | `--force` |
+| `confirm` | (omitted — no Cursor equivalent) |
+| `yolo` | `--yolo` |
+
+**Sandbox value mapping:**
+
+| `sandbox:` | Cursor CLI |
+|---|---|
+| `default` | (omitted) |
+| `read-only` | `--sandbox enabled` |
+| `workspace-write` | `--sandbox disabled` |
+| `danger-full-access` | `--sandbox disabled` |
+
+`approval` and `sandbox` are not stored in the Cursor native agent artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these as runtime CLI flags through its harness projection layer.
 
 Cursor requires a one-line frontmatter description for stable native parsing. Mars normalizes multiline/block descriptions by trimming and collapsing all whitespace to single spaces before emitting `.cursor/agents/*.md`.
 
@@ -260,8 +280,8 @@ Compact per-field, per-target classification:
 | `model` | preserved | exact | exact | exact | exact (internal deterministic adaptation when available) | exact |
 | `harness` | preserved | dropped | dropped | dropped | dropped | dropped |
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
-| `approval` | preserved | dropped | exact | dropped | dropped | dropped |
-| `sandbox` | preserved | dropped | exact | dropped | dropped | dropped |
+| `approval` | preserved | dropped | exact | dropped | approximate | dropped |
+| `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
 | `tools` | preserved | exact | dropped | dropped | dropped | dropped |
 | `disallowed-tools` | preserved | exact | dropped | dropped | dropped | dropped |
 | `mcp-tools` | preserved | exact | approximate | approximate | approximate | n/a |

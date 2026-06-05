@@ -899,6 +899,18 @@ pub fn apply_apply_outcomes_to_lock(
                 };
 
                 let key = item_key(&outcome.item_id);
+                let mut outputs = vec![OutputRecord {
+                    target_root: CANONICAL_TARGET_ROOT.to_string(),
+                    dest_path: outcome.dest_path.clone(),
+                    installed_checksum: installed_checksum.clone(),
+                }];
+                if let Some(old_item) = old_lock.items.get(&key) {
+                    for old_output in &old_item.outputs {
+                        if old_output.target_root != CANONICAL_TARGET_ROOT {
+                            outputs.push(old_output.clone());
+                        }
+                    }
+                }
                 lock.items.insert(
                     key,
                     LockedItemV2 {
@@ -906,11 +918,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: outcome.item_id.kind,
                         version: None,
                         source_checksum: source_checksum.clone(),
-                        outputs: vec![OutputRecord {
-                            target_root: CANONICAL_TARGET_ROOT.to_string(),
-                            dest_path: outcome.dest_path.clone(),
-                            installed_checksum: installed_checksum.clone(),
-                        }],
+                        outputs,
                     },
                 );
             }
@@ -1640,6 +1648,55 @@ installed_checksum = "sha256:222"
             }],
         );
         assert!(lock.contains_output(".claude", "agents/alias-name.md"));
+    }
+
+    #[test]
+    fn apply_apply_outcomes_to_lock_updated_preserves_non_canonical_outputs() {
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude".into(),
+            });
+
+        let mut lock = old_lock.clone();
+        apply_apply_outcomes_to_lock(
+            &mut lock,
+            &old_lock,
+            &[ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: ItemName::from("coder"),
+                },
+                action: ActionTaken::Updated,
+                dest_path: "agents/coder.md".into(),
+                source_name: "base".into(),
+                source_checksum: Some("sha256:new-src".into()),
+                installed_checksum: Some("sha256:new-mars".into()),
+            }],
+        );
+
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(lock.contains_output(".claude", "agents/coder.md"));
+        let item = &lock.items["agent/coder"];
+        assert_eq!(item.source_checksum, "sha256:new-src");
+        let mars = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".mars")
+            .unwrap();
+        assert_eq!(mars.installed_checksum, "sha256:new-mars");
+        let claude = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".claude")
+            .unwrap();
+        assert_eq!(claude.installed_checksum, "sha256:claude");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 
@@ -12,12 +12,54 @@ pub struct LaunchBundle {
     pub agent_body: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_actions: Option<LaunchActions>,
     pub prompt_surface: PromptSurface,
     pub scaffold_slots: ScaffoldSlots,
     pub tools: ToolsSpec,
     pub skills: Skills,
     pub provenance: BTreeMap<String, String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RuntimeContext {
+    pub cwd: Option<String>,
+    pub temp_dir: Option<String>,
+    pub streaming: Option<StreamingContext>,
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub workspace_roots: Vec<String>,
+    #[serde(default)]
+    pub interactive: bool,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+    pub opencode_config_content: Option<String>,
+    #[serde(default)]
+    pub pi_extension_entrypoints: Vec<String>,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamingContext {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchActions {
+    pub argv: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub files: Vec<LaunchFile>,
+    pub protocol_payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchFile {
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `apply_apply_outcomes_to_lock()` dropped `.claude`/`.cursor`/`.codex` output records on `Updated`/`Installed` actions — `copy_decision()` lost ownership, triggering "not tracked by Mars" warnings every sync.
+
 ## [0.7.15] - 2026-06-04
 
 ### Changed

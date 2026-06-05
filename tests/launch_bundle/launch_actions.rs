@@ -540,7 +540,6 @@ Code."#;
             "body": {
                 "model": "openai/gpt-5",
                 "modelID": "openai/gpt-5",
-                "agent": "reviewer",
                 "mcp": {"servers": ["server-one"]}
             }
         })

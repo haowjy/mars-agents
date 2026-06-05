@@ -89,9 +89,6 @@ pub fn project_streaming(
         body.insert("model".to_string(), json!(normalized));
         body.insert("modelID".to_string(), json!(normalized));
     }
-    if let Some(agent) = crate::build::project::agent_name(bundle) {
-        body.insert("agent".to_string(), json!(agent));
-    }
     let mcp = bundle
         .tools
         .mcp

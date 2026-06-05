@@ -6,6 +6,8 @@ pub fn project(
     bundle: &LaunchBundle,
     context: &RuntimeContext,
 ) -> Result<LaunchActions, MarsError> {
+    reject_managed_flag_collisions(&context.extra_args)?;
+
     let mut argv = vec!["pi".to_string(), "--mode".to_string(), "rpc".to_string()];
 
     if let Some(model) = model(bundle) {
@@ -33,14 +35,17 @@ pub fn project(
         }
     }
 
-    if let Some(session_dir) = context
+    let session_dir = context
         .pi_session_dir
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        argv.extend(["--session-dir".to_string(), session_dir.to_string()]);
-    }
+        .ok_or_else(|| MarsError::InvalidRequest {
+            message:
+                "Pi launch_actions require context.pi_session_dir for managed RPC session storage."
+                    .to_string(),
+        })?;
+    argv.extend(["--session-dir".to_string(), session_dir.to_string()]);
 
     if !context.load_all_pi_extensions {
         argv.push("--no-extensions".to_string());
@@ -76,4 +81,34 @@ fn effort_to_thinking(effort: &str) -> Option<&'static str> {
         "max" | "xhigh" => Some("xhigh"),
         _ => None,
     }
+}
+
+fn reject_managed_flag_collisions(extra_args: &[String]) -> Result<(), MarsError> {
+    if has_flag(extra_args, "--mode") {
+        return Err(MarsError::InvalidRequest {
+            message: "Pi harness owns --mode and always launches in RPC mode; remove --mode from passthrough extra_args".to_string(),
+        });
+    }
+    if has_flag(extra_args, "--no-extensions")
+        || has_flag(extra_args, "-e")
+        || has_flag(extra_args, "--extension")
+    {
+        return Err(MarsError::InvalidRequest {
+            message: "Pi harness owns extension loading for RPC launches; remove --no-extensions or -e/--extension from passthrough extra_args".to_string(),
+        });
+    }
+    if has_flag(extra_args, "--session-dir") {
+        return Err(MarsError::InvalidRequest {
+            message: "Pi harness owns --session-dir for Meridian-managed session isolation; remove --session-dir from passthrough extra_args".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|token| {
+        token == flag
+            || token.starts_with(&format!("{flag}="))
+            || (flag == "-e" && token.starts_with("-e") && token != "-e")
+    })
 }

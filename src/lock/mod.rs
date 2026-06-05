@@ -899,6 +899,18 @@ pub fn apply_apply_outcomes_to_lock(
                 };
 
                 let key = item_key(&outcome.item_id);
+                let mut outputs = vec![OutputRecord {
+                    target_root: CANONICAL_TARGET_ROOT.to_string(),
+                    dest_path: outcome.dest_path.clone(),
+                    installed_checksum: installed_checksum.clone(),
+                }];
+                if let Some(old_item) = old_lock.items.get(&key) {
+                    for old_output in &old_item.outputs {
+                        if old_output.target_root != CANONICAL_TARGET_ROOT {
+                            outputs.push(old_output.clone());
+                        }
+                    }
+                }
                 lock.items.insert(
                     key,
                     LockedItemV2 {
@@ -906,11 +918,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: outcome.item_id.kind,
                         version: None,
                         source_checksum: source_checksum.clone(),
-                        outputs: vec![OutputRecord {
-                            target_root: CANONICAL_TARGET_ROOT.to_string(),
-                            dest_path: outcome.dest_path.clone(),
-                            installed_checksum: installed_checksum.clone(),
-                        }],
+                        outputs,
                     },
                 );
             }
@@ -965,6 +973,63 @@ pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNat
             &record.dest_path,
             &record.installed_checksum,
         );
+    }
+}
+
+/// Carry forward non-canonical output records (`.claude`, `.cursor`, `.codex`,
+/// etc.) from `old_lock` that were not refreshed by the current compile pass.
+///
+/// When native agent compilation fails (I/O error, permission failure, schema
+/// error), `apply_compiled_native_outputs` has no `CompiledNativeOutput` record
+/// for the affected item. Without this carry-forward the old target output
+/// record is silently dropped, and the next sync treats the still-managed file
+/// as an unmanaged collision.
+///
+/// This function preserves ownership by copying non-canonical records from
+/// `old_lock` for every item that:
+/// - exists in both `old_lock` and `new_lock` (was not removed), and
+/// - has a non-canonical output record in `old_lock`, and
+/// - does NOT already have a record for that `(target_root, dest_path)` in
+///   `new_lock` (compile succeeded → `apply_compiled_native_outputs` already
+///   upserted a fresh record), and
+/// - was not explicitly removed by reconciliation (`removed_native_outputs`).
+pub fn carry_forward_unrefreshed_native_outputs(
+    new_lock: &mut LockFile,
+    old_lock: &LockFile,
+    removed_native_outputs: &[(String, String)],
+) {
+    for (key, old_item) in &old_lock.items {
+        let Some(new_item) = new_lock.items.get_mut(key.as_str()) else {
+            continue;
+        };
+        for old_output in &old_item.outputs {
+            if old_output.target_root == CANONICAL_TARGET_ROOT {
+                continue;
+            }
+            let was_removed = removed_native_outputs.iter().any(|(tr, dp)| {
+                tr == &old_output.target_root
+                    && crate::target::dest_paths_equivalent(dp, old_output.dest_path.as_str())
+            });
+            if was_removed {
+                continue;
+            }
+            let already_present = new_item.outputs.iter().any(|o| {
+                o.target_root == old_output.target_root
+                    && crate::target::dest_paths_equivalent(
+                        o.dest_path.as_str(),
+                        old_output.dest_path.as_str(),
+                    )
+            });
+            if already_present {
+                continue;
+            }
+            new_item.outputs.push(old_output.clone());
+        }
+        new_item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
     }
 }
 
@@ -1640,6 +1705,251 @@ installed_checksum = "sha256:222"
             }],
         );
         assert!(lock.contains_output(".claude", "agents/alias-name.md"));
+    }
+
+    #[test]
+    fn carry_forward_unrefreshed_native_outputs_preserves_on_compile_failure() {
+        // Simulate: old lock has .claude record, build() creates only .mars,
+        // native compile fails (no CompiledNativeOutput for .claude).
+        // carry_forward should preserve the old .claude record.
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude-old".into(),
+            });
+
+        // Build new lock (only .mars records)
+        let mut new_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: old_lock.dependencies.clone(),
+            items: IndexMap::from([(
+                "agent/coder".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: Some("v1.0.0".into()),
+                    source_checksum: "sha256:new-src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: ".mars".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: "sha256:new-mars".into(),
+                    }],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+
+        // No CompiledNativeOutput — simulating compile failure for .claude.
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
+
+        assert!(new_lock.contains_output(".mars", "agents/coder.md"));
+        assert!(
+            new_lock.contains_output(".claude", "agents/coder.md"),
+            ".claude record should survive compile failure"
+        );
+        let item = &new_lock.items["agent/coder"];
+        assert_eq!(item.outputs.len(), 2);
+        let claude = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".claude")
+            .unwrap();
+        assert_eq!(claude.installed_checksum, "sha256:claude-old");
+    }
+
+    #[test]
+    fn carry_forward_unrefreshed_native_outputs_no_duplicate_when_compile_succeeded() {
+        // When native compile succeeds, apply_compiled_native_outputs already
+        // upserted a fresh .claude record. carry_forward must NOT duplicate it.
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude-old".into(),
+            });
+
+        // Build new lock (.mars only), then simulate successful compile.
+        let mut new_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: old_lock.dependencies.clone(),
+            items: IndexMap::from([(
+                "agent/coder".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: Some("v1.0.0".into()),
+                    source_checksum: "sha256:new-src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: ".mars".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: "sha256:new-mars".into(),
+                    }],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+        apply_compiled_native_outputs(
+            &mut new_lock,
+            &[CompiledNativeOutput {
+                owner_canonical_dest_path: "agents/coder.md".to_string(),
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".to_string(),
+                installed_checksum: "sha256:claude-fresh".into(),
+            }],
+        );
+
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
+
+        let item = &new_lock.items["agent/coder"];
+        // Should have exactly 2 outputs: .mars + .claude (no duplicate).
+        assert_eq!(item.outputs.len(), 2, "should not duplicate .claude output");
+        let claude = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".claude")
+            .unwrap();
+        // Fresh checksum from compile must win over old stale record.
+        assert_eq!(claude.installed_checksum, "sha256:claude-fresh");
+    }
+
+    #[test]
+    fn carry_forward_unrefreshed_native_outputs_skips_removed_items() {
+        // Item existed in old_lock but was removed (not in new_lock).
+        // carry_forward should not resurrect it.
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude-old".into(),
+            });
+
+        // New lock does NOT contain agent/coder (item was removed).
+        let mut new_lock = LockFile::empty();
+
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
+
+        assert!(
+            new_lock.items.is_empty(),
+            "removed item should not be resurrected"
+        );
+    }
+
+    #[test]
+    fn carry_forward_skips_explicitly_removed_native_outputs() {
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude-old".into(),
+            });
+
+        let mut new_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: old_lock.dependencies.clone(),
+            items: IndexMap::from([(
+                "agent/coder".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: Some("v1.0.0".into()),
+                    source_checksum: "sha256:new-src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: ".mars".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: "sha256:new-mars".into(),
+                    }],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+
+        let removed = vec![(".claude".to_string(), "agents/coder.md".to_string())];
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &removed);
+
+        let item = &new_lock.items["agent/coder"];
+        assert_eq!(
+            item.outputs.len(),
+            1,
+            "removed .claude record should not be carried forward"
+        );
+        assert!(new_lock.contains_output(".mars", "agents/coder.md"));
+        assert!(
+            !new_lock.contains_output(".claude", "agents/coder.md"),
+            "explicitly removed native output should not be restored"
+        );
+    }
+
+    #[test]
+    fn apply_apply_outcomes_to_lock_updated_preserves_non_canonical_outputs() {
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude".into(),
+            });
+
+        let mut lock = old_lock.clone();
+        apply_apply_outcomes_to_lock(
+            &mut lock,
+            &old_lock,
+            &[ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: ItemName::from("coder"),
+                },
+                action: ActionTaken::Updated,
+                dest_path: "agents/coder.md".into(),
+                source_name: "base".into(),
+                source_checksum: Some("sha256:new-src".into()),
+                installed_checksum: Some("sha256:new-mars".into()),
+            }],
+        );
+
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(lock.contains_output(".claude", "agents/coder.md"));
+        let item = &lock.items["agent/coder"];
+        assert_eq!(item.source_checksum, "sha256:new-src");
+        let mars = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".mars")
+            .unwrap();
+        assert_eq!(mars.installed_checksum, "sha256:new-mars");
+        let claude = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".claude")
+            .unwrap();
+        assert_eq!(claude.installed_checksum, "sha256:claude");
     }
 
     #[test]

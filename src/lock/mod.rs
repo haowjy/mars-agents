@@ -991,14 +991,26 @@ pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNat
 /// - has a non-canonical output record in `old_lock`, and
 /// - does NOT already have a record for that `(target_root, dest_path)` in
 ///   `new_lock` (compile succeeded → `apply_compiled_native_outputs` already
-///   upserted a fresh record).
-pub fn carry_forward_unrefreshed_native_outputs(new_lock: &mut LockFile, old_lock: &LockFile) {
+///   upserted a fresh record), and
+/// - was not explicitly removed by reconciliation (`removed_native_outputs`).
+pub fn carry_forward_unrefreshed_native_outputs(
+    new_lock: &mut LockFile,
+    old_lock: &LockFile,
+    removed_native_outputs: &[(String, String)],
+) {
     for (key, old_item) in &old_lock.items {
         let Some(new_item) = new_lock.items.get_mut(key.as_str()) else {
             continue;
         };
         for old_output in &old_item.outputs {
             if old_output.target_root == CANONICAL_TARGET_ROOT {
+                continue;
+            }
+            let was_removed = removed_native_outputs.iter().any(|(tr, dp)| {
+                tr == &old_output.target_root
+                    && crate::target::dest_paths_equivalent(dp, old_output.dest_path.as_str())
+            });
+            if was_removed {
                 continue;
             }
             let already_present = new_item.outputs.iter().any(|o| {
@@ -1735,7 +1747,7 @@ installed_checksum = "sha256:222"
         };
 
         // No CompiledNativeOutput — simulating compile failure for .claude.
-        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock);
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
 
         assert!(new_lock.contains_output(".mars", "agents/coder.md"));
         assert!(
@@ -1799,7 +1811,7 @@ installed_checksum = "sha256:222"
             }],
         );
 
-        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock);
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
 
         let item = &new_lock.items["agent/coder"];
         // Should have exactly 2 outputs: .mars + .claude (no duplicate).
@@ -1832,11 +1844,62 @@ installed_checksum = "sha256:222"
         // New lock does NOT contain agent/coder (item was removed).
         let mut new_lock = LockFile::empty();
 
-        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock);
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &[]);
 
         assert!(
             new_lock.items.is_empty(),
             "removed item should not be resurrected"
+        );
+    }
+
+    #[test]
+    fn carry_forward_skips_explicitly_removed_native_outputs() {
+        let mut old_lock = sample_lock();
+        old_lock
+            .items
+            .get_mut("agent/coder")
+            .unwrap()
+            .outputs
+            .push(OutputRecord {
+                target_root: ".claude".to_string(),
+                dest_path: "agents/coder.md".into(),
+                installed_checksum: "sha256:claude-old".into(),
+            });
+
+        let mut new_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: old_lock.dependencies.clone(),
+            items: IndexMap::from([(
+                "agent/coder".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: Some("v1.0.0".into()),
+                    source_checksum: "sha256:new-src".into(),
+                    outputs: vec![OutputRecord {
+                        target_root: ".mars".to_string(),
+                        dest_path: "agents/coder.md".into(),
+                        installed_checksum: "sha256:new-mars".into(),
+                    }],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+
+        let removed = vec![(".claude".to_string(), "agents/coder.md".to_string())];
+        carry_forward_unrefreshed_native_outputs(&mut new_lock, &old_lock, &removed);
+
+        let item = &new_lock.items["agent/coder"];
+        assert_eq!(
+            item.outputs.len(),
+            1,
+            "removed .claude record should not be carried forward"
+        );
+        assert!(new_lock.contains_output(".mars", "agents/coder.md"));
+        assert!(
+            !new_lock.contains_output(".claude", "agents/coder.md"),
+            "explicitly removed native output should not be restored"
         );
     }
 

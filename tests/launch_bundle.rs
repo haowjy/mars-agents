@@ -39,6 +39,11 @@ fn build_launch_bundle_projects_cursor_launch_actions() {
 }
 
 #[test]
+fn build_launch_bundle_projects_claude_launch_actions() {
+    launch_actions::build_launch_bundle_projects_claude_launch_actions();
+}
+
+#[test]
 fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
     schema::build_launch_bundle_outputs_schema_and_slot_placeholders();
 }

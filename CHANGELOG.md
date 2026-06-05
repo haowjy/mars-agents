@@ -4,7 +4,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
-- `mars build launch-bundle --context` emits v4 `launch_actions` executable argv/env/files/protocol shape; Cursor subprocess projection first.
+- `mars build launch-bundle --context` emits v4 `launch_actions` executable argv/env/files/protocol shape; Cursor and Claude subprocess projections first.
 
 ## [0.7.17] - 2026-06-06
 

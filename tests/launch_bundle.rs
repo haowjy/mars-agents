@@ -59,6 +59,16 @@ fn build_launch_bundle_projects_pi_launch_actions() {
 }
 
 #[test]
+fn build_launch_bundle_projects_codex_streaming_launch_actions() {
+    launch_actions::build_launch_bundle_projects_codex_streaming_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_opencode_streaming_launch_actions() {
+    launch_actions::build_launch_bundle_projects_opencode_streaming_launch_actions();
+}
+
+#[test]
 fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
     schema::build_launch_bundle_outputs_schema_and_slot_placeholders();
 }

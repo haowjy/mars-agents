@@ -385,3 +385,164 @@ Code."#;
             .any(|value| value.as_str() == Some("/tmp/pi-sessions"))
     );
 }
+
+pub(crate) fn build_launch_bundle_projects_codex_streaming_launch_actions() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let agent_content = r#"---
+name: coder
+model: gpt-5
+effort: high
+harness: codex
+approval: never
+sandbox: danger-full-access
+mcp-tools: ["fs=npx filesystem-server"]
+---
+Code."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    let context = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": {"host": "127.0.0.1", "port": 9876},
+        "session_id": "thread-1",
+        "fork": true,
+        "workspace_roots": ["/extra/root"],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": null,
+        "pi_extension_entrypoints": [],
+        "prompt": "USER",
+        "base_instructions": "BASE",
+        "developer_instructions": "DEV"
+    });
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--transport",
+        "streaming",
+        "--context",
+        &context.to_string(),
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["launch_actions"]["argv"],
+        serde_json::json!([
+            "codex",
+            "app-server",
+            "--listen",
+            "ws://127.0.0.1:9876",
+            "-c",
+            "sandbox_mode=\"danger-full-access\"",
+            "-c",
+            "approval_policy=\"never\"",
+            "-c",
+            "mcp.servers.fs.command=\"npx filesystem-server\"",
+            "-c",
+            "sandbox_workspace_write.writable_roots=[\"/extra/root\"]",
+            "--foo"
+        ])
+    );
+    assert_eq!(
+        bundle["launch_actions"]["protocol_payload"],
+        serde_json::json!({
+            "transport": "jsonrpc",
+            "method": "thread/fork",
+            "params": {
+                "cwd": "/work/project",
+                "baseInstructions": "BASE",
+                "developerInstructions": "DEV",
+                "model": "gpt-5",
+                "config": {"model_reasoning_effort": "high"},
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "threadId": "thread-1",
+                "ephemeral": false
+            }
+        })
+    );
+}
+
+pub(crate) fn build_launch_bundle_projects_opencode_streaming_launch_actions() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
+    let agent_content = r#"---
+name: coder
+model: openai/gpt-5
+harness: opencode
+mcp-tools: [server-one]
+---
+Code."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    let context = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": {"host": "127.0.0.1", "port": 9877},
+        "session_id": null,
+        "fork": false,
+        "workspace_roots": ["/extra/root"],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": null,
+        "pi_extension_entrypoints": [],
+        "prompt": "USER"
+    });
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--transport",
+        "streaming",
+        "--context",
+        &context.to_string(),
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["launch_actions"]["argv"],
+        serde_json::json!([
+            "opencode",
+            "serve",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            "9877",
+            "--foo"
+        ])
+    );
+    assert_eq!(
+        bundle["launch_actions"]["env"]["OPENCODE_CONFIG_CONTENT"].as_str(),
+        Some("{\"permission\":{\"external_directory\":{\"/extra/root/**\":\"allow\"}}}")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["protocol_payload"],
+        serde_json::json!({
+            "transport": "http",
+            "method": "POST",
+            "path": "/session",
+            "body": {
+                "model": "openai/gpt-5",
+                "modelID": "openai/gpt-5",
+                "agent": "reviewer",
+                "mcp": {"servers": ["server-one"]}
+            }
+        })
+    );
+}

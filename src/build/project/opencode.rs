@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use crate::build::bundle::{LaunchActions, LaunchBundle, RuntimeContext};
+use crate::build::bundle::{
+    LaunchActions, LaunchBundle, LaunchProtocol, ProtocolBootstrap, ProtocolTurn, RuntimeContext,
+};
 use crate::build::project::{
-    effort, empty_actions, model, opencode_workspace_env, streaming_context,
+    cwd, effort, model, opencode_workspace_env, streaming_context, subprocess_actions,
 };
 use crate::error::MarsError;
 
@@ -49,11 +51,11 @@ pub fn project_subprocess(
         }
     }
 
-    let mut actions = empty_actions(argv);
-    if let Some(config) = opencode_workspace_env(context) {
-        actions
-            .env
-            .insert("OPENCODE_CONFIG_CONTENT".to_string(), config);
+    let mut actions = subprocess_actions(context, argv, Vec::new(), context.prompt.clone())?;
+    if let Some(config) = opencode_workspace_env(context)
+        && let LaunchActions::Subprocess { env, .. } = &mut actions
+    {
+        env.insert("OPENCODE_CONFIG_CONTENT".to_string(), config);
     }
     Ok(actions)
 }
@@ -99,15 +101,34 @@ pub fn project_streaming(
         body.insert("mcp".to_string(), json!({ "servers": mcp }));
     }
 
-    Ok(LaunchActions {
+    let mut turn_body = serde_json::Map::new();
+    turn_body.insert(
+        "parts".to_string(),
+        json!([{ "type": "text", "text": context.prompt.as_deref().unwrap_or_default() }]),
+    );
+    let system_instruction = bundle.prompt_surface.system_instruction.trim();
+    if !system_instruction.is_empty() {
+        turn_body.insert("system".to_string(), json!(system_instruction));
+    }
+
+    Ok(LaunchActions::Streaming {
         argv,
         env,
-        files: Vec::new(),
-        protocol_payload: Some(json!({
-            "transport": "http",
-            "method": "POST",
-            "path": "/session",
-            "body": body,
-        })),
+        cwd: cwd(context)?,
+        protocol: LaunchProtocol {
+            transport: "http".to_string(),
+            bootstrap: ProtocolBootstrap {
+                method: "POST".to_string(),
+                path: Some("/session".to_string()),
+                params: None,
+                body: Some(json!(body)),
+            },
+            turn: ProtocolTurn {
+                method: "POST".to_string(),
+                path_template: Some("/session/{session_id}/prompt_async".to_string()),
+                params_template: None,
+                body_template: Some(json!(turn_body)),
+            },
+        },
     })
 }

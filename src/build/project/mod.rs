@@ -103,13 +103,32 @@ fn agent_name(bundle: &LaunchBundle) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn empty_actions(argv: Vec<String>) -> LaunchActions {
-    LaunchActions {
+fn cwd(context: &RuntimeContext) -> Result<String, MarsError> {
+    context
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| MarsError::InvalidRequest {
+            message: "launch-bundle --context must include cwd for launch_actions projection"
+                .to_string(),
+        })
+}
+
+fn subprocess_actions(
+    context: &RuntimeContext,
+    argv: Vec<String>,
+    files: Vec<LaunchFile>,
+    stdin: Option<String>,
+) -> Result<LaunchActions, MarsError> {
+    Ok(LaunchActions::Subprocess {
         argv,
         env: BTreeMap::new(),
-        files: Vec::new(),
-        protocol_payload: None,
-    }
+        cwd: cwd(context)?,
+        files,
+        stdin,
+    })
 }
 
 fn json_string(value: &str) -> String {

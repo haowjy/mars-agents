@@ -71,6 +71,14 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(
+        bundle["launch_actions"]["kind"].as_str(),
+        Some("subprocess")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
+    assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
             "cursor",
@@ -92,7 +100,7 @@ Review code changes."#;
     );
     assert_eq!(bundle["launch_actions"]["env"], serde_json::json!({}));
     assert_eq!(bundle["launch_actions"]["files"], serde_json::json!([]));
-    assert!(bundle["launch_actions"]["protocol_payload"].is_null());
+    assert!(bundle["launch_actions"]["stdin"].is_null());
 }
 
 pub(crate) fn build_launch_bundle_projects_claude_launch_actions() {
@@ -141,6 +149,18 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    assert_eq!(
+        bundle["launch_actions"]["kind"].as_str(),
+        Some("subprocess")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["stdin"].as_str(),
+        Some("ignored by claude argv")
+    );
     assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
@@ -214,8 +234,6 @@ Code."#;
         "opencode_config_content": null,
         "pi_extension_entrypoints": [],
         "prompt": "USER",
-        "base_instructions": "BASE",
-        "developer_instructions": "DEV",
         "report_output_path": "/tmp/report.md"
     });
 
@@ -233,6 +251,14 @@ Code."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    assert_eq!(
+        bundle["launch_actions"]["kind"].as_str(),
+        Some("subprocess")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
     assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
@@ -256,9 +282,10 @@ Code."#;
             "--foo",
             "-o",
             "/tmp/report.md",
-            "BASE\n\nDEV\n\nUSER"
+            "USER"
         ])
     );
+    assert!(bundle["launch_actions"]["stdin"].is_null());
 }
 
 pub(crate) fn build_launch_bundle_projects_opencode_subprocess_launch_actions() {
@@ -303,6 +330,14 @@ Code."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(
+        bundle["launch_actions"]["kind"].as_str(),
+        Some("subprocess")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
+    assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
             "opencode",
@@ -324,6 +359,7 @@ Code."#;
             "{\"permission\":{\"external_directory\":{\"/extra/root/**\":\"allow\",\"/parent\":\"allow\"}}}"
         )
     );
+    assert_eq!(bundle["launch_actions"]["stdin"].as_str(), Some("USER"));
 }
 
 pub(crate) fn build_launch_bundle_projects_pi_launch_actions() {
@@ -369,6 +405,14 @@ Code."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     let argv = bundle["launch_actions"]["argv"].as_array().unwrap();
 
+    assert_eq!(
+        bundle["launch_actions"]["kind"].as_str(),
+        Some("subprocess")
+    );
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
     assert_eq!(argv[0].as_str(), Some("pi"));
     assert_eq!(argv[1].as_str(), Some("--mode"));
     assert_eq!(argv[2].as_str(), Some("rpc"));
@@ -384,6 +428,7 @@ Code."#;
         argv.iter()
             .any(|value| value.as_str() == Some("/tmp/pi-sessions"))
     );
+    assert_eq!(argv.last().and_then(|value| value.as_str()), Some("USER"));
 }
 
 pub(crate) fn build_launch_bundle_projects_codex_streaming_launch_actions() {
@@ -413,9 +458,7 @@ Code."#;
         "extra_args": ["--foo"],
         "opencode_config_content": null,
         "pi_extension_entrypoints": [],
-        "prompt": "USER",
-        "base_instructions": "BASE",
-        "developer_instructions": "DEV"
+        "prompt": "USER"
     });
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
@@ -434,6 +477,11 @@ Code."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    assert_eq!(bundle["launch_actions"]["kind"].as_str(), Some("streaming"));
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
     assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
@@ -453,20 +501,28 @@ Code."#;
         ])
     );
     assert_eq!(
-        bundle["launch_actions"]["protocol_payload"],
+        bundle["launch_actions"]["protocol"],
         serde_json::json!({
             "transport": "jsonrpc",
-            "method": "thread/fork",
-            "params": {
-                "cwd": "/work/project",
-                "baseInstructions": "BASE",
-                "developerInstructions": "DEV",
-                "model": "gpt-5",
-                "config": {"model_reasoning_effort": "high"},
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
-                "threadId": "thread-1",
-                "ephemeral": false
+            "bootstrap": {
+                "method": "thread/fork",
+                "params": {
+                    "cwd": "/work/project",
+                    "developerInstructions": bundle["prompt_surface"]["system_instruction"],
+                    "model": "gpt-5",
+                    "config": {"model_reasoning_effort": "high"},
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
+                    "threadId": "thread-1",
+                    "ephemeral": false
+                }
+            },
+            "turn": {
+                "method": "turn/start",
+                "params_template": {
+                    "threadId": "{{thread_id}}",
+                    "input": [{"type": "text", "text": "USER"}]
+                }
             }
         })
     );
@@ -515,6 +571,11 @@ Code."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    assert_eq!(bundle["launch_actions"]["kind"].as_str(), Some("streaming"));
+    assert_eq!(
+        bundle["launch_actions"]["cwd"].as_str(),
+        Some("/work/project")
+    );
     assert_eq!(
         bundle["launch_actions"]["argv"],
         serde_json::json!([
@@ -532,15 +593,25 @@ Code."#;
         Some("{\"permission\":{\"external_directory\":{\"/extra/root/**\":\"allow\"}}}")
     );
     assert_eq!(
-        bundle["launch_actions"]["protocol_payload"],
+        bundle["launch_actions"]["protocol"],
         serde_json::json!({
             "transport": "http",
-            "method": "POST",
-            "path": "/session",
-            "body": {
-                "model": "openai/gpt-5",
-                "modelID": "openai/gpt-5",
-                "mcp": {"servers": ["server-one"]}
+            "bootstrap": {
+                "method": "POST",
+                "path": "/session",
+                "body": {
+                    "model": "openai/gpt-5",
+                    "modelID": "openai/gpt-5",
+                    "mcp": {"servers": ["server-one"]}
+                }
+            },
+            "turn": {
+                "method": "POST",
+                "path_template": "/session/{session_id}/prompt_async",
+                "body_template": {
+                    "parts": [{"type": "text", "text": "USER"}],
+                    "system": bundle["prompt_surface"]["system_instruction"]
+                }
             }
         })
     );

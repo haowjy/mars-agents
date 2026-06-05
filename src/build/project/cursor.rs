@@ -1,5 +1,5 @@
 use crate::build::bundle::{LaunchActions, LaunchBundle, RuntimeContext};
-use crate::build::project::{approval, empty_actions, model, sandbox};
+use crate::build::project::{approval, cwd, model, sandbox, subprocess_actions};
 use crate::error::MarsError;
 
 pub fn project(
@@ -70,17 +70,12 @@ pub fn project(
         }
     }
 
-    if let Some(cwd) = context
-        .cwd
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        argv.extend(["--workspace".to_string(), cwd.to_string()]);
-    }
+    argv.extend(["--workspace".to_string(), cwd(context)?]);
 
     argv.extend(context.extra_args.iter().cloned());
-    argv.push(context.prompt.clone().unwrap_or_default());
+    if let Some(prompt) = context.prompt.as_deref() {
+        argv.push(prompt.to_string());
+    }
 
-    Ok(empty_actions(argv))
+    subprocess_actions(context, argv, Vec::new(), None)
 }

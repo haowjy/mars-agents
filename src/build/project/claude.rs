@@ -1,5 +1,5 @@
 use crate::build::bundle::{LaunchActions, LaunchBundle, RuntimeContext};
-use crate::build::project::{agent_name, approval, effort, empty_actions, model, prompt_file};
+use crate::build::project::{agent_name, approval, effort, model, prompt_file, subprocess_actions};
 use crate::error::MarsError;
 
 const CLAUDE_PARENT_ALLOWED_TOOLS_FLAG: &str = "--meridian-parent-allowed-tools";
@@ -104,9 +104,7 @@ pub fn project(
 
     argv.extend(passthrough_tail);
 
-    let mut actions = empty_actions(argv);
-    actions.files = files;
-    Ok(actions)
+    subprocess_actions(context, argv, files, context.prompt.clone())
 }
 
 fn claude_effort(effort: &str) -> &str {

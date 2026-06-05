@@ -4,7 +4,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
-- `mars build launch-bundle --context` emits v4 `launch_actions` executable argv/env/files/protocol shape; Cursor, Claude, Codex, OpenCode, and Pi subprocess projections first.
+- `mars build launch-bundle --context` emits v4 `launch_actions` with subprocess/streaming `kind`, `cwd`, stdin, files, env, and bootstrap/turn protocol shapes for Cursor, Claude, Codex, OpenCode, and Pi.
 
 ## [0.7.17] - 2026-06-06
 

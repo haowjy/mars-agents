@@ -41,9 +41,6 @@ pub struct RuntimeContext {
     pub pi_extension_entrypoints: Vec<String>,
     pub prompt: Option<String>,
     pub report_output_path: Option<String>,
-    pub base_instructions: Option<String>,
-    pub developer_instructions: Option<String>,
-    pub user_turn_content: Option<String>,
     pub pi_session_dir: Option<String>,
     #[serde(default)]
     pub load_all_pi_extensions: bool,
@@ -56,17 +53,56 @@ pub struct StreamingContext {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LaunchActions {
-    pub argv: Vec<String>,
-    pub env: BTreeMap<String, String>,
-    pub files: Vec<LaunchFile>,
-    pub protocol_payload: Option<serde_json::Value>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LaunchActions {
+    Subprocess {
+        argv: Vec<String>,
+        env: BTreeMap<String, String>,
+        cwd: String,
+        files: Vec<LaunchFile>,
+        stdin: Option<String>,
+    },
+    Streaming {
+        argv: Vec<String>,
+        env: BTreeMap<String, String>,
+        cwd: String,
+        protocol: LaunchProtocol,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchFile {
     pub path: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchProtocol {
+    pub transport: String,
+    pub bootstrap: ProtocolBootstrap,
+    pub turn: ProtocolTurn,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtocolBootstrap {
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtocolTurn {
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_template: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params_template: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_template: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]

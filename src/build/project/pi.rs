@@ -1,5 +1,5 @@
 use crate::build::bundle::{LaunchActions, LaunchBundle, RuntimeContext};
-use crate::build::project::{effort, empty_actions, model};
+use crate::build::project::{effort, model, subprocess_actions};
 use crate::error::MarsError;
 
 pub fn project(
@@ -63,7 +63,11 @@ pub fn project(
 
     argv.extend(context.extra_args.iter().cloned());
 
-    Ok(empty_actions(argv))
+    if let Some(prompt) = context.prompt.as_deref() {
+        argv.push(prompt.to_string());
+    }
+
+    subprocess_actions(context, argv, Vec::new(), None)
 }
 
 fn pi_model_arg(model: &str, effort: Option<&str>) -> String {

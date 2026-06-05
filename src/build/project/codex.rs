@@ -1,8 +1,10 @@
 use serde_json::json;
 
-use crate::build::bundle::{LaunchActions, LaunchBundle, RuntimeContext};
+use crate::build::bundle::{
+    LaunchActions, LaunchBundle, LaunchProtocol, ProtocolBootstrap, ProtocolTurn, RuntimeContext,
+};
 use crate::build::project::{
-    approval, effort, empty_actions, json_string, mcp_codex_flags, model, sandbox,
+    approval, cwd, effort, json_string, mcp_codex_flags, model, sandbox, subprocess_actions,
 };
 use crate::error::MarsError;
 
@@ -16,14 +18,7 @@ pub fn project_subprocess(
         "--json".to_string(),
     ];
 
-    let final_prompt = final_prompt(bundle, context);
     let session_id = normalized_session_id(context);
-    let guarded_prompt = if context.interactive && session_id.is_none() && !final_prompt.is_empty()
-    {
-        format!("{final_prompt}\n\nDO NOT DO ANYTHING. WAIT FOR USER INPUT.")
-    } else {
-        final_prompt
-    };
 
     if let Some(model) = model(bundle) {
         argv.extend(["--model".to_string(), model.to_string()]);
@@ -67,11 +62,11 @@ pub fn project_subprocess(
         argv.extend(["-o".to_string(), report_path.to_string()]);
     }
 
-    if !guarded_prompt.is_empty() {
-        argv.push(guarded_prompt);
+    if let Some(prompt) = context.prompt.as_deref() {
+        argv.push(prompt.to_string());
     }
 
-    Ok(empty_actions(argv))
+    subprocess_actions(context, argv, Vec::new(), None)
 }
 
 pub fn project_streaming(
@@ -113,26 +108,13 @@ pub fn project_streaming(
 
     let method = select_thread_method(context);
     let mut params = serde_json::Map::new();
-    params.insert(
-        "cwd".to_string(),
-        json!(context.cwd.as_deref().unwrap_or_default()),
-    );
-    if let Some(base) = context
-        .base_instructions
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        params.insert("baseInstructions".to_string(), json!(base));
-    }
-    let developer = context
-        .developer_instructions
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(bundle.prompt_surface.system_instruction.trim());
-    if !developer.is_empty() {
-        params.insert("developerInstructions".to_string(), json!(developer));
+    params.insert("cwd".to_string(), json!(cwd(context)?));
+    let system_instruction = bundle.prompt_surface.system_instruction.trim();
+    if !system_instruction.is_empty() {
+        params.insert(
+            "developerInstructions".to_string(),
+            json!(system_instruction),
+        );
     }
     if let Some(model) = model(bundle) {
         params.insert("model".to_string(), json!(model));
@@ -156,32 +138,33 @@ pub fn project_streaming(
         params.insert("ephemeral".to_string(), json!(false));
     }
 
-    let mut actions = empty_actions(argv);
-    actions.protocol_payload = Some(json!({
-        "transport": "jsonrpc",
-        "method": method,
-        "params": params,
-    }));
-    Ok(actions)
+    Ok(LaunchActions::Streaming {
+        argv,
+        env: Default::default(),
+        cwd: cwd(context)?,
+        protocol: LaunchProtocol {
+            transport: "jsonrpc".to_string(),
+            bootstrap: ProtocolBootstrap {
+                method: method.to_string(),
+                path: None,
+                params: Some(json!(params)),
+                body: None,
+            },
+            turn: ProtocolTurn {
+                method: "turn/start".to_string(),
+                path_template: None,
+                params_template: Some(json!({
+                    "threadId": "{{thread_id}}",
+                    "input": build_text_user_input(context.prompt.as_deref().unwrap_or_default()),
+                })),
+                body_template: None,
+            },
+        },
+    })
 }
 
-fn final_prompt(bundle: &LaunchBundle, context: &RuntimeContext) -> String {
-    let base = context.base_instructions.as_deref().unwrap_or("");
-    let developer = context
-        .developer_instructions
-        .as_deref()
-        .unwrap_or(bundle.prompt_surface.system_instruction.as_str());
-    let prompt = context
-        .user_turn_content
-        .as_deref()
-        .or(context.prompt.as_deref())
-        .unwrap_or("");
-    [base, developer, prompt]
-        .into_iter()
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+fn build_text_user_input(text: &str) -> serde_json::Value {
+    json!([{ "type": "text", "text": text }])
 }
 
 fn normalized_session_id(context: &RuntimeContext) -> Option<String> {

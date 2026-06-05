@@ -25,7 +25,7 @@ pub fn project_subprocess(
 
     let mut argv = vec!["opencode".to_string(), "run".to_string()];
     if let Some(model) = model(bundle) {
-        argv.extend(["--model".to_string(), normalize_opencode_model(model)]);
+        argv.extend(["--model".to_string(), model.to_string()]);
     }
     if let Some(effort) = effort(bundle).filter(|_| !context.interactive) {
         argv.extend(["--variant".to_string(), effort.to_string()]);
@@ -85,9 +85,8 @@ pub fn project_streaming(
 
     let mut body = serde_json::Map::new();
     if let Some(model) = model(bundle) {
-        let normalized = normalize_opencode_model(model);
-        body.insert("model".to_string(), json!(normalized));
-        body.insert("modelID".to_string(), json!(normalized));
+        body.insert("model".to_string(), json!(model));
+        body.insert("modelID".to_string(), json!(model));
     }
     let mcp = bundle
         .tools
@@ -111,18 +110,4 @@ pub fn project_streaming(
             "body": body,
         })),
     })
-}
-
-fn normalize_opencode_model(model: &str) -> String {
-    let normalized = model.trim();
-    let Some((provider, model_name)) = normalized.split_once('/') else {
-        return normalized.to_string();
-    };
-    let provider = provider.trim();
-    let model_name = model_name.trim();
-    if provider.is_empty() || model_name.is_empty() {
-        normalized.to_string()
-    } else {
-        format!("{provider}/{model_name}")
-    }
 }

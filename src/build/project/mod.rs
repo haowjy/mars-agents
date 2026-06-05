@@ -81,7 +81,6 @@ fn sandbox(bundle: &LaunchBundle) -> &str {
         .unwrap_or("default")
 }
 
-#[allow(dead_code)]
 fn effort(bundle: &LaunchBundle) -> Option<&str> {
     bundle
         .execution_policy
@@ -96,7 +95,6 @@ fn model(bundle: &LaunchBundle) -> Option<&str> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-#[allow(dead_code)]
 fn agent_name(bundle: &LaunchBundle) -> Option<&str> {
     bundle
         .agent
@@ -114,12 +112,10 @@ fn empty_actions(argv: Vec<String>) -> LaunchActions {
     }
 }
 
-#[allow(dead_code)]
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")
 }
 
-#[allow(dead_code)]
 fn mcp_codex_flags(entries: &[String]) -> Result<Vec<String>, MarsError> {
     let mut flags = Vec::new();
     for raw in entries {
@@ -148,7 +144,6 @@ fn mcp_codex_flags(entries: &[String]) -> Result<Vec<String>, MarsError> {
     Ok(flags)
 }
 
-#[allow(dead_code)]
 fn opencode_workspace_env(context: &RuntimeContext) -> Option<String> {
     if context.workspace_roots.is_empty() {
         return None;
@@ -202,7 +197,6 @@ fn opencode_workspace_env(context: &RuntimeContext) -> Option<String> {
     )
 }
 
-#[allow(dead_code)]
 fn prompt_file(context: &RuntimeContext, content: String) -> Result<LaunchFile, MarsError> {
     let temp_dir = context
         .temp_dir
@@ -217,7 +211,6 @@ fn prompt_file(context: &RuntimeContext, content: String) -> Result<LaunchFile, 
     })
 }
 
-#[allow(dead_code)]
 fn streaming_context(context: &RuntimeContext) -> Result<(&str, u16), MarsError> {
     context
         .streaming

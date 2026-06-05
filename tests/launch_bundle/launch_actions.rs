@@ -185,3 +185,203 @@ Review code changes."#;
             .contains("Review code changes.")
     );
 }
+
+pub(crate) fn build_launch_bundle_projects_codex_subprocess_launch_actions() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let agent_content = r#"---
+name: coder
+model: gpt-5
+harness: codex
+effort: high
+approval: auto
+sandbox: workspace-write
+mcp-tools: ["fs=npx filesystem-server"]
+---
+Code."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    let context = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": null,
+        "session_id": "codex-thread",
+        "fork": false,
+        "workspace_roots": ["/extra/root"],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": null,
+        "pi_extension_entrypoints": [],
+        "prompt": "USER",
+        "base_instructions": "BASE",
+        "developer_instructions": "DEV",
+        "report_output_path": "/tmp/report.md"
+    });
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--context",
+        &context.to_string(),
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["launch_actions"]["argv"],
+        serde_json::json!([
+            "codex",
+            "exec",
+            "--json",
+            "--model",
+            "gpt-5",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            "approval_policy=\"on-request\"",
+            "-c",
+            "mcp.servers.fs.command=\"npx filesystem-server\"",
+            "resume",
+            "codex-thread",
+            "--add-dir",
+            "/extra/root",
+            "--foo",
+            "-o",
+            "/tmp/report.md",
+            "BASE\n\nDEV\n\nUSER"
+        ])
+    );
+}
+
+pub(crate) fn build_launch_bundle_projects_opencode_subprocess_launch_actions() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
+    let agent_content = r#"---
+name: coder
+model: openai/gpt-5
+harness: opencode
+effort: high
+---
+Code."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    let context = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": null,
+        "session_id": "opencode-session",
+        "fork": true,
+        "workspace_roots": ["/extra/root"],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": "{\"permission\":{\"external_directory\":[\"/parent\"]}}",
+        "pi_extension_entrypoints": [],
+        "prompt": "USER"
+    });
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--context",
+        &context.to_string(),
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["launch_actions"]["argv"],
+        serde_json::json!([
+            "opencode",
+            "run",
+            "--model",
+            "openai/gpt-5",
+            "--variant",
+            "high",
+            "--foo",
+            "-",
+            "--session",
+            "opencode-session",
+            "--fork"
+        ])
+    );
+    assert_eq!(
+        bundle["launch_actions"]["env"]["OPENCODE_CONFIG_CONTENT"].as_str(),
+        Some(
+            "{\"permission\":{\"external_directory\":{\"/extra/root/**\":\"allow\",\"/parent\":\"allow\"}}}"
+        )
+    );
+}
+
+pub(crate) fn build_launch_bundle_projects_pi_launch_actions() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
+    let agent_content = r#"---
+name: coder
+model: openai-codex/gpt-5.4-mini
+harness: pi
+effort: xhigh
+---
+Code."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    let context = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": null,
+        "session_id": "pi-session",
+        "fork": false,
+        "workspace_roots": [],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": null,
+        "pi_extension_entrypoints": ["/ext/managed-bash/index.js", "/ext/spawn-watch/index.js"],
+        "prompt": "USER",
+        "pi_session_dir": "/tmp/pi-sessions"
+    });
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--context",
+        &context.to_string(),
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let argv = bundle["launch_actions"]["argv"].as_array().unwrap();
+
+    assert_eq!(argv[0].as_str(), Some("pi"));
+    assert_eq!(argv[1].as_str(), Some("--mode"));
+    assert_eq!(argv[2].as_str(), Some("rpc"));
+    assert!(
+        argv.iter()
+            .any(|value| value.as_str() == Some("openai-codex/gpt-5.4-mini:xhigh"))
+    );
+    assert!(
+        argv.iter()
+            .any(|value| value.as_str() == Some("/ext/managed-bash/index.js"))
+    );
+    assert!(
+        argv.iter()
+            .any(|value| value.as_str() == Some("/tmp/pi-sessions"))
+    );
+}

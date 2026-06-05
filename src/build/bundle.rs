@@ -40,6 +40,13 @@ pub struct RuntimeContext {
     #[serde(default)]
     pub pi_extension_entrypoints: Vec<String>,
     pub prompt: Option<String>,
+    pub report_output_path: Option<String>,
+    pub base_instructions: Option<String>,
+    pub developer_instructions: Option<String>,
+    pub user_turn_content: Option<String>,
+    pub pi_session_dir: Option<String>,
+    #[serde(default)]
+    pub load_all_pi_extensions: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

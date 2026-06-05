@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `apply_apply_outcomes_to_lock()` dropped `.claude`/`.cursor`/`.codex` output records on `Updated`/`Installed` actions — `copy_decision()` lost ownership, triggering "not tracked by Mars" warnings every sync.
+- `finalize()` dropped non-canonical ownership when native emission failed (I/O, permissions) — carry-forward now preserves old records, respecting explicit removals from reconciliation.
 
 ## [0.7.15] - 2026-06-04
 

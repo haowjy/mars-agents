@@ -743,3 +743,55 @@ targets = [".claude"]
         "shared mars.toml must not persist mars.local.toml-only targets"
     );
 }
+
+#[test]
+fn standalone_overlay_model_does_not_leak_into_declared_codex_harness() {
+    // E2E regression (thermo-nuclear review): a per-agent overlay model that resolves
+    // to a different harness than the agent's authored `harness:` must not be pinned
+    // into the declared-harness native file. Here `explorer` is authored harness=codex
+    // but overlaid to a claude-resolving model; under standalone EmitAll the `.codex`
+    // copy must be model-less while the `.claude` copy carries the overlay model.
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("explorer", CODEX_ONLY_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = [".claude", ".codex"]
+
+[models.opus]
+model = "claude-opus-4-6"
+provider = "anthropic"
+
+[agents.explorer]
+model = "opus"
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    // Standalone (MERIDIAN_MANAGED unset) -> EmitAll: every agent to every target.
+    sync_project(&project, None);
+
+    let claude = claude_native_content(&project, "explorer");
+    assert!(
+        claude.contains("model: claude-opus-4-6"),
+        ".claude copy should carry the overlay (claude-resolving) model: {claude}"
+    );
+
+    let codex_path = project.path().join(".codex/agents/explorer.toml");
+    assert!(
+        codex_path.exists(),
+        ".codex copy should still be emitted under EmitAll"
+    );
+    let codex = fs::read_to_string(&codex_path).unwrap();
+    assert!(
+        !codex.contains("model = "),
+        "overlay claude model must NOT leak into the declared codex harness file: {codex}"
+    );
+}

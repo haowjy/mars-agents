@@ -42,11 +42,15 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 
 ## Dual-Surface Compilation
 
-Under `EmitAll` policy (standalone mars), harness-bound agents are compiled to both:
+Under `EmitAll` policy (standalone mars), **every source agent** is compiled to **every configured managed target harness** (from `settings.targets`):
 1. `.mars/agents/` — canonical universal format
-2. `<target>/agents/` — harness-native format (e.g., `.claude/agents/coder.md`)
+2. `<target>/agents/` — harness-native format (e.g., `.claude/agents/coder.md`); model set to `Clear` when the agent's model does not resolve to that harness
 
-Under `SuppressAll` (Meridian-managed), native artifacts are removed.
+An agent with no matching model is still emitted — its native file omits the model field so the harness uses its own default. Profile `harness:` is a model-selection hint, not an emission filter.
+
+Under `EmitSelective` (via `settings.meridian.agent_copy`), only agents whose model resolves to the configured harnesses are emitted.
+
+Under `SuppressAll` (Meridian-managed, or `agent_emission = "never"` without agent_copy), native artifacts are removed.
 
 ### Model Alias Resolution at Compile Time
 
@@ -60,20 +64,22 @@ aliases pass through verbatim with a warning.
 
 ### Agent Surface Policy
 
-| Setting | Meridian-managed | Policy |
-|---|---|---|
-| unset (auto) | false | EmitAll |
-| unset (auto) | true | SuppressAll |
-| always | any | EmitAll |
-| never | any | SuppressAll |
+| Setting | Meridian-managed | agent_copy | Policy |
+|---|---|---|---|
+| unset (auto) | false | any | EmitAll |
+| unset (auto) | true | none | SuppressAll |
+| unset (auto) | true | configured | EmitSelective |
+| always | any | any | EmitAll |
+| never | any | none | SuppressAll |
+| never | any | configured | EmitSelective |
 
 ## Agent Compilation (`agents/`)
 
 - `mod.rs` — schema parser, `AgentProfile` from YAML frontmatter + markdown body
-- `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept an
-  optional `model_override: Option<&str>` parameter. `lower_for_harness_with_model()`
-  dispatches to the correct lowerer with the resolved model override, ensuring
-  emitted native artifacts carry pinned model IDs rather than aliases.
+- `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept a
+  `model_field: &NativeModel` parameter (`Inherit`, `Set(id)`, or `Clear` — omits the
+  model field). `lower_for_harness_with_model()` dispatches to the correct lowerer,
+  ensuring emitted native artifacts carry pinned model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 
 ### Non-Overridable Fields
@@ -106,15 +112,31 @@ Propagation rules for passive vs effectful items (D1/D10).
 
 ## Patterns
 
-**Test dual-surface:**
+**Policy selection:**
 ```rust
-let policy = agent_surface_policy(None, false); // standalone → EmitAll
-reconcile_native_agent_surfaces(policy, project_root, mars_dir, &outcomes, false, &mut diag);
+// standalone → EmitAll
+let policy = agent_surface_policy(None, None, false);
+// meridian-managed → SuppressAll
+let policy = agent_surface_policy(Some(&AgentEmission::Auto), None, true);
+// selective emission via settings.meridian.agent_copy
+let policy = agent_surface_policy(Some(&AgentEmission::Auto), spec.as_ref(), true);
 ```
 
-**Test suppression:**
+**Reconcile:**
 ```rust
-let policy = agent_surface_policy(Some(&AgentEmission::Auto), true); // meridian → SuppressAll
+let ctx = NativeAgentReconcileCtx {
+    policy, project_root, model_aliases, outcomes, old_lock, dry_run, selective_harness_scope,
+};
+let removed = reconcile_native_agent_surfaces(&ctx, &mars_agents, diag);
+```
+
+**Compile (EmitAll → every agent to every configured managed target):**
+```rust
+let ctx = NativeAgentCompileCtx {
+    project_root, model_aliases, cursor_probe_slugs, old_lock, harness_scope,
+    configured_emit_harnesses, options,
+};
+let outputs = compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &mars_agents, diag);
 ```
 
 ## Linked-target writes

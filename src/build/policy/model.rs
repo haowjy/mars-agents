@@ -95,6 +95,28 @@ pub(super) fn resolve_model_token<'a>(
     })
 }
 
+pub(super) fn resolve_literal_model(
+    model_token: String,
+    model_source: PolicySource,
+) -> ResolvedModel<'static> {
+    let (model, token_provider_constraint) =
+        models::split_provider_constrained_model_token(&model_token);
+    let provider_constraint = token_provider_constraint.clone();
+    let provider_for_order = token_provider_constraint
+        .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string));
+
+    ResolvedModel {
+        model_token,
+        model_source,
+        model,
+        alias: None,
+        alias_resolution_failed: false,
+        provider_for_order,
+        provider_constraint,
+        warnings: Vec::new(),
+    }
+}
+
 fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
     match &alias.spec {
         models::ModelSpec::Pinned { provider, .. }

@@ -179,6 +179,7 @@ impl MatchedModelPolicy {
 struct ModelFallbackCandidate {
     token: String,
     source: PolicySource,
+    match_type: ModelPolicyMatchType,
 }
 
 pub fn resolve_policy(
@@ -288,17 +289,30 @@ pub fn resolve_policy(
             return Err(err);
         }
         Err(MarsError::LinkedHarnessExhausted { .. }) => {
-            let candidates = model_fallback_candidates(input.profile, &primary_model_token);
+            let candidates = model_fallback_candidates(
+                input.profile,
+                &primary_model_token,
+                resolved_model.model_source,
+                matched_policy.as_ref(),
+            );
             let mut exhausted_tokens = Vec::new();
             let mut resolved = None;
 
             for candidate in candidates {
-                let fallback_model = model::resolve_model_token(
-                    candidate.token.clone(),
-                    candidate.source,
-                    aliases,
-                    &cache,
-                )?;
+                let fallback_model = match candidate.match_type {
+                    ModelPolicyMatchType::Alias => model::resolve_model_token(
+                        candidate.token.clone(),
+                        candidate.source,
+                        aliases,
+                        &cache,
+                    )?,
+                    ModelPolicyMatchType::Model => {
+                        model::resolve_literal_model(candidate.token.clone(), candidate.source)
+                    }
+                    ModelPolicyMatchType::ModelGlob => unreachable!(
+                        "model-glob policies are filtered out of model fallback candidates"
+                    ),
+                };
                 let fallback_policy = match_model_policy(
                     effective_policies(
                         overlay,
@@ -728,12 +742,24 @@ fn effective_policies<'a>(
 fn model_fallback_candidates(
     profile: &AgentProfile,
     primary_model_token: &str,
+    model_source: PolicySource,
+    active_policy: Option<&MatchedModelPolicy>,
 ) -> Vec<ModelFallbackCandidate> {
+    let Some(active_policy) = active_policy else {
+        return Vec::new();
+    };
+    if model_source != PolicySource::Profile
+        || active_policy.layer != PolicyLayer::Profile
+        || active_policy.rule.no_fallback
+    {
+        return Vec::new();
+    }
+
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
     seen.insert(primary_model_token.trim().to_string());
 
-    for policy in &profile.model_policies {
+    for policy in profile.model_policies.iter().skip(active_policy.index + 1) {
         if policy.no_fallback {
             continue;
         }
@@ -750,6 +776,7 @@ fn model_fallback_candidates(
         entries.push(ModelFallbackCandidate {
             token: token.to_string(),
             source: PolicySource::ProfileModelPolicy,
+            match_type: policy.match_type.clone(),
         });
     }
 

@@ -2786,6 +2786,90 @@ model = "claude-opus-4-6""#;
     );
 }
 
+pub(crate) fn build_launch_bundle_model_policy_fallback_honors_active_no_fallback_rule() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+    no-fallback: true
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+
+    assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
+    assert!(stderr.contains("tried: gpt55"));
+    assert!(!stderr.contains("sonnet"));
+}
+
+pub(crate) fn build_launch_bundle_model_policy_fallback_model_match_uses_literal_model_id() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models."claude-opus-4-6"]
+model = "gpt-5""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["routing"]["model_token"].as_str(),
+        Some("claude-opus-4-6")
+    );
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("claude-opus-4-6"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["model_fallback_to"].as_str(),
+        Some("claude-opus-4-6")
+    );
+}
+
 pub(crate) fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);

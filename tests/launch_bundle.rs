@@ -426,6 +426,16 @@ fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
 }
 
 #[test]
+fn build_launch_bundle_model_policy_fallback_honors_active_no_fallback_rule() {
+    routing::build_launch_bundle_model_policy_fallback_honors_active_no_fallback_rule();
+}
+
+#[test]
+fn build_launch_bundle_model_policy_fallback_model_match_uses_literal_model_id() {
+    routing::build_launch_bundle_model_policy_fallback_model_match_uses_literal_model_id();
+}
+
+#[test]
 fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
     routing::build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback();
 }

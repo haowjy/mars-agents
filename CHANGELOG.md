@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `mars sync` lock rebuild now carries forward existing non-canonical target ownership records while refreshing canonical `.mars` records, instead of relying on a post-build safety-net pass.
+
 ## [0.8.1] - 2026-06-06
 
 ### Removed

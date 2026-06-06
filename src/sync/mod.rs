@@ -622,11 +622,6 @@ pub(crate) fn finalize(
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
-        crate::lock::carry_forward_unrefreshed_native_outputs(
-            &mut new_lock,
-            old_lock,
-            &state.removed_native_outputs,
-        );
         if let Some(warning) =
             crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {

@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 - `mars build launch-bundle --context` emits v4 `launch_actions` with subprocess/streaming `kind`, `cwd`, stdin, files, env, and bootstrap/turn protocol shapes for Cursor, Claude, Codex, OpenCode, and Pi.
+- `.mars/native-agents.json` manifest after sync/link; launch-bundle inventory splits Meridian spawn agents from harness-native agents.
 
 ## [0.7.17] - 2026-06-06
 

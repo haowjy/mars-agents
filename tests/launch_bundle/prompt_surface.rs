@@ -326,10 +326,14 @@ Plan work."#;
     assert!(inventory_prompt.contains("# Meridian Agents"));
     assert!(inventory_prompt.contains("## Primary"));
     assert!(inventory_prompt.contains("## Subagent"));
-    assert!(inventory_prompt.contains("- planner: Plan tasks | Model: openai/gpt-5"));
     assert!(
-        inventory_prompt.contains("- reviewer: Review implementation | Model: claude-opus-4-6")
+        inventory_prompt
+            .contains("- `meridian spawn -a planner`: Plan tasks | Model: openai/gpt-5")
     );
+    assert!(inventory_prompt.contains(
+        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
+    ));
+    assert!(inventory_prompt.contains("Write prompts to `/tmp/<name>.md`."));
 
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
@@ -476,7 +480,7 @@ Hidden work."#;
     let inventory_prompt = bundle["prompt_surface"]["inventory_prompt"]
         .as_str()
         .expect("inventory_prompt should be string");
-    assert!(inventory_prompt.contains("reviewer: Review implementation"));
+    assert!(inventory_prompt.contains("`meridian spawn -a reviewer`: Review implementation"));
     assert!(inventory_prompt.contains("Fan-out: gpt55, gpt-5"));
     assert!(!inventory_prompt.contains("hidden-worker"));
 }
@@ -579,9 +583,11 @@ Review code changes."#;
         "# Skill: reference_a\n\n",
         "Reference body.\n\n",
         "# Meridian Agents\n\n",
-        "Installed Meridian agents available at launch time.\n\n",
+        "Write prompts to `/tmp/<name>.md`.\n",
+        "Use `--bg` + `meridian spawn wait` for parallel work.\n",
+        "Use `/handoff` when passing control back to the user.\n\n",
         "## Subagent\n",
-        "- reviewer: Review implementation | Model: claude-opus-4-6\n\n",
+        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6\n\n",
         "# Report\n\n",
         "**IMPORTANT - Your final assistant message must be the run report.**\n\n",
         "Provide a plain markdown report in your final assistant message.\n\n",

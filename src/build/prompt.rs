@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
-use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};
+use crate::build::inventory::build_inventory_prompt;
 use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
@@ -41,15 +41,6 @@ enum SkillLoadOutcome {
 enum AvailableSkillOutcome {
     Available(AvailableSkill),
     Missing,
-}
-
-#[derive(Debug, Clone)]
-struct ParsedAgentInventory {
-    name: String,
-    description: String,
-    model: Option<String>,
-    fanout: Vec<String>,
-    mode: AgentMode,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -132,7 +123,8 @@ pub fn compile_prompt_surface(
         }
     }
 
-    let inventory_prompt = build_inventory_prompt(mars_dir, subagents_filter, &mut warnings)?;
+    let inventory_prompt =
+        build_inventory_prompt(mars_dir, subagents_filter, harness_id, &mut warnings)?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
@@ -426,208 +418,4 @@ fn compose_system_instruction(
     blocks.push(report_instruction.to_string());
 
     blocks.join("\n\n")
-}
-
-fn build_inventory_prompt(
-    mars_dir: &Path,
-    subagents_filter: &[String],
-    warnings: &mut Vec<String>,
-) -> Result<String, MarsError> {
-    let agents_dir = mars_dir.join("agents");
-    if !agents_dir.is_dir() {
-        return Ok(String::new());
-    }
-
-    let read_dir = match std::fs::read_dir(&agents_dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            warnings.push(format!(
-                "failed to read agent inventory from {}: {err}",
-                agents_dir.display()
-            ));
-            return Ok(String::new());
-        }
-    };
-
-    let mut agent_paths: Vec<PathBuf> = read_dir
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .collect();
-    agent_paths.sort();
-
-    let mut primary_agents = Vec::new();
-    let mut subagent_agents = Vec::new();
-
-    for path in agent_paths {
-        match parse_inventory_agent(&path) {
-            Ok((Some(agent), agent_warnings)) => {
-                warnings.extend(agent_warnings);
-                if agent.mode == AgentMode::Primary {
-                    primary_agents.push(agent);
-                } else {
-                    subagent_agents.push(agent);
-                }
-            }
-            Ok((None, agent_warnings)) => warnings.extend(agent_warnings),
-            Err(err) => {
-                return Err(MarsError::Config(ConfigError::Invalid { message: err }));
-            }
-        }
-    }
-
-    if !subagents_filter.is_empty() {
-        primary_agents.retain(|agent| {
-            subagents_filter
-                .iter()
-                .any(|f| f.eq_ignore_ascii_case(&agent.name))
-        });
-        subagent_agents.retain(|agent| {
-            subagents_filter
-                .iter()
-                .any(|f| f.eq_ignore_ascii_case(&agent.name))
-        });
-    }
-
-    if primary_agents.is_empty() && subagent_agents.is_empty() {
-        return Ok(String::new());
-    }
-
-    primary_agents.sort_by(|left, right| left.name.cmp(&right.name));
-    subagent_agents.sort_by(|left, right| left.name.cmp(&right.name));
-
-    let mut lines = vec![
-        "# Meridian Agents".to_string(),
-        "".to_string(),
-        "Installed Meridian agents available at launch time.".to_string(),
-    ];
-
-    if !primary_agents.is_empty() {
-        lines.extend(["".to_string(), "## Primary".to_string()]);
-        for agent in &primary_agents {
-            lines.push(render_inventory_line(agent));
-        }
-    }
-
-    if !subagent_agents.is_empty() {
-        lines.extend(["".to_string(), "## Subagent".to_string()]);
-        for agent in &subagent_agents {
-            lines.push(render_inventory_line(agent));
-        }
-    }
-
-    Ok(lines.join("\n").trim().to_string())
-}
-
-fn parse_inventory_agent(
-    path: &Path,
-) -> Result<(Option<ParsedAgentInventory>, Vec<String>), String> {
-    let content = std::fs::read_to_string(path).map_err(|err| {
-        format!(
-            "failed to read agent inventory file {}: {err}",
-            path.display()
-        )
-    })?;
-
-    let mut parse_diags = Vec::new();
-    let (profile, _frontmatter) =
-        parse_agent_content(&content, &mut parse_diags).map_err(|err| {
-            format!(
-                "failed to parse agent inventory file {}: {err}",
-                path.display()
-            )
-        })?;
-
-    let mut warnings = Vec::new();
-    for diag in parse_diags {
-        if diag.is_error() {
-            return Err(format!(
-                "agent inventory file {} has invalid frontmatter: {}",
-                path.display(),
-                diag.message()
-            ));
-        }
-        warnings.push(format!(
-            "agent inventory parse warning in {}: {}",
-            path.display(),
-            diag.message()
-        ));
-    }
-    if !profile.model_invocable {
-        return Ok((None, warnings));
-    }
-
-    let fallback_name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("unknown-agent")
-        .to_string();
-    let fanout = fallback_model_policies_for_inventory(&profile);
-    let name = profile.name.unwrap_or(fallback_name);
-    let description = profile.description.unwrap_or_default();
-    let mode = profile.mode.clone().unwrap_or(AgentMode::Subagent);
-
-    Ok((
-        Some(ParsedAgentInventory {
-            name,
-            description,
-            model: profile.model,
-            fanout,
-            mode,
-        }),
-        warnings,
-    ))
-}
-
-fn fallback_model_policies_for_inventory(
-    profile: &crate::compiler::agents::AgentProfile,
-) -> Vec<String> {
-    let mut entries = Vec::new();
-    let mut seen = HashSet::new();
-
-    // Limitation: this deduplicates exact fallback labels only. Alias-to-model
-    // canonical dedupe requires alias catalog context not currently loaded here.
-    for policy in &profile.model_policies {
-        if policy.no_fallback {
-            continue;
-        }
-        if !matches!(
-            policy.match_type,
-            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model
-        ) {
-            continue;
-        }
-        let value = policy.match_value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if seen.insert(value.to_string()) {
-            entries.push(value.to_string());
-        }
-    }
-
-    entries
-}
-
-fn render_inventory_line(agent: &ParsedAgentInventory) -> String {
-    let description = agent.description.trim();
-    let mut line = if description.is_empty() {
-        format!("- {}", agent.name)
-    } else {
-        format!("- {}: {}", agent.name, description)
-    };
-
-    if let Some(model) = agent.model.as_ref().map(|value| value.trim())
-        && !model.is_empty()
-    {
-        line.push_str(" | Model: ");
-        line.push_str(model);
-    }
-
-    if !agent.fanout.is_empty() {
-        line.push_str(" | Fan-out: ");
-        line.push_str(&agent.fanout.join(", "));
-    }
-
-    line
 }

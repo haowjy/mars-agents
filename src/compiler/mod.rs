@@ -14,6 +14,7 @@ pub mod context;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
+pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
@@ -22,6 +23,7 @@ pub mod variants;
 /// Visibility propagation rules for passive vs effectful items (D1/D10).
 pub mod visibility;
 
+pub use native_agent_manifest::write_native_agent_manifest_from_lock;
 pub use native_agents::selective_native_orphan_preserve_paths;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, materialize_native_agents_after_link,

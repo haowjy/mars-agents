@@ -112,14 +112,16 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
 
 fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> LockFile {
     let mut lock = LockFile::empty();
-    let outputs = targets
-        .iter()
-        .map(|target| OutputRecord {
-            target_root: (*target).to_string(),
-            dest_path: dest.into(),
-            installed_checksum: checksum.into(),
-        })
-        .collect();
+    let mut outputs: Vec<OutputRecord> = vec![OutputRecord {
+        target_root: ".mars".to_string(),
+        dest_path: dest.into(),
+        installed_checksum: checksum.into(),
+    }];
+    outputs.extend(targets.iter().map(|target| OutputRecord {
+        target_root: (*target).to_string(),
+        dest_path: dest.into(),
+        installed_checksum: checksum.into(),
+    }));
     lock.items.insert(
         "agent/coder".to_string(),
         LockedItemV2 {

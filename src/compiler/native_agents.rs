@@ -734,7 +734,7 @@ pub(crate) fn materialize_native_agents_after_link(
     if !input
         .managed_targets
         .iter()
-        .any(|target| HarnessKind::all().iter().any(|h| h.target_dir() == target))
+        .any(|target| HarnessKind::from_target_dir(target).is_some())
     {
         return (Vec::new(), Vec::new());
     }
@@ -742,12 +742,7 @@ pub(crate) fn materialize_native_agents_after_link(
     let link_harness_scope: Vec<_> = input
         .target_outcomes
         .iter()
-        .filter_map(|outcome| {
-            HarnessKind::all()
-                .iter()
-                .find(|harness| harness.target_dir() == outcome.target)
-                .cloned()
-        })
+        .filter_map(|outcome| HarnessKind::from_target_dir(&outcome.target))
         .collect();
     if link_harness_scope.is_empty() {
         return (Vec::new(), Vec::new());
@@ -801,13 +796,14 @@ pub(crate) fn materialize_native_agents_after_link(
             },
         })
     };
-    run_native_agent_post_sync_lifecycle(
+    let (compiled_native_outputs, removed_native_outputs) = run_native_agent_post_sync_lifecycle(
         &reconcile_ctx,
         &policy,
         &mars_agents,
         compile_ctx.as_ref(),
         diag,
-    )
+    );
+    (compiled_native_outputs, removed_native_outputs)
 }
 
 #[cfg(test)]

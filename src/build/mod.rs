@@ -1,4 +1,5 @@
 pub mod bundle;
+pub mod inventory;
 pub mod policy;
 pub mod project;
 pub mod prompt;

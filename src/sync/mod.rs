@@ -611,6 +611,14 @@ pub(crate) fn finalize(
             old_lock,
             &state.removed_native_outputs,
         );
+        if let Err(err) =
+            crate::compiler::write_native_agent_manifest_from_lock(project_root, &new_lock)
+        {
+            diag.warn(
+                "native-agent-manifest-write",
+                format!("could not write native agent manifest: {err}"),
+            );
+        }
         crate::lock::write(project_root, &new_lock)?;
 
         // Best-effort models cache refresh: ensure the catalog covers any

@@ -471,18 +471,14 @@ fn no_harness_available_error(
     route_trace: &routing::RoutingTrace,
     installed_harnesses: &HashSet<String>,
 ) -> MarsError {
-    let constraint_detail = route_trace.diagnostics.iter().find(|diagnostic| {
-        diagnostic.contains(
-            "known linked harness constraints left no linked harness eligible for this model after routing assessments",
-        ) || diagnostic.contains(
-            "settings.default_harness is excluded by known linked harness constraints",
-        )
-    });
-
-    if let Some(detail) = constraint_detail {
+    if route_trace.exhaustion_reason == Some(routing::ExhaustionReason::LinkedHarnessConstraints) {
         MarsError::LinkedHarnessExhausted {
             model_token: model_token.to_string(),
-            detail: detail.clone(),
+            detail: route_trace
+                .diagnostics
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "linked harness constraints exhausted".to_string()),
             installed_harnesses: format_installed_harnesses(installed_harnesses),
         }
     } else {
@@ -495,13 +491,7 @@ fn no_harness_available_error(
 }
 
 fn no_linked_constraint_exhaustion(route_trace: &routing::RoutingTrace) -> bool {
-    route_trace.diagnostics.iter().all(|diagnostic| {
-        !diagnostic.contains(
-            "known linked harness constraints left no linked harness eligible for this model after routing assessments",
-        ) && !diagnostic.contains(
-            "settings.default_harness is excluded by known linked harness constraints",
-        )
-    })
+    route_trace.exhaustion_reason != Some(routing::ExhaustionReason::LinkedHarnessConstraints)
 }
 
 fn unavailable_profile_pivot_error(

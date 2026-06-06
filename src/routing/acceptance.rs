@@ -119,6 +119,7 @@ mod tests {
             candidates_tried: vec![harness.to_string()],
             assessments: Vec::new(),
             diagnostics: Vec::new(),
+            exhaustion_reason: None,
         }
     }
 

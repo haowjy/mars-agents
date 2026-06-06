@@ -304,11 +304,7 @@ pub fn resolve_policy(
         }
         Err(err) if is_harness_exhaustion(&err) => {
             let linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
-            let candidates = model_fallback_candidates(
-                input.profile,
-                resolved_model.model_source,
-                matched_policy.as_ref(),
-            );
+            let candidates = model_fallback_candidates(input.profile, matched_policy.as_ref());
             let mut exhausted_tokens = Vec::new();
             let mut resolved = None;
 
@@ -766,16 +762,12 @@ fn effective_policies<'a>(
 
 fn model_fallback_candidates(
     profile: &AgentProfile,
-    model_source: PolicySource,
     active_policy: Option<&MatchedModelPolicy>,
 ) -> Vec<ModelFallbackCandidate> {
     let Some(active_policy) = active_policy else {
         return Vec::new();
     };
-    if model_source != PolicySource::Profile
-        || active_policy.layer != PolicyLayer::Profile
-        || active_policy.rule.no_fallback
-    {
+    if active_policy.layer != PolicyLayer::Profile || active_policy.rule.no_fallback {
         return Vec::new();
     }
 

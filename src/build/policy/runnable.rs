@@ -207,6 +207,7 @@ mod tests {
                 skip_reason: None,
             }],
             diagnostics: Vec::new(),
+            exhaustion_reason: None,
         }
     }
 
@@ -288,6 +289,7 @@ mod tests {
                 skip_reason: None,
             }],
             diagnostics: Vec::new(),
+            exhaustion_reason: None,
         };
         let result = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
@@ -347,6 +349,7 @@ mod tests {
                 skip_reason: None,
             }],
             diagnostics: Vec::new(),
+            exhaustion_reason: None,
         };
         let resolution = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
@@ -692,6 +695,7 @@ mod tests {
                 candidates_tried: vec!["cursor".to_string()],
                 assessments: Vec::new(),
                 diagnostics: Vec::new(),
+                exhaustion_reason: None,
             },
         })
         .expect("routing should resolve");
@@ -730,6 +734,7 @@ mod tests {
                 candidates_tried: vec!["claude".to_string()],
                 assessments: Vec::new(),
                 diagnostics: Vec::new(),
+                exhaustion_reason: None,
             },
         })
         .expect("routing should resolve");

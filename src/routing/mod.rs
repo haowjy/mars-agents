@@ -56,6 +56,11 @@ impl MatchEvidence {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustionReason {
+    LinkedHarnessConstraints,
+}
+
 /// How the harness was selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteSource {
@@ -104,6 +109,7 @@ pub struct RoutingTrace {
     pub candidates_tried: Vec<String>,
     pub assessments: Vec<CandidateAssessment>,
     pub diagnostics: Vec<String>,
+    pub exhaustion_reason: Option<ExhaustionReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -279,6 +285,7 @@ pub fn trace_for_fixed_harness(
         candidates_tried: vec![harness.to_string()],
         assessments: vec![assessment],
         diagnostics,
+        exhaustion_reason: None,
     }
 }
 
@@ -440,6 +447,7 @@ where
                         candidates_tried,
                         assessments,
                         diagnostics,
+                        exhaustion_reason: None,
                     };
                 }
                 MatchEvidence::Passthrough => {
@@ -463,6 +471,7 @@ where
             candidates_tried,
             assessments,
             diagnostics,
+            exhaustion_reason: None,
         };
     }
 
@@ -486,6 +495,7 @@ where
             candidates_tried,
             assessments,
             diagnostics,
+            exhaustion_reason: None,
         };
     }
 
@@ -505,6 +515,7 @@ where
                 candidates_tried,
                 assessments,
                 diagnostics,
+                exhaustion_reason: None,
             };
         }
 
@@ -522,6 +533,7 @@ where
             candidates_tried,
             assessments,
             diagnostics,
+            exhaustion_reason: Some(ExhaustionReason::LinkedHarnessConstraints),
         };
     }
 
@@ -539,6 +551,7 @@ where
         candidates_tried,
         assessments,
         diagnostics,
+        exhaustion_reason: None,
     }
 }
 
@@ -2130,6 +2143,7 @@ mod tests {
                 },
             ],
             diagnostics: vec!["diag".to_string()],
+            exhaustion_reason: None,
         };
 
         let selected = trace

@@ -426,6 +426,11 @@ fn build_launch_bundle_model_policy_fallback_runs_after_profile_harness_pivot_ex
 }
 
 #[test]
+fn build_launch_bundle_model_policy_fallback_runs_for_settings_default_model() {
+    routing::build_launch_bundle_model_policy_fallback_runs_for_settings_default_model();
+}
+
+#[test]
 fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     routing::build_launch_bundle_model_policy_fallback_exhaustion_errors();
 }

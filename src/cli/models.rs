@@ -3373,6 +3373,7 @@ description = "Old alias"
             candidates_tried: vec!["opencode".to_string()],
             assessments: Vec::new(),
             diagnostics: Vec::new(),
+            exhaustion_reason: None,
         }
     }
 

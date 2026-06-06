@@ -165,7 +165,7 @@ model = "gpt-5""#;
 
 pub(crate) fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---
 name: reviewer
 model: openai_alias
@@ -183,36 +183,10 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert_eq!(bundle["routing"]["model"].as_str(), Some("openai_alias"));
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("openai_alias")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("unknown")
-    );
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
-    );
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("did not resolve from cached catalog")
-    }));
+    assert!(stderr.contains("model fallback candidates exhausted for `openai_alias`"));
 }
 
 pub(crate) fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
@@ -318,7 +292,7 @@ name: reviewer
 Review code changes."#;
 
     let extra_toml = r#"[settings]
-default_model = "gpt-5.4-mini""#;
+default_model = "gpt-5""#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
@@ -330,18 +304,15 @@ default_model = "gpt-5.4-mini""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(
-        bundle["routing"]["model_token"].as_str(),
-        Some("gpt-5.4-mini")
-    );
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
     assert_eq!(
         bundle["provenance"]["model_source"].as_str(),
         Some("project")
     );
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
+        Some("config-order")
     );
 }
 
@@ -412,10 +383,10 @@ default_model = "gpt-5.4-mini""#;
 pub(crate) fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default()
 {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &[]);
+    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
 name: reviewer
-model: unknown-model-token
+model: gpt-5
 ---
 Review code changes."#;
 
@@ -432,22 +403,22 @@ default_harness = "invalid-harness""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
+        Some("config-order")
     );
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex")
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -462,7 +433,7 @@ default_harness = "invalid-harness""#;
 
 pub(crate) fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["gemini"]);
+    let bin_dir = install_fake_harnesses(&temp, &["gemini", "pi"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -482,19 +453,19 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
+        Some("config-order")
     );
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -1091,13 +1062,53 @@ Review code changes."#;
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_OFFLINE", "1");
 
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(
+        "profile harness `claude` is not installed and no installed fallback harness is available",
+    ));
+    assert!(stderr.contains("installed harnesses: codex, opencode"));
+}
+
+pub(crate) fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate()
+ {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = temp.path().join("empty-bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: claude
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
         Some("passthrough")
     );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default()
+            == "profile harness 'claude' not installed; pivoting via model-policies"
+    }));
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default().contains(
+            "no harnesses are installed; selecting first routed candidate `claude` as passthrough",
+        )
+    }));
 }
 
 pub(crate) fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
@@ -2460,7 +2471,7 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
+pub(crate) fn build_launch_bundle_unknown_model_without_passthrough_harness_errors() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -2476,22 +2487,10 @@ Review code changes."#;
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("default")
-    );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
-    );
+    assert!(stderr.contains("model fallback candidates exhausted for `third-party-model-123`"));
 }
 
 pub(crate) fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
@@ -2597,10 +2596,10 @@ targets = [".opencode", ".agents"]"#;
 
 pub(crate) fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &[]);
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
 name: reviewer
-model: gpt-5
+model: claude-opus-4-6
 ---
 Review code changes."#;
 
@@ -2618,8 +2617,8 @@ default_harness = "pi""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_ne!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("default")
     );
@@ -2632,6 +2631,241 @@ default_harness = "pi""#;
             .unwrap_or_default()
             .contains("settings.default_harness is excluded by known linked harness constraints")
     }));
+}
+
+pub(crate) fn build_launch_bundle_model_policy_fallback_uses_linked_harness() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("sonnet"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("claude-opus-4-6"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["model_fallback_applied"].as_str(),
+        Some("true")
+    );
+    assert_eq!(
+        bundle["provenance"]["model_fallback_from"].as_str(),
+        Some("gpt55")
+    );
+    assert_eq!(
+        bundle["provenance"]["model_fallback_to"].as_str(),
+        Some("sonnet")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("fell back to `sonnet` on `claude`")
+    }));
+}
+
+pub(crate) fn build_launch_bundle_model_policy_fallback_walks_chain() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: gptmini
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.gptmini]
+model = "gpt-5.4-mini"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("sonnet"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["provenance"]["model_fallback_to"].as_str(),
+        Some("sonnet")
+    );
+}
+
+pub(crate) fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: gptmini
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.gptmini]
+model = "gpt-5.4-mini""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+
+    assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
+    assert!(stderr.contains("tried: gpt55, gptmini"));
+}
+
+pub(crate) fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: gptmini
+    no-fallback: true
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.gptmini]
+model = "gpt-5.4-mini"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["provenance"]["model_fallback_to"].as_str(),
+        Some("sonnet")
+    );
+    assert_ne!(
+        bundle["provenance"]["model_fallback_to"].as_str(),
+        Some("gptmini")
+    );
+}
+
+pub(crate) fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: sonnet
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[settings]
+targets = [".claude"]
+
+[models.gpt55]
+model = "gpt-5"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--model",
+        "gpt55",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+
+    assert!(stderr.contains("no linked harness available for model `gpt55`"));
+    assert!(!stderr.contains("fell back to `sonnet`"));
 }
 
 pub(crate) fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {

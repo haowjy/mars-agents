@@ -23,7 +23,6 @@ pub enum SelectionKind {
     Fixed,
     ConfigDefault,
     LinkedFallback,
-    HardcodedDefault,
 }
 
 impl SelectionKind {
@@ -33,7 +32,6 @@ impl SelectionKind {
             Self::Fixed => "fixed",
             Self::ConfigDefault => "config_default",
             Self::LinkedFallback => "linked_fallback",
-            Self::HardcodedDefault => "hardcoded_default",
         }
     }
 }
@@ -58,6 +56,11 @@ impl MatchEvidence {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustionReason {
+    LinkedHarnessConstraints,
+}
+
 /// How the harness was selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteSource {
@@ -67,7 +70,6 @@ pub enum RouteSource {
     ConfigOrder,
     ConfigDefault,
     Provider,
-    HardcodedDefault,
 }
 
 impl RouteSource {
@@ -79,7 +81,6 @@ impl RouteSource {
             Self::ConfigOrder => "config-order",
             Self::ConfigDefault => "config",
             Self::Provider => "provider",
-            Self::HardcodedDefault => "default",
         }
     }
 }
@@ -108,6 +109,7 @@ pub struct RoutingTrace {
     pub candidates_tried: Vec<String>,
     pub assessments: Vec<CandidateAssessment>,
     pub diagnostics: Vec<String>,
+    pub exhaustion_reason: Option<ExhaustionReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +275,7 @@ pub fn trace_for_fixed_harness(
     diagnostics: Vec<String>,
 ) -> RoutingTrace {
     let match_evidence = assessment.match_evidence.unwrap_or(MatchEvidence::None);
+
     RoutingTrace {
         source,
         selection_kind: SelectionKind::Fixed,
@@ -282,6 +285,7 @@ pub fn trace_for_fixed_harness(
         candidates_tried: vec![harness.to_string()],
         assessments: vec![assessment],
         diagnostics,
+        exhaustion_reason: None,
     }
 }
 
@@ -443,6 +447,7 @@ where
                         candidates_tried,
                         assessments,
                         diagnostics,
+                        exhaustion_reason: None,
                     };
                 }
                 MatchEvidence::Passthrough => {
@@ -466,6 +471,7 @@ where
             candidates_tried,
             assessments,
             diagnostics,
+            exhaustion_reason: None,
         };
     }
 
@@ -489,6 +495,7 @@ where
             candidates_tried,
             assessments,
             diagnostics,
+            exhaustion_reason: None,
         };
     }
 
@@ -508,6 +515,7 @@ where
                 candidates_tried,
                 assessments,
                 diagnostics,
+                exhaustion_reason: None,
             };
         }
 
@@ -515,20 +523,35 @@ where
             "known linked harness constraints left no linked harness eligible for this model after routing assessments"
                 .to_string(),
         );
+
+        return RoutingTrace {
+            source: candidate_source,
+            selection_kind: SelectionKind::Auto,
+            match_evidence: MatchEvidence::None,
+            harness: String::new(),
+            harness_order_position: None,
+            candidates_tried,
+            assessments,
+            diagnostics,
+            exhaustion_reason: Some(ExhaustionReason::LinkedHarnessConstraints),
+        };
     }
 
-    diagnostics
-        .push("harness not set by CLI/profile/alias/provider/config; defaulting to `pi`".into());
+    diagnostics.push(
+        "harness not set by CLI/profile/alias/provider/config and no fallback harness is available"
+            .to_string(),
+    );
 
     RoutingTrace {
-        source: RouteSource::HardcodedDefault,
-        selection_kind: SelectionKind::HardcodedDefault,
-        match_evidence: MatchEvidence::Passthrough,
-        harness: "pi".to_string(),
+        source: candidate_source,
+        selection_kind: SelectionKind::Auto,
+        match_evidence: MatchEvidence::None,
+        harness: String::new(),
         harness_order_position: None,
         candidates_tried,
         assessments,
         diagnostics,
+        exhaustion_reason: None,
     }
 }
 
@@ -1160,7 +1183,7 @@ fn format_harness_order_fallback_warning(
     } else if has_link_constraints {
         warning.push_str("; linked harness constraints prevent unrelated fallback");
     } else {
-        warning.push_str("; settings.default_harness is unset, falling through to hardcoded `pi`");
+        warning.push_str("; settings.default_harness is unset, no fallback harness available");
     }
 
     Some(warning)
@@ -1496,8 +1519,9 @@ mod tests {
         );
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
-        assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.selection_kind, SelectionKind::HardcodedDefault);
+        assert_eq!(trace.harness, "");
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.match_evidence, MatchEvidence::None);
         assert_eq!(
             trace
                 .assessments
@@ -1839,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_hardcoded_pi_fallback_with_warning() {
+    fn returns_empty_trace_when_no_fallback_harness_available() {
         let installed = installed(&[]);
         let input = routing_input(
             "model",
@@ -1853,14 +1877,15 @@ mod tests {
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
-        assert_eq!(trace.source, RouteSource::HardcodedDefault);
-        assert_eq!(trace.selection_kind, SelectionKind::HardcodedDefault);
-        assert_eq!(trace.harness, "pi");
+        assert_eq!(trace.source, RouteSource::Provider);
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.match_evidence, MatchEvidence::None);
+        assert_eq!(trace.harness, "");
         assert!(
             trace
                 .diagnostics
                 .iter()
-                .any(|diagnostic| { diagnostic.contains("defaulting to `pi`") })
+                .any(|diagnostic| { diagnostic.contains("no fallback harness is available") })
         );
     }
 
@@ -1917,6 +1942,51 @@ mod tests {
                 .iter()
                 .any(|diagnostic| { diagnostic.contains("selecting linked harness `claude`") })
         );
+    }
+
+    #[test]
+    fn linked_constraints_block_hardcoded_pi_when_all_candidates_hard_rejected() {
+        use crate::routing::acceptance::{MatchPolicy, accept_route};
+
+        let installed = installed(&["claude", "cursor", "codex", "pi"]);
+        let linked_harnesses = vec![
+            "claude".to_string(),
+            "cursor".to_string(),
+            "codex".to_string(),
+        ];
+        let cursor_probe = CursorProbeResult {
+            model_probe_success: true,
+            slugs: vec!["gpt-5.5".to_string()],
+            ..CursorProbeResult::default()
+        };
+        let input = routing_input_with_catalog(
+            "deepseekflash",
+            Some("deepseek"),
+            None,
+            None,
+            &installed,
+            Some(&linked_harnesses),
+            None,
+            (None, None, Some(&cursor_probe)),
+        );
+
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+
+        assert_ne!(trace.harness, "pi");
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.match_evidence, MatchEvidence::None);
+        assert!(trace.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains(
+                "known linked harness constraints left no linked harness eligible for this model after routing assessments",
+            )
+        }));
+        assert!(
+            !trace
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("defaulting to `pi`"))
+        );
+        assert!(accept_route(&trace, &installed, MatchPolicy::InstalledOnly).is_err());
     }
 
     #[test]
@@ -2073,6 +2143,7 @@ mod tests {
                 },
             ],
             diagnostics: vec!["diag".to_string()],
+            exhaustion_reason: None,
         };
 
         let selected = trace

@@ -29,8 +29,6 @@ pub(super) fn resolve_model<'a>(
     aliases: &'a IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Result<ResolvedModel<'a>, MarsError> {
-    let mut warnings = Vec::new();
-
     let (model_token, model_source) = match input.model_override {
         Some(model) => (model.to_string(), PolicySource::Cli),
         None => match overlay.and_then(|entry| entry.model.as_deref()) {
@@ -45,6 +43,16 @@ pub(super) fn resolve_model<'a>(
         },
     };
 
+    resolve_model_token(model_token, model_source, aliases, cache)
+}
+
+pub(super) fn resolve_model_token<'a>(
+    model_token: String,
+    model_source: PolicySource,
+    aliases: &'a IndexMap<String, ModelAlias>,
+    cache: &ModelsCache,
+) -> Result<ResolvedModel<'a>, MarsError> {
+    let mut warnings = Vec::new();
     let alias = aliases.get(&model_token);
     let (raw_model_token, token_provider_constraint) =
         models::split_provider_constrained_model_token(&model_token);
@@ -85,6 +93,28 @@ pub(super) fn resolve_model<'a>(
         provider_constraint,
         warnings,
     })
+}
+
+pub(super) fn resolve_literal_model(
+    model_token: String,
+    model_source: PolicySource,
+) -> ResolvedModel<'static> {
+    let (model, token_provider_constraint) =
+        models::split_provider_constrained_model_token(&model_token);
+    let provider_constraint = token_provider_constraint.clone();
+    let provider_for_order = token_provider_constraint
+        .or_else(|| models::infer_provider_from_model_id(&model).map(str::to_string));
+
+    ResolvedModel {
+        model_token,
+        model_source,
+        model,
+        alias: None,
+        alias_resolution_failed: false,
+        provider_for_order,
+        provider_constraint,
+        warnings: Vec::new(),
+    }
 }
 
 fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {

@@ -239,8 +239,8 @@ fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
 }
 
 #[test]
-fn build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed() {
-    routing::build_launch_bundle_unknown_model_prefers_opencode_over_cursor_when_installed();
+fn build_launch_bundle_unknown_model_without_passthrough_harness_errors() {
+    routing::build_launch_bundle_unknown_model_without_passthrough_harness_errors();
 }
 
 #[test]
@@ -406,6 +406,31 @@ fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
 }
 
 #[test]
+fn build_launch_bundle_model_policy_fallback_uses_linked_harness() {
+    routing::build_launch_bundle_model_policy_fallback_uses_linked_harness();
+}
+
+#[test]
+fn build_launch_bundle_model_policy_fallback_walks_chain() {
+    routing::build_launch_bundle_model_policy_fallback_walks_chain();
+}
+
+#[test]
+fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
+    routing::build_launch_bundle_model_policy_fallback_exhaustion_errors();
+}
+
+#[test]
+fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
+    routing::build_launch_bundle_model_policy_fallback_skips_no_fallback_rules();
+}
+
+#[test]
+fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
+    routing::build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback();
+}
+
+#[test]
 fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     routing::build_launch_bundle_cli_harness_override_beats_settings_harness_order();
 }
@@ -423,6 +448,11 @@ fn build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate
 #[test]
 fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
     routing::build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback();
+}
+
+#[test]
+fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate() {
+    routing::build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate();
 }
 
 #[test]

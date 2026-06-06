@@ -24,8 +24,8 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 1. Build candidate list from `settings_harness_order` (when unset, see default order below) or `provider_candidate_order`
 2. Filter by `linked_harnesses` — only `KnownHarness` links filter
 3. Per-candidate gate: installed → native catalog slug match + auth → OpenCode probe → Pi probe → Pi/Cursor passthrough (deferred)
-4. Fallback chain: config `default_harness` → linked fallback → hardcoded `pi`
-5. Link constraints block config-default and hardcoded fallbacks from routing outside known links
+4. Fallback chain: config `default_harness` → linked fallback → no selection
+5. Link constraints block config-default fallback from routing outside known links
 
 ### Default `harness_order`
 
@@ -63,7 +63,6 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 | `Fixed` | Caller committed to specific harness |
 | `ConfigDefault` | Fell through to `settings.default_harness` |
 | `LinkedFallback` | Linked harnesses selected themselves |
-| `HardcodedDefault` | Defaulting to `pi` |
 
 ### `MatchEvidence` (what supports it)
 | Value | Meaning |

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 
@@ -12,99 +12,12 @@ pub struct LaunchBundle {
     pub agent_body: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
-    /// EXPERIMENTAL — see `build/project` module doc.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub launch_actions: Option<LaunchActions>,
     pub prompt_surface: PromptSurface,
     pub scaffold_slots: ScaffoldSlots,
     pub tools: ToolsSpec,
     pub skills: Skills,
     pub provenance: BTreeMap<String, String>,
     pub warnings: Vec<String>,
-}
-
-/// EXPERIMENTAL — see `build/project` module doc.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RuntimeContext {
-    pub cwd: Option<String>,
-    pub temp_dir: Option<String>,
-    pub streaming: Option<StreamingContext>,
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub fork: bool,
-    #[serde(default)]
-    pub workspace_roots: Vec<String>,
-    #[serde(default)]
-    pub interactive: bool,
-    #[serde(default)]
-    pub extra_args: Vec<String>,
-    pub opencode_config_content: Option<String>,
-    #[serde(default)]
-    pub pi_extension_entrypoints: Vec<String>,
-    pub prompt: Option<String>,
-    pub report_output_path: Option<String>,
-    pub pi_session_dir: Option<String>,
-    #[serde(default)]
-    pub load_all_pi_extensions: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamingContext {
-    pub host: String,
-    pub port: u16,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LaunchActions {
-    Subprocess {
-        argv: Vec<String>,
-        env: BTreeMap<String, String>,
-        cwd: String,
-        files: Vec<LaunchFile>,
-        stdin: Option<String>,
-    },
-    Streaming {
-        argv: Vec<String>,
-        env: BTreeMap<String, String>,
-        cwd: String,
-        protocol: LaunchProtocol,
-    },
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LaunchFile {
-    pub path: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LaunchProtocol {
-    pub transport: String,
-    pub bootstrap: ProtocolBootstrap,
-    pub turn: ProtocolTurn,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProtocolBootstrap {
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProtocolTurn {
-    pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path_template: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub params_template: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_template: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]

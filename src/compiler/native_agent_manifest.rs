@@ -1,6 +1,6 @@
 //! On-disk native agent manifest (`.mars/native-agents.json`) — schema, lock projection, queries.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -15,12 +15,12 @@ const NATIVE_AGENT_MANIFEST_FILENAME: &str = "native-agents.json";
 #[derive(Debug, Serialize, Deserialize)]
 struct NativeAgentManifestFile {
     version: u32,
-    agents: HashMap<String, Vec<String>>,
+    agents: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NativeAgentManifestRead {
-    Found(HashMap<String, Vec<String>>),
+    Found(BTreeMap<String, Vec<String>>),
     Missing,
     Unreadable,
 }
@@ -78,8 +78,8 @@ fn compiled_native_outputs_from_lock(lock: &crate::lock::LockFile) -> Vec<Compil
     records
 }
 
-fn manifest_agents_from_records(records: &[CompiledNativeOutput]) -> HashMap<String, Vec<String>> {
-    let mut agents: HashMap<String, Vec<String>> = HashMap::new();
+fn manifest_agents_from_records(records: &[CompiledNativeOutput]) -> BTreeMap<String, Vec<String>> {
+    let mut agents: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for record in records {
         let Some(agent_name) = agent_name_from_native_dest(&record.dest_path) else {
             continue;
@@ -146,17 +146,31 @@ pub fn write_native_agent_manifest_from_lock(
     write_native_agent_manifest_file(project_root, &manifest)
 }
 
+/// Persist the lock first, then best-effort write the native-agent manifest projection.
+pub fn persist_lock_then_native_agent_manifest(
+    project_root: &Path,
+    lock: &crate::lock::LockFile,
+) -> Result<Option<String>, MarsError> {
+    crate::lock::write(project_root, lock)?;
+    match write_native_agent_manifest_from_lock(project_root, lock) {
+        Ok(()) => Ok(None),
+        Err(err) => Ok(Some(format!(
+            "could not write native agent manifest: {err}"
+        ))),
+    }
+}
+
 /// Read `.mars/native-agents.json` for inventory rendering and diagnostics.
-pub fn read_native_agent_manifest(mars_dir: &Path) -> HashMap<String, Vec<String>> {
+pub fn read_native_agent_manifest(mars_dir: &Path) -> BTreeMap<String, Vec<String>> {
     match read_native_agent_manifest_state(mars_dir) {
         NativeAgentManifestRead::Found(agents) => agents,
-        NativeAgentManifestRead::Missing | NativeAgentManifestRead::Unreadable => HashMap::new(),
+        NativeAgentManifestRead::Missing | NativeAgentManifestRead::Unreadable => BTreeMap::new(),
     }
 }
 
 /// Whether `agent_name` is materialized natively for `harness` (HarnessId snake_case string).
 pub fn agent_is_native_for_harness(
-    manifest: &HashMap<String, Vec<String>>,
+    manifest: &BTreeMap<String, Vec<String>>,
     agent_name: &str,
     harness: &str,
 ) -> bool {
@@ -311,12 +325,55 @@ mod tests {
 
     #[test]
     fn agent_is_native_for_harness_matches_manifest_membership() {
-        let mut manifest = HashMap::new();
+        let mut manifest = BTreeMap::new();
         manifest.insert("coder".to_string(), vec!["claude".to_string()]);
         assert!(agent_is_native_for_harness(&manifest, "coder", "claude"));
         assert!(!agent_is_native_for_harness(&manifest, "coder", "codex"));
         assert!(!agent_is_native_for_harness(
             &manifest, "explorer", "claude"
         ));
+    }
+
+    #[test]
+    fn manifest_json_keys_are_sorted() {
+        let dir = TempDir::new().unwrap();
+        let lock = lock_with_agent_outputs(
+            "agent/z-agent",
+            "agents/z-agent.md",
+            &[(HarnessKind::Claude.target_dir(), "agents/z-agent.md")],
+        );
+        let lock = {
+            let mut lock = lock;
+            lock.items.insert(
+                "agent/a-agent".to_string(),
+                LockedItemV2 {
+                    source: "test".into(),
+                    kind: ItemKind::Agent,
+                    version: None,
+                    source_checksum: "sha256:src".into(),
+                    outputs: vec![
+                        OutputRecord {
+                            target_root: ".mars".to_string(),
+                            dest_path: "agents/a-agent.md".into(),
+                            installed_checksum: "sha256:src".into(),
+                        },
+                        OutputRecord {
+                            target_root: HarnessKind::Claude.target_dir().to_string(),
+                            dest_path: "agents/a-agent.md".into(),
+                            installed_checksum: "sha256:native".into(),
+                        },
+                    ],
+                },
+            );
+            lock
+        };
+
+        write_native_agent_manifest_from_lock(dir.path(), &lock).unwrap();
+
+        let json = std::fs::read_to_string(dir.path().join(".mars/native-agents.json")).unwrap();
+        assert!(
+            json.find("\"a-agent\"").unwrap() < json.find("\"z-agent\"").unwrap(),
+            "manifest JSON must emit agent keys in sorted order"
+        );
     }
 }

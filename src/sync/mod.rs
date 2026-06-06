@@ -627,15 +627,11 @@ pub(crate) fn finalize(
             old_lock,
             &state.removed_native_outputs,
         );
-        if let Err(err) =
-            crate::compiler::write_native_agent_manifest_from_lock(project_root, &new_lock)
+        if let Some(warning) =
+            crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {
-            diag.warn(
-                "native-agent-manifest-write",
-                format!("could not write native agent manifest: {err}"),
-            );
+            diag.warn("native-agent-manifest-write", warning);
         }
-        crate::lock::write(project_root, &new_lock)?;
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh

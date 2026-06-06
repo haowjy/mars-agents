@@ -734,8 +734,13 @@ pub fn build(
                     .expect("validated above: installed_checksum exists for write actions");
 
                 let key = item_key(&outcome.item_id);
+                let old_item = old_lock.items.get(&key).or_else(|| {
+                    old_lock_index
+                        .item_for_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                        .map(|(_, old_item, _)| old_item)
+                });
                 let outputs = outputs_with_carried_non_canonical(
-                    old_lock.items.get(&key),
+                    old_item,
                     OutputRecord {
                         target_root: CANONICAL_TARGET_ROOT.to_string(),
                         dest_path,
@@ -945,17 +950,28 @@ pub fn apply_apply_outcomes_to_lock(
                 };
 
                 let key = item_key(&outcome.item_id);
-                let mut outputs = vec![OutputRecord {
-                    target_root: CANONICAL_TARGET_ROOT.to_string(),
-                    dest_path: outcome.dest_path.clone(),
-                    installed_checksum: installed_checksum.clone(),
-                }];
-                if let Some(old_item) = old_lock.items.get(&key) {
-                    for old_output in &old_item.outputs {
-                        if old_output.target_root != CANONICAL_TARGET_ROOT {
-                            outputs.push(old_output.clone());
-                        }
-                    }
+                let old_entry = old_lock
+                    .items
+                    .get(&key)
+                    .map(|old_item| (key.as_str(), old_item))
+                    .or_else(|| {
+                        old_lock_index
+                            .item_for_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
+                            .map(|(old_key, old_item, _)| (old_key, old_item))
+                    });
+                let old_key = old_entry.map(|(old_key, _)| old_key.to_string());
+                let outputs = outputs_with_carried_non_canonical(
+                    old_entry.map(|(_, old_item)| old_item),
+                    OutputRecord {
+                        target_root: CANONICAL_TARGET_ROOT.to_string(),
+                        dest_path: outcome.dest_path.clone(),
+                        installed_checksum: installed_checksum.clone(),
+                    },
+                );
+                if let Some(old_key) = old_key
+                    && old_key != key
+                {
+                    lock.items.shift_remove(&old_key);
                 }
                 lock.items.insert(
                     key,
@@ -1876,6 +1892,130 @@ installed_checksum = "sha256:222"
         assert!(!new_lock.items.contains_key("skill/skills/review"));
         assert!(new_lock.contains_output(".mars", "skills/review"));
         assert!(new_lock.contains_output(".codex", "skills/review/SKILL.md"));
+    }
+
+    #[test]
+    fn build_write_fallback_carries_non_canonical_outputs() {
+        let old_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: IndexMap::new(),
+            items: IndexMap::from([(
+                "agent/agents/coder.md".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: None,
+                    source_checksum: "sha256:old-src".into(),
+                    outputs: vec![
+                        OutputRecord {
+                            target_root: ".mars".to_string(),
+                            dest_path: "agents/coder.md".into(),
+                            installed_checksum: "sha256:old-mars".into(),
+                        },
+                        OutputRecord {
+                            target_root: ".claude".to_string(),
+                            dest_path: "agents/coder.md".into(),
+                            installed_checksum: "sha256:old-claude".into(),
+                        },
+                    ],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+        let graph = ResolvedGraph {
+            nodes: IndexMap::new(),
+            order: Vec::new(),
+            filters: HashMap::new(),
+            version_constraints: std::collections::HashMap::new(),
+        };
+        let applied = ApplyResult {
+            outcomes: vec![ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: "coder".into(),
+                },
+                action: ActionTaken::Updated,
+                dest_path: "agents/coder.md".into(),
+                source_name: "base".into(),
+                source_checksum: Some("sha256:new-src".into()),
+                installed_checksum: Some("sha256:new-mars".into()),
+            }],
+        };
+
+        let new_lock = build(
+            &graph,
+            &applied,
+            &old_lock,
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(!new_lock.items.contains_key("agent/agents/coder.md"));
+        assert!(new_lock.contains_output(".mars", "agents/coder.md"));
+        assert!(new_lock.contains_output(".claude", "agents/coder.md"));
+        let item = &new_lock.items["agent/coder"];
+        assert_eq!(item.source_checksum, "sha256:new-src");
+        let claude = item
+            .outputs
+            .iter()
+            .find(|o| o.target_root == ".claude")
+            .unwrap();
+        assert_eq!(claude.installed_checksum, "sha256:old-claude");
+    }
+
+    #[test]
+    fn apply_apply_outcomes_write_fallback_carries_non_canonical_outputs() {
+        let old_lock = LockFile {
+            version: LOCK_VERSION,
+            dependencies: IndexMap::new(),
+            items: IndexMap::from([(
+                "agent/agents/coder.md".to_string(),
+                LockedItemV2 {
+                    source: "base".into(),
+                    kind: ItemKind::Agent,
+                    version: None,
+                    source_checksum: "sha256:old-src".into(),
+                    outputs: vec![
+                        OutputRecord {
+                            target_root: ".mars".to_string(),
+                            dest_path: "agents/coder.md".into(),
+                            installed_checksum: "sha256:old-mars".into(),
+                        },
+                        OutputRecord {
+                            target_root: ".claude".to_string(),
+                            dest_path: "agents/coder.md".into(),
+                            installed_checksum: "sha256:old-claude".into(),
+                        },
+                    ],
+                },
+            )]),
+            config_entries: BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+        let mut lock = old_lock.clone();
+
+        apply_apply_outcomes_to_lock(
+            &mut lock,
+            &old_lock,
+            &[ActionOutcome {
+                item_id: ItemId {
+                    kind: ItemKind::Agent,
+                    name: "coder".into(),
+                },
+                action: ActionTaken::Updated,
+                dest_path: "agents/coder.md".into(),
+                source_name: "base".into(),
+                source_checksum: Some("sha256:new-src".into()),
+                installed_checksum: Some("sha256:new-mars".into()),
+            }],
+        );
+
+        assert!(!lock.items.contains_key("agent/agents/coder.md"));
+        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(lock.contains_output(".claude", "agents/coder.md"));
+        let item = &lock.items["agent/coder"];
+        assert_eq!(item.source_checksum, "sha256:new-src");
     }
 
     #[test]

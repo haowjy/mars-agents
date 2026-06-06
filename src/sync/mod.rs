@@ -270,7 +270,7 @@ pub(crate) fn build_target(
     ctx: &MarsContext,
     resolved: ResolvedState,
     local_items: Vec<crate::local_source::LocalDiscoveredItem>,
-    _request: &SyncRequest,
+    request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     // Use .mars/ as the canonical content root for diff/collision checks.
@@ -379,8 +379,12 @@ pub(crate) fn build_target(
     let warnings = validate_skill_refs(&target_state);
 
     // Prevent managed installs from overwriting unmanaged files.
-    let unmanaged_collisions =
-        target::check_unmanaged_collisions(managed_root, &resolved.loaded.old_lock, &target_state);
+    let unmanaged_collisions = target::check_unmanaged_collisions(
+        managed_root,
+        &resolved.loaded.old_lock,
+        &target_state,
+        request.options.force,
+    );
     for collision in &unmanaged_collisions {
         diag.warn(
             "unmanaged-collision",

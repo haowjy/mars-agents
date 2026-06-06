@@ -213,6 +213,7 @@ pub fn check_unmanaged_collisions(
     install_target: &Path,
     lock: &LockFile,
     target: &TargetState,
+    force: bool,
 ) -> Vec<UnmanagedCollision> {
     let mut collisions = Vec::new();
     let lock_index = LockIndex::new(lock);
@@ -224,6 +225,9 @@ pub fn check_unmanaged_collisions(
 
         let disk_path = target_item.dest_path.resolve(install_target);
         if disk_path.exists() {
+            if force {
+                continue;
+            }
             // Check if disk content matches what we'd install — if so,
             // this is a partial prior install (crash recovery), not an
             // unmanaged user file. Safe to overwrite.
@@ -757,7 +761,7 @@ mod tests {
         fs::write(&existing, "# user-authored").unwrap();
 
         let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
@@ -785,7 +789,7 @@ mod tests {
 
         // Should skip collision — disk content matches planned install (crash recovery)
         let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
         assert!(collisions.is_empty());
     }
 
@@ -809,9 +813,32 @@ mod tests {
         fs::write(&existing, "# different user content").unwrap();
 
         let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target);
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
+    }
+
+    #[test]
+    fn unmanaged_collision_skipped_under_force() {
+        let tree = make_source_tree(&[("coder.md", "# managed")], &[]);
+        let (graph, config) = make_graph_and_config(vec![(
+            "base",
+            &tree,
+            Some("https://github.com/org/base"),
+            FilterMode::All,
+        )]);
+
+        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        assert!(renames.is_empty());
+        let install_root = TempDir::new().unwrap();
+
+        let existing = install_root.path().join("agents").join("coder.md");
+        fs::create_dir_all(existing.parent().unwrap()).unwrap();
+        fs::write(&existing, "# stale cache content").unwrap();
+
+        let collisions =
+            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, true);
+        assert!(collisions.is_empty());
     }
 }

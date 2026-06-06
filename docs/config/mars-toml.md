@@ -55,7 +55,7 @@ description = "Core agents and skills for meridian"  # optional
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
 
-When `[package]` is present, Mars also reads legacy repo-root `agents/` and `skills/` directories during sync. `.mars-src/` always takes precedence over the legacy root if an item name is defined in both.
+Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots.
 
 ### `[dependencies]`
 
@@ -397,4 +397,4 @@ See [local-development.md](../dev/local-development.md) for workflows.
 
 ## Reserved Names
 
-- `_self` is reserved for project-local items: agents and skills discovered from `.mars-src/` (always) and from the legacy repo-root `agents/`/`skills/` directories (only when `[package]` is present). `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.
+- `_self` is reserved for project-local items: agents and skills discovered from `.mars-src/`. `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.

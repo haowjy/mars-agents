@@ -171,3 +171,74 @@ fn switching_between_standalone_and_meridian_managed_converges() {
         "returning to standalone sync should re-emit native harness agent"
     );
 }
+
+fn sync_capture(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) -> String {
+    let mut cmd = mars();
+    cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
+    match meridian_managed {
+        Some(value) => {
+            cmd.env("MERIDIAN_MANAGED", value);
+        }
+        None => {
+            cmd.env_remove("MERIDIAN_MANAGED");
+        }
+    }
+    let output = cmd.output().expect("sync runs");
+    assert!(output.status.success(), "sync should succeed");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn sync_summary_reports_native_emit_and_prune() {
+    // Regression (observability gap): the sync summary must surface native-agent
+    // emission and removal instead of reporting "already up to date".
+    let dir = TempDir::new().unwrap();
+    let project = create_emission_project(&dir);
+
+    // Standalone EmitAll: first sync emits the native agent -> summary says "emitted".
+    let standalone = sync_capture(&project, None);
+    assert!(
+        standalone.contains("emitted") && standalone.contains("native agent"),
+        "standalone sync should report native emission, got:\n{standalone}"
+    );
+    assert!(
+        !standalone.contains("already up to date"),
+        "a sync that emits native agents is not up to date:\n{standalone}"
+    );
+
+    // MERIDIAN_MANAGED auto + no agent_copy -> SuppressAll prunes the native agent.
+    let managed = sync_capture(&project, Some("1"));
+    assert!(
+        managed.contains("removed") && managed.contains("native agent"),
+        "managed prune should report native removal, got:\n{managed}"
+    );
+    assert!(
+        !managed.contains("already up to date"),
+        "a sync that prunes native agents must NOT say up to date:\n{managed}"
+    );
+
+    // Steady state: nothing left to prune or emit -> genuinely up to date.
+    let steady = sync_capture(&project, Some("1"));
+    assert!(
+        steady.contains("already up to date"),
+        "steady-state managed sync should be up to date, got:\n{steady}"
+    );
+    assert!(
+        !steady.contains("native agent"),
+        "steady state should not list native agent changes:\n{steady}"
+    );
+}
+
+fn create_emission_project(dir: &TempDir) -> assert_fs::fixture::ChildPath {
+    let source = create_source(dir, "src", &[("coder", CLAUDE_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\"]\n\n[dependencies.src]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    project
+}

@@ -44,6 +44,13 @@ pub struct SyncReport {
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     /// Whether this was a dry run (`--diff`). Affects output wording only.
     pub dry_run: bool,
+    /// Native harness agent outputs emitted this run that are new or content-changed
+    /// vs the previous lock, as `(target_root, dest_path)`. Surfaced so native
+    /// emission is not silent in the summary.
+    pub native_emitted: Vec<(String, String)>,
+    /// Native harness agent outputs removed this run, as `(target_root, dest_path)`.
+    /// Surfaced so SuppressAll / selective prunes are not reported as "up to date".
+    pub native_removed: Vec<(String, String)>,
 }
 
 impl SyncReport {
@@ -586,6 +593,15 @@ pub(crate) fn finalize(
     let project_root = &ctx.project_root;
     let old_lock = &state.applied.planned.targeted.resolved.loaded.old_lock;
     let graph = &state.applied.planned.targeted.resolved.graph;
+    // Native-agent surface deltas for the summary: removals are unambiguous; emits
+    // are filtered to new/changed outputs so steady-state re-emits stay quiet.
+    let native_removed: Vec<(String, String)> = state.removed_native_outputs.clone();
+    let native_emitted: Vec<(String, String)> = state
+        .compiled_native_outputs
+        .iter()
+        .filter(|out| crate::lock::native_output_is_new_or_changed(old_lock, out))
+        .map(|out| (out.target_root.clone(), out.dest_path.clone()))
+        .collect();
 
     // Write lock file (D21 — regardless of target sync outcome).
     if !request.options.dry_run {
@@ -696,6 +712,8 @@ pub(crate) fn finalize(
         upgrades_available,
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
+        native_emitted,
+        native_removed,
     })
 }
 

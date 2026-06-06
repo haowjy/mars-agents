@@ -169,6 +169,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         conflicts: usize,
         kept: usize,
         skipped: usize,
+        native_emitted: usize,
+        native_removed: usize,
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
@@ -219,6 +221,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         conflicts,
         kept,
         skipped,
+        native_emitted: report.native_emitted.len(),
+        native_removed: report.native_removed.len(),
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
@@ -268,6 +272,15 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         }
     }
 
+    let native_emitted = report.native_emitted.len();
+    let native_removed = report.native_removed.len();
+    for (target_root, dest_path) in &report.native_removed {
+        print_native_line(&mut stdout, "-", Color::Red, target_root, dest_path);
+    }
+    for (target_root, dest_path) in &report.native_emitted {
+        print_native_line(&mut stdout, "+", Color::Green, target_root, dest_path);
+    }
+
     // Summary line — use "would ..." wording for dry runs
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
@@ -292,6 +305,20 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
             let _ = writeln!(stdout, "  removed     {removed} orphans");
         }
     }
+    if native_emitted > 0 {
+        if dry {
+            let _ = writeln!(stdout, "  would emit   {native_emitted} native agents");
+        } else {
+            let _ = writeln!(stdout, "  emitted     {native_emitted} native agents");
+        }
+    }
+    if native_removed > 0 {
+        if dry {
+            let _ = writeln!(stdout, "  would remove {native_removed} native agents");
+        } else {
+            let _ = writeln!(stdout, "  removed     {native_removed} native agents");
+        }
+    }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
@@ -305,7 +332,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         let _ = stdout.reset();
     }
 
-    if installed == 0 && updated == 0 && removed == 0 && conflicts == 0 && kept == 0 {
+    if installed == 0
+        && updated == 0
+        && removed == 0
+        && conflicts == 0
+        && kept == 0
+        && native_emitted == 0
+        && native_removed == 0
+    {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  already up to date");
         let _ = stdout.reset();
@@ -351,6 +385,19 @@ fn print_action_line(
     let _ = write!(stdout, "  {prefix} ");
     let _ = stdout.reset();
     let _ = writeln!(stdout, "{} ({})", outcome.dest_path, outcome.item_id.kind);
+}
+
+fn print_native_line(
+    stdout: &mut StandardStream,
+    prefix: &str,
+    color: Color,
+    target_root: &str,
+    dest_path: &str,
+) {
+    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(color)));
+    let _ = write!(stdout, "  {prefix} ");
+    let _ = stdout.reset();
+    let _ = writeln!(stdout, "{target_root}/{dest_path} (native agent)");
 }
 
 /// Print a list of items as a table or JSON.

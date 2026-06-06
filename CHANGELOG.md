@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars build launch-bundle --context` / `launch_actions` projection marked EXPERIMENTAL — not consumed by meridian; may be removed.
 
 ### Added
+- `mars sync` summary now reports native-agent emissions and removals (`emitted N native agents` / `removed N native agents`, with per-line `+/-  <target>/<path> (native agent)`). Previously a managed/SuppressAll sync that pruned native agents printed "already up to date" — the prune was silent. Emissions are diffed against the prior lock so steady-state re-syncs stay quiet; counts also added to `--json`.
 - `mars build launch-bundle --context` emits v4 `launch_actions` with subprocess/streaming `kind`, `cwd`, stdin, files, env, and bootstrap/turn protocol shapes for Cursor, Claude, Codex, OpenCode, and Pi.
 - `.mars/native-agents.json` manifest after sync/link; launch-bundle inventory splits Meridian spawn agents from harness-native agents.
 

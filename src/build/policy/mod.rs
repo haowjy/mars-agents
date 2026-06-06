@@ -306,7 +306,6 @@ pub fn resolve_policy(
             let linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
             let candidates = model_fallback_candidates(
                 input.profile,
-                &primary_model_token,
                 resolved_model.model_source,
                 matched_policy.as_ref(),
             );
@@ -767,7 +766,6 @@ fn effective_policies<'a>(
 
 fn model_fallback_candidates(
     profile: &AgentProfile,
-    primary_model_token: &str,
     model_source: PolicySource,
     active_policy: Option<&MatchedModelPolicy>,
 ) -> Vec<ModelFallbackCandidate> {
@@ -783,7 +781,10 @@ fn model_fallback_candidates(
 
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    seen.insert(primary_model_token.trim().to_string());
+    seen.insert(model_fallback_seen_key(
+        active_policy.rule.match_type,
+        active_policy.rule.match_value.trim(),
+    ));
 
     for policy in profile.model_policies.iter().skip(active_policy.index + 1) {
         if policy.no_fallback {
@@ -796,7 +797,7 @@ fn model_fallback_candidates(
             continue;
         }
         let token = policy.match_value.trim();
-        if token.is_empty() || !seen.insert(token.to_string()) {
+        if token.is_empty() || !seen.insert(model_fallback_seen_key(policy.match_type, token)) {
             continue;
         }
         entries.push(ModelFallbackCandidate {
@@ -807,6 +808,10 @@ fn model_fallback_candidates(
     }
 
     entries
+}
+
+fn model_fallback_seen_key(match_type: ModelPolicyMatchType, token: &str) -> String {
+    format!("{match_type:?}:{token}")
 }
 
 fn match_model_policy<'a>(

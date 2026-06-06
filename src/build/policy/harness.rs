@@ -235,18 +235,18 @@ where
         )
     };
 
-    if let Some(profile_harness) = unavailable_profile_harness {
-        return Err(unavailable_profile_pivot_error(
-            &profile_harness,
-            &harness.value,
-            evidence.routing.installed_harnesses,
-        ));
-    }
-
     if harness.value.is_empty() {
         return Err(no_harness_available_error(
             evidence.model_token,
             &route_trace,
+            evidence.routing.installed_harnesses,
+        ));
+    }
+
+    if let Some(profile_harness) = unavailable_profile_harness {
+        return Err(unavailable_profile_pivot_error(
+            &profile_harness,
+            &harness.value,
             evidence.routing.installed_harnesses,
         ));
     }

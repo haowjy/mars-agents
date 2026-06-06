@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-06
+
 ### Removed
 - `launch_actions` experiment and `mars build launch-bundle --context` / `--transport` flags; launch-bundle schema reverted from v4 to v3 (revival tracked in #101).
 

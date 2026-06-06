@@ -62,6 +62,7 @@ pub fn project_subprocess(
         argv.extend(["-o".to_string(), report_path.to_string()]);
     }
 
+    // TODO(launch-actions-parity, launch-bundle-projection): subprocess drops base/developer instruction layers (only positional prompt)
     if let Some(prompt) = context.prompt.as_deref() {
         argv.push(prompt.to_string());
     }
@@ -69,6 +70,7 @@ pub fn project_subprocess(
     subprocess_actions(context, argv, Vec::new(), None)
 }
 
+// TODO(launch-actions-parity, launch-bundle-projection): no primary TUI attach command (`codex resume <id> --remote <ws>`)
 pub fn project_streaming(
     bundle: &LaunchBundle,
     context: &RuntimeContext,
@@ -109,6 +111,7 @@ pub fn project_streaming(
     let method = select_thread_method(context);
     let mut params = serde_json::Map::new();
     params.insert("cwd".to_string(), json!(cwd(context)?));
+    // TODO(launch-actions-parity, launch-bundle-projection): streaming sets only developerInstructions, not baseInstructions
     let system_instruction = bundle.prompt_surface.system_instruction.trim();
     if !system_instruction.is_empty() {
         params.insert(

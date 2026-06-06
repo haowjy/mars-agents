@@ -22,6 +22,7 @@ pub fn project(
         "--verbose".to_string(),
     ];
 
+    // TODO(launch-actions-parity, launch-bundle-projection): interactive prompt via stdin, not positional arg
     if !context.interactive {
         argv.push("-".to_string());
     }
@@ -43,6 +44,7 @@ pub fn project(
 
     argv.extend(permission_tail(bundle)?);
 
+    // TODO(launch-actions-parity, launch-bundle-projection): no `--agents` native-agent payload emitted
     let mut allowed_tools = Vec::new();
     allowed_tools.extend(bundle.tools.allowed.iter().cloned());
     allowed_tools.extend(parent_allowed_tools);
@@ -104,6 +106,7 @@ pub fn project(
 
     argv.extend(passthrough_tail);
 
+    // TODO(launch-actions-parity, launch-bundle-projection): interactive prompt via stdin, not positional arg
     subprocess_actions(context, argv, files, context.prompt.clone())
 }
 

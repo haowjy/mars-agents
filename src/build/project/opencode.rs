@@ -25,10 +25,13 @@ pub fn project_subprocess(
         });
     }
 
+    // TODO(launch-actions-parity, launch-bundle-projection): subprocess emits no `--agent <name>` flag
+    // TODO(launch-actions-parity, launch-bundle-projection): interactive emits `opencode run`, not managed serve+HTTP attach
     let mut argv = vec!["opencode".to_string(), "run".to_string()];
     if let Some(model) = model(bundle) {
         argv.extend(["--model".to_string(), model.to_string()]);
     }
+    // TODO(launch-actions-parity, launch-bundle-projection): interactive emits `opencode run`, not managed serve+HTTP attach
     if let Some(effort) = effort(bundle).filter(|_| !context.interactive) {
         argv.extend(["--variant".to_string(), effort.to_string()]);
     }
@@ -39,6 +42,7 @@ pub fn project_subprocess(
         argv.push("-".to_string());
     }
 
+    // TODO(launch-actions-parity, launch-bundle-projection): interactive emits `opencode run`, not managed serve+HTTP attach
     if let Some(session_id) = context
         .session_id
         .as_deref()
@@ -60,6 +64,7 @@ pub fn project_subprocess(
     Ok(actions)
 }
 
+// TODO(launch-actions-parity, launch-bundle-projection): streaming has no session resume (always POST /session)
 pub fn project_streaming(
     bundle: &LaunchBundle,
     context: &RuntimeContext,
@@ -85,6 +90,7 @@ pub fn project_streaming(
         env.insert("OPENCODE_CONFIG_CONTENT".to_string(), config);
     }
 
+    // TODO(launch-actions-parity, launch-bundle-projection): streaming bootstrap omits agent/skills
     let mut body = serde_json::Map::new();
     if let Some(model) = model(bundle) {
         body.insert("model".to_string(), json!(model));

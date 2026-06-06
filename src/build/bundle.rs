@@ -12,6 +12,7 @@ pub struct LaunchBundle {
     pub agent_body: Option<String>,
     pub routing: Routing,
     pub execution_policy: ExecutionPolicy,
+    /// EXPERIMENTAL — see `build/project` module doc.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_actions: Option<LaunchActions>,
     pub prompt_surface: PromptSurface,
@@ -22,6 +23,7 @@ pub struct LaunchBundle {
     pub warnings: Vec<String>,
 }
 
+/// EXPERIMENTAL — see `build/project` module doc.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RuntimeContext {
     pub cwd: Option<String>,

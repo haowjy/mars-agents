@@ -1,3 +1,20 @@
+//! EXPERIMENTAL per-harness `launch_actions` projection (`mars build launch-bundle --context`).
+//!
+//! Not consumed by meridian-cli (invariant I-2). Meridian owns launch argv/env in its harness
+//! adapters. This module is slated for possible deletion — see work item `launch-bundle-projection` / PR #94.
+//!
+//! Parity TODOs in harness projectors document gaps vs meridian adapters for anyone reviving Phase 2.
+//! A second class of gaps (MERIDIAN_* env protocol, session preflight, permission→flag model) is
+//! intentionally meridian-owned and will never be mars's responsibility.
+//!
+//! To delete the experimental launch_actions projection:
+//! - src/build/project/*            (this module: per-harness projectors + project_launch_actions)
+//! - src/build/bundle.rs            (launch_actions field; LaunchActions/LaunchFile/LaunchProtocol/RuntimeContext/StreamingContext)
+//! - src/build/mod.rs               (runtime_context/transport on request; the `if let Some(context)` gate)
+//! - src/cli/build.rs               (--context/--transport args + RuntimeContext parse + the warning)
+//!
+//! launch_actions is Option (serde-skipped when None), so removal needs no version bump.
+
 use std::collections::BTreeMap;
 
 use serde_json::json;

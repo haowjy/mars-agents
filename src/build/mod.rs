@@ -149,6 +149,7 @@ pub fn build_launch_bundle(
         warnings,
     };
 
+    // EXPERIMENTAL optional projection — see `build/project` module doc.
     if let Some(context) = request.runtime_context.as_ref() {
         bundle.launch_actions = Some(project::project_launch_actions(
             &bundle,

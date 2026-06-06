@@ -152,10 +152,12 @@ pub struct LaunchBundleArgs {
     pub no_refresh_models: bool,
 
     /// Runtime launch context JSON used to project concrete launch actions.
+    /// (EXPERIMENTAL; launch_actions are not consumed by meridian-cli and may be removed — see work item launch-bundle-projection)
     #[arg(long)]
     pub context: Option<String>,
 
     /// Launch transport shape to project when --context is provided.
+    /// (EXPERIMENTAL; only used with --context)
     #[arg(long, value_enum, default_value_t = TransportArg::Subprocess)]
     transport: TransportArg,
 }
@@ -194,6 +196,12 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             transport,
         },
     )?;
+
+    if args.context.is_some() {
+        eprintln!(
+            "warning: --context launch_actions projection is EXPERIMENTAL and not consumed by meridian-cli; meridian builds argv/env in its own harness adapters (invariant I-2). May be removed. See work item launch-bundle-projection / PR #94."
+        );
+    }
 
     println!(
         "{}",

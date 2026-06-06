@@ -63,6 +63,7 @@ pub fn project(
 
     argv.extend(context.extra_args.iter().cloned());
 
+    // TODO(launch-actions-parity, launch-bundle-projection): prompt on CLI vs delivered over RPC post-startup
     if let Some(prompt) = context.prompt.as_deref() {
         argv.push(prompt.to_string());
     }

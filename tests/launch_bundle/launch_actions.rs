@@ -3,6 +3,30 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
+/// Default launch context; tests override only the fields they care about.
+fn context_json(overrides: Value) -> Value {
+    let mut base = serde_json::json!({
+        "cwd": "/work/project",
+        "temp_dir": "/tmp/mars-spawn",
+        "streaming": null,
+        "session_id": null,
+        "fork": false,
+        "workspace_roots": [],
+        "interactive": false,
+        "extra_args": ["--foo"],
+        "opencode_config_content": null,
+        "pi_extension_entrypoints": [],
+        "prompt": "USER"
+    });
+    let base_map = base.as_object_mut().unwrap();
+    if let Value::Object(over) = overrides {
+        for (k, v) in over {
+            base_map.insert(k, v);
+        }
+    }
+    base
+}
+
 pub(crate) fn build_launch_bundle_omits_launch_actions_without_context() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
@@ -42,19 +66,10 @@ Review code changes."#;
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
-        "streaming": null,
-        "session_id": null,
-        "fork": false,
+    let context = context_json(serde_json::json!({
         "workspace_roots": ["/ignored-extra-root"],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": null,
-        "pi_extension_entrypoints": [],
         "prompt": "Review this change"
-    });
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -121,19 +136,13 @@ Review code changes."#;
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
-        "streaming": null,
+    let context = context_json(serde_json::json!({
         "session_id": "session-123",
         "fork": true,
         "workspace_roots": ["/extra/root"],
-        "interactive": false,
         "extra_args": ["--meridian-parent-allowed-tools", "Read,Write", "--allowedTools", "Grep", "--passthrough"],
-        "opencode_config_content": null,
-        "pi_extension_entrypoints": [],
         "prompt": "ignored by claude argv"
-    });
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -210,7 +219,7 @@ pub(crate) fn build_launch_bundle_projects_codex_subprocess_launch_actions() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
-name: coder
+name: reviewer
 model: gpt-5
 harness: codex
 effort: high
@@ -222,20 +231,11 @@ Code."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
-        "streaming": null,
+    let context = context_json(serde_json::json!({
         "session_id": "codex-thread",
-        "fork": false,
         "workspace_roots": ["/extra/root"],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": null,
-        "pi_extension_entrypoints": [],
-        "prompt": "USER",
         "report_output_path": "/tmp/report.md"
-    });
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -292,7 +292,7 @@ pub(crate) fn build_launch_bundle_projects_opencode_subprocess_launch_actions() 
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
-name: coder
+name: reviewer
 model: openai/gpt-5
 harness: opencode
 effort: high
@@ -301,19 +301,12 @@ Code."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
-        "streaming": null,
+    let context = context_json(serde_json::json!({
         "session_id": "opencode-session",
         "fork": true,
         "workspace_roots": ["/extra/root"],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": "{\"permission\":{\"external_directory\":[\"/parent\"]}}",
-        "pi_extension_entrypoints": [],
-        "prompt": "USER"
-    });
+        "opencode_config_content": "{\"permission\":{\"external_directory\":[\"/parent\"]}}"
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -366,7 +359,7 @@ pub(crate) fn build_launch_bundle_projects_pi_launch_actions() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     let agent_content = r#"---
-name: coder
+name: reviewer
 model: openai-codex/gpt-5.4-mini
 harness: pi
 effort: xhigh
@@ -375,20 +368,12 @@ Code."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
-        "streaming": null,
+    let context = context_json(serde_json::json!({
         "session_id": "pi-session",
-        "fork": false,
         "workspace_roots": [],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": null,
         "pi_extension_entrypoints": ["/ext/managed-bash/index.js", "/ext/spawn-watch/index.js"],
-        "prompt": "USER",
         "pi_session_dir": "/tmp/pi-sessions"
-    });
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -435,7 +420,7 @@ pub(crate) fn build_launch_bundle_projects_codex_streaming_launch_actions() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
-name: coder
+name: reviewer
 model: gpt-5
 effort: high
 harness: codex
@@ -447,19 +432,12 @@ Code."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
+    let context = context_json(serde_json::json!({
         "streaming": {"host": "127.0.0.1", "port": 9876},
         "session_id": "thread-1",
         "fork": true,
-        "workspace_roots": ["/extra/root"],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": null,
-        "pi_extension_entrypoints": [],
-        "prompt": "USER"
-    });
+        "workspace_roots": ["/extra/root"]
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([
@@ -532,7 +510,7 @@ pub(crate) fn build_launch_bundle_projects_opencode_streaming_launch_actions() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
-name: coder
+name: reviewer
 model: openai/gpt-5
 harness: opencode
 mcp-tools: [server-one]
@@ -541,19 +519,10 @@ Code."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    let context = serde_json::json!({
-        "cwd": "/work/project",
-        "temp_dir": "/tmp/mars-spawn",
+    let context = context_json(serde_json::json!({
         "streaming": {"host": "127.0.0.1", "port": 9877},
-        "session_id": null,
-        "fork": false,
-        "workspace_roots": ["/extra/root"],
-        "interactive": false,
-        "extra_args": ["--foo"],
-        "opencode_config_content": null,
-        "pi_extension_entrypoints": [],
-        "prompt": "USER"
-    });
+        "workspace_roots": ["/extra/root"]
+    }));
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args([

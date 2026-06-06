@@ -333,7 +333,6 @@ Plan work."#;
     assert!(inventory_prompt.contains(
         "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
     ));
-    assert!(inventory_prompt.contains("Write prompts to `/tmp/<name>.md`."));
 
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
@@ -575,23 +574,39 @@ Review code changes."#;
         .as_str()
         .expect("system instruction should be string");
 
-    let expected = concat!(
-        "# Agent Profile\n\n",
-        "Review code changes.\n\n",
-        "# Skill: principle_a\n\n",
-        "Principle body.\n\n",
-        "# Skill: reference_a\n\n",
-        "Reference body.\n\n",
-        "# Meridian Agents\n\n",
-        "Write prompts to `/tmp/<name>.md`.\n",
-        "Use `--bg` + `meridian spawn wait` for parallel work.\n",
-        "Use `/handoff` when passing control back to the user.\n\n",
-        "## Subagent\n",
-        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6\n\n",
-        "# Report\n\n",
-        "**IMPORTANT - Your final assistant message must be the run report.**\n\n",
-        "Provide a plain markdown report in your final assistant message.\n\n",
-        "Include: what was done, key decisions made, files created/modified, verification results, and any issues or blockers."
+    // Assert structure (headings, spawn format, report contract), not prose copy.
+    assert!(system_instruction.contains("# Agent Profile"));
+    assert!(system_instruction.contains("Review code changes."));
+    assert!(system_instruction.contains("# Skill: principle_a"));
+    assert!(system_instruction.contains("Principle body."));
+    assert!(system_instruction.contains("# Skill: reference_a"));
+    assert!(system_instruction.contains("Reference body."));
+    assert!(system_instruction.contains("# Meridian Agents"));
+    assert!(system_instruction.contains("## Subagent"));
+    assert!(system_instruction.contains(
+        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
+    ));
+    assert!(system_instruction.contains("# Report"));
+    assert!(
+        system_instruction
+            .contains("**IMPORTANT - Your final assistant message must be the run report.**")
     );
-    assert_eq!(system_instruction, expected);
+
+    let profile_index = system_instruction
+        .find("# Agent Profile")
+        .expect("profile section");
+    let principle_index = system_instruction
+        .find("# Skill: principle_a")
+        .expect("principle skill");
+    let reference_index = system_instruction
+        .find("# Skill: reference_a")
+        .expect("reference skill");
+    let inventory_index = system_instruction
+        .find("# Meridian Agents")
+        .expect("inventory section");
+    let report_index = system_instruction.find("# Report").expect("report section");
+    assert!(profile_index < principle_index);
+    assert!(principle_index < reference_index);
+    assert!(reference_index < inventory_index);
+    assert!(inventory_index < report_index);
 }

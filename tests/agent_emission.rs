@@ -85,7 +85,7 @@ fn sync_project(project: &assert_fs::fixture::ChildPath, meridian_managed: Optio
 #[test]
 fn default_auto_standalone_emits_native_agent() {
     let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, None, None);
+    let project = setup_project(&dir, Some("[settings]\ntargets = [\".claude\"]\n"), None);
 
     assert_canonical_agent_exists(&project);
     assert!(
@@ -111,7 +111,7 @@ fn always_meridian_managed_still_emits_native_agent() {
     let dir = TempDir::new().unwrap();
     let project = setup_project(
         &dir,
-        Some("[settings]\nagent_emission = \"always\"\n"),
+        Some("[settings]\nagent_emission = \"always\"\ntargets = [\".claude\"]\n"),
         Some("1"),
     );
 
@@ -137,7 +137,7 @@ fn never_suppresses_native_agent() {
 #[test]
 fn standalone_sync_is_idempotent() {
     let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, None, None);
+    let project = setup_project(&dir, Some("[settings]\ntargets = [\".claude\"]\n"), None);
 
     sync_project(&project, None);
 
@@ -151,7 +151,7 @@ fn standalone_sync_is_idempotent() {
 #[test]
 fn switching_between_standalone_and_meridian_managed_converges() {
     let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, None, None);
+    let project = setup_project(&dir, Some("[settings]\ntargets = [\".claude\"]\n"), None);
     assert!(
         native_agent_path(&project).exists(),
         "standalone sync should emit native harness agent"

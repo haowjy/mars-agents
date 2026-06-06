@@ -650,6 +650,12 @@ path = "{}"
             .exists()
     );
     assert!(project.child(".codex/agents/explorer.toml").exists());
+    assert!(
+        project
+            .child(".codex/agents/integration-tester.toml")
+            .exists(),
+        "EmitAll should emit every agent to every configured harness target"
+    );
 
     let codex_toml =
         fs::read_to_string(project.child(".codex/agents/explorer.toml").path()).unwrap();
@@ -676,7 +682,10 @@ path = "{}"
             .child(".opencode/agents/integration-tester.md")
             .exists()
     );
-    assert!(!project.child(".opencode/agents/explorer.md").exists());
+    assert!(
+        project.child(".opencode/agents/explorer.md").exists(),
+        "EmitAll should emit explorer to opencode even when profile.harness is codex"
+    );
     let opencode_native = fs::read_to_string(
         project
             .child(".opencode/agents/integration-tester.md")
@@ -1531,9 +1540,13 @@ path = "{}"
         .assert()
         .success();
 
+    // A genuinely unmanaged, user-authored agent uses a name mars does not emit.
+    // Under full-coverage EmitAll, mars owns every *source* agent name on every
+    // configured target, so an edit to design-lead.md is managed drift that sync
+    // restores. Unmanaged-collision protection only guards non-source names.
     fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
     fs::write(
-        project.child(".cursor/agents/design-lead.md").path(),
+        project.child(".cursor/agents/handwritten-only.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1543,10 +1556,13 @@ path = "{}"
         .assert()
         .success();
 
+    // The unmanaged file survives untouched.
     assert_eq!(
-        fs::read_to_string(project.child(".cursor/agents/design-lead.md").path()).unwrap(),
+        fs::read_to_string(project.child(".cursor/agents/handwritten-only.md").path()).unwrap(),
         "# hand-written\n"
     );
+    // And full-coverage EmitAll still emits the mars source agent to the target.
+    assert!(project.child(".cursor/agents/design-lead.md").exists());
 }
 
 #[test]

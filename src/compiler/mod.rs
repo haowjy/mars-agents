@@ -73,6 +73,11 @@ pub fn compile(
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
+    let configured_emit_harnesses: Vec<agents::HarnessKind> = effective_settings
+        .managed_targets()
+        .iter()
+        .filter_map(|t| agents::HarnessKind::from_target_dir(t))
+        .collect();
     let mars_dir = ctx.project_root.join(".mars");
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
@@ -118,6 +123,7 @@ pub fn compile(
             cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,
+            configured_emit_harnesses: &configured_emit_harnesses,
             options: native_agents::NativeAgentSurfaceCompileOptions {
                 force: request.options.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,

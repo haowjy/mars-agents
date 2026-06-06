@@ -40,6 +40,7 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
     pub cursor_probe_slugs: &'a [String],
     pub old_lock: &'a crate::lock::LockFile,
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
+    pub configured_emit_harnesses: &'a [crate::compiler::agents::HarnessKind],
     pub options: NativeAgentSurfaceCompileOptions,
 }
 
@@ -365,16 +366,31 @@ pub(crate) fn compile_native_agents(
     let mut records = Vec::new();
 
     for agent in mars_agents {
-        for (harness, model_override) in qualifying_emissions(agent, policy, ctx, diag) {
+        for (harness, directive) in qualifying_emissions(agent, policy, ctx, diag) {
+            // `Clear` emits to a harness the agent's model does not resolve to;
+            // strip the profile model so lowering writes no model field.
+            let cleared_profile;
+            let (profile, model_override): (&crate::compiler::agents::AgentProfile, Option<&str>) =
+                match &directive {
+                    NativeModelDirective::Resolved(model) => (&agent.profile, model.as_deref()),
+                    NativeModelDirective::Clear => {
+                        cleared_profile = {
+                            let mut p = agent.profile.clone();
+                            p.model = None;
+                            p
+                        };
+                        (&cleared_profile, None)
+                    }
+                };
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
-                    profile: &agent.profile,
+                    profile,
                     fm: &agent.fm,
                     body: agent.fm.body(),
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
-                    model_override: model_override.as_deref(),
+                    model_override,
                 },
                 &emit_ctx,
                 diag,
@@ -386,12 +402,27 @@ pub(crate) fn compile_native_agents(
     records
 }
 
+/// What model field a native emission should carry.
+///
+/// `Option<String>` alone is two-state ("pin this id" vs "fall back to the
+/// profile's own model"); full-coverage `EmitAll` needs a third state that
+/// clears the model entirely when an agent is emitted to a harness whose model
+/// it does not resolve to.
+#[derive(Debug, Clone)]
+enum NativeModelDirective {
+    /// Qualified emission: pin `Some(id)`, or `None` to emit the profile's own
+    /// model verbatim (e.g. an unpinned alias or a fanout token).
+    Resolved(Option<String>),
+    /// Full-coverage emission to a non-resolving harness: emit no model field.
+    Clear,
+}
+
 fn qualifying_emissions(
     agent: &MarsCanonicalAgent,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
-) -> Vec<(crate::compiler::agents::HarnessKind, Option<String>)> {
+) -> Vec<(crate::compiler::agents::HarnessKind, NativeModelDirective)> {
     use crate::compiler::agents::HarnessKind;
 
     let in_scope = |harness: &HarnessKind| {
@@ -402,20 +433,30 @@ fn qualifying_emissions(
     match policy {
         AgentSurfacePolicy::SuppressAll => Vec::new(),
         AgentSurfacePolicy::EmitAll => {
-            let Some(harness) = agent.profile.harness.as_ref() else {
-                return Vec::new();
-            };
-            if !in_scope(harness) {
-                return Vec::new();
+            let mut emissions = Vec::new();
+            for harness in ctx.configured_emit_harnesses {
+                if !in_scope(harness) {
+                    continue;
+                }
+                let directive = match agent_copy::agent_qualifies_for_harness(
+                    &agent.profile,
+                    harness,
+                    ctx.model_aliases,
+                    true,
+                ) {
+                    Some(emission) => NativeModelDirective::Resolved(model_override_for_emission(
+                        harness,
+                        &agent.profile,
+                        &emission,
+                        ctx.model_aliases,
+                        ctx.cursor_probe_slugs,
+                        diag,
+                    )),
+                    None => NativeModelDirective::Clear,
+                };
+                emissions.push((harness.clone(), directive));
             }
-            let model_override = native_model_override_for_harness(
-                harness,
-                &agent.profile,
-                ctx.model_aliases,
-                ctx.cursor_probe_slugs,
-                diag,
-            );
-            vec![(harness.clone(), model_override)]
+            emissions
         }
         AgentSurfacePolicy::EmitSelective(spec) => {
             let mut emissions = Vec::new();
@@ -431,15 +472,15 @@ fn qualifying_emissions(
                 ) else {
                     continue;
                 };
-                let model_override = model_override_for_emission(
+                let directive = NativeModelDirective::Resolved(model_override_for_emission(
                     harness,
                     &agent.profile,
                     &emission,
                     ctx.model_aliases,
                     ctx.cursor_probe_slugs,
                     diag,
-                );
-                emissions.push((harness.clone(), model_override));
+                ));
+                emissions.push((harness.clone(), directive));
             }
             emissions
         }
@@ -768,6 +809,11 @@ pub(crate) fn materialize_native_agents_after_link(
         diag,
     );
     let harness_scope = Some(link_harness_scope.as_slice());
+    let configured_emit_harnesses: Vec<_> = input
+        .managed_targets
+        .iter()
+        .filter_map(|t| HarnessKind::from_target_dir(t))
+        .collect();
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
@@ -789,6 +835,7 @@ pub(crate) fn materialize_native_agents_after_link(
             cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
             old_lock: &ownership_lock,
             harness_scope,
+            configured_emit_harnesses: &configured_emit_harnesses,
             options: NativeAgentSurfaceCompileOptions {
                 force: input.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,

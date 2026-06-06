@@ -803,7 +803,7 @@ fn model_fallback_candidates(
         entries.push(ModelFallbackCandidate {
             token: token.to_string(),
             source: PolicySource::ProfileModelPolicy,
-            match_type: policy.match_type.clone(),
+            match_type: policy.match_type,
         });
     }
 

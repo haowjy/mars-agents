@@ -81,42 +81,139 @@ where
         settings_policy_harness,
         alias_harness,
     );
-    let (harness, candidates_tried, route_trace, unavailable_profile_harness) = if let Some(
-        selection,
-    ) =
-        fixed_harness_selection.clone()
-    {
-        let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
-            evidence.routing.provider_for_order,
-            &selection.value,
-        );
-        let mut fixed_input =
-            routing_input_from_evidence(&evidence, normalized_config_default_harness.as_deref());
-        fixed_input.provider_for_order = fixed_provider_for_order;
-        let fixed_assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
-            &fixed_input,
-            &selection.value,
-            probe_resolver,
-            auth_check,
-        );
-        let mut fixed_route_trace = routing::trace_for_fixed_harness(
-            route_source_for_policy_source(selection.source),
-            &selection.value,
-            fixed_assessment.clone(),
-            Vec::new(),
-        );
-        if selection.source == PolicySource::Profile
-            && routing::acceptance::accept_route(
-                &fixed_route_trace,
-                evidence.routing.installed_harnesses,
-                routing::acceptance::MatchPolicy::InstalledOnly,
-            )
-            .is_err()
-        {
-            warnings.push(format!(
-                "profile harness '{}' not installed; pivoting via model-policies",
-                selection.value
-            ));
+    let (mut harness, candidates_tried, mut route_trace, unavailable_profile_harness) =
+        if let Some(selection) = fixed_harness_selection.clone() {
+            let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
+                evidence.routing.provider_for_order,
+                &selection.value,
+            );
+            let mut fixed_input = routing_input_from_evidence(
+                &evidence,
+                normalized_config_default_harness.as_deref(),
+            );
+            fixed_input.provider_for_order = fixed_provider_for_order;
+            let fixed_assessment = routing::evaluate_fixed_harness_with_auth_and_probes(
+                &fixed_input,
+                &selection.value,
+                probe_resolver,
+                auth_check,
+            );
+            let mut fixed_route_trace = routing::trace_for_fixed_harness(
+                route_source_for_policy_source(selection.source),
+                &selection.value,
+                fixed_assessment.clone(),
+                Vec::new(),
+            );
+            if selection.source == PolicySource::Profile
+                && routing::acceptance::accept_route(
+                    &fixed_route_trace,
+                    evidence.routing.installed_harnesses,
+                    routing::acceptance::MatchPolicy::InstalledOnly,
+                )
+                .is_err()
+            {
+                warnings.push(format!(
+                    "profile harness '{}' not installed; pivoting via model-policies",
+                    selection.value
+                ));
+                let trace = evaluate_candidates(
+                    &evidence,
+                    normalized_config_default_harness.as_deref(),
+                    probe_resolver,
+                    auth_check,
+                );
+                selected_harness_order_position = trace.selected_harness_order_position();
+                warnings.extend(trace.selected_diagnostics().to_vec());
+                let unavailable = routing::acceptance::accept_route(
+                    &trace,
+                    evidence.routing.installed_harnesses,
+                    routing::acceptance::MatchPolicy::InstalledOnly,
+                )
+                .err()
+                .map(|_| selection.value.clone());
+                let candidates_tried = trace.candidates_tried.clone();
+                (
+                    ResolvedField {
+                        value: trace.harness.clone(),
+                        source: trace.source.into(),
+                        matched_rule: None,
+                    },
+                    candidates_tried,
+                    trace,
+                    unavailable,
+                )
+            } else {
+                if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
+                    // When the model comes from a higher-precedence *configuration
+                    // layer* (overlay/CLI) and the harness from a lower layer (profile),
+                    // pivot to candidate evaluation instead of hard-failing on provider
+                    // mismatch. E.g. profile says `harness: codex` but overlay sets
+                    // `model: sonnet` — the overlay should win.
+                    //
+                    // Do NOT pivot when the harness comes from an alias — alias pairs
+                    // model+harness intentionally, even if the model source (profile)
+                    // technically outranks the alias harness.
+                    if rejection.is_provider_constraint()
+                        && selection.source == PolicySource::Profile
+                        && evidence.model_source.precedence_rank()
+                            > selection.source.precedence_rank()
+                    {
+                        warnings.push(format!(
+                        "{} harness '{}' cannot run {} model '{}' (provider mismatch); pivoting to compatible harness",
+                        selection.source.label(),
+                        selection.value,
+                        evidence.model_source.label(),
+                        evidence.model_token,
+                    ));
+                        let trace = evaluate_candidates(
+                            &evidence,
+                            normalized_config_default_harness.as_deref(),
+                            probe_resolver,
+                            auth_check,
+                        );
+                        selected_harness_order_position = trace.selected_harness_order_position();
+                        warnings.extend(trace.selected_diagnostics().to_vec());
+                        let candidates_tried = trace.candidates_tried.clone();
+                        (
+                            ResolvedField {
+                                value: trace.harness.clone(),
+                                source: trace.source.into(),
+                                matched_rule: None,
+                            },
+                            candidates_tried,
+                            trace,
+                            None,
+                        )
+                    } else {
+                        fixed_route_trace = resolve_fixed_harness_rejection(
+                            rejection,
+                            selection.source,
+                            evidence.model_source,
+                            fixed_input,
+                            &selection.value,
+                            evidence.routing.installed_harnesses,
+                            probe_resolver,
+                            auth_check,
+                        )?;
+                        warnings.push(format!(
+                        "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
+                        evidence.model_source.label(),
+                        evidence.model_token,
+                        selection.source.label(),
+                        selection.value
+                    ));
+                        model_override = Some(());
+                        let route_trace = fixed_route_trace;
+                        let candidates_tried = route_trace.candidates_tried.clone();
+                        (selection, candidates_tried, route_trace, None)
+                    }
+                } else {
+                    let route_trace = fixed_route_trace;
+                    let candidates_tried = route_trace.candidates_tried.clone();
+                    (selection, candidates_tried, route_trace, None)
+                }
+            }
+        } else {
             let trace = evaluate_candidates(
                 &evidence,
                 normalized_config_default_harness.as_deref(),
@@ -125,13 +222,6 @@ where
             );
             selected_harness_order_position = trace.selected_harness_order_position();
             warnings.extend(trace.selected_diagnostics().to_vec());
-            let unavailable = routing::acceptance::accept_route(
-                &trace,
-                evidence.routing.installed_harnesses,
-                routing::acceptance::MatchPolicy::InstalledOnly,
-            )
-            .err()
-            .map(|_| selection.value.clone());
             let candidates_tried = trace.candidates_tried.clone();
             (
                 ResolvedField {
@@ -141,99 +231,22 @@ where
                 },
                 candidates_tried,
                 trace,
-                unavailable,
+                None,
             )
-        } else {
-            if let Err(rejection) = routing::acceptance::accept_assessment(&fixed_assessment) {
-                // When the model comes from a higher-precedence *configuration
-                // layer* (overlay/CLI) and the harness from a lower layer (profile),
-                // pivot to candidate evaluation instead of hard-failing on provider
-                // mismatch. E.g. profile says `harness: codex` but overlay sets
-                // `model: sonnet` — the overlay should win.
-                //
-                // Do NOT pivot when the harness comes from an alias — alias pairs
-                // model+harness intentionally, even if the model source (profile)
-                // technically outranks the alias harness.
-                if rejection.is_provider_constraint()
-                    && selection.source == PolicySource::Profile
-                    && evidence.model_source.precedence_rank() > selection.source.precedence_rank()
-                {
-                    warnings.push(format!(
-                        "{} harness '{}' cannot run {} model '{}' (provider mismatch); pivoting to compatible harness",
-                        selection.source.label(),
-                        selection.value,
-                        evidence.model_source.label(),
-                        evidence.model_token,
-                    ));
-                    let trace = evaluate_candidates(
-                        &evidence,
-                        normalized_config_default_harness.as_deref(),
-                        probe_resolver,
-                        auth_check,
-                    );
-                    selected_harness_order_position = trace.selected_harness_order_position();
-                    warnings.extend(trace.selected_diagnostics().to_vec());
-                    let candidates_tried = trace.candidates_tried.clone();
-                    (
-                        ResolvedField {
-                            value: trace.harness.clone(),
-                            source: trace.source.into(),
-                            matched_rule: None,
-                        },
-                        candidates_tried,
-                        trace,
-                        None,
-                    )
-                } else {
-                    fixed_route_trace = resolve_fixed_harness_rejection(
-                        rejection,
-                        selection.source,
-                        evidence.model_source,
-                        fixed_input,
-                        &selection.value,
-                        evidence.routing.installed_harnesses,
-                        probe_resolver,
-                        auth_check,
-                    )?;
-                    warnings.push(format!(
-                        "{} model '{}' cannot run on {} harness '{}'; clearing model (harness override takes precedence).",
-                        evidence.model_source.label(),
-                        evidence.model_token,
-                        selection.source.label(),
-                        selection.value
-                    ));
-                    model_override = Some(());
-                    let route_trace = fixed_route_trace;
-                    let candidates_tried = route_trace.candidates_tried.clone();
-                    (selection, candidates_tried, route_trace, None)
-                }
-            } else {
-                let route_trace = fixed_route_trace;
-                let candidates_tried = route_trace.candidates_tried.clone();
-                (selection, candidates_tried, route_trace, None)
-            }
-        }
-    } else {
-        let trace = evaluate_candidates(
-            &evidence,
-            normalized_config_default_harness.as_deref(),
-            probe_resolver,
-            auth_check,
-        );
-        selected_harness_order_position = trace.selected_harness_order_position();
-        warnings.extend(trace.selected_diagnostics().to_vec());
-        let candidates_tried = trace.candidates_tried.clone();
-        (
-            ResolvedField {
-                value: trace.harness.clone(),
-                source: trace.source.into(),
-                matched_rule: None,
-            },
-            candidates_tried,
-            trace,
-            None,
-        )
-    };
+        };
+
+    if harness.value.is_empty()
+        && evidence.routing.installed_harnesses.is_empty()
+        && no_linked_constraint_exhaustion(&route_trace)
+        && let Some(candidate) = candidates_tried.first()
+    {
+        warnings.push(format!(
+            "no harnesses are installed; selecting first routed candidate `{candidate}` as passthrough"
+        ));
+        harness.value.clone_from(candidate);
+        route_trace.harness.clone_from(candidate);
+        route_trace.match_evidence = routing::MatchEvidence::Passthrough;
+    }
 
     if harness.value.is_empty() {
         return Err(no_harness_available_error(
@@ -478,6 +491,16 @@ fn no_harness_available_error(
             installed_harnesses: format_installed_harnesses(installed_harnesses),
         }
     }
+}
+
+fn no_linked_constraint_exhaustion(route_trace: &routing::RoutingTrace) -> bool {
+    route_trace.diagnostics.iter().all(|diagnostic| {
+        !diagnostic.contains(
+            "known linked harness constraints left no linked harness eligible for this model after routing assessments",
+        ) && !diagnostic.contains(
+            "settings.default_harness is excluded by known linked harness constraints",
+        )
+    })
 }
 
 fn unavailable_profile_pivot_error(

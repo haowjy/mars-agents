@@ -20,6 +20,9 @@ pub(crate) struct NativeAgentReconcileCtx<'a> {
     pub policy: AgentSurfacePolicy,
     pub project_root: &'a Path,
     pub model_aliases: &'a IndexMap<String, ModelAlias>,
+    /// Per-agent overlays (mars.toml `[agents.<name>]`) keyed by agent name; supplies
+    /// `overlay.model` / `overlay.model_policies` to native qualification (not `overlay.harness`).
+    pub agent_overlays: &'a indexmap::IndexMap<String, crate::config::AgentOverlay>,
     pub outcomes: &'a [ActionOutcome],
     pub old_lock: &'a crate::lock::LockFile,
     pub dry_run: bool,
@@ -37,6 +40,9 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
 pub(crate) struct NativeAgentCompileCtx<'a> {
     pub project_root: &'a Path,
     pub model_aliases: &'a IndexMap<String, ModelAlias>,
+    /// Per-agent overlays (mars.toml `[agents.<name>]`) keyed by agent name; supplies
+    /// `overlay.model` / `overlay.model_policies` to native qualification (not `overlay.harness`).
+    pub agent_overlays: &'a indexmap::IndexMap<String, crate::config::AgentOverlay>,
     pub cursor_probe_slugs: &'a [String],
     pub old_lock: &'a crate::lock::LockFile,
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
@@ -284,10 +290,14 @@ fn reconcile_selective_native_agent_surfaces(
 ) -> Vec<RemovedNativeOutput> {
     let mut removed = Vec::new();
     for agent in mars_agents {
+        // Overlay-aware qualification keeps reconcile consistent with emission: an
+        // overlay model that resolves to a harness must not be pruned.
+        let overlay = ctx.agent_overlays.get(&agent.agent_name);
+        let effective_profile = effective_native_profile(&agent.profile, overlay);
         for harness in harnesses {
             let qualifies = spec.harnesses.contains(harness)
                 && agent_copy::agent_qualifies_for_harness(
-                    &agent.profile,
+                    &effective_profile,
                     harness,
                     ctx.model_aliases,
                     spec.include_fanout,
@@ -366,16 +376,20 @@ pub(crate) fn compile_native_agents(
     let mut records = Vec::new();
 
     for agent in mars_agents {
-        for (harness, directive) in qualifying_emissions(agent, policy, ctx, diag) {
+        // Merge per-agent overlay (model + model_policies) over the profile before
+        // qualification and emission; overlay.harness is intentionally ignored.
+        let overlay = ctx.agent_overlays.get(&agent.agent_name);
+        let effective_profile = effective_native_profile(&agent.profile, overlay);
+        for (harness, directive) in qualifying_emissions(&effective_profile, policy, ctx, diag) {
             // `Clear` emits to a harness the agent's model does not resolve to;
-            // strip the profile model so lowering writes no model field.
+            // strip the model so lowering writes no model field.
             let cleared_profile;
             let (profile, model_override): (&crate::compiler::agents::AgentProfile, Option<&str>) =
                 match &directive {
-                    NativeModelDirective::Resolved(model) => (&agent.profile, model.as_deref()),
+                    NativeModelDirective::Resolved(model) => (&effective_profile, model.as_deref()),
                     NativeModelDirective::Clear => {
                         cleared_profile = {
-                            let mut p = agent.profile.clone();
+                            let mut p = effective_profile.clone();
                             p.model = None;
                             p
                         };
@@ -402,6 +416,29 @@ pub(crate) fn compile_native_agents(
     records
 }
 
+/// Merge a per-agent overlay's model selection over the canonical profile for native
+/// emission: `overlay.model` wins over `profile.model`, and overlay policies take
+/// precedence over profile policies (shared with launch-bundle via the config helpers).
+/// `overlay.harness` is intentionally ignored — native coverage is configured-target
+/// driven, not overlay-routed.
+fn effective_native_profile(
+    profile: &crate::compiler::agents::AgentProfile,
+    overlay: Option<&crate::config::AgentOverlay>,
+) -> crate::compiler::agents::AgentProfile {
+    let Some(overlay) = overlay else {
+        return profile.clone();
+    };
+    let mut effective = profile.clone();
+    effective.model =
+        crate::config::overlay_then_profile_model(Some(overlay), profile.model.as_deref())
+            .map(|model| model.to_string());
+    effective.model_policies =
+        crate::config::overlay_then_profile_policies(Some(overlay), &profile.model_policies)
+            .map(|(_, _, rule)| rule.clone())
+            .collect();
+    effective
+}
+
 /// What model field a native emission should carry.
 ///
 /// `Option<String>` alone is two-state ("pin this id" vs "fall back to the
@@ -418,7 +455,7 @@ enum NativeModelDirective {
 }
 
 fn qualifying_emissions(
-    agent: &MarsCanonicalAgent,
+    profile: &crate::compiler::agents::AgentProfile,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
@@ -439,14 +476,14 @@ fn qualifying_emissions(
                     continue;
                 }
                 let directive = match agent_copy::agent_qualifies_for_harness(
-                    &agent.profile,
+                    profile,
                     harness,
                     ctx.model_aliases,
                     true,
                 ) {
                     Some(emission) => NativeModelDirective::Resolved(model_override_for_emission(
                         harness,
-                        &agent.profile,
+                        profile,
                         &emission,
                         ctx.model_aliases,
                         ctx.cursor_probe_slugs,
@@ -465,7 +502,7 @@ fn qualifying_emissions(
                     continue;
                 }
                 let Some(emission) = agent_copy::agent_qualifies_for_harness(
-                    &agent.profile,
+                    profile,
                     harness,
                     ctx.model_aliases,
                     spec.include_fanout,
@@ -474,7 +511,7 @@ fn qualifying_emissions(
                 };
                 let directive = NativeModelDirective::Resolved(model_override_for_emission(
                     harness,
-                    &agent.profile,
+                    profile,
                     &emission,
                     ctx.model_aliases,
                     ctx.cursor_probe_slugs,
@@ -808,6 +845,9 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
+    // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
+    // project-level effective.agents map the sync path carries).
+    let agent_overlays = crate::config::merged_agent_overlays(&input.config.agents, input.local);
     let harness_scope = Some(link_harness_scope.as_slice());
     let configured_emit_harnesses: Vec<_> = input
         .managed_targets
@@ -818,6 +858,7 @@ pub(crate) fn materialize_native_agents_after_link(
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
         model_aliases: &model_aliases,
+        agent_overlays: &agent_overlays,
         outcomes: &[],
         old_lock: input.old_lock,
         dry_run: false,
@@ -832,6 +873,7 @@ pub(crate) fn materialize_native_agents_after_link(
         Some(NativeAgentCompileCtx {
             project_root: &input.mars_ctx.project_root,
             model_aliases: &model_aliases,
+            agent_overlays: &agent_overlays,
             cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
             old_lock: &ownership_lock,
             harness_scope,

@@ -94,10 +94,15 @@ pub fn compile(
 
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;
+    let loaded = &synced.applied.planned.targeted.resolved.loaded;
+    // Per-agent overlays merged from mars.toml + mars.local.toml (loaded.effective is
+    // EffectiveConfig, which does not carry the overlay map).
+    let agent_overlays = crate::config::merged_agent_overlays(&loaded.config.agents, &loaded.local);
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
         policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
         model_aliases: &model_aliases,
+        agent_overlays: &agent_overlays,
         outcomes,
         old_lock,
         dry_run: request.options.dry_run,
@@ -120,6 +125,7 @@ pub fn compile(
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
             model_aliases: &model_aliases,
+            agent_overlays: &agent_overlays,
             cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,

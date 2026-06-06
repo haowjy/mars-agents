@@ -174,6 +174,7 @@ fn link_suppress_all_reconciles_selective_native_target() {
             policy: AgentSurfacePolicy::SuppressAll,
             project_root: dir.path(),
             model_aliases: &IndexMap::new(),
+            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -238,6 +239,7 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
             model_aliases: &aliases,
+            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -318,6 +320,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
             model_aliases: &aliases,
+            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -360,9 +363,11 @@ fn compile_emit_all_agents(
     aliases: &IndexMap<String, ModelAlias>,
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
+    let empty_overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         model_aliases: aliases,
+        agent_overlays: &empty_overlays,
         cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
@@ -508,5 +513,150 @@ fn emit_all_ignores_authored_harness_pin_for_coverage() {
     assert!(
         native.contains("model: claude-opus-4-6"),
         "authored codex pin should not block claude emission; model resolves via alias: {native}"
+    );
+}
+
+fn compile_emit_all_with_overlays(
+    dir: &Path,
+    configured_harnesses: &[HarnessKind],
+    agents: &[MarsCanonicalAgent],
+    aliases: &IndexMap<String, ModelAlias>,
+    overlays: &IndexMap<String, crate::config::AgentOverlay>,
+) -> Vec<CompiledNativeOutput> {
+    let mut diag = DiagnosticCollector::new();
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir,
+        model_aliases: aliases,
+        agent_overlays: overlays,
+        cursor_probe_slugs: &[],
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: configured_harnesses,
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+    };
+    compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, agents, &mut diag)
+}
+
+#[test]
+fn emit_all_consumes_overlay_model_over_profile_model() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    // profile.model is a codex token that does not resolve to claude.
+    let agent = parse_mars_agent(
+        "---\nname: worker\nmodel: gpt-5.3-codex\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            model: Some("opus".to_string()),
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        native.contains("model: claude-opus-4-6"),
+        "overlay.model must re-pin the claude native copy: {native}"
+    );
+}
+
+#[test]
+fn emit_all_consumes_overlay_model_policies() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    // profile has no claude-resolving model; an overlay model-policy supplies one.
+    let agent = parse_mars_agent(
+        "---\nname: worker\nmodel: gpt-5.3-codex\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            model_policies: vec![crate::config::ModelPolicyRule {
+                match_type: crate::config::ModelPolicyMatchType::Alias,
+                match_value: "opus".to_string(),
+                no_fallback: false,
+                overrides: serde_yaml::Mapping::new(),
+            }],
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        native.contains("model: claude-opus-4-6"),
+        "overlay model-policy must supply the claude native model: {native}"
+    );
+}
+
+#[test]
+fn emit_all_ignores_overlay_harness_for_model_resolution() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let aliases = IndexMap::new();
+    // profile.model is a codex token; overlay.harness alone must not make it qualify.
+    let agent = parse_mars_agent(
+        "---\nname: worker\nmodel: gpt-5.3-codex\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            harness: Some("claude".to_string()),
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        !native.contains("model:"),
+        "overlay.harness must be ignored; the codex model must not leak under claude: {native}"
     );
 }

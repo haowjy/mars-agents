@@ -792,6 +792,44 @@ pub fn merged_agent_overlays(
     overlay_agent_overlays_replace_by_key(base, local)
 }
 
+/// Base model precedence for the overlay+profile layer shared by native emission
+/// and launch-bundle: `overlay.model` wins over `profile.model`. Settings-level
+/// defaults (e.g. `settings.default_model`) are layered on by launch-bundle only.
+pub fn overlay_then_profile_model<'a>(
+    overlay: Option<&'a AgentOverlay>,
+    profile_model: Option<&'a str>,
+) -> Option<&'a str> {
+    overlay
+        .and_then(|entry| entry.model.as_deref())
+        .or(profile_model)
+}
+
+/// Model-policy precedence for the overlay+profile layer: overlay policies first,
+/// then profile policies. Each item carries `is_overlay` (its source layer) and the
+/// index within that layer's own list, so callers can index back into the originating
+/// slice. Launch-bundle appends `settings.model_policies` after this iterator; native
+/// emission consumes it directly (settings policies stay launch-bundle/spawn-only).
+pub fn overlay_then_profile_policies<'a>(
+    overlay: Option<&'a AgentOverlay>,
+    profile_policies: &'a [ModelPolicyRule],
+) -> impl Iterator<Item = (bool, usize, &'a ModelPolicyRule)> + 'a {
+    overlay
+        .into_iter()
+        .flat_map(|entry| {
+            entry
+                .model_policies
+                .iter()
+                .enumerate()
+                .map(|(index, rule)| (true, index, rule))
+        })
+        .chain(
+            profile_policies
+                .iter()
+                .enumerate()
+                .map(|(index, rule)| (false, index, rule)),
+        )
+}
+
 pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), MarsError> {
     let config = load(root)?;
     let local = load_local(root)?;

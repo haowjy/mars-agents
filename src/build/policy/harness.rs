@@ -81,7 +81,7 @@ where
         settings_policy_harness,
         alias_harness,
     );
-    let (mut harness, candidates_tried, mut route_trace, unavailable_profile_harness) =
+    let (mut harness, candidates_tried, mut route_trace, mut unavailable_profile_harness) =
         if let Some(selection) = fixed_harness_selection.clone() {
             let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
                 evidence.routing.provider_for_order,
@@ -246,6 +246,7 @@ where
         harness.value.clone_from(candidate);
         route_trace.harness.clone_from(candidate);
         route_trace.match_evidence = routing::MatchEvidence::Passthrough;
+        unavailable_profile_harness = None;
     }
 
     if harness.value.is_empty() {

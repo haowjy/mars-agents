@@ -471,6 +471,11 @@ fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fall
 }
 
 #[test]
+fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate() {
+    routing::build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate();
+}
+
+#[test]
 fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
     routing::build_launch_bundle_unavailable_cli_harness_errors_without_pivoting();
 }

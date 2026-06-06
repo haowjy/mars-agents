@@ -1071,6 +1071,47 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate()
+ {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = temp.path().join("empty-bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+harness: claude
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("passthrough")
+    );
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default()
+            == "profile harness 'claude' not installed; pivoting via model-policies"
+    }));
+    assert!(warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default().contains(
+            "no harnesses are installed; selecting first routed candidate `claude` as passthrough",
+        )
+    }));
+}
+
 pub(crate) fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);

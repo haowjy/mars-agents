@@ -1062,13 +1062,12 @@ Review code changes."#;
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_OFFLINE", "1");
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
-    );
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(
+        "profile harness `claude` is not installed and no installed fallback harness is available",
+    ));
+    assert!(stderr.contains("installed harnesses: codex, opencode"));
 }
 
 pub(crate) fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate()

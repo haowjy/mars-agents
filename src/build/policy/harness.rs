@@ -127,7 +127,7 @@ where
                 let unavailable = routing::acceptance::accept_route(
                     &trace,
                     evidence.routing.installed_harnesses,
-                    routing::acceptance::MatchPolicy::InstalledOnly,
+                    routing::acceptance::MatchPolicy::RequireSlugEvidence,
                 )
                 .err()
                 .map(|_| selection.value.clone());
@@ -893,13 +893,13 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_profile_harness_pivots_when_installed_candidate_remains() {
+    fn unavailable_profile_harness_rejects_passthrough_candidate() {
         let installed = installed(&["opencode"]);
         let profile = profile(Some(HarnessKind::Claude));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
-        let resolution = resolve_harness_test(
+        let error = resolve_harness_test(
             &input,
             None,
             None,
@@ -907,13 +907,11 @@ mod tests {
             evidence(None, None, &installed),
             &mut probe_resolver,
         )
-        .expect("profile harness should pivot to available candidates");
-        assert_eq!(resolution.harness.value, "opencode");
-        assert_eq!(resolution.harness.source, PolicySource::Provider);
-        assert_eq!(
-            resolution.route_trace.selected_match_evidence(),
-            MatchEvidence::Passthrough
-        );
+        .expect_err("passthrough-only pivot should fail");
+
+        assert!(error.to_string().contains(
+            "profile harness `claude` is not installed and no installed fallback harness is available",
+        ));
     }
 
     #[test]

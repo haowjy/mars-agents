@@ -416,6 +416,11 @@ fn build_launch_bundle_model_policy_fallback_walks_chain() {
 }
 
 #[test]
+fn build_launch_bundle_model_policy_fallback_runs_without_link_constraints() {
+    routing::build_launch_bundle_model_policy_fallback_runs_without_link_constraints();
+}
+
+#[test]
 fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     routing::build_launch_bundle_model_policy_fallback_exhaustion_errors();
 }

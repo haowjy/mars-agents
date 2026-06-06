@@ -472,11 +472,11 @@ fn no_harness_available_error(
             installed_harnesses: format_installed_harnesses(installed_harnesses),
         }
     } else {
-        let message = format!(
-            "no harness available for model `{model_token}`; installed harnesses: {}",
-            format_installed_harnesses(installed_harnesses)
-        );
-        MarsError::Config(ConfigError::Invalid { message })
+        MarsError::HarnessUnavailable {
+            model_token: model_token.to_string(),
+            detail: "candidate routing produced no selectable harness".to_string(),
+            installed_harnesses: format_installed_harnesses(installed_harnesses),
+        }
     }
 }
 

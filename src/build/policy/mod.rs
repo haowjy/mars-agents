@@ -182,6 +182,20 @@ struct ModelFallbackCandidate {
     match_type: ModelPolicyMatchType,
 }
 
+fn is_harness_exhaustion(err: &MarsError) -> bool {
+    matches!(
+        err,
+        MarsError::LinkedHarnessExhausted { .. } | MarsError::HarnessUnavailable { .. }
+    )
+}
+
+fn selected_alias_token<'a, 'm>(resolved_model: &'a model::ResolvedModel<'m>) -> Option<&'a str> {
+    resolved_model
+        .alias
+        .is_some()
+        .then_some(resolved_model.model_token.as_str())
+}
+
 pub fn resolve_policy(
     effective_config: &EffectiveProjectConfig,
     input: PolicyInput<'_>,
@@ -242,7 +256,7 @@ pub fn resolve_policy(
             settings_model_policies,
         ),
         &resolved_model.model,
-        &resolved_model.model_token,
+        selected_alias_token(&resolved_model),
     );
 
     let mut capability_session = CapabilitySession::collect(&CapabilityCollectionOptions {
@@ -285,10 +299,11 @@ pub fn resolve_policy(
     let mut model_fallback: Option<(String, String)> = None;
     let harness_resolution = match harness_result {
         Ok(resolution) => resolution,
-        Err(err @ MarsError::LinkedHarnessExhausted { .. }) if input.model_override.is_some() => {
+        Err(err) if is_harness_exhaustion(&err) && input.model_override.is_some() => {
             return Err(err);
         }
-        Err(MarsError::LinkedHarnessExhausted { .. }) => {
+        Err(err) if is_harness_exhaustion(&err) => {
+            let linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
             let candidates = model_fallback_candidates(
                 input.profile,
                 &primary_model_token,
@@ -320,7 +335,7 @@ pub fn resolve_policy(
                         settings_model_policies,
                     ),
                     &fallback_model.model,
-                    &fallback_model.model_token,
+                    selected_alias_token(&fallback_model),
                 );
                 let fallback_result = {
                     let mut probe_resolver = SessionProbeResolver {
@@ -365,8 +380,14 @@ pub fn resolve_policy(
                     Ok(harness_resolution) => {
                         warnings.extend(fallback_model.warnings.iter().cloned());
                         warnings.push(format!(
-                            "model `{primary_model_token}` unavailable on linked harnesses; fell back to `{}` on `{}`",
-                            fallback_model.model_token, harness_resolution.harness.value
+                            "model `{primary_model_token}` unavailable{}; fell back to `{}` on `{}`",
+                            if linked_exhaustion {
+                                " on linked harnesses"
+                            } else {
+                                ""
+                            },
+                            fallback_model.model_token,
+                            harness_resolution.harness.value
                         ));
                         provenance.insert(
                             "model_source".to_string(),
@@ -379,7 +400,7 @@ pub fn resolve_policy(
                         resolved = Some((fallback_model, fallback_policy, harness_resolution));
                         break;
                     }
-                    Err(MarsError::LinkedHarnessExhausted { .. }) => {
+                    Err(err) if is_harness_exhaustion(&err) => {
                         exhausted_tokens.push(candidate.token);
                     }
                     Err(err) => return Err(err),
@@ -391,8 +412,13 @@ pub fn resolve_policy(
                 tried.extend(exhausted_tokens);
                 return Err(MarsError::Config(ConfigError::Invalid {
                     message: format!(
-                        "model fallback candidates exhausted for `{}` on linked harnesses; tried: {}",
+                        "model fallback candidates exhausted for `{}`{}; tried: {}",
                         primary_model_token,
+                        if linked_exhaustion {
+                            " on linked harnesses"
+                        } else {
+                            ""
+                        },
                         tried.join(", ")
                     ),
                 }));
@@ -786,16 +812,16 @@ fn model_fallback_candidates(
 fn match_model_policy<'a>(
     policies: impl Iterator<Item = (PolicyLayer, usize, &'a ModelPolicyRule)>,
     canonical_model_id: &str,
-    selected_model_token: &str,
+    selected_alias_token: Option<&str>,
 ) -> Option<MatchedModelPolicy> {
-    if canonical_model_id.is_empty() || selected_model_token.is_empty() {
+    if canonical_model_id.is_empty() {
         return None;
     }
 
     for (layer, index, rule) in policies {
         let matched = match rule.match_type {
             ModelPolicyMatchType::Model => rule.match_value == canonical_model_id,
-            ModelPolicyMatchType::Alias => rule.match_value == selected_model_token,
+            ModelPolicyMatchType::Alias => selected_alias_token == Some(rule.match_value.as_str()),
             ModelPolicyMatchType::ModelGlob => {
                 crate::models::glob_match(&rule.match_value, canonical_model_id)
             }

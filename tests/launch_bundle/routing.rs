@@ -186,8 +186,7 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert!(stderr.contains("no harness available for model `openai_alias`"));
-    assert!(stderr.contains("installed harnesses: codex, pi"));
+    assert!(stderr.contains("model fallback candidates exhausted for `openai_alias`"));
 }
 
 pub(crate) fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
@@ -2451,8 +2450,7 @@ Review code changes."#;
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert!(stderr.contains("no harness available for model `third-party-model-123`"));
-    assert!(stderr.contains("installed harnesses: opencode"));
+    assert!(stderr.contains("model fallback candidates exhausted for `third-party-model-123`"));
 }
 
 pub(crate) fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
@@ -2700,6 +2698,49 @@ model = "claude-opus-4-6""#;
     );
 }
 
+pub(crate) fn build_launch_bundle_model_policy_fallback_runs_without_link_constraints() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt55
+model-policies:
+  - match:
+      alias: gpt55
+  - match:
+      alias: sonnet
+---
+Review code changes."#;
+
+    let extra_toml = r#"[models.gpt55]
+model = "gpt-5"
+
+[models.sonnet]
+model = "claude-opus-4-6""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("sonnet"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("model `gpt55` unavailable; fell back to `sonnet` on `claude`")
+    }));
+}
+
 pub(crate) fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
@@ -2834,6 +2875,11 @@ model: gpt55
 model-policies:
   - match:
       alias: gpt55
+  - match:
+      alias: claude-opus-4-6
+    no-fallback: true
+    override:
+      harness: codex
   - match:
       model: claude-opus-4-6
 ---

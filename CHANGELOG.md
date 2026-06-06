@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Linked harness exhaustion no longer falls through to unlinked `pi`; launch-bundle walks profile model-policy fallbacks instead.
+- Harness exhaustion no longer falls through to unlinked `pi`; launch-bundle walks profile model-policy fallbacks instead.
 
 ## [0.7.16] - 2026-06-05
 

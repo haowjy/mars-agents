@@ -51,7 +51,7 @@ struct NativeAgentEmit<'a> {
     body: &'a str,
     agent_name: &'a str,
     canonical_dest_path: &'a str,
-    model_override: Option<&'a str>,
+    model: &'a crate::compiler::agents::lower::NativeModel,
 }
 
 struct NativeAgentEmitCtx<'a> {
@@ -371,31 +371,16 @@ pub(crate) fn compile_native_agents(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, directive) in qualifying_emissions(effective_profile, policy, ctx, diag) {
-            // `Clear` emits to a harness the agent's model does not resolve to;
-            // strip the model so lowering writes no model field.
-            let cleared_profile;
-            let (profile, model_override): (&crate::compiler::agents::AgentProfile, Option<&str>) =
-                match &directive {
-                    NativeModelDirective::Resolved(model) => (effective_profile, model.as_deref()),
-                    NativeModelDirective::Clear => {
-                        cleared_profile = {
-                            let mut p = effective_profile.clone();
-                            p.model = None;
-                            p
-                        };
-                        (&cleared_profile, None)
-                    }
-                };
+        for (harness, model) in qualifying_emissions(effective_profile, policy, ctx, diag) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
-                    profile,
+                    profile: effective_profile,
                     fm: &agent.fm,
                     body: agent.fm.body(),
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
-                    model_override,
+                    model: &model,
                 },
                 &emit_ctx,
                 diag,
@@ -430,19 +415,16 @@ fn effective_native_profile(
     effective
 }
 
-/// What model field a native emission should carry.
-///
-/// `Option<String>` alone is two-state ("pin this id" vs "fall back to the
-/// profile's own model"); full-coverage `EmitAll` needs a third state that
-/// clears the model entirely when an agent is emitted to a harness whose model
-/// it does not resolve to.
-#[derive(Debug, Clone)]
-enum NativeModelDirective {
-    /// Qualified emission: pin `Some(id)`, or `None` to emit the profile's own
-    /// model verbatim (e.g. an unpinned alias or a fanout token).
-    Resolved(Option<String>),
-    /// Full-coverage emission to a non-resolving harness: emit no model field.
-    Clear,
+/// Map a resolved model override (`Some(id)` to pin, `None` to inherit the profile's
+/// own model) to the lowering boundary's [`crate::compiler::agents::lower::NativeModel`].
+fn native_model_from_override(
+    model_override: Option<String>,
+) -> crate::compiler::agents::lower::NativeModel {
+    use crate::compiler::agents::lower::NativeModel;
+    match model_override {
+        Some(id) => NativeModel::Set(id),
+        None => NativeModel::Inherit,
+    }
 }
 
 fn qualifying_emissions(
@@ -450,7 +432,10 @@ fn qualifying_emissions(
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
-) -> Vec<(crate::compiler::agents::HarnessKind, NativeModelDirective)> {
+) -> Vec<(
+    crate::compiler::agents::HarnessKind,
+    crate::compiler::agents::lower::NativeModel,
+)> {
     use crate::compiler::agents::HarnessKind;
 
     let in_scope = |harness: &HarnessKind| {
@@ -466,13 +451,13 @@ fn qualifying_emissions(
                 if !in_scope(harness) {
                     continue;
                 }
-                let directive = match agent_copy::agent_qualifies_for_harness(
+                let model = match agent_copy::agent_qualifies_for_harness(
                     profile,
                     harness,
                     ctx.model_aliases,
                     true,
                 ) {
-                    Some(emission) => NativeModelDirective::Resolved(model_override_for_emission(
+                    Some(emission) => native_model_from_override(model_override_for_emission(
                         harness,
                         profile,
                         &emission,
@@ -480,9 +465,9 @@ fn qualifying_emissions(
                         ctx.cursor_probe_slugs,
                         diag,
                     )),
-                    None => NativeModelDirective::Clear,
+                    None => crate::compiler::agents::lower::NativeModel::Clear,
                 };
-                emissions.push((harness.clone(), directive));
+                emissions.push((harness.clone(), model));
             }
             emissions
         }
@@ -500,7 +485,7 @@ fn qualifying_emissions(
                 ) else {
                     continue;
                 };
-                let directive = NativeModelDirective::Resolved(model_override_for_emission(
+                let model = native_model_from_override(model_override_for_emission(
                     harness,
                     profile,
                     &emission,
@@ -508,7 +493,7 @@ fn qualifying_emissions(
                     ctx.cursor_probe_slugs,
                     diag,
                 ));
-                emissions.push((harness.clone(), directive));
+                emissions.push((harness.clone(), model));
             }
             emissions
         }
@@ -529,7 +514,7 @@ fn emit_lowered_native_agent(
         agent.profile,
         agent.fm,
         agent.body,
-        agent.model_override,
+        agent.model,
     );
 
     for lf in &lowered.lossy_fields {

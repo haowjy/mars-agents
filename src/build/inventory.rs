@@ -287,7 +287,7 @@ fn render_native_section_heading(harness: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::compiler::agents::HarnessKind;
-    use crate::compiler::write_native_agent_manifest_from_lock;
+    use crate::compiler::native_agent_manifest::write_native_agent_manifest_from_lock;
     use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
     use std::fs;
     use tempfile::TempDir;

@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- `launch_actions` experiment and `mars build launch-bundle --context` / `--transport` flags; launch-bundle schema reverted from v4 to v3 (revival tracked in #101).
+
+### Fixed
+- `.mars/native-agents.json` manifest determinism (sorted agent keys via `BTreeMap`) and write ordering (lock persisted before manifest projection).
+
 ## [0.8.0] - 2026-06-06
 ### Changed
 - `[settings.agent_copy]` renamed to `[settings.meridian.agent_copy]` (clean break, no shim) — marks selective native copy as meridian-managed-only.

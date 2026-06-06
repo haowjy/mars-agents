@@ -956,6 +956,22 @@ pub struct CompiledNativeOutput {
     pub installed_checksum: ContentHash,
 }
 
+/// Whether a freshly compiled native output is new or content-changed vs the
+/// previous lock at the same `(target_root, dest_path)`. Lets the sync summary
+/// count only real emissions — steady-state re-emits don't inflate the count.
+pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutput) -> bool {
+    for item in old.items.values() {
+        for output in &item.outputs {
+            if output.target_root == out.target_root
+                && crate::target::dest_paths_equivalent(output.dest_path.as_str(), &out.dest_path)
+            {
+                return output.installed_checksum != out.installed_checksum;
+            }
+        }
+    }
+    true
+}
+
 /// Drop native harness output records removed by native agent reconcile.
 pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
     for (target_root, dest_path) in records {

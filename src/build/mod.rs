@@ -1,11 +1,13 @@
 pub mod bundle;
+pub mod inventory;
 pub mod policy;
+pub mod project;
 pub mod prompt;
 pub mod tool_normalize;
 
 use std::path::PathBuf;
 
-use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
+use bundle::{LaunchBundle, RuntimeContext, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_tool_for_harness};
@@ -16,7 +18,7 @@ use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
 
-pub const LAUNCH_BUNDLE_VERSION: u32 = 3;
+pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
@@ -27,6 +29,8 @@ pub struct LaunchBundleRequest {
     pub sandbox: Option<String>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
+    pub runtime_context: Option<RuntimeContext>,
+    pub transport: project::Transport,
 }
 
 pub fn build_launch_bundle(
@@ -122,12 +126,13 @@ pub fn build_launch_bundle(
     let (resolved_tools, tool_warnings) = resolve_bundle_tools(&profile, &policy.routing.harness)?;
     warnings.extend(tool_warnings);
 
-    Ok(LaunchBundle {
+    let mut bundle = LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
         agent: request.agent,
         agent_body,
         routing: policy.routing,
         execution_policy: policy.execution_policy,
+        launch_actions: None,
         prompt_surface: bundle::PromptSurface {
             system_instruction: prompt.system_instruction,
             supplemental_documents: prompt.supplemental_documents,
@@ -142,7 +147,18 @@ pub fn build_launch_bundle(
         },
         provenance: policy.provenance,
         warnings,
-    })
+    };
+
+    // EXPERIMENTAL optional projection — see `build/project` module doc.
+    if let Some(context) = request.runtime_context.as_ref() {
+        bundle.launch_actions = Some(project::project_launch_actions(
+            &bundle,
+            context,
+            request.transport,
+        )?);
+    }
+
+    Ok(bundle)
 }
 
 fn empty_agent_profile() -> AgentProfile {

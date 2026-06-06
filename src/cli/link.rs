@@ -78,7 +78,7 @@ fn link_target(
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
-        effective.settings.agent_copy.as_ref(),
+        effective.settings.meridian_agent_copy(),
         &runtime_targets,
         &mut diag,
     );
@@ -198,6 +198,15 @@ fn link_target(
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
     crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
     crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs);
+    if let Err(err) =
+        crate::compiler::write_native_agent_manifest_from_lock(&ctx.project_root, &new_lock)
+    {
+        diag.warn(
+            "native-agent-manifest-write",
+            format!("could not write native agent manifest: {err}"),
+        );
+        diagnostics.extend(diag.drain());
+    }
     crate::lock::write(&ctx.project_root, &new_lock)?;
 
     if settings_changed {

@@ -1,6 +1,6 @@
 # Agent Compilation
 
-During `mars sync`, every agent is compiled to a canonical full-fidelity artifact in `.mars/agents/`. Native harness artifacts (`.claude/agents/`, `.codex/agents/`, etc.) are emitted when native agent emission policy allows them: normally for agents that declare `harness:`, or selectively through `[settings.agent_copy]`.
+During `mars sync`, every agent is compiled to a canonical full-fidelity artifact in `.mars/agents/`. Native harness artifacts (`.claude/agents/`, `.codex/agents/`, etc.) are emitted when native agent emission policy allows them: normally for agents that declare `harness:`, or selectively through `[settings.meridian.agent_copy]`.
 
 ## The Two Surfaces
 
@@ -18,7 +18,7 @@ When native emission selects an agent for a harness, a second artifact is emitte
 
 Harness-native artifacts are format-translated and field-stripped. They serve as agent discovery surfaces for harness-native invocation (e.g. `codex --agent coder`). Meridian always uses the `.mars/` artifact for its own spawn logic and applies all policy fields through its own projection layer.
 
-Universal agents (no `harness:`) are installed to `.mars/agents/` only by default and can be launched by Meridian against any harness. `[settings.agent_copy]` can still create a native copy when the agent qualifies through its `model:` alias or, with `include_fanout = true`, its `model-policies`.
+Universal agents (no `harness:`) are installed to `.mars/agents/` only by default and can be launched by Meridian against any harness. `[settings.meridian.agent_copy]` can still create a native copy when the agent qualifies through its `model:` alias or, with `include_fanout = true`, its `model-policies`.
 
 ## Emission Control
 
@@ -37,14 +37,14 @@ agent_emission = "always"
 
 **`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Set `agent_emission = "always"` to emit all native artifacts.
 
-Use `[settings.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
+Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 
 ```toml
 [settings]
 targets = [".claude"]
 agent_emission = "never"  # optional
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = false
 ```

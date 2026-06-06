@@ -451,8 +451,8 @@ pub struct LocalSettings {
     pub provider_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_copy: Option<AgentCopyConfig>,
+    #[serde(default, skip_serializing_if = "MeridianSettings::is_empty")]
+    pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
 }
@@ -524,8 +524,8 @@ pub struct Settings {
     /// `MERIDIAN_MANAGED=1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_copy: Option<AgentCopyConfig>,
+    #[serde(default, skip_serializing_if = "MeridianSettings::is_empty")]
+    pub meridian: MeridianSettings,
     #[serde(
         default,
         rename = "model-policies",
@@ -542,6 +542,20 @@ pub struct AgentCopyConfig {
     pub harnesses: Vec<String>,
     #[serde(default)]
     pub include_fanout: bool,
+}
+
+/// Meridian-managed settings nested under `[settings.meridian]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MeridianSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_copy: Option<AgentCopyConfig>,
+}
+
+impl MeridianSettings {
+    pub fn is_empty(&self) -> bool {
+        self.agent_copy.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -565,7 +579,7 @@ impl Default for Settings {
             harness_order: None,
             provider_order: None,
             agent_emission: None,
-            agent_copy: None,
+            meridian: MeridianSettings::default(),
             model_policies: Vec::new(),
         }
     }
@@ -598,6 +612,11 @@ impl Settings {
             .into_iter()
             .map(|harness| harness.to_string())
             .collect()
+    }
+
+    /// Selective native agent copy config from `[settings.meridian.agent_copy]`.
+    pub fn meridian_agent_copy(&self) -> Option<&AgentCopyConfig> {
+        self.meridian.agent_copy.as_ref()
     }
 }
 
@@ -771,6 +790,44 @@ pub fn merged_agent_overlays(
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
     overlay_agent_overlays_replace_by_key(base, local)
+}
+
+/// Base model precedence for the overlay+profile layer shared by native emission
+/// and launch-bundle: `overlay.model` wins over `profile.model`. Settings-level
+/// defaults (e.g. `settings.default_model`) are layered on by launch-bundle only.
+pub fn overlay_then_profile_model<'a>(
+    overlay: Option<&'a AgentOverlay>,
+    profile_model: Option<&'a str>,
+) -> Option<&'a str> {
+    overlay
+        .and_then(|entry| entry.model.as_deref())
+        .or(profile_model)
+}
+
+/// Model-policy precedence for the overlay+profile layer: overlay policies first,
+/// then profile policies. Each item carries `is_overlay` (its source layer) and the
+/// index within that layer's own list, so callers can index back into the originating
+/// slice. Launch-bundle appends `settings.model_policies` after this iterator; native
+/// emission consumes it directly (settings policies stay launch-bundle/spawn-only).
+pub fn overlay_then_profile_policies<'a>(
+    overlay: Option<&'a AgentOverlay>,
+    profile_policies: &'a [ModelPolicyRule],
+) -> impl Iterator<Item = (bool, usize, &'a ModelPolicyRule)> + 'a {
+    overlay
+        .into_iter()
+        .flat_map(|entry| {
+            entry
+                .model_policies
+                .iter()
+                .enumerate()
+                .map(|(index, rule)| (true, index, rule))
+        })
+        .chain(
+            profile_policies
+                .iter()
+                .enumerate()
+                .map(|(index, rule)| (false, index, rule)),
+        )
 }
 
 pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), MarsError> {
@@ -1179,11 +1236,11 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
         }
         .into());
     }
-    if reparsed.settings.agent_copy != original.settings.agent_copy {
+    if reparsed.settings.meridian.agent_copy != original.settings.meridian.agent_copy {
         return Err(ConfigError::Invalid {
             message: format!(
-                "refusing to save config: settings.agent_copy changed during roundtrip ({:?} -> {:?})",
-                original.settings.agent_copy, reparsed.settings.agent_copy
+                "refusing to save config: settings.meridian.agent_copy changed during roundtrip ({:?} -> {:?})",
+                original.settings.meridian.agent_copy, reparsed.settings.meridian.agent_copy
             ),
         }
         .into());
@@ -2859,13 +2916,17 @@ models_cache_ttl_hours = 48
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = true
 "#,
         )
         .unwrap();
-        let agent_copy = config.settings.agent_copy.expect("agent_copy should parse");
+        let agent_copy = config
+            .settings
+            .meridian_agent_copy()
+            .expect("agent_copy should parse")
+            .clone();
         assert_eq!(agent_copy.harnesses, vec!["claude".to_string()]);
         assert!(agent_copy.include_fanout);
     }

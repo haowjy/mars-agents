@@ -737,21 +737,17 @@ fn effective_policies<'a>(
     profile_policies: &'a [ModelPolicyRule],
     settings_policies: &'a [ModelPolicyRule],
 ) -> impl Iterator<Item = (PolicyLayer, usize, &'a ModelPolicyRule)> + 'a {
-    overlay
-        .into_iter()
-        .flat_map(|agent_overlay| {
-            agent_overlay
-                .model_policies
-                .iter()
-                .enumerate()
-                .map(|(index, rule)| (PolicyLayer::Overlay, index, rule))
+    // Overlay->profile ordering (with per-layer indices) is shared with native
+    // emission via the config helper; launch-bundle alone appends settings policies.
+    crate::config::overlay_then_profile_policies(overlay, profile_policies)
+        .map(|(is_overlay, index, rule)| {
+            let layer = if is_overlay {
+                PolicyLayer::Overlay
+            } else {
+                PolicyLayer::Profile
+            };
+            (layer, index, rule)
         })
-        .chain(
-            profile_policies
-                .iter()
-                .enumerate()
-                .map(|(index, rule)| (PolicyLayer::Profile, index, rule)),
-        )
         .chain(
             settings_policies
                 .iter()

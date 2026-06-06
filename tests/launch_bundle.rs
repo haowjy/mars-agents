@@ -12,6 +12,8 @@ mod cursor;
 mod errors;
 #[path = "launch_bundle/execution_policy.rs"]
 mod execution_policy;
+#[path = "launch_bundle/launch_actions.rs"]
+mod launch_actions;
 #[path = "launch_bundle/native_config.rs"]
 mod native_config;
 #[path = "launch_bundle/prompt_surface.rs"]
@@ -25,6 +27,46 @@ mod tool_policy;
 
 // Keep root-level #[test] wrappers so discovered test names stay historically stable
 // while test bodies remain organized in contract-focused modules.
+
+#[test]
+fn build_launch_bundle_omits_launch_actions_without_context() {
+    launch_actions::build_launch_bundle_omits_launch_actions_without_context();
+}
+
+#[test]
+fn build_launch_bundle_projects_cursor_launch_actions() {
+    launch_actions::build_launch_bundle_projects_cursor_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_claude_launch_actions() {
+    launch_actions::build_launch_bundle_projects_claude_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_codex_subprocess_launch_actions() {
+    launch_actions::build_launch_bundle_projects_codex_subprocess_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_opencode_subprocess_launch_actions() {
+    launch_actions::build_launch_bundle_projects_opencode_subprocess_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_pi_launch_actions() {
+    launch_actions::build_launch_bundle_projects_pi_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_codex_streaming_launch_actions() {
+    launch_actions::build_launch_bundle_projects_codex_streaming_launch_actions();
+}
+
+#[test]
+fn build_launch_bundle_projects_opencode_streaming_launch_actions() {
+    launch_actions::build_launch_bundle_projects_opencode_streaming_launch_actions();
+}
 
 #[test]
 fn build_launch_bundle_outputs_schema_and_slot_placeholders() {

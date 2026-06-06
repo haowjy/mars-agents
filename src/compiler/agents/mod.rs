@@ -89,6 +89,14 @@ impl HarnessKind {
             crate::harness::registry::HarnessId::Cursor => Self::Cursor,
         }
     }
+
+    /// Resolve a linked target directory (e.g. `.claude`) to its harness kind.
+    pub fn from_target_dir(target_root: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .find(|harness| harness.target_dir() == target_root)
+            .cloned()
+    }
 }
 
 /// Approval policy field.

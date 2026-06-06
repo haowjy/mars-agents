@@ -2,6 +2,7 @@
 
 use clap::{ArgAction, ValueEnum};
 
+use crate::build::bundle::RuntimeContext;
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
 use crate::error::MarsError;
@@ -85,6 +86,21 @@ enum SandboxArg {
     DangerFullAccess,
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+enum TransportArg {
+    Subprocess,
+    Streaming,
+}
+
+impl TransportArg {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Subprocess => "subprocess",
+            Self::Streaming => "streaming",
+        }
+    }
+}
+
 impl SandboxArg {
     fn as_str(&self) -> &'static str {
         match self {
@@ -134,6 +150,16 @@ pub struct LaunchBundleArgs {
     /// Skip automatic models-cache refresh; use disk cache only (no probe background refresh).
     #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
+
+    /// Runtime launch context JSON used to project concrete launch actions.
+    /// (EXPERIMENTAL; launch_actions are not consumed by meridian-cli and may be removed — see work item launch-bundle-projection)
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Launch transport shape to project when --context is provided.
+    /// (EXPERIMENTAL; only used with --context)
+    #[arg(long, value_enum, default_value_t = TransportArg::Subprocess)]
+    transport: TransportArg,
 }
 
 pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, MarsError> {
@@ -145,6 +171,16 @@ pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Mars
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {
     let models_refresh =
         crate::models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
+    let runtime_context = args
+        .context
+        .as_deref()
+        .map(|raw| {
+            serde_json::from_str::<RuntimeContext>(raw).map_err(|err| MarsError::InvalidRequest {
+                message: format!("invalid launch-bundle --context JSON: {err}"),
+            })
+        })
+        .transpose()?;
+    let transport = crate::build::project::Transport::parse(args.transport.as_str())?;
     let bundle = build_launch_bundle(
         ctx,
         LaunchBundleRequest {
@@ -156,8 +192,16 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
             extra_skills: args.extra_skills.clone(),
             models_refresh,
+            runtime_context,
+            transport,
         },
     )?;
+
+    if args.context.is_some() {
+        eprintln!(
+            "warning: --context launch_actions projection is EXPERIMENTAL and not consumed by meridian-cli; meridian builds argv/env in its own harness adapters (invariant I-2). May be removed. See work item launch-bundle-projection / PR #94."
+        );
+    }
 
     println!(
         "{}",

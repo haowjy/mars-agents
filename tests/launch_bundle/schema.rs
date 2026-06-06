@@ -56,7 +56,7 @@ Review code changes.
 
     let bundle: Value = serde_json::from_str(&stdout).expect("launch-bundle should emit JSON");
 
-    assert_eq!(bundle["version"].as_u64(), Some(3));
+    assert_eq!(bundle["version"].as_u64(), Some(4));
     assert_eq!(bundle["agent"].as_str(), Some("reviewer"));
     assert_eq!(
         bundle["agent_body"].as_str(),
@@ -130,7 +130,7 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["version"].as_u64(), Some(3));
+    assert_eq!(bundle["version"].as_u64(), Some(4));
     assert!(bundle["agent"].is_null());
     assert_field_absent_or_null(&bundle, "agent_body");
     assert_eq!(

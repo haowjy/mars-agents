@@ -174,7 +174,7 @@ agent_emission = "auto"
 min_mars_version = "0.12.0"
 models_cache_ttl_hours = 24
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = false
 
@@ -197,7 +197,7 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
-`[settings.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
+`[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

@@ -1,4 +1,4 @@
-/// Selective native agent emission via `settings.agent_copy`.
+/// Selective native agent emission via `settings.meridian.agent_copy`.
 pub mod agent_copy;
 /// Compiler stage — target building, diff, plan, apply, lock finalization.
 ///
@@ -14,6 +14,7 @@ pub mod context;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
+pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
@@ -22,6 +23,7 @@ pub mod variants;
 /// Visibility propagation rules for passive vs effectful items (D1/D10).
 pub mod visibility;
 
+pub use native_agent_manifest::write_native_agent_manifest_from_lock;
 pub use native_agents::selective_native_orphan_preserve_paths;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, materialize_native_agents_after_link,
@@ -62,7 +64,7 @@ pub fn compile(
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
-        effective_settings.agent_copy.as_ref(),
+        effective_settings.meridian_agent_copy(),
         &effective_settings.managed_targets(),
         diag,
     );
@@ -71,6 +73,11 @@ pub fn compile(
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
+    let configured_emit_harnesses: Vec<agents::HarnessKind> = effective_settings
+        .managed_targets()
+        .iter()
+        .filter_map(|t| agents::HarnessKind::from_target_dir(t))
+        .collect();
     let mars_dir = ctx.project_root.join(".mars");
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
@@ -87,6 +94,10 @@ pub fn compile(
 
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;
+    let loaded = &synced.applied.planned.targeted.resolved.loaded;
+    // Per-agent overlays merged from mars.toml + mars.local.toml (loaded.effective is
+    // EffectiveConfig, which does not carry the overlay map).
+    let agent_overlays = crate::config::merged_agent_overlays(&loaded.config.agents, &loaded.local);
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
         policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
@@ -116,6 +127,7 @@ pub fn compile(
             cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,
+            configured_emit_harnesses: &configured_emit_harnesses,
             options: native_agents::NativeAgentSurfaceCompileOptions {
                 force: request.options.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -130,6 +142,7 @@ pub fn compile(
         &native_reconcile_ctx,
         &agent_surface_policy,
         &mars_agents,
+        &agent_overlays,
         native_compile_ctx.as_ref(),
         diag,
     );

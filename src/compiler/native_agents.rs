@@ -40,6 +40,7 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
     pub cursor_probe_slugs: &'a [String],
     pub old_lock: &'a crate::lock::LockFile,
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
+    pub configured_emit_harnesses: &'a [crate::compiler::agents::HarnessKind],
     pub options: NativeAgentSurfaceCompileOptions,
 }
 
@@ -50,7 +51,7 @@ struct NativeAgentEmit<'a> {
     body: &'a str,
     agent_name: &'a str,
     canonical_dest_path: &'a str,
-    model_override: Option<&'a str>,
+    model: &'a crate::compiler::agents::lower::NativeModel,
 }
 
 struct NativeAgentEmitCtx<'a> {
@@ -283,6 +284,8 @@ fn reconcile_selective_native_agent_surfaces(
 ) -> Vec<RemovedNativeOutput> {
     let mut removed = Vec::new();
     for agent in mars_agents {
+        // `agent.profile` is already overlay-resolved (see the lifecycle), so reconcile
+        // and emission qualify against identical effective profiles.
         for harness in harnesses {
             let qualifies = spec.harnesses.contains(harness)
                 && agent_copy::agent_qualifies_for_harness(
@@ -364,17 +367,20 @@ pub(crate) fn compile_native_agents(
     };
     let mut records = Vec::new();
 
+    // `mars_agents` carry already overlay-resolved profiles (resolved once in
+    // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
-        for (harness, model_override) in qualifying_emissions(agent, policy, ctx, diag) {
+        let effective_profile = &agent.profile;
+        for (harness, model) in qualifying_emissions(effective_profile, policy, ctx, diag) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
-                    profile: &agent.profile,
+                    profile: effective_profile,
                     fm: &agent.fm,
                     body: agent.fm.body(),
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
-                    model_override: model_override.as_deref(),
+                    model: &model,
                 },
                 &emit_ctx,
                 diag,
@@ -386,12 +392,50 @@ pub(crate) fn compile_native_agents(
     records
 }
 
+/// Merge a per-agent overlay's model selection over the canonical profile for native
+/// emission: `overlay.model` wins over `profile.model`, and overlay policies take
+/// precedence over profile policies (shared with launch-bundle via the config helpers).
+/// `overlay.harness` is intentionally ignored — native coverage is configured-target
+/// driven, not overlay-routed.
+fn effective_native_profile(
+    profile: &crate::compiler::agents::AgentProfile,
+    overlay: Option<&crate::config::AgentOverlay>,
+) -> crate::compiler::agents::AgentProfile {
+    let Some(overlay) = overlay else {
+        return profile.clone();
+    };
+    let mut effective = profile.clone();
+    effective.model =
+        crate::config::overlay_then_profile_model(Some(overlay), profile.model.as_deref())
+            .map(|model| model.to_string());
+    effective.model_policies =
+        crate::config::overlay_then_profile_policies(Some(overlay), &profile.model_policies)
+            .map(|(_, _, rule)| rule.clone())
+            .collect();
+    effective
+}
+
+/// Map a resolved model override (`Some(id)` to pin, `None` to inherit the profile's
+/// own model) to the lowering boundary's [`crate::compiler::agents::lower::NativeModel`].
+fn native_model_from_override(
+    model_override: Option<String>,
+) -> crate::compiler::agents::lower::NativeModel {
+    use crate::compiler::agents::lower::NativeModel;
+    match model_override {
+        Some(id) => NativeModel::Set(id),
+        None => NativeModel::Inherit,
+    }
+}
+
 fn qualifying_emissions(
-    agent: &MarsCanonicalAgent,
+    profile: &crate::compiler::agents::AgentProfile,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
     diag: &mut DiagnosticCollector,
-) -> Vec<(crate::compiler::agents::HarnessKind, Option<String>)> {
+) -> Vec<(
+    crate::compiler::agents::HarnessKind,
+    crate::compiler::agents::lower::NativeModel,
+)> {
     use crate::compiler::agents::HarnessKind;
 
     let in_scope = |harness: &HarnessKind| {
@@ -402,20 +446,30 @@ fn qualifying_emissions(
     match policy {
         AgentSurfacePolicy::SuppressAll => Vec::new(),
         AgentSurfacePolicy::EmitAll => {
-            let Some(harness) = agent.profile.harness.as_ref() else {
-                return Vec::new();
-            };
-            if !in_scope(harness) {
-                return Vec::new();
+            let mut emissions = Vec::new();
+            for harness in ctx.configured_emit_harnesses {
+                if !in_scope(harness) {
+                    continue;
+                }
+                let model = match agent_copy::agent_qualifies_for_harness(
+                    profile,
+                    harness,
+                    ctx.model_aliases,
+                    true,
+                ) {
+                    Some(emission) => native_model_from_override(model_override_for_emission(
+                        harness,
+                        profile,
+                        &emission,
+                        ctx.model_aliases,
+                        ctx.cursor_probe_slugs,
+                        diag,
+                    )),
+                    None => crate::compiler::agents::lower::NativeModel::Clear,
+                };
+                emissions.push((harness.clone(), model));
             }
-            let model_override = native_model_override_for_harness(
-                harness,
-                &agent.profile,
-                ctx.model_aliases,
-                ctx.cursor_probe_slugs,
-                diag,
-            );
-            vec![(harness.clone(), model_override)]
+            emissions
         }
         AgentSurfacePolicy::EmitSelective(spec) => {
             let mut emissions = Vec::new();
@@ -424,22 +478,22 @@ fn qualifying_emissions(
                     continue;
                 }
                 let Some(emission) = agent_copy::agent_qualifies_for_harness(
-                    &agent.profile,
+                    profile,
                     harness,
                     ctx.model_aliases,
                     spec.include_fanout,
                 ) else {
                     continue;
                 };
-                let model_override = model_override_for_emission(
+                let model = native_model_from_override(model_override_for_emission(
                     harness,
-                    &agent.profile,
+                    profile,
                     &emission,
                     ctx.model_aliases,
                     ctx.cursor_probe_slugs,
                     diag,
-                );
-                emissions.push((harness.clone(), model_override));
+                ));
+                emissions.push((harness.clone(), model));
             }
             emissions
         }
@@ -460,7 +514,7 @@ fn emit_lowered_native_agent(
         agent.profile,
         agent.fm,
         agent.body,
-        agent.model_override,
+        agent.model,
     );
 
     for lf in &lowered.lossy_fields {
@@ -713,15 +767,41 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     reconcile_ctx: &NativeAgentReconcileCtx<'_>,
     policy: &AgentSurfacePolicy,
     mars_agents: &[MarsCanonicalAgent],
+    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
     compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
     diag: &mut DiagnosticCollector,
 ) -> (Vec<CompiledNativeOutput>, Vec<RemovedNativeOutput>) {
-    let removed_native_outputs = reconcile_native_agent_surfaces(reconcile_ctx, mars_agents, diag);
+    // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
+    // compile qualify against identical state without each re-deriving it (and without
+    // threading the overlay map through their contexts).
+    let resolved = resolve_native_agent_profiles(mars_agents, agent_overlays);
+    let removed_native_outputs = reconcile_native_agent_surfaces(reconcile_ctx, &resolved, diag);
     let compiled_native_outputs = match compile_ctx {
         None => Vec::new(),
-        Some(ctx) => compile_native_agents(ctx, policy, mars_agents, diag),
+        Some(ctx) => compile_native_agents(ctx, policy, &resolved, diag),
     };
     (compiled_native_outputs, removed_native_outputs)
+}
+
+/// Apply each agent's overlay (`overlay.model` / `overlay.model_policies`) over its
+/// canonical profile, yielding agents whose `profile` is the effective native profile.
+/// Single source of overlay merging for the native lifecycle.
+fn resolve_native_agent_profiles(
+    mars_agents: &[MarsCanonicalAgent],
+    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+) -> Vec<MarsCanonicalAgent> {
+    mars_agents
+        .iter()
+        .map(|agent| MarsCanonicalAgent {
+            agent_name: agent.agent_name.clone(),
+            canonical_dest_path: agent.canonical_dest_path.clone(),
+            profile: effective_native_profile(
+                &agent.profile,
+                agent_overlays.get(&agent.agent_name),
+            ),
+            fm: agent.fm.clone(),
+        })
+        .collect()
 }
 
 /// Reconcile and compile native harness agents after `mars link` (same path as sync).
@@ -734,7 +814,7 @@ pub(crate) fn materialize_native_agents_after_link(
     if !input
         .managed_targets
         .iter()
-        .any(|target| HarnessKind::all().iter().any(|h| h.target_dir() == target))
+        .any(|target| HarnessKind::from_target_dir(target).is_some())
     {
         return (Vec::new(), Vec::new());
     }
@@ -742,19 +822,14 @@ pub(crate) fn materialize_native_agents_after_link(
     let link_harness_scope: Vec<_> = input
         .target_outcomes
         .iter()
-        .filter_map(|outcome| {
-            HarnessKind::all()
-                .iter()
-                .find(|harness| harness.target_dir() == outcome.target)
-                .cloned()
-        })
+        .filter_map(|outcome| HarnessKind::from_target_dir(&outcome.target))
         .collect();
     if link_harness_scope.is_empty() {
         return (Vec::new(), Vec::new());
     }
 
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
-        input.effective.settings.agent_copy.as_ref(),
+        input.effective.settings.meridian_agent_copy(),
         input.managed_targets,
         diag,
     );
@@ -772,7 +847,15 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
+    // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
+    // project-level effective.agents map the sync path carries).
+    let agent_overlays = crate::config::merged_agent_overlays(&input.config.agents, input.local);
     let harness_scope = Some(link_harness_scope.as_slice());
+    let configured_emit_harnesses: Vec<_> = input
+        .managed_targets
+        .iter()
+        .filter_map(|t| HarnessKind::from_target_dir(t))
+        .collect();
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
@@ -794,6 +877,7 @@ pub(crate) fn materialize_native_agents_after_link(
             cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
             old_lock: &ownership_lock,
             harness_scope,
+            configured_emit_harnesses: &configured_emit_harnesses,
             options: NativeAgentSurfaceCompileOptions {
                 force: input.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
@@ -801,13 +885,15 @@ pub(crate) fn materialize_native_agents_after_link(
             },
         })
     };
-    run_native_agent_post_sync_lifecycle(
+    let (compiled_native_outputs, removed_native_outputs) = run_native_agent_post_sync_lifecycle(
         &reconcile_ctx,
         &policy,
         &mars_agents,
+        &agent_overlays,
         compile_ctx.as_ref(),
         diag,
-    )
+    );
+    (compiled_native_outputs, removed_native_outputs)
 }
 
 #[cfg(test)]

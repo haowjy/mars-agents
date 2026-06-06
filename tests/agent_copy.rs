@@ -172,7 +172,7 @@ fn agent_copy_mixed_selective_only_qualifying_emitted() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -207,7 +207,7 @@ fn agent_copy_first_qualifying_policy_wins() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = true
 
@@ -251,7 +251,7 @@ fn agent_copy_link_fails_on_handwritten_native_collision() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -300,7 +300,7 @@ fn agent_copy_model_binding_qualifies_without_profile_harness() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [models.opus]
@@ -333,7 +333,7 @@ fn agent_copy_steady_state_survives_consecutive_syncs() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 "#,
         CLAUDE_HARNESS_AGENT,
@@ -373,7 +373,7 @@ fn agent_copy_stale_native_removed_when_config_cleared() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 "#,
         CLAUDE_HARNESS_AGENT,
@@ -462,7 +462,7 @@ fn agent_copy_link_materializes_selective_native_agents() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -528,7 +528,7 @@ model: gpt-5.3-codex
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["codex"]
 
 [dependencies.src]
@@ -573,7 +573,7 @@ fn link_scopes_native_agent_materialization_to_requested_target() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude", "opencode"]
 "#,
         Some("1"),
@@ -672,7 +672,7 @@ fn agent_copy_sync_diff_does_not_materialize_native_or_lock() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -741,5 +741,57 @@ targets = [".claude"]
     assert!(
         !mars_toml.contains(".codex"),
         "shared mars.toml must not persist mars.local.toml-only targets"
+    );
+}
+
+#[test]
+fn standalone_overlay_model_does_not_leak_into_declared_codex_harness() {
+    // E2E regression (thermo-nuclear review): a per-agent overlay model that resolves
+    // to a different harness than the agent's authored `harness:` must not be pinned
+    // into the declared-harness native file. Here `explorer` is authored harness=codex
+    // but overlaid to a claude-resolving model; under standalone EmitAll the `.codex`
+    // copy must be model-less while the `.claude` copy carries the overlay model.
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("explorer", CODEX_ONLY_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = [".claude", ".codex"]
+
+[models.opus]
+model = "claude-opus-4-6"
+provider = "anthropic"
+
+[agents.explorer]
+model = "opus"
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    // Standalone (MERIDIAN_MANAGED unset) -> EmitAll: every agent to every target.
+    sync_project(&project, None);
+
+    let claude = claude_native_content(&project, "explorer");
+    assert!(
+        claude.contains("model: claude-opus-4-6"),
+        ".claude copy should carry the overlay (claude-resolving) model: {claude}"
+    );
+
+    let codex_path = project.path().join(".codex/agents/explorer.toml");
+    assert!(
+        codex_path.exists(),
+        ".codex copy should still be emitted under EmitAll"
+    );
+    let codex = fs::read_to_string(&codex_path).unwrap();
+    assert!(
+        !codex.contains("model = "),
+        "overlay claude model must NOT leak into the declared codex harness file: {codex}"
     );
 }

@@ -76,7 +76,7 @@ Read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. **Always set a `
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, promotes changelog, commits, tags, and publishes to PyPI/npm/crates.io.
 
-**Direct push ≠ release.** A plain `git push` to `main` with no associated merged PR runs CI/CD only — `release-on-main.yml` resolves release intent from the trigger commit's PR (`/repos/.../commits/{sha}/pulls`); no PR found → `should_release=false`, so no version bump or tag. Auto-release fires **only** for a merged PR carrying a `release:*` label. Docs and other no-ceremony commits are fine to push straight to `main`.
+**Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 
 **Update CHANGELOG.md `[Unreleased]` as you work** — CI promotes it during release.
 

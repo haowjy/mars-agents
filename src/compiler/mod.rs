@@ -102,7 +102,6 @@ pub fn compile(
         policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
         model_aliases: &model_aliases,
-        agent_overlays: &agent_overlays,
         outcomes,
         old_lock,
         dry_run: request.options.dry_run,
@@ -125,7 +124,6 @@ pub fn compile(
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
             model_aliases: &model_aliases,
-            agent_overlays: &agent_overlays,
             cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,
@@ -144,6 +142,7 @@ pub fn compile(
         &native_reconcile_ctx,
         &agent_surface_policy,
         &mars_agents,
+        &agent_overlays,
         native_compile_ctx.as_ref(),
         diag,
     );

@@ -174,7 +174,6 @@ fn link_suppress_all_reconciles_selective_native_target() {
             policy: AgentSurfacePolicy::SuppressAll,
             project_root: dir.path(),
             model_aliases: &IndexMap::new(),
-            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -239,7 +238,6 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
             model_aliases: &aliases,
-            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -320,7 +318,6 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
             model_aliases: &aliases,
-            agent_overlays: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -363,11 +360,9 @@ fn compile_emit_all_agents(
     aliases: &IndexMap<String, ModelAlias>,
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
-    let empty_overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         model_aliases: aliases,
-        agent_overlays: &empty_overlays,
         cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
@@ -527,7 +522,6 @@ fn compile_emit_all_with_overlays(
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         model_aliases: aliases,
-        agent_overlays: overlays,
         cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
@@ -538,7 +532,9 @@ fn compile_emit_all_with_overlays(
             dry_run: false,
         },
     };
-    compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, agents, &mut diag)
+    // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
+    let resolved = resolve_native_agent_profiles(agents, overlays);
+    compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &resolved, &mut diag)
 }
 
 #[test]

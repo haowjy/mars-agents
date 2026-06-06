@@ -83,7 +83,28 @@ pub fn agent_qualifies_for_harness(
     include_fanout: bool,
 ) -> Option<QualifiedEmission> {
     if profile.harness.as_ref() == Some(target_harness) {
-        return Some(QualifiedEmission::DefaultModel);
+        // Honor the declared harness, but only when the model belongs here. An overlay
+        // can pivot the effective model to another harness while `profile.harness`
+        // stays put; pinning that foreign model would emit an incoherent native file.
+        // Clear only when the model *positively* resolves to a different harness — a
+        // bare/unresolvable model id keeps honoring the declared harness (consistent
+        // with the canonical resolver, which also pivots only on a known alias).
+        let resolves_elsewhere = match profile.model.as_deref() {
+            None => false,
+            Some(token) if token.contains('[') => false,
+            // Cursor hosts foreign-provider models via internal slug mapping, so a
+            // model resolving to another native harness is normal there and must never
+            // be treated as foreign — cursor agents only ever qualify via this branch.
+            Some(_) if *target_harness == HarnessKind::Cursor => false,
+            Some(token) => {
+                matches!(model_resolved_harness(token, model_aliases), Some(h) if h != *target_harness)
+            }
+        };
+        if !resolves_elsewhere {
+            return Some(QualifiedEmission::DefaultModel);
+        }
+        // Model resolves to a different harness: fall through (returns None), so EmitAll
+        // clears the model for this harness and EmitSelective skips it.
     }
 
     if let Some(ref model_token) = profile.model
@@ -177,17 +198,18 @@ fn policy_override_harness(policy: &ModelPolicyRule) -> Option<HarnessKind> {
         .and_then(HarnessKind::from_str)
 }
 
-pub fn model_resolves_to_harness(
+/// The native harness a model token resolves to via its alias — an explicit
+/// `harness` field or a provider->native-harness mapping. Returns `None` when the
+/// token is not a known alias, or carries no harness/provider signal (e.g. a bare
+/// model id). This is the shared primitive behind `model_resolves_to_harness`.
+pub fn model_resolved_harness(
     model_token: &str,
-    target_harness: &HarnessKind,
     aliases: &IndexMap<String, ModelAlias>,
-) -> bool {
-    let Some(alias) = aliases.get(model_token) else {
-        return false;
-    };
+) -> Option<HarnessKind> {
+    let alias = aliases.get(model_token)?;
 
     if let Some(ref harness_name) = alias.harness {
-        return HarnessKind::from_str(harness_name).as_ref() == Some(target_harness);
+        return HarnessKind::from_str(harness_name);
     }
 
     let provider = match &alias.spec {
@@ -197,13 +219,17 @@ pub fn model_resolves_to_harness(
         ModelSpec::AutoResolve { provider, .. } => provider.as_deref(),
     };
 
-    if let Some(provider) = provider
-        && let Some(native) = registry::native_harness_for_provider(provider)
-    {
-        return HarnessKind::from_harness_id(native) == *target_harness;
-    }
+    provider
+        .and_then(registry::native_harness_for_provider)
+        .map(HarnessKind::from_harness_id)
+}
 
-    false
+pub fn model_resolves_to_harness(
+    model_token: &str,
+    target_harness: &HarnessKind,
+    aliases: &IndexMap<String, ModelAlias>,
+) -> bool {
+    model_resolved_harness(model_token, aliases).as_ref() == Some(target_harness)
 }
 
 #[cfg(test)]
@@ -436,6 +462,45 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("not in settings.targets")),
             "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn declared_harness_foreign_model_does_not_short_circuit() {
+        let mut profile = empty_profile();
+        profile.harness = Some(HarnessKind::Codex);
+        profile.model = Some("opus".to_string());
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), anthropic_alias());
+        assert!(
+            agent_qualifies_for_harness(&profile, &HarnessKind::Codex, &aliases, false).is_none(),
+            "codex harness with claude-resolving model must not qualify for codex"
+        );
+        assert!(
+            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some(),
+            "effective model should qualify via model-resolution branch"
+        );
+    }
+
+    #[test]
+    fn declared_harness_matching_model_still_short_circuits() {
+        let mut profile = empty_profile();
+        profile.harness = Some(HarnessKind::Claude);
+        profile.model = Some("opus".to_string());
+        let mut aliases = IndexMap::new();
+        aliases.insert("opus".to_string(), anthropic_alias());
+        assert!(
+            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some()
+        );
+    }
+
+    #[test]
+    fn declared_harness_no_model_still_short_circuits() {
+        let mut profile = empty_profile();
+        profile.harness = Some(HarnessKind::Claude);
+        assert!(
+            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &IndexMap::new(), false,)
+                .is_some()
         );
     }
 }

@@ -627,6 +627,134 @@ fn emit_all_consumes_overlay_model_policies() {
 }
 
 #[test]
+fn emit_all_overlay_cross_harness_clears_foreign_declared_harness() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".codex/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+    aliases.insert(
+        "codex-model".to_string(),
+        pinned_alias_with_harness("gpt-5.3-codex", "codex", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\nharness: codex\nmodel: codex-model\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            model: Some("opus".to_string()),
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude, HarnessKind::Codex],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 2);
+    assert!(dir.path().join(".claude/agents/worker.md").exists());
+    assert!(dir.path().join(".codex/agents/worker.toml").exists());
+
+    let codex_native =
+        std::fs::read_to_string(dir.path().join(".codex/agents/worker.toml")).unwrap();
+    assert!(
+        !codex_native.contains("model"),
+        "overlay claude model must not leak into declared codex harness: {codex_native}"
+    );
+
+    let claude_native =
+        std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        claude_native.contains("model: claude-opus-4-6"),
+        "claude harness should carry the overlay opus model: {claude_native}"
+    );
+}
+
+#[test]
+fn emit_all_hand_authored_cross_harness_clears_foreign_model() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "codex-model".to_string(),
+        pinned_alias_with_harness("gpt-5.3-codex", "codex", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\nharness: claude\nmodel: codex-model\n---\n# Worker\n",
+        "worker",
+    );
+
+    let records = compile_emit_all_agents(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        !native.contains("model:"),
+        "declared claude harness with codex model must emit model-less: {native}"
+    );
+}
+
+#[test]
+fn emit_all_declared_harness_matching_model_still_pins() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let pinned = parse_mars_agent(
+        "---\nname: pinned-worker\nharness: claude\nmodel: opus\n---\n# Pinned\n",
+        "pinned-worker",
+    );
+    let model_less = parse_mars_agent(
+        "---\nname: bare-worker\nharness: claude\n---\n# Bare\n",
+        "bare-worker",
+    );
+
+    let records = compile_emit_all_agents(
+        dir.path(),
+        &[HarnessKind::Claude],
+        &[pinned, model_less],
+        &aliases,
+    );
+    assert_eq!(records.len(), 2);
+
+    let pinned_native =
+        std::fs::read_to_string(dir.path().join(".claude/agents/pinned-worker.md")).unwrap();
+    assert!(
+        pinned_native.contains("model: claude-opus-4-6"),
+        "matching harness+model should still pin: {pinned_native}"
+    );
+
+    let bare_native =
+        std::fs::read_to_string(dir.path().join(".claude/agents/bare-worker.md")).unwrap();
+    assert!(
+        !bare_native.contains("model:"),
+        "declared harness without model should emit model-less: {bare_native}"
+    );
+}
+
+#[test]
 fn emit_all_ignores_overlay_harness_for_model_resolution() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();

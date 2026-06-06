@@ -243,6 +243,14 @@ where
         ));
     }
 
+    if harness.value.is_empty() {
+        return Err(no_harness_available_error(
+            evidence.model_token,
+            &route_trace,
+            evidence.routing.installed_harnesses,
+        ));
+    }
+
     let resolved_harness = HarnessKind::from_str(&harness.value).ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
@@ -358,7 +366,6 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
         PolicySource::Alias => routing::RouteSource::Alias,
         PolicySource::ConfigOrder => routing::RouteSource::ConfigOrder,
         PolicySource::Config => routing::RouteSource::ConfigDefault,
-        PolicySource::Default => routing::RouteSource::HardcodedDefault,
         PolicySource::Provider => routing::RouteSource::Provider,
         _ => routing::RouteSource::Provider,
     }
@@ -443,6 +450,34 @@ where
     routing::acceptance::accept_assessment(&assessment)
         .ok()
         .map(|_| route_trace)
+}
+
+fn no_harness_available_error(
+    model_token: &str,
+    route_trace: &routing::RoutingTrace,
+    installed_harnesses: &HashSet<String>,
+) -> MarsError {
+    let constraint_detail = route_trace.diagnostics.iter().find(|diagnostic| {
+        diagnostic.contains(
+            "known linked harness constraints left no linked harness eligible for this model after routing assessments",
+        ) || diagnostic.contains(
+            "settings.default_harness is excluded by known linked harness constraints",
+        )
+    });
+
+    if let Some(detail) = constraint_detail {
+        MarsError::LinkedHarnessExhausted {
+            model_token: model_token.to_string(),
+            detail: detail.clone(),
+            installed_harnesses: format_installed_harnesses(installed_harnesses),
+        }
+    } else {
+        let message = format!(
+            "no harness available for model `{model_token}`; installed harnesses: {}",
+            format_installed_harnesses(installed_harnesses)
+        );
+        MarsError::Config(ConfigError::Invalid { message })
+    }
 }
 
 fn unavailable_profile_pivot_error(
@@ -1037,6 +1072,52 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("provider_constraint_unsatisfied"));
         assert!(!message.contains("no_model_match"));
+    }
+
+    #[test]
+    fn empty_linked_constraint_route_errors_instead_of_invalid_harness() {
+        let installed = installed(&["claude", "cursor", "codex", "pi"]);
+        let linked_harnesses = vec![
+            "claude".to_string(),
+            "cursor".to_string(),
+            "codex".to_string(),
+        ];
+        let profile = profile(None);
+        let input = policy_input(&profile, None, None);
+        let cursor_probe = CursorProbeResult {
+            model_probe_success: true,
+            slugs: vec!["gpt-5.5".to_string()],
+            ..CursorProbeResult::default()
+        };
+        let mut probe_resolver = TestProbeResolver {
+            cursor: Some(cursor_probe.clone()),
+            ..TestProbeResolver::default()
+        };
+        let evidence = HarnessEvidence {
+            routing: routing::RoutingEvidence {
+                model_id: "deepseekflash",
+                provider_for_order: Some("deepseek"),
+                provider_constraint: None,
+                settings_provider_order: None,
+                config_default_harness: None,
+                settings_harness_order: None,
+                installed_harnesses: &installed,
+                linked_harnesses: Some(&linked_harnesses),
+                opencode_probe_result: None,
+                pi_probe_result: None,
+                cursor_probe_result: Some(&cursor_probe),
+                catalog_model_slugs: None,
+            },
+            model_token: "deepseekflash",
+            model_source: PolicySource::Profile,
+        };
+
+        let error = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
+            .expect_err("empty harness route should fail before HarnessKind validation");
+
+        let message = error.to_string();
+        assert!(message.contains("no linked harness available for model `deepseekflash`"));
+        assert!(message.contains("known linked harness constraints"));
     }
 
     #[test]

@@ -212,7 +212,7 @@ Review code changes."#;
         "build",
         "launch-bundle",
         "--model",
-        "gpt-5.4-mini",
+        "gpt-5",
         "--skill",
         "planning,missing_skill",
         "--effort",
@@ -259,10 +259,7 @@ Review code changes."#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("workspace-write")
     );
-    assert_eq!(
-        bundle["routing"]["model_token"].as_str(),
-        Some("gpt-5.4-mini")
-    );
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
     assert!(bundle["routing"]["harness"].is_string());
     assert!(bundle["routing"]["selection_kind"].is_string());
     assert!(bundle["routing"]["match_evidence"].is_string());

@@ -210,6 +210,15 @@ pub enum MarsError {
     FrozenViolation { message: String },
 
     #[error(
+        "config error: invalid config: no linked harness available for model `{model_token}` — {detail}; installed harnesses: {installed_harnesses}"
+    )]
+    LinkedHarnessExhausted {
+        model_token: String,
+        detail: String,
+        installed_harnesses: String,
+    },
+
+    #[error(
         "locked commit {commit} is no longer reachable in {url} — the tag may have been force-pushed"
     )]
     LockedCommitUnreachable { commit: String, url: String },
@@ -270,6 +279,7 @@ impl MarsError {
             | MarsError::Validation(_)
             | MarsError::InvalidRequest { .. }
             | MarsError::FrozenViolation { .. }
+            | MarsError::LinkedHarnessExhausted { .. }
             | MarsError::LockedCommitUnreachable { .. } => 2,
             MarsError::Source { .. }
             | MarsError::SubpathTraversal { .. }

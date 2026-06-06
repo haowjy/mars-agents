@@ -68,7 +68,6 @@ pub(super) enum PolicySource {
     ConfigOrder,
     Config,
     Provider,
-    Default,
     ProfileHarnessOverride,
     Unset,
 }
@@ -87,7 +86,6 @@ impl PolicySource {
             Self::ConfigOrder => "config-order",
             Self::Config => "config",
             Self::Provider => "provider",
-            Self::Default => "default",
             Self::ProfileHarnessOverride => "profile-harness-override",
             Self::Unset => "unset",
         }
@@ -100,7 +98,7 @@ impl PolicySource {
             Self::Profile | Self::ProfileModelPolicy | Self::ProfileHarnessOverride => 3,
             Self::SettingsModelPolicy | Self::Project | Self::Config => 2,
             Self::Alias => 1,
-            Self::Unset | Self::ConfigOrder | Self::Provider | Self::Default => 0,
+            Self::Unset | Self::ConfigOrder | Self::Provider => 0,
         }
     }
 }
@@ -114,7 +112,6 @@ impl From<crate::routing::RouteSource> for PolicySource {
             crate::routing::RouteSource::ConfigOrder => Self::ConfigOrder,
             crate::routing::RouteSource::ConfigDefault => Self::Config,
             crate::routing::RouteSource::Provider => Self::Provider,
-            crate::routing::RouteSource::HardcodedDefault => Self::Default,
         }
     }
 }
@@ -179,6 +176,11 @@ impl MatchedModelPolicy {
     }
 }
 
+struct ModelFallbackCandidate {
+    token: String,
+    source: PolicySource,
+}
+
 pub fn resolve_policy(
     effective_config: &EffectiveProjectConfig,
     input: PolicyInput<'_>,
@@ -218,7 +220,7 @@ pub fn resolve_policy(
         warnings.push(format!("models cache: {reason}"));
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
-    let resolved_model = model::resolve_model(
+    let mut resolved_model = model::resolve_model(
         &input,
         effective_config.settings.default_model.as_deref(),
         overlay,
@@ -231,7 +233,8 @@ pub fn resolve_policy(
         "model_source".to_string(),
         resolved_model.model_source.label().to_string(),
     );
-    let matched_policy = match_model_policy(
+    let primary_model_token = resolved_model.model_token.clone();
+    let mut matched_policy = match_model_policy(
         effective_policies(
             overlay,
             &input.profile.model_policies,
@@ -246,7 +249,7 @@ pub fn resolve_policy(
         probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_session.installed_harnesses();
-    let harness_resolution = {
+    let harness_result = {
         let mut probe_resolver = SessionProbeResolver {
             session: &mut capability_session,
         };
@@ -276,10 +279,127 @@ pub fn resolve_policy(
             },
             &mut probe_resolver,
             crate::models::harness::native_harness_authenticated,
-        )?
+        )
+    };
+    let mut model_fallback: Option<(String, String)> = None;
+    let harness_resolution = match harness_result {
+        Ok(resolution) => resolution,
+        Err(err @ MarsError::LinkedHarnessExhausted { .. }) if input.model_override.is_some() => {
+            return Err(err);
+        }
+        Err(MarsError::LinkedHarnessExhausted { .. }) => {
+            let candidates = model_fallback_candidates(input.profile, &primary_model_token);
+            let mut exhausted_tokens = Vec::new();
+            let mut resolved = None;
+
+            for candidate in candidates {
+                let fallback_model = model::resolve_model_token(
+                    candidate.token.clone(),
+                    candidate.source,
+                    aliases,
+                    &cache,
+                )?;
+                let fallback_policy = match_model_policy(
+                    effective_policies(
+                        overlay,
+                        &input.profile.model_policies,
+                        settings_model_policies,
+                    ),
+                    &fallback_model.model,
+                    &fallback_model.model_token,
+                );
+                let fallback_result = {
+                    let mut probe_resolver = SessionProbeResolver {
+                        session: &mut capability_session,
+                    };
+                    harness::resolve_harness(
+                        &input,
+                        fallback_model.alias,
+                        overlay,
+                        fallback_policy.as_ref(),
+                        harness::HarnessEvidence {
+                            routing: routing::RoutingEvidence {
+                                model_id: &fallback_model.model,
+                                provider_for_order: fallback_model.provider_for_order.as_deref(),
+                                provider_constraint: fallback_model.provider_constraint.as_deref(),
+                                settings_provider_order: effective_config
+                                    .settings
+                                    .provider_order
+                                    .as_deref(),
+                                config_default_harness: effective_config
+                                    .settings
+                                    .default_harness
+                                    .as_deref(),
+                                settings_harness_order: Some(harness_order),
+                                installed_harnesses: &installed_harnesses,
+                                linked_harnesses: (!linked_harnesses.is_empty())
+                                    .then_some(linked_harnesses.as_slice()),
+                                opencode_probe_result: None,
+                                pi_probe_result: None,
+                                cursor_probe_result: None,
+                                catalog_model_slugs: Some(catalog_slugs.as_slice()),
+                            },
+                            model_token: &fallback_model.model_token,
+                            model_source: fallback_model.model_source,
+                        },
+                        &mut probe_resolver,
+                        crate::models::harness::native_harness_authenticated,
+                    )
+                };
+
+                match fallback_result {
+                    Ok(harness_resolution) => {
+                        warnings.extend(fallback_model.warnings.iter().cloned());
+                        warnings.push(format!(
+                            "model `{primary_model_token}` unavailable on linked harnesses; fell back to `{}` on `{}`",
+                            fallback_model.model_token, harness_resolution.harness.value
+                        ));
+                        provenance.insert(
+                            "model_source".to_string(),
+                            fallback_model.model_source.label().to_string(),
+                        );
+                        model_fallback = Some((
+                            primary_model_token.clone(),
+                            fallback_model.model_token.clone(),
+                        ));
+                        resolved = Some((fallback_model, fallback_policy, harness_resolution));
+                        break;
+                    }
+                    Err(MarsError::LinkedHarnessExhausted { .. }) => {
+                        exhausted_tokens.push(candidate.token);
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+
+            let Some((fallback_model, fallback_policy, harness_resolution)) = resolved else {
+                let mut tried = vec![primary_model_token.clone()];
+                tried.extend(exhausted_tokens);
+                return Err(MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "model fallback candidates exhausted for `{}` on linked harnesses; tried: {}",
+                        primary_model_token,
+                        tried.join(", ")
+                    ),
+                }));
+            };
+
+            resolved_model = fallback_model;
+            matched_policy = fallback_policy;
+            harness_resolution
+        }
+        Err(err) => return Err(err),
     };
 
     warnings.extend(harness_resolution.warnings);
+    provenance.insert(
+        "model_fallback_applied".to_string(),
+        model_fallback.is_some().to_string(),
+    );
+    if let Some((from, to)) = &model_fallback {
+        provenance.insert("model_fallback_from".to_string(), from.clone());
+        provenance.insert("model_fallback_to".to_string(), to.clone());
+    }
     provenance.insert(
         "harness_source".to_string(),
         harness_resolution.harness.source.label().to_string(),
@@ -603,6 +723,37 @@ fn effective_policies<'a>(
                 .enumerate()
                 .map(|(index, rule)| (PolicyLayer::Settings, index, rule)),
         )
+}
+
+fn model_fallback_candidates(
+    profile: &AgentProfile,
+    primary_model_token: &str,
+) -> Vec<ModelFallbackCandidate> {
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(primary_model_token.trim().to_string());
+
+    for policy in &profile.model_policies {
+        if policy.no_fallback {
+            continue;
+        }
+        if !matches!(
+            policy.match_type,
+            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model
+        ) {
+            continue;
+        }
+        let token = policy.match_value.trim();
+        if token.is_empty() || !seen.insert(token.to_string()) {
+            continue;
+        }
+        entries.push(ModelFallbackCandidate {
+            token: token.to_string(),
+            source: PolicySource::ProfileModelPolicy,
+        });
+    }
+
+    entries
 }
 
 fn match_model_policy<'a>(

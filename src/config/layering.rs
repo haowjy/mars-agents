@@ -43,7 +43,7 @@ impl LocalSettings {
             && self.harness_order.is_none()
             && self.provider_order.is_none()
             && self.agent_emission.is_none()
-            && self.agent_copy.is_none()
+            && self.meridian.is_empty()
             && self.model_policies.is_none()
     }
 
@@ -80,8 +80,8 @@ impl LocalSettings {
         if let Some(value) = &self.agent_emission {
             merged.agent_emission = Some(value.clone());
         }
-        if let Some(value) = &self.agent_copy {
-            merged.agent_copy = Some(value.clone());
+        if let Some(value) = &self.meridian.agent_copy {
+            merged.meridian.agent_copy = Some(value.clone());
         }
         if let Some(value) = &self.model_policies {
             merged.model_policies = value.clone();

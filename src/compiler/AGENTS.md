@@ -30,7 +30,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `mod.rs` (304 lines) — orchestration: `compile()` entry point, stages, lock finalization
 - `native_agents.rs` (814 lines) — native harness surface lifecycle: scan, reconcile, compile,
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines).
-- `agent_copy.rs` — selective emission when `settings.agent_copy` is configured;
+- `agent_copy.rs` — selective emission when `settings.meridian.agent_copy` is configured;
   `agent_qualifies_for_harness()`, `model_resolves_to_harness()`, `QualifiedEmission` enum
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts

@@ -1,4 +1,4 @@
-/// Selective native agent emission via `settings.agent_copy`.
+/// Selective native agent emission via `settings.meridian.agent_copy`.
 pub mod agent_copy;
 /// Compiler stage — target building, diff, plan, apply, lock finalization.
 ///
@@ -64,7 +64,7 @@ pub fn compile(
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
-        effective_settings.agent_copy.as_ref(),
+        effective_settings.meridian_agent_copy(),
         &effective_settings.managed_targets(),
         diag,
     );

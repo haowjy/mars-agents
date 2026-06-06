@@ -1,4 +1,4 @@
-//! Selective native agent emission when `settings.agent_copy` is configured.
+//! Selective native agent emission when `settings.meridian.agent_copy` is configured.
 
 use indexmap::IndexMap;
 
@@ -42,7 +42,7 @@ pub fn build_agent_copy_spec(
             diag.warn(
                 "agent-copy-invalid-harness",
                 format!(
-                    "settings.agent_copy.harnesses: unknown harness '{trimmed}'; \
+                    "settings.meridian.agent_copy.harnesses: unknown harness '{trimmed}'; \
                      valid harnesses: {}",
                     registry::names().join(", ")
                 ),
@@ -54,7 +54,7 @@ pub fn build_agent_copy_spec(
             diag.warn(
                 "agent-copy-harness-not-in-targets",
                 format!(
-                    "settings.agent_copy.harnesses: harness '{trimmed}' maps to target \
+                    "settings.meridian.agent_copy.harnesses: harness '{trimmed}' maps to target \
                      `{target}` which is not in settings.targets; add `{target}` to \
                      settings.targets to emit native agents there"
                 ),

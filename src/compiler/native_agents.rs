@@ -749,7 +749,7 @@ pub(crate) fn materialize_native_agents_after_link(
     }
 
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
-        input.effective.settings.agent_copy.as_ref(),
+        input.effective.settings.meridian_agent_copy(),
         input.managed_targets,
         diag,
     );

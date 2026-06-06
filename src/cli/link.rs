@@ -78,7 +78,7 @@ fn link_target(
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
-        effective.settings.agent_copy.as_ref(),
+        effective.settings.meridian_agent_copy(),
         &runtime_targets,
         &mut diag,
     );

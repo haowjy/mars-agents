@@ -122,7 +122,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → target → diff → apply. Native agent materialization follows `settings.agent_emission`; `[settings.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → target → diff → apply. Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 ---
 
@@ -297,7 +297,7 @@ mars link <target> [--force]
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk but is not tracked for that `target_root`, Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record ownership (`target-unmanaged-adopted`)
-- Materialization depends on target, `agent_emission`, and optional `[settings.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
+- Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/

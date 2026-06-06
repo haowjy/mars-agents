@@ -4,6 +4,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Changed
+- `[settings.agent_copy]` renamed to `[settings.meridian.agent_copy]` (clean break, no shim) — marks selective native copy as meridian-managed-only.
 - `mars build launch-bundle --context` / `launch_actions` projection marked EXPERIMENTAL — not consumed by meridian; may be removed.
 
 ### Added

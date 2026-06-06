@@ -172,7 +172,7 @@ fn agent_copy_mixed_selective_only_qualifying_emitted() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -207,7 +207,7 @@ fn agent_copy_first_qualifying_policy_wins() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = true
 
@@ -251,7 +251,7 @@ fn agent_copy_link_fails_on_handwritten_native_collision() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -300,7 +300,7 @@ fn agent_copy_model_binding_qualifies_without_profile_harness() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [models.opus]
@@ -333,7 +333,7 @@ fn agent_copy_steady_state_survives_consecutive_syncs() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 "#,
         CLAUDE_HARNESS_AGENT,
@@ -373,7 +373,7 @@ fn agent_copy_stale_native_removed_when_config_cleared() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 "#,
         CLAUDE_HARNESS_AGENT,
@@ -462,7 +462,7 @@ fn agent_copy_link_materializes_selective_native_agents() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]
@@ -528,7 +528,7 @@ model: gpt-5.3-codex
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["codex"]
 
 [dependencies.src]
@@ -573,7 +573,7 @@ fn link_scopes_native_agent_materialization_to_requested_target() {
 [settings]
 targets = []
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude", "opencode"]
 "#,
         Some("1"),
@@ -672,7 +672,7 @@ fn agent_copy_sync_diff_does_not_materialize_native_or_lock() {
 [settings]
 targets = [".claude"]
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 
 [dependencies.src]

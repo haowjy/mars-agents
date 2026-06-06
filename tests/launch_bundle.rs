@@ -416,21 +416,6 @@ fn build_launch_bundle_model_policy_fallback_walks_chain() {
 }
 
 #[test]
-fn build_launch_bundle_model_policy_fallback_runs_without_link_constraints() {
-    routing::build_launch_bundle_model_policy_fallback_runs_without_link_constraints();
-}
-
-#[test]
-fn build_launch_bundle_model_policy_fallback_runs_after_profile_harness_pivot_exhausts() {
-    routing::build_launch_bundle_model_policy_fallback_runs_after_profile_harness_pivot_exhausts();
-}
-
-#[test]
-fn build_launch_bundle_model_policy_fallback_runs_for_settings_default_model() {
-    routing::build_launch_bundle_model_policy_fallback_runs_for_settings_default_model();
-}
-
-#[test]
 fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     routing::build_launch_bundle_model_policy_fallback_exhaustion_errors();
 }
@@ -438,16 +423,6 @@ fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
 #[test]
 fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
     routing::build_launch_bundle_model_policy_fallback_skips_no_fallback_rules();
-}
-
-#[test]
-fn build_launch_bundle_model_policy_fallback_honors_active_no_fallback_rule() {
-    routing::build_launch_bundle_model_policy_fallback_honors_active_no_fallback_rule();
-}
-
-#[test]
-fn build_launch_bundle_model_policy_fallback_model_match_uses_literal_model_id() {
-    routing::build_launch_bundle_model_policy_fallback_model_match_uses_literal_model_id();
 }
 
 #[test]

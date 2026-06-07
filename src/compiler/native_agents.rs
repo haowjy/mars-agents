@@ -1067,7 +1067,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
             reconcile_ctx,
             &resolved,
             model_router
-                .as_deref_mut()
+                .as_mut()
                 .expect("native model router required for selective native reconcile"),
             diag,
         ),
@@ -1087,7 +1087,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
                 )
             }),
             model_router
-                .as_deref_mut()
+                .as_mut()
                 .expect("native model router required for native compile"),
             diag,
         ),

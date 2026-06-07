@@ -750,7 +750,10 @@ path = "{}"
     let cursor_native =
         fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
     assert!(cursor_native.contains("name: cursor-worker"));
-    assert!(cursor_native.contains("model: gpt55"));
+    assert!(
+        !cursor_native.contains("model:"),
+        "unresolved cursor model should be cleared in EmitAll mode: {cursor_native}"
+    );
     assert!(cursor_native.contains("# Cursor body"));
     assert!(
         !cursor_native.contains("mcp-tools"),

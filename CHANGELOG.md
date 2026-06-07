@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Native agent compilation now resolves auto-resolved model aliases from the models cache before emitting harness-native files.
+- Native agent compilation now uses the shared model routing evaluator for native model pinning, resolving auto aliases from `.mars/models-cache.json`, respecting model-policy fallback order, and clearing/skipping target-native model fields when no candidate routes to that harness.
 
 ## [0.8.2] - 2026-06-07
 

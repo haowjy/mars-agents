@@ -1,6 +1,9 @@
 use super::*;
 use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
+use crate::harness::host::{
+    CapabilityCollectionOptions, CapabilitySession, ExecutableResolver, ExecutableState,
+};
 use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
 use crate::models::{CachedModel, ModelAlias, ModelSpec, ModelsCache};
 use indexmap::IndexMap;
@@ -76,37 +79,37 @@ fn models_cache_with(id: &str, provider: &str, release_date: &str) -> ModelsCach
     }
 }
 
+struct MissingResolver;
+
+impl ExecutableResolver for MissingResolver {
+    fn resolve(&self, _binary: &str) -> ExecutableState {
+        ExecutableState::Missing
+    }
+}
+
+fn test_router<'a>(
+    aliases: &'a IndexMap<String, ModelAlias>,
+    cache: &'a ModelsCache,
+) -> NativeModelRoutingRuntime<'a> {
+    let settings = crate::config::Settings::default();
+    let routing_settings = ResolvedRoutingSettings::from_settings(&settings);
+    let session = CapabilitySession::collect_with_resolver_without_auth(
+        &CapabilityCollectionOptions {
+            offline: true,
+            probe_refresh: crate::models::probes::ProbeRefreshMode::Skip,
+        },
+        &MissingResolver,
+    );
+    NativeModelRoutingRuntime::with_session(aliases, cache, routing_settings, session)
+}
+
 #[test]
-fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
+fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     let mut aliases = IndexMap::new();
     aliases.insert(
         "sonnet".to_string(),
         pinned_alias_with_harness("claude-sonnet-4-6", "claude", None),
     );
-    let mut diag = DiagnosticCollector::new();
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Claude,
-            &profile_with_model("sonnet", HarnessKind::Claude),
-            &aliases,
-            &empty_models_cache(),
-            &[],
-            &mut diag
-        ),
-        Some("claude-sonnet-4-6".to_string())
-    );
-    assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Codex,
-            &profile_with_model("raw-model-id", HarnessKind::Codex),
-            &IndexMap::new(),
-            &empty_models_cache(),
-            &[],
-            &mut diag
-        ),
-        None
-    );
-
     aliases.insert(
         "gpt-auto".to_string(),
         ModelAlias {
@@ -122,26 +125,42 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
             },
         },
     );
+
+    let cache = empty_models_cache();
+    let mut router = test_router(&aliases, &cache);
     assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Codex,
-            &profile_with_model("gpt-auto", HarnessKind::Codex),
-            &aliases,
-            &empty_models_cache(),
-            &[],
-            &mut diag
+        router.decision_for_profile(
+            &profile_with_model("sonnet", HarnessKind::Claude),
+            &HarnessKind::Claude,
+            false,
+            true,
         ),
-        None
+        NativeModelDecision::Set {
+            model_id: "claude-sonnet-4-6".to_string()
+        }
     );
-    assert!(
-        diag.drain()
-            .iter()
-            .any(|d| d.code == "native-model-alias-unpinned")
+    assert_eq!(
+        router.decision_for_profile(
+            &profile_with_model("raw-model-id", HarnessKind::Codex),
+            &HarnessKind::Codex,
+            false,
+            true,
+        ),
+        NativeModelDecision::Clear
+    );
+    assert_eq!(
+        router.decision_for_profile(
+            &profile_with_model("gpt-auto", HarnessKind::Codex),
+            &HarnessKind::Codex,
+            false,
+            true,
+        ),
+        NativeModelDecision::Clear
     );
 }
 
 #[test]
-fn non_cursor_native_model_mapping_resolves_auto_aliases_from_models_cache() {
+fn native_model_routing_resolves_auto_aliases_from_models_cache() {
     let mut aliases = IndexMap::new();
     aliases.insert(
         "sonnet".to_string(),
@@ -159,58 +178,60 @@ fn non_cursor_native_model_mapping_resolves_auto_aliases_from_models_cache() {
         },
     );
     let cache = models_cache_with("claude-sonnet-4-6", "Anthropic", "2026-01-01");
-    let mut diag = DiagnosticCollector::new();
+    let mut router = test_router(&aliases, &cache);
 
     assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Claude,
+        router.decision_for_profile(
             &profile_with_model("sonnet", HarnessKind::Claude),
-            &aliases,
-            &cache,
-            &[],
-            &mut diag
+            &HarnessKind::Cursor,
+            false,
+            true,
         ),
-        Some("claude-sonnet-4-6".to_string())
+        NativeModelDecision::Clear,
+        "without cursor probe evidence the claude model should not blindly pin to cursor"
     );
-    assert!(
-        diag.drain()
-            .iter()
-            .all(|d| d.code != "native-model-alias-unpinned")
+    assert_eq!(
+        router.decision_for_profile(
+            &profile_with_model("sonnet", HarnessKind::Claude),
+            &HarnessKind::Claude,
+            false,
+            true,
+        ),
+        NativeModelDecision::Set {
+            model_id: "claude-sonnet-4-6".to_string()
+        }
     );
 }
 
 #[test]
-fn cursor_native_model_mapping_resolves_auto_aliases_before_slug_lookup() {
+fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
     let mut aliases = IndexMap::new();
     aliases.insert(
-        "sonnet".to_string(),
+        "deepseek".to_string(),
         ModelAlias {
-            harness: Some("claude".to_string()),
+            harness: None,
             description: None,
-            default_effort: Some("high".to_string()),
+            default_effort: None,
             autocompact: None,
             autocompact_pct: None,
-            spec: ModelSpec::AutoResolve {
-                provider: Some("Anthropic".to_string()),
-                match_patterns: vec!["*sonnet*".to_string()],
-                exclude_patterns: Vec::new(),
+            spec: ModelSpec::Pinned {
+                model: "deepseek-reasoner".to_string(),
+                provider: Some("deepseek".to_string()),
             },
         },
     );
-    let cache = models_cache_with("claude-sonnet-4-6", "Anthropic", "2026-01-01");
-    let probe_slugs = vec!["claude-4.6-sonnet-high".to_string()];
-    let mut diag = DiagnosticCollector::new();
+    let cache = empty_models_cache();
+    let mut router = test_router(&aliases, &cache);
 
     assert_eq!(
-        native_model_override_for_harness(
-            &HarnessKind::Cursor,
-            &profile_with_model("sonnet", HarnessKind::Cursor),
-            &aliases,
-            &cache,
-            &probe_slugs,
-            &mut diag
+        router.decision_for_profile(
+            &profile_with_model("deepseek", HarnessKind::Claude),
+            &HarnessKind::Claude,
+            false,
+            true,
         ),
-        Some("claude-4.6-sonnet-high".to_string())
+        NativeModelDecision::Clear,
+        "linked-harness fallback must not make a foreign-provider model qualify for claude"
     );
 }
 
@@ -272,11 +293,10 @@ fn link_suppress_all_reconciles_selective_native_target() {
             installed_checksum: "sha256:coder-toml".into(),
         });
     let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    let removed = reconcile_native_agent_surfaces(
+    let removed = reconcile_native_agent_surfaces_without_model_routing(
         &NativeAgentReconcileCtx {
             policy: AgentSurfacePolicy::SuppressAll,
             project_root: dir.path(),
-            model_aliases: &IndexMap::new(),
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
@@ -336,17 +356,19 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
     let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
     let mut diag = DiagnosticCollector::new();
     let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
+    let cache = empty_models_cache();
+    let mut router = test_router(&aliases, &cache);
     reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
-            model_aliases: &aliases,
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
         },
         &mars_agents,
+        &mut router,
         &mut diag,
     );
 
@@ -416,17 +438,19 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
     let mut diag = DiagnosticCollector::new();
     let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
+    let cache = empty_models_cache();
+    let mut router = test_router(&aliases, &cache);
     let removed = reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
             policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
-            model_aliases: &aliases,
             outcomes: &[],
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
         },
         &mars_agents,
+        &mut router,
         &mut diag,
     );
 
@@ -466,9 +490,6 @@ fn compile_emit_all_agents(
     let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
-        model_aliases: aliases,
-        models_cache: &models_cache,
-        cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
         configured_emit_harnesses: configured_harnesses,
@@ -478,7 +499,14 @@ fn compile_emit_all_agents(
             dry_run: false,
         },
     };
-    compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, agents, &mut diag)
+    let mut router = test_router(aliases, &models_cache);
+    compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        agents,
+        &mut router,
+        &mut diag,
+    )
 }
 
 #[test]
@@ -627,9 +655,6 @@ fn compile_emit_all_with_overlays(
     let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
-        model_aliases: aliases,
-        models_cache: &models_cache,
-        cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
         configured_emit_harnesses: configured_harnesses,
@@ -641,7 +666,14 @@ fn compile_emit_all_with_overlays(
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
     let resolved = resolve_native_agent_profiles(agents, overlays);
-    compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &resolved, &mut diag)
+    let mut router = test_router(aliases, &models_cache);
+    compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        &resolved,
+        &mut router,
+        &mut diag,
+    )
 }
 
 #[test]

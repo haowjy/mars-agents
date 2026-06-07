@@ -10,6 +10,7 @@ const CLAUDE_HARNESS_AGENT: &str = r#"---
 name: coder
 description: Writes code
 harness: claude
+model: claude-opus-4-6
 ---
 # Coder
 "#;
@@ -26,6 +27,7 @@ const CODEX_ONLY_AGENT: &str = r#"---
 name: explorer
 description: Codex only
 harness: codex
+model: gpt-5.3-codex
 ---
 # Explorer
 "#;
@@ -54,9 +56,12 @@ fn lock_has_codex_native_agent(project: &assert_fs::fixture::ChildPath, agent: &
     lock.contains_output(".codex", &format!("agents/{agent}.toml"))
 }
 
-fn lock_has_opencode_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
+fn lock_has_codex_secondary_native_agent(
+    project: &assert_fs::fixture::ChildPath,
+    agent: &str,
+) -> bool {
     let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
-    lock.contains_output(".opencode", &format!("agents/{agent}.md"))
+    lock.contains_output(".codex", &format!("agents/{agent}.toml"))
 }
 
 fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -> String {
@@ -114,7 +119,7 @@ fn setup_dual_harness_project(
         "src",
         &[
             ("coder", CLAUDE_HARNESS_AGENT),
-            ("integration-tester", OPENCODE_HARNESS_AGENT),
+            ("integration-tester", CODEX_SECONDARY_AGENT),
         ],
         &[],
     );
@@ -555,11 +560,11 @@ path = "{}"
     );
 }
 
-const OPENCODE_HARNESS_AGENT: &str = r#"---
+const CODEX_SECONDARY_AGENT: &str = r#"---
 name: integration-tester
 description: Runs integration tests
-harness: opencode
-model: kimi-k2
+harness: codex
+model: gpt-5.3-codex
 ---
 # Integration tester
 "#;
@@ -574,7 +579,7 @@ fn link_scopes_native_agent_materialization_to_requested_target() {
 targets = []
 
 [settings.meridian.agent_copy]
-harnesses = ["claude", "opencode"]
+harnesses = ["claude", "codex"]
 "#,
         Some("1"),
     );
@@ -585,24 +590,19 @@ harnesses = ["claude", "opencode"]
     write_claude_collision(&project);
 
     mars()
-        .args([
-            "link",
-            ".opencode",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
+        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
         .success();
 
     assert!(
         project
-            .child(".opencode/agents/integration-tester.md")
+            .child(".codex/agents/integration-tester.toml")
             .exists()
     );
     assert_claude_collision_unchanged(&project);
 
-    for (target, expect_opencode) in [(".opencode", true), (".agents", false)] {
+    for (target, expect_codex) in [(".codex", true), (".agents", false)] {
         let dir = TempDir::new().unwrap();
         let project = setup_dual_harness_project(
             &dir,
@@ -638,19 +638,19 @@ path = "{}"
             .assert()
             .success();
 
-        if expect_opencode {
+        if expect_codex {
             assert!(
                 project
-                    .child(".opencode/agents/integration-tester.md")
+                    .child(".codex/agents/integration-tester.toml")
                     .exists()
             );
         } else {
             assert!(
                 !project
-                    .child(".opencode/agents/integration-tester.md")
+                    .child(".codex/agents/integration-tester.toml")
                     .exists()
             );
-            assert!(!lock_has_opencode_native_agent(
+            assert!(!lock_has_codex_secondary_native_agent(
                 &project,
                 "integration-tester"
             ));

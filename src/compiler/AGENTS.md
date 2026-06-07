@@ -30,8 +30,8 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `mod.rs` (304 lines) — orchestration: `compile()` entry point, stages, lock finalization
 - `native_agents.rs` (814 lines) — native harness surface lifecycle: scan, reconcile, compile,
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines).
-- `agent_copy.rs` — selective emission when `settings.meridian.agent_copy` is configured;
-  `agent_qualifies_for_harness()`, `model_resolves_to_harness()`, `QualifiedEmission` enum
+- `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
+- `native_agents.rs` — native model routing runtime, reconcile, compile, and link materialization
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
@@ -55,12 +55,13 @@ Under `SuppressAll` (Meridian-managed, or `agent_emission = "never"` without age
 ### Model Alias Resolution at Compile Time
 
 When lowering a universal agent profile to a native harness format, model aliases like
-`opus46` are resolved to pinned model IDs (e.g., `claude-opus-4-6`) at compile time.
+`opus46` are resolved to concrete model IDs (e.g., `claude-opus-4-6`) at compile time.
 This is necessary because native harnesses (Claude Code, Codex) don't understand the
-alias system. Resolution happens in `native_model_override_for_harness()` in
-`native_agents.rs` — it consults the merged alias registry and supplies a
-`model_override` to the lowerer. `AutoResolve` tokens (containing `[`) and unpinned
-aliases pass through verbatim with a warning.
+alias system. `NativeModelRoutingRuntime` in `native_agents.rs` owns the merged alias
+registry, `.mars/models-cache.json`, catalog slugs, routing settings, one lazy
+capability session, and memoized `(model token, target harness)` decisions. It resolves
+profile `model` first, then model-policy candidates when fanout is enabled, and delegates
+accept/reject to `routing::evaluate_candidates*` constrained to the target harness.
 
 ### Agent Surface Policy
 
@@ -77,9 +78,10 @@ aliases pass through verbatim with a warning.
 
 - `mod.rs` — schema parser, `AgentProfile` from YAML frontmatter + markdown body
 - `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept a
-  `model_field: &NativeModel` parameter (`Inherit`, `Set(id)`, or `Clear` — omits the
-  model field). `lower_for_harness_with_model()` dispatches to the correct lowerer,
-  ensuring emitted native artifacts carry pinned model IDs rather than aliases.
+  `model_field: &NativeModel` parameter (`Set(id)` or `Clear` for native compile;
+  `Inherit` remains for direct lowerer tests). `lower_for_harness_with_model()`
+  dispatches to the correct lowerer, ensuring emitted native artifacts carry concrete
+  model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 
 ### Non-Overridable Fields

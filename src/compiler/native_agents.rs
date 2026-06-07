@@ -1,13 +1,17 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
+use crate::config::ModelPolicyMatchType;
+use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
-use crate::models::{ModelAlias, ModelsCache};
+use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
+use crate::models::{ModelAlias, ModelSpec, ModelsCache};
 use crate::sync::apply::ActionOutcome;
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
@@ -19,7 +23,6 @@ pub use crate::lock::CompiledNativeOutput;
 pub(crate) struct NativeAgentReconcileCtx<'a> {
     pub policy: AgentSurfacePolicy,
     pub project_root: &'a Path,
-    pub model_aliases: &'a IndexMap<String, ModelAlias>,
     pub outcomes: &'a [ActionOutcome],
     pub old_lock: &'a crate::lock::LockFile,
     pub dry_run: bool,
@@ -36,9 +39,6 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
 /// Shared inputs for native agent compilation.
 pub(crate) struct NativeAgentCompileCtx<'a> {
     pub project_root: &'a Path,
-    pub model_aliases: &'a IndexMap<String, ModelAlias>,
-    pub models_cache: &'a ModelsCache,
-    pub cursor_probe_slugs: &'a [String],
     pub old_lock: &'a crate::lock::LockFile,
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
     pub configured_emit_harnesses: &'a [crate::compiler::agents::HarnessKind],
@@ -66,6 +66,334 @@ pub(crate) struct MarsCanonicalAgent {
     pub canonical_dest_path: String,
     pub profile: crate::compiler::agents::AgentProfile,
     pub fm: crate::frontmatter::Frontmatter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NativeModelDecision {
+    Set { model_id: String },
+    Clear,
+    Skip,
+}
+
+#[derive(Debug, Clone)]
+struct NativeResolvedModel<'a> {
+    model_id: String,
+    provider_for_order: Option<String>,
+    provider_constraint: Option<String>,
+    alias: Option<&'a ModelAlias>,
+}
+
+#[derive(Debug, Clone)]
+struct NativeModelCandidate {
+    token: String,
+    harness_constraint: Option<crate::compiler::agents::HarnessKind>,
+}
+
+struct NativeSessionProbeResolver<'a> {
+    session: &'a mut CapabilitySession,
+}
+
+impl crate::routing::ProbeResolver for NativeSessionProbeResolver<'_> {
+    fn opencode_probe_result(&mut self) -> Option<crate::models::probes::OpenCodeProbeResult> {
+        self.session.opencode_probe_result()
+    }
+
+    fn pi_probe_result(&mut self) -> Option<crate::models::probes::PiProbeResult> {
+        self.session.pi_probe_result()
+    }
+
+    fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
+        self.session.cursor_probe_result()
+    }
+}
+
+/// Command-scoped native model router. Native surfaces must emit one concrete
+/// harness model per file, but the accept/reject decision is delegated to the
+/// same routing evaluator used by `mars models resolve`.
+pub(crate) struct NativeModelRoutingRuntime<'a> {
+    aliases: &'a IndexMap<String, ModelAlias>,
+    cache: &'a ModelsCache,
+    catalog_model_slugs: Vec<String>,
+    routing_settings: ResolvedRoutingSettings,
+    session: CapabilitySession,
+    installed_for_native_targets: HashSet<String>,
+    memo: HashMap<(String, String, Option<String>), Option<String>>,
+}
+
+impl<'a> NativeModelRoutingRuntime<'a> {
+    pub(crate) fn collect(
+        aliases: &'a IndexMap<String, ModelAlias>,
+        cache: &'a ModelsCache,
+        routing_settings: ResolvedRoutingSettings,
+    ) -> Self {
+        let session = CapabilitySession::collect_without_auth(&CapabilityCollectionOptions {
+            offline: crate::models::is_mars_offline(),
+            probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
+        });
+        Self::with_session(aliases, cache, routing_settings, session)
+    }
+
+    fn with_session(
+        aliases: &'a IndexMap<String, ModelAlias>,
+        cache: &'a ModelsCache,
+        routing_settings: ResolvedRoutingSettings,
+        session: CapabilitySession,
+    ) -> Self {
+        let mut installed_for_native_targets = session.installed_harnesses();
+        installed_for_native_targets.extend(
+            crate::compiler::agents::HarnessKind::all()
+                .iter()
+                .map(|harness| harness.to_harness_id().as_str().to_string()),
+        );
+        Self {
+            aliases,
+            cache,
+            catalog_model_slugs: crate::models::catalog_model_slugs(cache),
+            routing_settings,
+            session,
+            installed_for_native_targets,
+            memo: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn decision_for_profile(
+        &mut self,
+        profile: &crate::compiler::agents::AgentProfile,
+        target_harness: &crate::compiler::agents::HarnessKind,
+        include_fanout: bool,
+        emit_all: bool,
+    ) -> NativeModelDecision {
+        for candidate in self.candidates(profile, include_fanout) {
+            if candidate
+                .harness_constraint
+                .as_ref()
+                .is_some_and(|constraint| constraint != target_harness)
+            {
+                continue;
+            }
+            if let Some(model_id) = self.route_candidate(profile, &candidate.token, target_harness)
+            {
+                return NativeModelDecision::Set { model_id };
+            }
+        }
+
+        if emit_all {
+            NativeModelDecision::Clear
+        } else {
+            NativeModelDecision::Skip
+        }
+    }
+
+    fn candidates(
+        &self,
+        profile: &crate::compiler::agents::AgentProfile,
+        include_fanout: bool,
+    ) -> Vec<NativeModelCandidate> {
+        let mut candidates = Vec::new();
+        if let Some(model) = profile.model.as_deref()
+            && !model.trim().is_empty()
+        {
+            candidates.push(NativeModelCandidate {
+                token: model.trim().to_string(),
+                harness_constraint: None,
+            });
+        }
+        if include_fanout {
+            for policy in &profile.model_policies {
+                candidates.extend(self.policy_candidates(policy));
+            }
+        }
+        candidates
+    }
+
+    fn policy_candidates(
+        &self,
+        policy: &crate::config::ModelPolicyRule,
+    ) -> Vec<NativeModelCandidate> {
+        let value = policy.match_value.trim();
+        if value.is_empty() {
+            return Vec::new();
+        }
+        let harness_constraint = policy_override_harness(policy);
+
+        match policy.match_type {
+            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model => {
+                vec![NativeModelCandidate {
+                    token: value.to_string(),
+                    harness_constraint,
+                }]
+            }
+            ModelPolicyMatchType::ModelGlob => self
+                .cache
+                .models
+                .iter()
+                .filter(|model| crate::models::glob_match(value, &model.id))
+                .map(|model| NativeModelCandidate {
+                    token: model.id.clone(),
+                    harness_constraint: harness_constraint.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    fn route_candidate(
+        &mut self,
+        profile: &crate::compiler::agents::AgentProfile,
+        token: &str,
+        target_harness: &crate::compiler::agents::HarnessKind,
+    ) -> Option<String> {
+        let memo_effort = if *target_harness == crate::compiler::agents::HarnessKind::Cursor {
+            self.resolve_candidate(token).and_then(|resolved| {
+                cursor_effective_effort(profile, resolved.alias).map(str::to_string)
+            })
+        } else {
+            None
+        };
+        let key = (
+            token.to_string(),
+            target_harness.to_harness_id().as_str().to_string(),
+            memo_effort,
+        );
+        if let Some(cached) = self.memo.get(&key) {
+            return cached.clone();
+        }
+
+        let routed = self.route_candidate_uncached(profile, token, target_harness);
+        self.memo.insert(key, routed.clone());
+        routed
+    }
+
+    fn route_candidate_uncached(
+        &mut self,
+        profile: &crate::compiler::agents::AgentProfile,
+        token: &str,
+        target_harness: &crate::compiler::agents::HarnessKind,
+    ) -> Option<String> {
+        let resolved = self.resolve_candidate(token)?;
+        let target_name = target_harness.to_harness_id().as_str().to_string();
+        let linked_harnesses = [target_name.clone()];
+        let provider_order = self.routing_settings.provider_order_names();
+        let harness_order = self.routing_settings.harness_order_names();
+        let default_harness = self.routing_settings.default_harness_name();
+        let route_model_ids = self.route_model_ids(target_harness, &resolved.model_id);
+
+        for route_model_id in route_model_ids {
+            let input = crate::routing::RoutingInput {
+                model_id: &route_model_id,
+                provider_for_order: resolved.provider_for_order.as_deref(),
+                provider_constraint: resolved.provider_constraint.as_deref(),
+                settings_provider_order: provider_order.as_deref(),
+                settings_harness_order: harness_order.as_deref(),
+                config_default_harness: default_harness.as_deref(),
+                installed_harnesses: &self.installed_for_native_targets,
+                linked_harnesses: Some(linked_harnesses.as_slice()),
+                opencode_probe_result: None,
+                pi_probe_result: None,
+                cursor_probe_result: None,
+                catalog_model_slugs: Some(self.catalog_model_slugs.as_slice()),
+            };
+            let mut probe_resolver = NativeSessionProbeResolver {
+                session: &mut self.session,
+            };
+            let trace = crate::routing::evaluate_candidates_with_auth_and_probes(
+                &input,
+                &mut probe_resolver,
+                |_| true,
+            );
+            if trace.selected_harness() != target_name {
+                continue;
+            }
+            if matches!(
+                trace.selected_selection_kind(),
+                crate::routing::SelectionKind::ConfigDefault
+                    | crate::routing::SelectionKind::LinkedFallback
+            ) {
+                continue;
+            }
+            if crate::routing::acceptance::accept_route(
+                &trace,
+                &self.installed_for_native_targets,
+                native_acceptance_policy(target_harness),
+            )
+            .is_err()
+            {
+                continue;
+            }
+
+            return Some(self.native_model_id(profile, target_harness, &resolved, &route_model_id));
+        }
+        None
+    }
+
+    fn route_model_ids(
+        &self,
+        target_harness: &crate::compiler::agents::HarnessKind,
+        model_id: &str,
+    ) -> Vec<String> {
+        let mut ids = vec![model_id.to_string()];
+        if *target_harness == crate::compiler::agents::HarnessKind::Cursor
+            && let Some(shimmed) = cursor_probe_model_id_shim(model_id)
+            && !ids.iter().any(|id| id == &shimmed)
+        {
+            ids.push(shimmed);
+        }
+        ids
+    }
+
+    fn native_model_id(
+        &mut self,
+        profile: &crate::compiler::agents::AgentProfile,
+        target_harness: &crate::compiler::agents::HarnessKind,
+        resolved: &NativeResolvedModel<'_>,
+        routed_model_id: &str,
+    ) -> String {
+        if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
+            return resolved.model_id.clone();
+        }
+
+        let effort = cursor_effective_effort(profile, resolved.alias).unwrap_or("medium");
+        let Some(cursor_probe) = self.session.cursor_probe_result() else {
+            return routed_model_id.to_string();
+        };
+        crate::models::probes::cursor::resolve_cursor_effort_slug(
+            routed_model_id,
+            effort,
+            &cursor_probe.slugs,
+        )
+        .map(|resolution| resolution.slug)
+        .unwrap_or_else(|_| routed_model_id.to_string())
+    }
+
+    fn resolve_candidate(&self, token: &str) -> Option<NativeResolvedModel<'a>> {
+        let alias = self.aliases.get(token);
+        let (raw_model_token, token_provider_constraint) =
+            crate::models::split_provider_constrained_model_token(token);
+        let model_id = match alias {
+            Some(alias) => crate::models::resolve_model_id_for_alias(alias, self.cache)?,
+            None => raw_model_token.clone(),
+        };
+        if model_id.trim().is_empty() {
+            return None;
+        }
+
+        let provider_constraint = alias
+            .and_then(provider_constraint_for_alias)
+            .or(token_provider_constraint.clone());
+        let provider_for_order = alias
+            .and_then(|alias| crate::models::resolve_provider_for_alias(alias, self.cache))
+            .or_else(|| {
+                token_provider_constraint.or_else(|| {
+                    crate::models::infer_provider_from_model_id(&model_id).map(str::to_string)
+                })
+            });
+
+        Some(NativeResolvedModel {
+            model_id,
+            provider_for_order,
+            provider_constraint,
+            alias,
+        })
+    }
 }
 
 /// Lock-recorded native agent paths to keep during selective target-sync orphan cleanup.
@@ -174,10 +502,51 @@ pub(crate) fn scan_mars_agents(
     agents
 }
 
+fn reconcile_native_agent_surfaces_without_model_routing(
+    ctx: &NativeAgentReconcileCtx<'_>,
+    mars_agents: &[MarsCanonicalAgent],
+    diag: &mut DiagnosticCollector,
+) -> Vec<RemovedNativeOutput> {
+    use crate::lock::ItemKind;
+
+    let mut removed = match &ctx.policy {
+        AgentSurfacePolicy::SuppressAll => remove_current_native_agent_surfaces(
+            ctx.project_root,
+            mars_agents,
+            ctx.old_lock,
+            ctx.selective_harness_scope,
+            ctx.dry_run,
+            diag,
+        ),
+        AgentSurfacePolicy::EmitSelective(_) | AgentSurfacePolicy::EmitAll => Vec::new(),
+    };
+
+    for outcome in ctx.outcomes {
+        if outcome.item_id.kind != ItemKind::Agent
+            || !matches!(outcome.action, crate::sync::apply::ActionTaken::Removed)
+        {
+            continue;
+        }
+
+        let agent_name = outcome.dest_path.item_name(ItemKind::Agent);
+        removed.extend(remove_native_agent_shapes(
+            ctx.project_root,
+            &agent_name,
+            ctx.old_lock,
+            ctx.selective_harness_scope,
+            ctx.dry_run,
+            diag,
+        ));
+    }
+
+    removed
+}
+
 /// Reconcile native harness agent artifacts written outside target sync.
 pub(crate) fn reconcile_native_agent_surfaces(
     ctx: &NativeAgentReconcileCtx<'_>,
     mars_agents: &[MarsCanonicalAgent],
+    model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<RemovedNativeOutput> {
     use crate::lock::ItemKind;
@@ -197,7 +566,14 @@ pub(crate) fn reconcile_native_agent_surfaces(
                 Some(scope) => scope,
                 None => HarnessKind::all(),
             };
-            reconcile_selective_native_agent_surfaces(ctx, spec, harnesses, mars_agents, diag)
+            reconcile_selective_native_agent_surfaces(
+                ctx,
+                spec,
+                harnesses,
+                mars_agents,
+                model_router,
+                diag,
+            )
         }
         AgentSurfacePolicy::EmitAll => Vec::new(),
     };
@@ -281,6 +657,7 @@ fn reconcile_selective_native_agent_surfaces(
     spec: &agent_copy::AgentCopySpec,
     harnesses: &[crate::compiler::agents::HarnessKind],
     mars_agents: &[MarsCanonicalAgent],
+    model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<RemovedNativeOutput> {
     let mut removed = Vec::new();
@@ -289,13 +666,15 @@ fn reconcile_selective_native_agent_surfaces(
         // and emission qualify against identical effective profiles.
         for harness in harnesses {
             let qualifies = spec.harnesses.contains(harness)
-                && agent_copy::agent_qualifies_for_harness(
-                    &agent.profile,
-                    harness,
-                    ctx.model_aliases,
-                    spec.include_fanout,
-                )
-                .is_some();
+                && matches!(
+                    model_router.decision_for_profile(
+                        &agent.profile,
+                        harness,
+                        spec.include_fanout,
+                        false,
+                    ),
+                    NativeModelDecision::Set { .. }
+                );
             if qualifies {
                 continue;
             }
@@ -355,6 +734,7 @@ pub(crate) fn compile_native_agents<'a>(
     ctx: &NativeAgentCompileCtx<'_>,
     policy: &AgentSurfacePolicy,
     mars_agents: impl IntoIterator<Item = &'a MarsCanonicalAgent>,
+    model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<CompiledNativeOutput> {
     if matches!(policy, AgentSurfacePolicy::SuppressAll) {
@@ -372,7 +752,7 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, model) in qualifying_emissions(effective_profile, policy, ctx, diag) {
+        for (harness, model) in qualifying_emissions(effective_profile, policy, ctx, model_router) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
@@ -416,23 +796,11 @@ fn effective_native_profile(
     effective
 }
 
-/// Map a resolved model override (`Some(id)` to pin, `None` to inherit the profile's
-/// own model) to the lowering boundary's [`crate::compiler::agents::lower::NativeModel`].
-fn native_model_from_override(
-    model_override: Option<String>,
-) -> crate::compiler::agents::lower::NativeModel {
-    use crate::compiler::agents::lower::NativeModel;
-    match model_override {
-        Some(id) => NativeModel::Set(id),
-        None => NativeModel::Inherit,
-    }
-}
-
 fn qualifying_emissions(
     profile: &crate::compiler::agents::AgentProfile,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
-    diag: &mut DiagnosticCollector,
+    model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> Vec<(
     crate::compiler::agents::HarnessKind,
     crate::compiler::agents::lower::NativeModel,
@@ -452,22 +820,13 @@ fn qualifying_emissions(
                 if !in_scope(harness) {
                     continue;
                 }
-                let model = match agent_copy::agent_qualifies_for_harness(
-                    profile,
-                    harness,
-                    ctx.model_aliases,
-                    true,
-                ) {
-                    Some(emission) => native_model_from_override(model_override_for_emission(
-                        harness,
-                        profile,
-                        &emission,
-                        ctx.model_aliases,
-                        ctx.models_cache,
-                        ctx.cursor_probe_slugs,
-                        diag,
-                    )),
-                    None => crate::compiler::agents::lower::NativeModel::Clear,
+                let model = match model_router.decision_for_profile(profile, harness, true, true) {
+                    NativeModelDecision::Set { model_id } => {
+                        crate::compiler::agents::lower::NativeModel::Set(model_id)
+                    }
+                    NativeModelDecision::Clear | NativeModelDecision::Skip => {
+                        crate::compiler::agents::lower::NativeModel::Clear
+                    }
                 };
                 emissions.push((harness.clone(), model));
             }
@@ -479,24 +838,14 @@ fn qualifying_emissions(
                 if !in_scope(harness) {
                     continue;
                 }
-                let Some(emission) = agent_copy::agent_qualifies_for_harness(
-                    profile,
-                    harness,
-                    ctx.model_aliases,
-                    spec.include_fanout,
-                ) else {
-                    continue;
-                };
-                let model = native_model_from_override(model_override_for_emission(
-                    harness,
-                    profile,
-                    &emission,
-                    ctx.model_aliases,
-                    ctx.models_cache,
-                    ctx.cursor_probe_slugs,
-                    diag,
-                ));
-                emissions.push((harness.clone(), model));
+                if let NativeModelDecision::Set { model_id } =
+                    model_router.decision_for_profile(profile, harness, spec.include_fanout, false)
+                {
+                    emissions.push((
+                        harness.clone(),
+                        crate::compiler::agents::lower::NativeModel::Set(model_id),
+                    ));
+                }
             }
             emissions
         }
@@ -618,113 +967,41 @@ pub(crate) fn merged_model_aliases_for_native_agents(
     )
 }
 
-pub(crate) fn cached_cursor_probe_slugs_for_native_agents() -> Vec<String> {
-    crate::models::probes::cursor_cache::read_cached_probe_result_usable()
-        .map(|probe| probe.slugs)
-        .unwrap_or_default()
+fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    match &alias.spec {
+        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
+            provider.clone()
+        }
+        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
+    }
+    .map(|provider| provider.trim().to_ascii_lowercase())
+    .filter(|provider| !provider.is_empty())
 }
 
-pub(crate) fn native_model_override_for_harness(
-    harness: &crate::compiler::agents::HarnessKind,
-    profile: &crate::compiler::agents::AgentProfile,
-    aliases: &IndexMap<String, ModelAlias>,
-    models_cache: &ModelsCache,
-    cursor_probe_slugs: &[String],
-    diag: &mut DiagnosticCollector,
-) -> Option<String> {
-    let token = profile.model.as_deref()?;
-    if matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
-        return map_cursor_native_model(profile, aliases, models_cache, cursor_probe_slugs);
-    }
-    if token.contains('[') {
-        return None;
-    }
-    let alias = aliases.get(token)?;
-    if let Some(pinned) = alias.pinned_model_id() {
-        return Some(pinned.to_string());
-    }
-    if let Some(resolved) = crate::models::resolve_model_id_for_alias(alias, models_cache) {
-        return Some(resolved);
-    }
-    diag.warn(
-        "native-model-alias-unpinned",
-        format!(
-            "native agent compile: alias `{token}` has no pinned model id for {}; emitting alias verbatim",
-            harness.target_dir()
-        ),
-    );
-    None
+fn policy_override_harness(
+    policy: &crate::config::ModelPolicyRule,
+) -> Option<crate::compiler::agents::HarnessKind> {
+    policy
+        .overrides
+        .get(serde_yaml::Value::String("harness".to_string()))
+        .and_then(|value| value.as_str())
+        .and_then(crate::compiler::agents::HarnessKind::from_str)
 }
 
-pub(crate) fn model_override_for_emission(
-    harness: &crate::compiler::agents::HarnessKind,
-    profile: &crate::compiler::agents::AgentProfile,
-    emission: &agent_copy::QualifiedEmission,
-    model_aliases: &IndexMap<String, ModelAlias>,
-    models_cache: &ModelsCache,
-    cursor_probe_slugs: &[String],
-    diag: &mut DiagnosticCollector,
-) -> Option<String> {
-    match emission {
-        agent_copy::QualifiedEmission::DefaultModel => native_model_override_for_harness(
-            harness,
-            profile,
-            model_aliases,
-            models_cache,
-            cursor_probe_slugs,
-            diag,
-        ),
-        agent_copy::QualifiedEmission::PolicyModel(token) => {
-            let mut profile_for_policy = profile.clone();
-            profile_for_policy.model = Some(token.clone());
-            native_model_override_for_harness(
-                harness,
-                &profile_for_policy,
-                model_aliases,
-                models_cache,
-                cursor_probe_slugs,
-                diag,
-            )
-            .or_else(|| Some(token.clone()))
+fn native_acceptance_policy(
+    target_harness: &crate::compiler::agents::HarnessKind,
+) -> crate::routing::acceptance::MatchPolicy {
+    match target_harness {
+        crate::compiler::agents::HarnessKind::Claude
+        | crate::compiler::agents::HarnessKind::Codex => {
+            crate::routing::acceptance::MatchPolicy::AllowPassthrough
+        }
+        crate::compiler::agents::HarnessKind::OpenCode
+        | crate::compiler::agents::HarnessKind::Cursor
+        | crate::compiler::agents::HarnessKind::Pi => {
+            crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }
     }
-}
-
-fn map_cursor_native_model(
-    profile: &crate::compiler::agents::AgentProfile,
-    aliases: &IndexMap<String, ModelAlias>,
-    models_cache: &ModelsCache,
-    cursor_probe_slugs: &[String],
-) -> Option<String> {
-    let token = profile.model.as_deref()?;
-    if token.contains('[') {
-        return None;
-    }
-
-    let alias = aliases.get(token);
-    let model_id = alias
-        .and_then(|a| {
-            a.pinned_model_id()
-                .map(str::to_string)
-                .or_else(|| crate::models::resolve_model_id_for_alias(a, models_cache))
-        })
-        .unwrap_or_else(|| token.to_string());
-    let effort = cursor_effective_effort(profile, alias).unwrap_or("medium");
-    if cursor_probe_slugs.is_empty() {
-        return None;
-    }
-
-    for candidate in cursor_probe_lookup_model_ids(&model_id) {
-        if let Ok(resolution) = crate::models::probes::cursor::resolve_cursor_effort_slug(
-            &candidate,
-            effort,
-            cursor_probe_slugs,
-        ) {
-            return Some(resolution.slug);
-        }
-    }
-
-    None
 }
 
 fn cursor_effective_effort<'a>(
@@ -748,14 +1025,6 @@ fn cursor_effective_effort<'a>(
             "auto" => "medium",
             other => other,
         })
-}
-
-fn cursor_probe_lookup_model_ids(model_id: &str) -> Vec<String> {
-    let mut candidates = vec![model_id.to_string()];
-    if let Some(shimmed) = cursor_probe_model_id_shim(model_id) {
-        candidates.push(shimmed);
-    }
-    candidates
 }
 
 fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
@@ -786,13 +1055,26 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     mars_agents: &[MarsCanonicalAgent],
     agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
     compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
+    mut model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
 ) -> (Vec<CompiledNativeOutput>, Vec<RemovedNativeOutput>) {
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).
     let resolved = resolve_native_agent_profiles(mars_agents, agent_overlays);
-    let removed_native_outputs = reconcile_native_agent_surfaces(reconcile_ctx, &resolved, diag);
+    let removed_native_outputs = match reconcile_ctx.policy {
+        AgentSurfacePolicy::EmitSelective(_) => reconcile_native_agent_surfaces(
+            reconcile_ctx,
+            &resolved,
+            model_router
+                .as_deref_mut()
+                .expect("native model router required for selective native reconcile"),
+            diag,
+        ),
+        AgentSurfacePolicy::SuppressAll | AgentSurfacePolicy::EmitAll => {
+            reconcile_native_agent_surfaces_without_model_routing(reconcile_ctx, &resolved, diag)
+        }
+    };
     let compiled_native_outputs = match compile_ctx {
         None => Vec::new(),
         Some(ctx) => compile_native_agents(
@@ -804,6 +1086,9 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
                     &agent.canonical_dest_path,
                 )
             }),
+            model_router
+                .as_deref_mut()
+                .expect("native model router required for native compile"),
             diag,
         ),
     };
@@ -879,6 +1164,10 @@ pub(crate) fn materialize_native_agents_after_link(
         input.local,
         diag,
     );
+    let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
+    let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {
+        NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
+    });
     // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
     // project-level effective.agents map the sync path carries).
     let agent_overlays = crate::config::merged_agent_overlays(&input.config.agents, input.local);
@@ -891,14 +1180,12 @@ pub(crate) fn materialize_native_agents_after_link(
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
-        model_aliases: &model_aliases,
         outcomes: &[],
         old_lock: input.old_lock,
         dry_run: false,
         selective_harness_scope: harness_scope,
     };
     let ownership_lock;
-    let cursor_probe_slugs = cached_cursor_probe_slugs_for_native_agents();
     let compile_ctx = if matches!(policy, AgentSurfacePolicy::SuppressAll) {
         None
     } else {
@@ -906,9 +1193,6 @@ pub(crate) fn materialize_native_agents_after_link(
             crate::lock::ownership_lock_after_target_sync(input.old_lock, input.target_outcomes);
         Some(NativeAgentCompileCtx {
             project_root: &input.mars_ctx.project_root,
-            model_aliases: &model_aliases,
-            models_cache: &models_cache,
-            cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: &ownership_lock,
             harness_scope,
             configured_emit_harnesses: &configured_emit_harnesses,
@@ -925,6 +1209,7 @@ pub(crate) fn materialize_native_agents_after_link(
         &mars_agents,
         &agent_overlays,
         compile_ctx.as_ref(),
+        model_router.as_mut(),
         diag,
     );
     (compiled_native_outputs, removed_native_outputs)

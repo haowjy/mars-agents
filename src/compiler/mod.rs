@@ -86,7 +86,16 @@ pub fn compile(
         });
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
-    let cursor_probe_slugs = native_agents::cached_cursor_probe_slugs_for_native_agents();
+    let routing_settings =
+        crate::config::routing_settings::ResolvedRoutingSettings::from_settings(effective_settings);
+    let mut native_model_router =
+        (!matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll)).then(|| {
+            native_agents::NativeModelRoutingRuntime::collect(
+                &model_aliases,
+                &models_cache,
+                routing_settings,
+            )
+        });
     let mars_agents = native_agents::scan_mars_agents(&mars_dir, diag);
 
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
@@ -117,7 +126,6 @@ pub fn compile(
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
         policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
-        model_aliases: &model_aliases,
         outcomes,
         old_lock,
         dry_run: request.options.dry_run,
@@ -128,9 +136,6 @@ pub fn compile(
     } else {
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
-            model_aliases: &model_aliases,
-            models_cache: &models_cache,
-            cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,
             configured_emit_harnesses: &configured_emit_harnesses,
@@ -150,6 +155,7 @@ pub fn compile(
         &mars_agents,
         &agent_overlays,
         native_compile_ctx.as_ref(),
+        native_model_router.as_mut(),
         diag,
     );
 

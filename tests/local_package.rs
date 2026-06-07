@@ -56,8 +56,8 @@ fn full_pipeline_with_local_package_and_custom_target() {
     config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\n");
     fs::write(project.child("mars.toml").path(), &config_str).unwrap();
 
-    // Create local agent and skill
-    let local_agents = project.child("agents");
+    // Create local agent and skill under the local package source root.
+    let local_agents = project.child(".mars-src").child("agents");
     local_agents.create_dir_all().unwrap();
     fs::write(
         local_agents.child("local-agent.md").path(),
@@ -65,7 +65,10 @@ fn full_pipeline_with_local_package_and_custom_target() {
     )
     .unwrap();
 
-    let local_skill = project.child("skills").child("local-skill");
+    let local_skill = project
+        .child(".mars-src")
+        .child("skills")
+        .child("local-skill");
     fs::create_dir_all(local_skill.path()).unwrap();
     fs::write(
         local_skill.child("SKILL.md").path(),
@@ -234,8 +237,7 @@ fn sync_prefers_mars_src_local_items_over_repo_root() {
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("defined in both"))
-        .stderr(predicate::str::contains(".mars-src"));
+        .stderr(predicate::str::is_empty());
 
     assert_eq!(
         fs::read_to_string(
@@ -386,7 +388,7 @@ fn sync_reads_mars_src_local_items_without_package_section() {
 }
 
 #[test]
-fn sync_ignores_repo_root_local_items_without_package_section() {
+fn sync_ignores_repo_root_local_items_with_package_section() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -395,6 +397,11 @@ fn sync_ignores_repo_root_local_items_without_package_section() {
         .args(["init", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
+    fs::write(
+        project.child("mars.toml").path(),
+        "[dependencies]\n\n[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
 
     let legacy_skill = project.child("skills").child("legacy-only");
     legacy_skill.create_dir_all().unwrap();

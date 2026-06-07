@@ -270,7 +270,7 @@ pub(crate) fn build_target(
     ctx: &MarsContext,
     resolved: ResolvedState,
     local_items: Vec<crate::local_source::LocalDiscoveredItem>,
-    _request: &SyncRequest,
+    request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     // Use .mars/ as the canonical content root for diff/collision checks.
@@ -379,8 +379,12 @@ pub(crate) fn build_target(
     let warnings = validate_skill_refs(&target_state);
 
     // Prevent managed installs from overwriting unmanaged files.
-    let unmanaged_collisions =
-        target::check_unmanaged_collisions(managed_root, &resolved.loaded.old_lock, &target_state);
+    let unmanaged_collisions = target::check_unmanaged_collisions(
+        managed_root,
+        &resolved.loaded.old_lock,
+        &target_state,
+        request.options.force,
+    );
     for collision in &unmanaged_collisions {
         diag.warn(
             "unmanaged-collision",
@@ -622,11 +626,6 @@ pub(crate) fn finalize(
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
-        crate::lock::carry_forward_unrefreshed_native_outputs(
-            &mut new_lock,
-            old_lock,
-            &state.removed_native_outputs,
-        );
         if let Some(warning) =
             crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {

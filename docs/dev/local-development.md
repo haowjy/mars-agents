@@ -166,7 +166,7 @@ name = "my-project-agents"
 version = "0.1.0"
 ```
 
-With `[package]` present, Mars also reads legacy repo-root `agents/` and `skills/` directories in addition to `.mars-src/`. If the same item name exists in both, `.mars-src/` takes precedence (with a warning). See [configuration.md](configuration.md#package-optional) for the full schema.
+Source package contents can live in repo-root `agents/` and `skills/` directories for downstream consumers. For items you want the package project itself to sync as `_self`, put them in `.mars-src/`. See [`mars.toml`](../config/mars-toml.md#package-optional) for the full schema.
 
 ### Validating Before Publishing
 

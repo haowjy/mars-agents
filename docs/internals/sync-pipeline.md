@@ -152,8 +152,7 @@ With `--force`, the baseline for "local changed" shifts to `source_checksum`, so
 
 Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
 - Items from `.mars-src/` are always discovered, regardless of whether `[package]` is present.
-- Items from the legacy repo-root `agents/`/`skills/` directories are discovered only when `[package]` is in `mars.toml`.
-- If the same item name exists in both `.mars-src/` and the repo root, `.mars-src/` wins (with a `duplicate-local-definition` warning).
+- Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages still expose those directories when consumed as dependencies.
 
 ### 5. Apply Plan (`apply_plan`)
 
@@ -233,9 +232,8 @@ Project-local agents and skills are discovered, hashed, and installed into the m
 | Source | When included |
 |---|---|
 | `.mars-src/agents/` and `.mars-src/skills/` | Always |
-| Repo-root `agents/` and `skills/` (legacy) | Only when `[package]` is present in `mars.toml` |
 
-`.mars-src/` is the preferred location. The repo-root directories are a legacy path retained for source packages that published content there before `.mars-src/` existed. If the same item name appears in both, `.mars-src/` wins.
+`.mars-src/` is the only project-local source root. Repo-root `agents/` and `skills/` directories remain valid package contents when the project is consumed as a dependency, but `mars sync` no longer scans them as local `_self` items in that same project.
 
 All `_self` items follow the same behavior:
 - Shadow external dependency items if names collide (with a warning)

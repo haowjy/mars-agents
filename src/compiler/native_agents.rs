@@ -350,10 +350,10 @@ fn remove_native_agent_shapes_for_harness(
 }
 
 /// Compile native harness agents from a pre-scanned canonical store.
-pub(crate) fn compile_native_agents(
+pub(crate) fn compile_native_agents<'a>(
     ctx: &NativeAgentCompileCtx<'_>,
     policy: &AgentSurfacePolicy,
-    mars_agents: &[MarsCanonicalAgent],
+    mars_agents: impl IntoIterator<Item = &'a MarsCanonicalAgent>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<CompiledNativeOutput> {
     if matches!(policy, AgentSurfacePolicy::SuppressAll) {
@@ -778,7 +778,17 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     let removed_native_outputs = reconcile_native_agent_surfaces(reconcile_ctx, &resolved, diag);
     let compiled_native_outputs = match compile_ctx {
         None => Vec::new(),
-        Some(ctx) => compile_native_agents(ctx, policy, &resolved, diag),
+        Some(ctx) => compile_native_agents(
+            ctx,
+            policy,
+            resolved.iter().filter(|agent| {
+                ctx.old_lock.contains_output(
+                    crate::lock::CANONICAL_TARGET_ROOT,
+                    &agent.canonical_dest_path,
+                )
+            }),
+            diag,
+        ),
     };
     (compiled_native_outputs, removed_native_outputs)
 }

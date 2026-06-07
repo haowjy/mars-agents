@@ -131,6 +131,13 @@ impl CapabilitySession {
         self.installed.clone()
     }
 
+    pub(crate) fn extend_installed_harnesses<I>(&mut self, harnesses: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.installed.extend(harnesses);
+    }
+
     pub fn offline(&self) -> bool {
         self.offline
     }

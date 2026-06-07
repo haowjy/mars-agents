@@ -137,7 +137,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         aliases: &'a IndexMap<String, ModelAlias>,
         cache: &'a ModelsCache,
         routing_settings: ResolvedRoutingSettings,
-        session: CapabilitySession,
+        mut session: CapabilitySession,
     ) -> Self {
         let mut installed_for_native_targets = session.installed_harnesses();
         installed_for_native_targets.extend(
@@ -145,6 +145,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 .iter()
                 .map(|harness| harness.to_harness_id().as_str().to_string()),
         );
+        session.extend_installed_harnesses(installed_for_native_targets.iter().cloned());
         Self {
             aliases,
             cache,

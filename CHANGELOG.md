@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-06-07
+
 ### Fixed
 - Native agent compilation now uses the shared model routing evaluator for native model pinning, resolving auto aliases from `.mars/models-cache.json`, respecting model-policy fallback order, and clearing/skipping target-native model fields when no candidate routes to that harness.
 

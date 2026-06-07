@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-06-07
+
 ### Fixed
 - `mars sync` lock rebuild now carries forward existing non-canonical target ownership records while refreshing canonical `.mars` records, instead of relying on a post-build safety-net pass.
 - Local package discovery scans only `.mars-src/`, preventing package source `agents/` / `skills/` directories at the project root from being misread as local unmanaged items; `--force` also repairs stale canonical cache files left by the old discovery behavior.

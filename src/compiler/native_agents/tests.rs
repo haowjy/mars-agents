@@ -2,7 +2,7 @@ use super::*;
 use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
-use crate::models::{ModelAlias, ModelSpec};
+use crate::models::{CachedModel, ModelAlias, ModelSpec, ModelsCache};
 use indexmap::IndexMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -50,6 +50,32 @@ fn pinned_alias_with_harness(
     }
 }
 
+fn empty_models_cache() -> ModelsCache {
+    ModelsCache {
+        models: Vec::new(),
+        fetched_at: None,
+    }
+}
+
+fn models_cache_with(id: &str, provider: &str, release_date: &str) -> ModelsCache {
+    ModelsCache {
+        models: vec![CachedModel {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            release_date: Some(release_date.to_string()),
+            description: None,
+            context_window: None,
+            max_output: None,
+            cost_input: None,
+            cost_output: None,
+            cost_cache_read: None,
+            cost_cache_write: None,
+            cost_reasoning: None,
+        }],
+        fetched_at: None,
+    }
+}
+
 #[test]
 fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
     let mut aliases = IndexMap::new();
@@ -63,6 +89,7 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
             &HarnessKind::Claude,
             &profile_with_model("sonnet", HarnessKind::Claude),
             &aliases,
+            &empty_models_cache(),
             &[],
             &mut diag
         ),
@@ -73,6 +100,7 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
             &HarnessKind::Codex,
             &profile_with_model("raw-model-id", HarnessKind::Codex),
             &IndexMap::new(),
+            &empty_models_cache(),
             &[],
             &mut diag
         ),
@@ -99,6 +127,7 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
             &HarnessKind::Codex,
             &profile_with_model("gpt-auto", HarnessKind::Codex),
             &aliases,
+            &empty_models_cache(),
             &[],
             &mut diag
         ),
@@ -108,6 +137,80 @@ fn non_cursor_native_model_mapping_handles_pinned_raw_and_unpinned_aliases() {
         diag.drain()
             .iter()
             .any(|d| d.code == "native-model-alias-unpinned")
+    );
+}
+
+#[test]
+fn non_cursor_native_model_mapping_resolves_auto_aliases_from_models_cache() {
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "sonnet".to_string(),
+        ModelAlias {
+            harness: Some("claude".to_string()),
+            description: None,
+            default_effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::AutoResolve {
+                provider: Some("Anthropic".to_string()),
+                match_patterns: vec!["*sonnet*".to_string()],
+                exclude_patterns: Vec::new(),
+            },
+        },
+    );
+    let cache = models_cache_with("claude-sonnet-4-6", "Anthropic", "2026-01-01");
+    let mut diag = DiagnosticCollector::new();
+
+    assert_eq!(
+        native_model_override_for_harness(
+            &HarnessKind::Claude,
+            &profile_with_model("sonnet", HarnessKind::Claude),
+            &aliases,
+            &cache,
+            &[],
+            &mut diag
+        ),
+        Some("claude-sonnet-4-6".to_string())
+    );
+    assert!(
+        diag.drain()
+            .iter()
+            .all(|d| d.code != "native-model-alias-unpinned")
+    );
+}
+
+#[test]
+fn cursor_native_model_mapping_resolves_auto_aliases_before_slug_lookup() {
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "sonnet".to_string(),
+        ModelAlias {
+            harness: Some("claude".to_string()),
+            description: None,
+            default_effort: Some("high".to_string()),
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::AutoResolve {
+                provider: Some("Anthropic".to_string()),
+                match_patterns: vec!["*sonnet*".to_string()],
+                exclude_patterns: Vec::new(),
+            },
+        },
+    );
+    let cache = models_cache_with("claude-sonnet-4-6", "Anthropic", "2026-01-01");
+    let probe_slugs = vec!["claude-4.6-sonnet-high".to_string()];
+    let mut diag = DiagnosticCollector::new();
+
+    assert_eq!(
+        native_model_override_for_harness(
+            &HarnessKind::Cursor,
+            &profile_with_model("sonnet", HarnessKind::Cursor),
+            &aliases,
+            &cache,
+            &probe_slugs,
+            &mut diag
+        ),
+        Some("claude-4.6-sonnet-high".to_string())
     );
 }
 
@@ -360,9 +463,11 @@ fn compile_emit_all_agents(
     aliases: &IndexMap<String, ModelAlias>,
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
+    let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         model_aliases: aliases,
+        models_cache: &models_cache,
         cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,
@@ -519,9 +624,11 @@ fn compile_emit_all_with_overlays(
     overlays: &IndexMap<String, crate::config::AgentOverlay>,
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
+    let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         model_aliases: aliases,
+        models_cache: &models_cache,
         cursor_probe_slugs: &[],
         old_lock: &LockFile::empty(),
         harness_scope: None,

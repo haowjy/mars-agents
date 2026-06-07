@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use super::AgentSurfacePolicy;
 use super::agent_copy;
 use crate::diagnostic::DiagnosticCollector;
-use crate::models::ModelAlias;
+use crate::models::{ModelAlias, ModelsCache};
 use crate::sync::apply::ActionOutcome;
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
@@ -37,6 +37,7 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
 pub(crate) struct NativeAgentCompileCtx<'a> {
     pub project_root: &'a Path,
     pub model_aliases: &'a IndexMap<String, ModelAlias>,
+    pub models_cache: &'a ModelsCache,
     pub cursor_probe_slugs: &'a [String],
     pub old_lock: &'a crate::lock::LockFile,
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
@@ -462,6 +463,7 @@ fn qualifying_emissions(
                         profile,
                         &emission,
                         ctx.model_aliases,
+                        ctx.models_cache,
                         ctx.cursor_probe_slugs,
                         diag,
                     )),
@@ -490,6 +492,7 @@ fn qualifying_emissions(
                     profile,
                     &emission,
                     ctx.model_aliases,
+                    ctx.models_cache,
                     ctx.cursor_probe_slugs,
                     diag,
                 ));
@@ -625,12 +628,13 @@ pub(crate) fn native_model_override_for_harness(
     harness: &crate::compiler::agents::HarnessKind,
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, ModelAlias>,
+    models_cache: &ModelsCache,
     cursor_probe_slugs: &[String],
     diag: &mut DiagnosticCollector,
 ) -> Option<String> {
     let token = profile.model.as_deref()?;
     if matches!(harness, crate::compiler::agents::HarnessKind::Cursor) {
-        return map_cursor_native_model(profile, aliases, cursor_probe_slugs);
+        return map_cursor_native_model(profile, aliases, models_cache, cursor_probe_slugs);
     }
     if token.contains('[') {
         return None;
@@ -638,6 +642,9 @@ pub(crate) fn native_model_override_for_harness(
     let alias = aliases.get(token)?;
     if let Some(pinned) = alias.pinned_model_id() {
         return Some(pinned.to_string());
+    }
+    if let Some(resolved) = crate::models::resolve_model_id_for_alias(alias, models_cache) {
+        return Some(resolved);
     }
     diag.warn(
         "native-model-alias-unpinned",
@@ -654,6 +661,7 @@ pub(crate) fn model_override_for_emission(
     profile: &crate::compiler::agents::AgentProfile,
     emission: &agent_copy::QualifiedEmission,
     model_aliases: &IndexMap<String, ModelAlias>,
+    models_cache: &ModelsCache,
     cursor_probe_slugs: &[String],
     diag: &mut DiagnosticCollector,
 ) -> Option<String> {
@@ -662,6 +670,7 @@ pub(crate) fn model_override_for_emission(
             harness,
             profile,
             model_aliases,
+            models_cache,
             cursor_probe_slugs,
             diag,
         ),
@@ -672,6 +681,7 @@ pub(crate) fn model_override_for_emission(
                 harness,
                 &profile_for_policy,
                 model_aliases,
+                models_cache,
                 cursor_probe_slugs,
                 diag,
             )
@@ -683,6 +693,7 @@ pub(crate) fn model_override_for_emission(
 fn map_cursor_native_model(
     profile: &crate::compiler::agents::AgentProfile,
     aliases: &IndexMap<String, ModelAlias>,
+    models_cache: &ModelsCache,
     cursor_probe_slugs: &[String],
 ) -> Option<String> {
     let token = profile.model.as_deref()?;
@@ -691,13 +702,19 @@ fn map_cursor_native_model(
     }
 
     let alias = aliases.get(token);
-    let model_id = alias.and_then(|a| a.pinned_model_id()).unwrap_or(token);
+    let model_id = alias
+        .and_then(|a| {
+            a.pinned_model_id()
+                .map(str::to_string)
+                .or_else(|| crate::models::resolve_model_id_for_alias(a, models_cache))
+        })
+        .unwrap_or_else(|| token.to_string());
     let effort = cursor_effective_effort(profile, alias).unwrap_or("medium");
     if cursor_probe_slugs.is_empty() {
         return None;
     }
 
-    for candidate in cursor_probe_lookup_model_ids(model_id) {
+    for candidate in cursor_probe_lookup_model_ids(&model_id) {
         if let Ok(resolution) = crate::models::probes::cursor::resolve_cursor_effort_slug(
             &candidate,
             effort,
@@ -850,6 +867,11 @@ pub(crate) fn materialize_native_agents_after_link(
     );
     let mars_dir = input.mars_ctx.project_root.join(".mars");
     let mars_agents = scan_mars_agents(&mars_dir, diag);
+    let models_cache =
+        crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        });
     let model_aliases = crate::models::merged_model_aliases(
         input.graph,
         input.effective,
@@ -876,6 +898,7 @@ pub(crate) fn materialize_native_agents_after_link(
         selective_harness_scope: harness_scope,
     };
     let ownership_lock;
+    let cursor_probe_slugs = cached_cursor_probe_slugs_for_native_agents();
     let compile_ctx = if matches!(policy, AgentSurfacePolicy::SuppressAll) {
         None
     } else {
@@ -884,7 +907,8 @@ pub(crate) fn materialize_native_agents_after_link(
         Some(NativeAgentCompileCtx {
             project_root: &input.mars_ctx.project_root,
             model_aliases: &model_aliases,
-            cursor_probe_slugs: &cached_cursor_probe_slugs_for_native_agents(),
+            models_cache: &models_cache,
+            cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: &ownership_lock,
             harness_scope,
             configured_emit_harnesses: &configured_emit_harnesses,

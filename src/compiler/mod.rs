@@ -79,6 +79,11 @@ pub fn compile(
         .filter_map(|t| agents::HarnessKind::from_target_dir(t))
         .collect();
     let mars_dir = ctx.project_root.join(".mars");
+    let models_cache =
+        crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        });
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let cursor_probe_slugs = native_agents::cached_cursor_probe_slugs_for_native_agents();
@@ -124,6 +129,7 @@ pub fn compile(
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
             model_aliases: &model_aliases,
+            models_cache: &models_cache,
             cursor_probe_slugs: &cursor_probe_slugs,
             old_lock: native_ownership_lock,
             harness_scope: None,

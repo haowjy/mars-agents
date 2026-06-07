@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Native agent compilation now resolves auto-resolved model aliases from the models cache before emitting harness-native files.
+
 ## [0.8.2] - 2026-06-07
 
 ### Fixed

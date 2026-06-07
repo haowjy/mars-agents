@@ -619,6 +619,15 @@ Run focused integration checks.
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
+    write_cache(
+        project.path(),
+        vec![json!({
+            "id": "gpt-5.5",
+            "provider": "OpenAI",
+            "release_date": "2026-01-01"
+        })],
+        &fresh_fetched_at(),
+    );
     project
         .child("mars.toml")
         .write_str(&format!(
@@ -750,7 +759,10 @@ path = "{}"
     let cursor_native =
         fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
     assert!(cursor_native.contains("name: cursor-worker"));
-    assert!(cursor_native.contains("model: gpt55"));
+    assert!(
+        !cursor_native.contains("model:"),
+        "unresolved cursor model should be cleared in EmitAll mode: {cursor_native}"
+    );
     assert!(cursor_native.contains("# Cursor body"));
     assert!(
         !cursor_native.contains("mcp-tools"),
@@ -812,7 +824,12 @@ path = "{}"
         .unwrap();
 
     mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .env("MARS_CACHE_DIR", cache_root.path())
         .assert()
         .success();
@@ -860,6 +877,22 @@ default_effort = "high"
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
+    write_cache(
+        project.path(),
+        vec![
+            json!({
+                "id": "gpt-5.5",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+            json!({
+                "id": "gpt-5.5-turbo",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+        ],
+        &fresh_fetched_at(),
+    );
     project
         .child("mars.toml")
         .write_str(&format!(
@@ -885,7 +918,12 @@ default_effort = "high"
         .unwrap();
 
     mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .env("MARS_CACHE_DIR", cache_root.path())
         .assert()
         .success();

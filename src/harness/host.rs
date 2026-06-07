@@ -70,9 +70,28 @@ impl CapabilitySession {
         Self::collect_with_resolver(options, &PathExecutableResolver)
     }
 
+    pub(crate) fn collect_without_auth(options: &CapabilityCollectionOptions) -> Self {
+        Self::collect_with_resolver_without_auth(options, &PathExecutableResolver)
+    }
+
     pub fn collect_with_resolver(
         options: &CapabilityCollectionOptions,
         resolver: &dyn ExecutableResolver,
+    ) -> Self {
+        Self::collect_with_resolver_inner(options, resolver, true)
+    }
+
+    pub(crate) fn collect_with_resolver_without_auth(
+        options: &CapabilityCollectionOptions,
+        resolver: &dyn ExecutableResolver,
+    ) -> Self {
+        Self::collect_with_resolver_inner(options, resolver, false)
+    }
+
+    fn collect_with_resolver_inner(
+        options: &CapabilityCollectionOptions,
+        resolver: &dyn ExecutableResolver,
+        collect_auth: bool,
     ) -> Self {
         let mut executable = BTreeMap::new();
         let mut auth = BTreeMap::new();
@@ -80,10 +99,14 @@ impl CapabilitySession {
         for descriptor in registry::descriptors() {
             let state = resolver.resolve(descriptor.binary);
             executable.insert(descriptor.id, state.clone());
-            auth.insert(
-                descriptor.id,
-                native_auth_state(descriptor.id, &state, resolver, auth_probe_timeout()),
-            );
+            let auth_state = if collect_auth {
+                native_auth_state(descriptor.id, &state, resolver, auth_probe_timeout())
+            } else {
+                AuthState::Unknown {
+                    reason: "auth not collected".to_string(),
+                }
+            };
+            auth.insert(descriptor.id, auth_state);
         }
 
         let installed = executable
@@ -106,6 +129,13 @@ impl CapabilitySession {
 
     pub fn installed_harnesses(&self) -> HashSet<String> {
         self.installed.clone()
+    }
+
+    pub(crate) fn extend_installed_harnesses<I>(&mut self, harnesses: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.installed.extend(harnesses);
     }
 
     pub fn offline(&self) -> bool {

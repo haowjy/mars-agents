@@ -755,9 +755,13 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, model) in
-            qualifying_emissions(effective_profile, &agent.agent_name, policy, ctx, model_router)
-        {
+        for (harness, model) in qualifying_emissions(
+            effective_profile,
+            &agent.agent_name,
+            policy,
+            ctx,
+            model_router,
+        ) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,

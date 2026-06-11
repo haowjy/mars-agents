@@ -213,6 +213,7 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
+        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(
@@ -293,6 +294,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
+        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(

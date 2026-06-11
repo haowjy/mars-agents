@@ -542,6 +542,8 @@ pub struct AgentCopyConfig {
     pub harnesses: Vec<String>,
     #[serde(default)]
     pub include_fanout: bool,
+    #[serde(default)]
+    pub fanout_agents: Vec<String>,
 }
 
 /// Meridian-managed settings nested under `[settings.meridian]`.

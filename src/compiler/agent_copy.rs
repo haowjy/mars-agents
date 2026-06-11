@@ -13,6 +13,7 @@ use crate::models::{ModelAlias, ModelSpec};
 pub struct AgentCopySpec {
     pub harnesses: Vec<HarnessKind>,
     pub include_fanout: bool,
+    pub fanout_agents: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +74,7 @@ pub fn build_agent_copy_spec(
     Some(AgentCopySpec {
         harnesses,
         include_fanout: config.include_fanout,
+        fanout_agents: config.fanout_agents.clone(),
     })
 }
 
@@ -446,6 +448,7 @@ mod tests {
         let config = AgentCopyConfig {
             harnesses: vec!["gemini".to_string(), "claude".to_string()],
             include_fanout: false,
+            fanout_agents: Vec::new(),
         };
         let mut diag = DiagnosticCollector::new();
         let spec = build_agent_copy_spec(Some(&config), &[".agents".to_string()], &mut diag);
@@ -491,6 +494,68 @@ mod tests {
         aliases.insert("opus".to_string(), anthropic_alias());
         assert!(
             agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some()
+        );
+    }
+
+    #[test]
+    fn fanout_agent_effective_true_qualifies() {
+        let mut profile = empty_profile();
+        profile.model_policies.push(ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "sonnet".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        });
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "sonnet".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-sonnet-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                },
+            },
+        );
+        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
+            .expect("effective fanout should qualify via model policy");
+        assert!(matches!(
+            emission,
+            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
+        ));
+    }
+
+    #[test]
+    fn fanout_agent_effective_false_does_not_qualify() {
+        let mut profile = empty_profile();
+        profile.model_policies.push(ModelPolicyRule {
+            match_type: ModelPolicyMatchType::Alias,
+            match_value: "sonnet".to_string(),
+            no_fallback: false,
+            overrides: serde_yaml::Mapping::new(),
+        });
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "sonnet".to_string(),
+            ModelAlias {
+                harness: None,
+                description: None,
+                default_effort: None,
+                autocompact: None,
+                autocompact_pct: None,
+                spec: ModelSpec::Pinned {
+                    model: "claude-sonnet-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                },
+            },
+        );
+        assert!(
+            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_none(),
+            "without effective fanout, model policies should not qualify"
         );
     }
 

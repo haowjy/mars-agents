@@ -284,6 +284,7 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
+            fanout_agents: Vec::new(),
         };
         assert!(matches!(
             agent_surface_policy(Some(&AgentEmission::Auto), Some(&spec), true),
@@ -296,6 +297,7 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
+            fanout_agents: Vec::new(),
         };
         assert!(matches!(
             agent_surface_policy(Some(&AgentEmission::Never), Some(&spec), false),
@@ -308,6 +310,7 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
+            fanout_agents: Vec::new(),
         };
         assert_eq!(
             agent_surface_policy(Some(&AgentEmission::Always), Some(&spec), true),

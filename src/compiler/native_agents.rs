@@ -666,12 +666,14 @@ fn reconcile_selective_native_agent_surfaces(
         // `agent.profile` is already overlay-resolved (see the lifecycle), so reconcile
         // and emission qualify against identical effective profiles.
         for harness in harnesses {
+            let effective_fanout =
+                spec.include_fanout || spec.fanout_agents.iter().any(|n| n == &agent.agent_name);
             let qualifies = spec.harnesses.contains(harness)
                 && matches!(
                     model_router.decision_for_profile(
                         &agent.profile,
                         harness,
-                        spec.include_fanout,
+                        effective_fanout,
                         false,
                     ),
                     NativeModelDecision::Set { .. }
@@ -753,7 +755,13 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, model) in qualifying_emissions(effective_profile, policy, ctx, model_router) {
+        for (harness, model) in qualifying_emissions(
+            effective_profile,
+            &agent.agent_name,
+            policy,
+            ctx,
+            model_router,
+        ) {
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &harness,
@@ -799,6 +807,7 @@ fn effective_native_profile(
 
 fn qualifying_emissions(
     profile: &crate::compiler::agents::AgentProfile,
+    agent_name: &str,
     policy: &AgentSurfacePolicy,
     ctx: &NativeAgentCompileCtx<'_>,
     model_router: &mut NativeModelRoutingRuntime<'_>,
@@ -834,13 +843,15 @@ fn qualifying_emissions(
             emissions
         }
         AgentSurfacePolicy::EmitSelective(spec) => {
+            let effective_fanout =
+                spec.include_fanout || spec.fanout_agents.iter().any(|n| n == agent_name);
             let mut emissions = Vec::new();
             for harness in &spec.harnesses {
                 if !in_scope(harness) {
                     continue;
                 }
                 if let NativeModelDecision::Set { model_id } =
-                    model_router.decision_for_profile(profile, harness, spec.include_fanout, false)
+                    model_router.decision_for_profile(profile, harness, effective_fanout, false)
                 {
                     emissions.push((
                         harness.clone(),

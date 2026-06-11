@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `fanout_agents` field in `[settings.meridian.agent_copy]` — selectively enable fanout qualification for listed agents when `include_fanout = false` globally.
+
+## [0.8.3] - 2026-06-07
+
+### Fixed
+- Native agent compilation now uses the shared model routing evaluator for native model pinning, resolving auto aliases from `.mars/models-cache.json`, respecting model-policy fallback order, and clearing/skipping target-native model fields when no candidate routes to that harness.
+
+## [0.8.2] - 2026-06-07
+
+### Fixed
+- `mars sync` lock rebuild now carries forward existing non-canonical target ownership records while refreshing canonical `.mars` records, instead of relying on a post-build safety-net pass.
+- Local package discovery scans only `.mars-src/`, preventing package source `agents/` / `skills/` directories at the project root from being misread as local unmanaged items; `--force` also repairs stale canonical cache files left by the old discovery behavior.
+
 ## [0.8.1] - 2026-06-06
 
 ### Removed

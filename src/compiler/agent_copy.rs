@@ -1,12 +1,9 @@
 //! Selective native agent emission when `settings.meridian.agent_copy` is configured.
 
-use indexmap::IndexMap;
-
-use crate::compiler::agents::{AgentProfile, HarnessKind};
-use crate::config::{AgentCopyConfig, ModelPolicyMatchType, ModelPolicyRule};
+use crate::compiler::agents::HarnessKind;
+use crate::config::AgentCopyConfig;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::registry;
-use crate::models::{ModelAlias, ModelSpec};
 
 /// Validated harness allowlist for selective native emission.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +11,6 @@ pub struct AgentCopySpec {
     pub harnesses: Vec<HarnessKind>,
     pub include_fanout: bool,
     pub fanout_agents: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum QualifiedEmission {
-    DefaultModel,
-    PolicyModel(String),
 }
 
 /// Validate `agent_copy.harnesses` and build a spec for the compiler.
@@ -78,370 +69,10 @@ pub fn build_agent_copy_spec(
     })
 }
 
-pub fn agent_qualifies_for_harness(
-    profile: &AgentProfile,
-    target_harness: &HarnessKind,
-    model_aliases: &IndexMap<String, ModelAlias>,
-    include_fanout: bool,
-) -> Option<QualifiedEmission> {
-    if profile.harness.as_ref() == Some(target_harness) {
-        // Honor the declared harness, but only when the model belongs here. An overlay
-        // can pivot the effective model to another harness while `profile.harness`
-        // stays put; pinning that foreign model would emit an incoherent native file.
-        // Clear only when the model *positively* resolves to a different harness — a
-        // bare/unresolvable model id keeps honoring the declared harness (consistent
-        // with the canonical resolver, which also pivots only on a known alias).
-        let resolves_elsewhere = match profile.model.as_deref() {
-            None => false,
-            Some(token) if token.contains('[') => false,
-            // Cursor hosts foreign-provider models via internal slug mapping, so a
-            // model resolving to another native harness is normal there and must never
-            // be treated as foreign — cursor agents only ever qualify via this branch.
-            Some(_) if *target_harness == HarnessKind::Cursor => false,
-            Some(token) => {
-                matches!(model_resolved_harness(token, model_aliases), Some(h) if h != *target_harness)
-            }
-        };
-        if !resolves_elsewhere {
-            return Some(QualifiedEmission::DefaultModel);
-        }
-        // Model resolves to a different harness: fall through (returns None), so EmitAll
-        // clears the model for this harness and EmitSelective skips it.
-    }
-
-    if let Some(ref model_token) = profile.model
-        && model_resolves_to_harness(model_token, target_harness, model_aliases)
-    {
-        return Some(QualifiedEmission::DefaultModel);
-    }
-
-    if !include_fanout {
-        return None;
-    }
-
-    for policy in &profile.model_policies {
-        if let Some(emission) = policy_qualifies(policy, target_harness, model_aliases) {
-            return Some(emission);
-        }
-    }
-
-    None
-}
-
-fn policy_qualifies(
-    policy: &ModelPolicyRule,
-    target_harness: &HarnessKind,
-    model_aliases: &IndexMap<String, ModelAlias>,
-) -> Option<QualifiedEmission> {
-    if let Some(override_harness) = policy_override_harness(policy)
-        && override_harness != *target_harness
-    {
-        return None;
-    }
-
-    match policy.match_type {
-        ModelPolicyMatchType::Alias => {
-            if model_resolves_to_harness(&policy.match_value, target_harness, model_aliases) {
-                return Some(QualifiedEmission::PolicyModel(policy.match_value.clone()));
-            }
-        }
-        ModelPolicyMatchType::Model => {
-            for (alias_name, alias) in model_aliases {
-                if alias.pinned_model_id() == Some(policy.match_value.as_str())
-                    && alias_resolves_to_harness(alias, target_harness)
-                {
-                    return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
-                }
-            }
-        }
-        ModelPolicyMatchType::ModelGlob => {
-            for (alias_name, alias) in model_aliases {
-                let Some(model_id) = alias.pinned_model_id() else {
-                    continue;
-                };
-                if crate::models::glob_match(&policy.match_value, model_id)
-                    && alias_resolves_to_harness(alias, target_harness)
-                {
-                    return Some(QualifiedEmission::PolicyModel(alias_name.clone()));
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn alias_resolves_to_harness(alias: &ModelAlias, target_harness: &HarnessKind) -> bool {
-    if let Some(ref harness_name) = alias.harness {
-        return HarnessKind::from_str(harness_name).as_ref() == Some(target_harness);
-    }
-
-    let provider = match &alias.spec {
-        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
-            provider.as_deref()
-        }
-        ModelSpec::AutoResolve { provider, .. } => provider.as_deref(),
-    };
-
-    if let Some(provider) = provider
-        && let Some(native) = registry::native_harness_for_provider(provider)
-    {
-        return HarnessKind::from_harness_id(native) == *target_harness;
-    }
-
-    false
-}
-
-fn policy_override_harness(policy: &ModelPolicyRule) -> Option<HarnessKind> {
-    policy
-        .overrides
-        .get(serde_yaml::Value::String("harness".to_string()))
-        .and_then(|value| value.as_str())
-        .and_then(HarnessKind::from_str)
-}
-
-/// The native harness a model token resolves to via its alias — an explicit
-/// `harness` field or a provider->native-harness mapping. Returns `None` when the
-/// token is not a known alias, or carries no harness/provider signal (e.g. a bare
-/// model id). This is the shared primitive behind `model_resolves_to_harness`.
-pub fn model_resolved_harness(
-    model_token: &str,
-    aliases: &IndexMap<String, ModelAlias>,
-) -> Option<HarnessKind> {
-    let alias = aliases.get(model_token)?;
-
-    if let Some(ref harness_name) = alias.harness {
-        return HarnessKind::from_str(harness_name);
-    }
-
-    let provider = match &alias.spec {
-        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
-            provider.as_deref()
-        }
-        ModelSpec::AutoResolve { provider, .. } => provider.as_deref(),
-    };
-
-    provider
-        .and_then(registry::native_harness_for_provider)
-        .map(HarnessKind::from_harness_id)
-}
-
-pub fn model_resolves_to_harness(
-    model_token: &str,
-    target_harness: &HarnessKind,
-    aliases: &IndexMap<String, ModelAlias>,
-) -> bool {
-    model_resolved_harness(model_token, aliases).as_ref() == Some(target_harness)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::AgentProfile;
-    use crate::config::ModelPolicyMatchType;
     use crate::diagnostic::DiagnosticCollector;
-    use crate::frontmatter::SkillsSpec;
-    use crate::models::{ModelAlias, ModelSpec};
-
-    fn empty_profile() -> AgentProfile {
-        AgentProfile {
-            name: None,
-            description: None,
-            harness: None,
-            model: None,
-            mode: None,
-            model_invocable: true,
-            approval: None,
-            sandbox: None,
-            effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            skills: SkillsSpec::default(),
-            subagents: Vec::new(),
-            tools: Vec::new(),
-            tools_denied: Vec::new(),
-            disallowed_tools: Vec::new(),
-            mcp_tools: Vec::new(),
-            harness_overrides: Default::default(),
-            model_policies: Vec::new(),
-            fanout: Vec::new(),
-        }
-    }
-
-    fn anthropic_alias() -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        }
-    }
-
-    #[test]
-    fn explicit_profile_harness_qualifies() {
-        let mut profile = empty_profile();
-        profile.harness = Some(HarnessKind::Claude);
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &IndexMap::new(), false,)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn model_alias_provider_maps_to_claude() {
-        let mut profile = empty_profile();
-        profile.model = Some("opus".to_string());
-        let mut aliases = IndexMap::new();
-        aliases.insert("opus".to_string(), anthropic_alias());
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some()
-        );
-    }
-
-    #[test]
-    fn unknown_model_alias_does_not_qualify() {
-        let mut profile = empty_profile();
-        profile.model = Some("missing".to_string());
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &IndexMap::new(), false,)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn fanout_policy_qualifies_with_match_value() {
-        let mut profile = empty_profile();
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "sonnet".to_string(),
-            no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-sonnet-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
-            .expect("policy should qualify");
-        assert!(matches!(
-            emission,
-            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
-        ));
-    }
-
-    #[test]
-    fn model_policy_qualifies_by_pinned_model_id() {
-        let mut profile = empty_profile();
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Model,
-            match_value: "claude-sonnet-4-6".to_string(),
-            no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-sonnet-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
-            .expect("model policy should qualify");
-        assert!(matches!(
-            emission,
-            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
-        ));
-    }
-
-    #[test]
-    fn model_glob_policy_qualifies_by_pinned_model_id() {
-        let mut profile = empty_profile();
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::ModelGlob,
-            match_value: "claude-sonnet-*".to_string(),
-            no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-sonnet-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
-            .expect("model-glob policy should qualify");
-        assert!(matches!(
-            emission,
-            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
-        ));
-    }
-
-    #[test]
-    fn policy_override_harness_vetoes_mismatch() {
-        let mut profile = empty_profile();
-        let mut overrides = serde_yaml::Mapping::new();
-        overrides.insert(
-            serde_yaml::Value::String("harness".to_string()),
-            serde_yaml::Value::String("codex".to_string()),
-        );
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "gpt".to_string(),
-            no_fallback: false,
-            overrides,
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "gpt".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "gpt-5".to_string(),
-                    provider: Some("openai".to_string()),
-                },
-            },
-        );
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true).is_none()
-        );
-    }
 
     #[test]
     fn validate_rejects_unknown_harness_and_missing_target() {
@@ -469,103 +100,30 @@ mod tests {
     }
 
     #[test]
-    fn declared_harness_foreign_model_does_not_short_circuit() {
-        let mut profile = empty_profile();
-        profile.harness = Some(HarnessKind::Codex);
-        profile.model = Some("opus".to_string());
-        let mut aliases = IndexMap::new();
-        aliases.insert("opus".to_string(), anthropic_alias());
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Codex, &aliases, false).is_none(),
-            "codex harness with claude-resolving model must not qualify for codex"
-        );
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some(),
-            "effective model should qualify via model-resolution branch"
-        );
+    fn fanout_agents_propagated_to_spec() {
+        let config = AgentCopyConfig {
+            harnesses: vec!["claude".to_string()],
+            include_fanout: false,
+            fanout_agents: vec!["reviewer".to_string(), "investigator".to_string()],
+        };
+        let mut diag = DiagnosticCollector::new();
+        let spec =
+            build_agent_copy_spec(Some(&config), &[".claude".to_string()], &mut diag).unwrap();
+        assert!(!spec.include_fanout);
+        assert_eq!(spec.fanout_agents, vec!["reviewer", "investigator"]);
+        assert!(diag.drain().is_empty());
     }
 
     #[test]
-    fn declared_harness_matching_model_still_short_circuits() {
-        let mut profile = empty_profile();
-        profile.harness = Some(HarnessKind::Claude);
-        profile.model = Some("opus".to_string());
-        let mut aliases = IndexMap::new();
-        aliases.insert("opus".to_string(), anthropic_alias());
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_some()
-        );
-    }
-
-    #[test]
-    fn fanout_agent_effective_true_qualifies() {
-        let mut profile = empty_profile();
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "sonnet".to_string(),
-            no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-sonnet-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-        let emission = agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, true)
-            .expect("effective fanout should qualify via model policy");
-        assert!(matches!(
-            emission,
-            QualifiedEmission::PolicyModel(ref m) if m == "sonnet"
-        ));
-    }
-
-    #[test]
-    fn fanout_agent_effective_false_does_not_qualify() {
-        let mut profile = empty_profile();
-        profile.model_policies.push(ModelPolicyRule {
-            match_type: ModelPolicyMatchType::Alias,
-            match_value: "sonnet".to_string(),
-            no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
-        });
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "sonnet".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-sonnet-4-6".to_string(),
-                    provider: Some("anthropic".to_string()),
-                },
-            },
-        );
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &aliases, false).is_none(),
-            "without effective fanout, model policies should not qualify"
-        );
-    }
-
-    #[test]
-    fn declared_harness_no_model_still_short_circuits() {
-        let mut profile = empty_profile();
-        profile.harness = Some(HarnessKind::Claude);
-        assert!(
-            agent_qualifies_for_harness(&profile, &HarnessKind::Claude, &IndexMap::new(), false,)
-                .is_some()
-        );
+    fn fanout_agents_defaults_to_empty() {
+        let config = AgentCopyConfig {
+            harnesses: vec!["claude".to_string()],
+            include_fanout: false,
+            fanout_agents: Vec::new(),
+        };
+        let mut diag = DiagnosticCollector::new();
+        let spec =
+            build_agent_copy_spec(Some(&config), &[".claude".to_string()], &mut diag).unwrap();
+        assert!(spec.fanout_agents.is_empty());
     }
 }

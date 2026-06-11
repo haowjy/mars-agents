@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-11
+
 ### Added
 - `fanout_agents` field in `[settings.meridian.agent_copy]` — selectively enable fanout qualification for listed agents when `include_fanout = false` globally.
 

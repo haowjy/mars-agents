@@ -525,7 +525,8 @@ mod tests {
 
         assert!(inventory.contains("## Subagent"));
         assert!(
-            inventory.contains("- `meridian spawn -a reviewer`: Adversarial review | Model: test-model")
+            inventory
+                .contains("- `meridian spawn -a reviewer`: Adversarial review | Model: test-model")
         );
         assert!(
             inventory.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")

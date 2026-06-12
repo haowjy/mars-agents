@@ -473,13 +473,11 @@ agents = ["reviewer"]
         .as_str()
         .expect("inventory_prompt should be string");
     assert!(inventory_prompt.contains("## Subagent"));
+    assert!(inventory_prompt.contains(
+        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
+    ));
     assert!(
-        inventory_prompt
-            .contains("- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6")
-    );
-    assert!(
-        inventory_prompt
-            .contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
+        inventory_prompt.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
     );
     assert!(inventory_prompt.contains("- reviewer: Review implementation"));
 }
@@ -497,13 +495,8 @@ Review code changes."#;
 fanout_agents = ["reviewer"]
 "#;
 
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        reviewer_content,
-        &[],
-        extra_toml,
-    );
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", reviewer_content, &[], extra_toml);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);

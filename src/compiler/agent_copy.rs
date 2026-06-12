@@ -125,7 +125,9 @@ mod tests {
         assert!(!spec.include_fanout);
         let messages: Vec<_> = diag.drain().into_iter().map(|d| d.message).collect();
         assert!(
-            messages.iter().any(|m| m.contains("[settings.meridian.fanout].agents")),
+            messages
+                .iter()
+                .any(|m| m.contains("[settings.meridian.fanout].agents")),
             "{messages:?}"
         );
     }

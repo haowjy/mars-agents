@@ -393,10 +393,7 @@ fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Resul
 /// Remove the given (event, name) managed hook bindings from a single settings
 /// file, if it exists. Conservative — only removes entries whose command path
 /// matches a mars-managed hook (`/hooks/<name>/`).
-fn remove_hook_keys_from_file(
-    path: &Path,
-    hook_keys: &[(String, &str)],
-) -> Result<(), MarsError> {
+fn remove_hook_keys_from_file(path: &Path, hook_keys: &[(String, &str)]) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
@@ -703,8 +700,7 @@ mod tests {
         adapter.write_config_entries(&entries, tmp.path()).unwrap();
 
         // New hook lands in settings.local.json.
-        let local_raw =
-            std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
+        let local_raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
         let local: serde_json::Value = serde_json::from_str(&local_raw).unwrap();
         let local_hooks = local["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(local_hooks.len(), 1);
@@ -720,10 +716,7 @@ mod tests {
         let committed: serde_json::Value = serde_json::from_str(&committed_raw).unwrap();
         let committed_hooks = committed["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(committed_hooks.len(), 1);
-        assert_eq!(
-            committed_hooks[0]["hooks"][0]["command"],
-            "echo user-owned"
-        );
+        assert_eq!(committed_hooks[0]["hooks"][0]["command"], "echo user-owned");
     }
 
     #[test]

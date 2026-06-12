@@ -117,6 +117,7 @@ pub fn build_launch_bundle(
         &policy.routing.model_token,
         &policy.routing.model,
         &profile.subagents,
+        effective_project_config.settings.meridian_fanout_agents(),
     )?;
 
     warnings.extend(prompt.warnings);

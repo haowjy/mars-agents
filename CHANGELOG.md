@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Moved fanout agent list from `[settings.meridian.agent_copy].fanout_agents` to `[settings.meridian.fanout].agents`. Old key parses with a migration warning and is ignored.
+- Fanout agents that are native-for-harness now appear in both the Meridian spawn inventory and the native harness agents section.
+
 ## [0.8.4] - 2026-06-11
 
 ### Added

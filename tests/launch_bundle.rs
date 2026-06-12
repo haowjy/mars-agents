@@ -102,6 +102,11 @@ fn build_launch_bundle_orders_skills_by_type_and_bookends_principles() {
 }
 
 #[test]
+fn build_launch_bundle_fanout_agent_dual_lists_in_inventory() {
+    prompt_surface::build_launch_bundle_fanout_agent_dual_lists_in_inventory();
+}
+
+#[test]
 fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
     prompt_surface::build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout(
     );

@@ -7,7 +7,7 @@ use crate::compiler::native_agent_manifest::{
 };
 use crate::error::{ConfigError, MarsError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedAgentInventory {
     name: String,
     description: String,
@@ -20,6 +20,7 @@ pub fn build_inventory_prompt(
     mars_dir: &Path,
     subagents_filter: &[String],
     harness: &str,
+    fanout_agents: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<String, MarsError> {
     let agents_dir = mars_dir.join("agents");
@@ -94,16 +95,28 @@ pub fn build_inventory_prompt(
     let mut meridian_subagent = Vec::new();
     let mut native_agents = Vec::new();
 
+    let is_fanout_agent = |agent: &ParsedAgentInventory| -> bool {
+        fanout_agents
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&agent.name))
+    };
+
     for agent in primary_agents {
         if is_native_for_harness(&agent) {
-            native_agents.push(agent);
+            native_agents.push(agent.clone());
+            if is_fanout_agent(&agent) {
+                meridian_primary.push(agent);
+            }
         } else {
             meridian_primary.push(agent);
         }
     }
     for agent in subagent_agents {
         if is_native_for_harness(&agent) {
-            native_agents.push(agent);
+            native_agents.push(agent.clone());
+            if is_fanout_agent(&agent) {
+                meridian_subagent.push(agent);
+            }
         } else {
             meridian_subagent.push(agent);
         }
@@ -361,7 +374,8 @@ mod tests {
         );
 
         let mut warnings = Vec::new();
-        let inventory = build_inventory_prompt(&mars_dir, &[], "claude", &mut warnings).unwrap();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
 
         assert!(inventory.contains("Write prompts to `/tmp/<name>.md`."));
         assert!(inventory.contains("## Subagent"));
@@ -407,7 +421,8 @@ mod tests {
         .unwrap();
 
         let mut warnings = Vec::new();
-        let inventory = build_inventory_prompt(&mars_dir, &[], "claude", &mut warnings).unwrap();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
 
         assert!(
             inventory.contains(
@@ -448,7 +463,8 @@ mod tests {
         .unwrap();
 
         let mut warnings = Vec::new();
-        let inventory = build_inventory_prompt(&mars_dir, &[], "claude", &mut warnings).unwrap();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
 
         assert!(
             inventory.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
@@ -475,12 +491,45 @@ mod tests {
         .unwrap();
 
         let mut warnings = Vec::new();
-        let inventory = build_inventory_prompt(&mars_dir, &[], "codex", &mut warnings).unwrap();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "codex", &[], &mut warnings).unwrap();
 
         assert!(inventory.contains(
             "- `meridian spawn -a frontend-coder`: Frontend implementation | Model: test-model"
         ));
         assert!(!inventory.contains("## Native Agents"));
         assert!(!inventory.contains("## Claude Agents"));
+    }
+
+    #[test]
+    fn inventory_fanout_agent_dual_lists_in_meridian_and_native_sections() {
+        let temp = TempDir::new().unwrap();
+        let project_root = temp.path();
+        let mars_dir = project_root.join(".mars");
+        write_agent(
+            &mars_dir,
+            "reviewer",
+            &sample_agent_content("reviewer", "subagent", "Adversarial review"),
+        );
+
+        write_native_agent_manifest_from_lock(
+            project_root,
+            &lock_with_native_agent("reviewer", HarnessKind::Claude),
+        )
+        .unwrap();
+
+        let fanout = vec!["reviewer".to_string()];
+        let mut warnings = Vec::new();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "claude", &fanout, &mut warnings).unwrap();
+
+        assert!(inventory.contains("## Subagent"));
+        assert!(
+            inventory.contains("- `meridian spawn -a reviewer`: Adversarial review | Model: test-model")
+        );
+        assert!(
+            inventory.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
+        );
+        assert!(inventory.contains("- reviewer: Adversarial review"));
     }
 }

@@ -53,6 +53,7 @@ pub fn compile_prompt_surface(
     selected_model_token: &str,
     canonical_model_id: &str,
     subagents_filter: &[String],
+    fanout_agents: &[String],
 ) -> Result<PromptCompilation, MarsError> {
     let _ = (selected_model_token, canonical_model_id);
 
@@ -123,8 +124,13 @@ pub fn compile_prompt_surface(
         }
     }
 
-    let inventory_prompt =
-        build_inventory_prompt(mars_dir, subagents_filter, harness_id, &mut warnings)?;
+    let inventory_prompt = build_inventory_prompt(
+        mars_dir,
+        subagents_filter,
+        harness_id,
+        fanout_agents,
+        &mut warnings,
+    )?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,

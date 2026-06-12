@@ -93,28 +93,30 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .assert()
         .success();
 
-    // 7-10. Verify items exist in target and .mars/ canonical store
+    // 7-10. Verify items exist in .mars/ canonical store and target.
+    // Agents now materialize to .mars/agents/ (canonical store), not the
+    // managed target dir. Skills still go to the target.
     let managed = project.child(".custom");
-    let local_agent_target = managed.child("agents").child("local-agent.md");
     let local_skill_target = managed.child("skills").child("local-skill");
-    let external_agent = managed.child("agents").child("external-agent.md");
+
+    let mars_dir = project.child(".mars");
+    let mars_local_agent = mars_dir.child("agents").child("local-agent.md");
+    let mars_external_agent = mars_dir.child("agents").child("external-agent.md");
 
     assert!(
-        local_agent_target.path().exists(),
-        "local agent should exist"
+        mars_local_agent.path().exists(),
+        "local agent should exist in .mars/agents/"
     );
     assert!(
         local_skill_target.path().exists(),
         "local skill should exist"
     );
     assert!(
-        external_agent.path().exists(),
-        "external agent should exist"
+        mars_external_agent.path().exists(),
+        "external agent should exist in .mars/agents/"
     );
 
     // In .mars/ canonical store, local items are regular copied content
-    let mars_dir = project.child(".mars");
-    let mars_local_agent = mars_dir.child("agents").child("local-agent.md");
     assert!(
         !mars_local_agent
             .path()
@@ -125,18 +127,9 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "local agent in .mars/ should be a regular file copy"
     );
 
-    // In target directories, ALL items are regular file copies (D26)
+    // External agent is also a regular file copy (D26)
     assert!(
-        !local_agent_target
-            .path()
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink(),
-        "local agent in target should be a regular file copy, not a symlink"
-    );
-    assert!(
-        !external_agent
+        !mars_external_agent
             .path()
             .symlink_metadata()
             .unwrap()

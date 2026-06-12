@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Claude target writes hook bindings to `settings.local.json` (gitignored) instead of `settings.json`. Hook commands embed machine-local cache paths that churn on every sync and every machine, so they no longer belong in the committed file. Existing managed hooks in `settings.json` are migrated out on next sync; user-owned hooks are preserved.
+
 ## [0.8.6] - 2026-06-12
 
 ## [0.8.5] - 2026-06-12

@@ -47,7 +47,9 @@ fn sync_force_overwrites_local_changes() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[("coder", "# Original content")], &[]);
 
-    let agents_dir = dir.child("project").child(".agents");
+    // Agents materialize to the canonical `.mars/agents` store; the `.agents`
+    // link target only receives native skills.
+    let mars_agents_dir = dir.child("project").child(".mars").child("agents");
     mars()
         .args([
             "init",
@@ -68,8 +70,8 @@ fn sync_force_overwrites_local_changes() {
         .assert()
         .success();
 
-    // Locally modify the file
-    let installed_file = agents_dir.child("agents").child("coder.md");
+    // Locally modify the canonical store file
+    let installed_file = mars_agents_dir.child("coder.md");
     fs::write(installed_file.path(), "# Locally modified").unwrap();
 
     // Also update source so there's a conflict
@@ -382,10 +384,11 @@ fn sync_force_overwrites_divergent_target() {
         .assert()
         .success();
 
-    // Manually edit the target (.agents/) to simulate divergence
+    // Manually edit the canonical store to simulate divergence. Agents
+    // materialize to `.mars/agents`, not the `.agents` link target.
     let target_installed = dir
         .child("project")
-        .child(".agents")
+        .child(".mars")
         .child("agents")
         .child("coder.md");
     fs::write(target_installed.path(), "# Hand-edited content\n").unwrap();
@@ -1606,7 +1609,10 @@ path = "{}"
 #[test]
 fn link_fails_on_unmanaged_collision_without_force() {
     let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "base", &[("coder", "# Coder from Mars")], &[]);
+    // Skills are the only items emitted to the `.agents` link target now;
+    // agents materialize to the canonical `.mars/agents` store. Test the
+    // unmanaged-collision guard against a skill the link target would touch.
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning from Mars")]);
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -1623,9 +1629,9 @@ fn link_fails_on_unmanaged_collision_without_force() {
         .assert()
         .success();
 
-    fs::create_dir_all(project.child(".agents/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".agents/skills/planning").path()).unwrap();
     fs::write(
-        project.child(".agents/agents/coder.md").path(),
+        project.child(".agents/skills/planning/SKILL.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1641,7 +1647,7 @@ fn link_fails_on_unmanaged_collision_without_force() {
         .failure();
 
     assert_eq!(
-        fs::read_to_string(project.child(".agents/agents/coder.md").path()).unwrap(),
+        fs::read_to_string(project.child(".agents/skills/planning/SKILL.md").path()).unwrap(),
         "# hand-written\n"
     );
 }
@@ -1649,7 +1655,10 @@ fn link_fails_on_unmanaged_collision_without_force() {
 #[test]
 fn link_force_adopts_unmanaged_collision_and_records_lock() {
     let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "base", &[("coder", "# Coder from Mars")], &[]);
+    // Skills are the only items emitted to the `.agents` link target now;
+    // agents materialize to the canonical `.mars/agents` store. Test
+    // `--force` adoption against a skill the link target would touch.
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning from Mars")]);
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -1666,9 +1675,9 @@ fn link_force_adopts_unmanaged_collision_and_records_lock() {
         .assert()
         .success();
 
-    fs::create_dir_all(project.child(".agents/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".agents/skills/planning").path()).unwrap();
     fs::write(
-        project.child(".agents/agents/coder.md").path(),
+        project.child(".agents/skills/planning/SKILL.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1685,10 +1694,10 @@ fn link_force_adopts_unmanaged_collision_and_records_lock() {
         .success();
 
     assert_eq!(
-        fs::read_to_string(project.child(".agents/agents/coder.md").path()).unwrap(),
-        "# Coder from Mars"
+        fs::read_to_string(project.child(".agents/skills/planning/SKILL.md").path()).unwrap(),
+        "# Planning from Mars"
     );
 
     let lock = mars_agents::lock::load(project.path()).unwrap();
-    assert!(lock.contains_output(".agents", "agents/coder.md"));
+    assert!(lock.contains_output(".agents", "skills/planning"));
 }

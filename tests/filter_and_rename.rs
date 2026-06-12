@@ -22,7 +22,9 @@ fn add_with_agents_filter() {
         &[],
     );
 
-    let agents_dir = dir.child("project").child(".agents");
+    // Agents materialize to the canonical `.mars/agents` store; the `.agents`
+    // link target only receives native skills.
+    let mars_agents_dir = dir.child("project").child(".mars").child("agents");
     mars()
         .args([
             "init",
@@ -46,9 +48,9 @@ fn add_with_agents_filter() {
         .success();
 
     // Only coder should be installed
-    assert!(agents_dir.child("agents").child("coder.md").exists());
-    assert!(!agents_dir.child("agents").child("reviewer.md").exists());
-    assert!(!agents_dir.child("agents").child("planner.md").exists());
+    assert!(mars_agents_dir.child("coder.md").exists());
+    assert!(!mars_agents_dir.child("reviewer.md").exists());
+    assert!(!mars_agents_dir.child("planner.md").exists());
 }
 
 #[test]
@@ -56,7 +58,8 @@ fn rename_applies_path_mapping_during_sync() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[("coder", "# Coder")], &[]);
 
-    let agents_dir = dir.child("project").child(".agents");
+    // Agents materialize to the canonical `.mars/agents` store.
+    let mars_agents_dir = dir.child("project").child(".mars").child("agents");
     mars()
         .args([
             "init",
@@ -88,13 +91,8 @@ fn rename_applies_path_mapping_during_sync() {
         .assert()
         .success();
 
-    assert!(
-        agents_dir
-            .child("agents")
-            .child("coder-renamed.md")
-            .exists()
-    );
-    assert!(!agents_dir.child("agents").child("coder.md").exists());
+    assert!(mars_agents_dir.child("coder-renamed.md").exists());
+    assert!(!mars_agents_dir.child("coder.md").exists());
 
     let lock_content = fs::read_to_string(dir.child("project").child("mars.lock").path()).unwrap();
     let lock: Value = toml::from_str(&lock_content).unwrap();
@@ -163,7 +161,10 @@ fn rename_skill_rewrites_agent_skill_references() {
         .child("planning")
         .assert(predicate::path::missing());
 
-    let agent_content = fs::read_to_string(agents_dir.child("agents").child("coder.md").path())
+    // Agents materialize to the canonical `.mars/agents` store, not the
+    // `.agents` link target (which only receives native skills).
+    let mars_agents_dir = project_root.child(".mars").child("agents");
+    let agent_content = fs::read_to_string(mars_agents_dir.child("coder.md").path())
         .expect("expected installed agent");
     assert!(
         agent_content.contains("- strategy"),

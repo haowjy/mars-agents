@@ -672,10 +672,11 @@ fn reconcile_selective_native_agent_surfaces(
         // `agent.profile` is already overlay-resolved (see the lifecycle), so reconcile
         // and emission qualify against identical effective profiles.
         for harness in harnesses {
+            // Case-insensitive match — consistent with inventory dual-listing (`inventory.rs`).
             let effective_fanout = spec.include_fanout
                 || fanout_agents
                     .iter()
-                    .any(|n| n == &agent.agent_name);
+                    .any(|n| n.eq_ignore_ascii_case(&agent.agent_name));
             let qualifies = spec.harnesses.contains(harness)
                 && matches!(
                     model_router.decision_for_profile(
@@ -853,8 +854,10 @@ fn qualifying_emissions(
             emissions
         }
         AgentSurfacePolicy::EmitSelective(spec) => {
-            let effective_fanout =
-                spec.include_fanout || fanout_agents.iter().any(|n| n == agent_name);
+            let effective_fanout = spec.include_fanout
+                || fanout_agents
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(agent_name));
             let mut emissions = Vec::new();
             for harness in &spec.harnesses {
                 if !in_scope(harness) {

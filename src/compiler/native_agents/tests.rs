@@ -301,6 +301,7 @@ fn link_suppress_all_reconciles_selective_native_target() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: Some(&[HarnessKind::Claude]),
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut diag,
@@ -336,7 +337,6 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
-        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(
@@ -367,6 +367,7 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut router,
@@ -419,7 +420,6 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
-        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(
@@ -450,6 +450,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut router,
@@ -500,6 +501,7 @@ fn compile_emit_all_agents(
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
         },
+        fanout_agents: &[],
     };
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
@@ -665,6 +667,7 @@ fn compile_emit_all_with_overlays(
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
         },
+        fanout_agents: &[],
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
     let resolved = resolve_native_agent_profiles(agents, overlays);

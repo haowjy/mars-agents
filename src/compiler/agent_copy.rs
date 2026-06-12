@@ -10,7 +10,6 @@ use crate::harness::registry;
 pub struct AgentCopySpec {
     pub harnesses: Vec<HarnessKind>,
     pub include_fanout: bool,
-    pub fanout_agents: Vec<String>,
 }
 
 /// Validate `agent_copy.harnesses` and build a spec for the compiler.
@@ -20,6 +19,13 @@ pub fn build_agent_copy_spec(
     diag: &mut DiagnosticCollector,
 ) -> Option<AgentCopySpec> {
     let config = config?;
+    if !config.deprecated_fanout_agents.is_empty() {
+        diag.warn(
+            "agent-copy-fanout-moved",
+            "settings.meridian.agent_copy.fanout_agents is deprecated; move agents to \
+             [settings.meridian.fanout].agents (old value ignored)",
+        );
+    }
     if config.harnesses.is_empty() {
         return None;
     }
@@ -65,7 +71,6 @@ pub fn build_agent_copy_spec(
     Some(AgentCopySpec {
         harnesses,
         include_fanout: config.include_fanout,
-        fanout_agents: config.fanout_agents.clone(),
     })
 }
 
@@ -79,7 +84,7 @@ mod tests {
         let config = AgentCopyConfig {
             harnesses: vec!["gemini".to_string(), "claude".to_string()],
             include_fanout: false,
-            fanout_agents: Vec::new(),
+            deprecated_fanout_agents: Vec::new(),
         };
         let mut diag = DiagnosticCollector::new();
         let spec = build_agent_copy_spec(Some(&config), &[".agents".to_string()], &mut diag);
@@ -100,30 +105,20 @@ mod tests {
     }
 
     #[test]
-    fn fanout_agents_propagated_to_spec() {
+    fn deprecated_fanout_agents_emits_migration_warning() {
         let config = AgentCopyConfig {
             harnesses: vec!["claude".to_string()],
             include_fanout: false,
-            fanout_agents: vec!["reviewer".to_string(), "investigator".to_string()],
+            deprecated_fanout_agents: vec!["reviewer".to_string(), "investigator".to_string()],
         };
         let mut diag = DiagnosticCollector::new();
         let spec =
             build_agent_copy_spec(Some(&config), &[".claude".to_string()], &mut diag).unwrap();
         assert!(!spec.include_fanout);
-        assert_eq!(spec.fanout_agents, vec!["reviewer", "investigator"]);
-        assert!(diag.drain().is_empty());
-    }
-
-    #[test]
-    fn fanout_agents_defaults_to_empty() {
-        let config = AgentCopyConfig {
-            harnesses: vec!["claude".to_string()],
-            include_fanout: false,
-            fanout_agents: Vec::new(),
-        };
-        let mut diag = DiagnosticCollector::new();
-        let spec =
-            build_agent_copy_spec(Some(&config), &[".claude".to_string()], &mut diag).unwrap();
-        assert!(spec.fanout_agents.is_empty());
+        let messages: Vec<_> = diag.drain().into_iter().map(|d| d.message).collect();
+        assert!(
+            messages.iter().any(|m| m.contains("[settings.meridian.fanout].agents")),
+            "{messages:?}"
+        );
     }
 }

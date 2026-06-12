@@ -542,8 +542,21 @@ pub struct AgentCopyConfig {
     pub harnesses: Vec<String>,
     #[serde(default)]
     pub include_fanout: bool,
+    /// Deprecated: use `[settings.meridian.fanout].agents` instead. Parsed only to emit a migration warning.
+    #[serde(
+        default,
+        rename = "fanout_agents",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub deprecated_fanout_agents: Vec<String>,
+}
+
+/// Fanout agent list for native emission qualification and dual inventory listing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutConfig {
     #[serde(default)]
-    pub fanout_agents: Vec<String>,
+    pub agents: Vec<String>,
 }
 
 /// Meridian-managed settings nested under `[settings.meridian]`.
@@ -552,11 +565,13 @@ pub struct AgentCopyConfig {
 pub struct MeridianSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_copy: Option<AgentCopyConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fanout: Option<FanoutConfig>,
 }
 
 impl MeridianSettings {
     pub fn is_empty(&self) -> bool {
-        self.agent_copy.is_none()
+        self.agent_copy.is_none() && self.fanout.is_none()
     }
 }
 
@@ -619,6 +634,15 @@ impl Settings {
     /// Selective native agent copy config from `[settings.meridian.agent_copy]`.
     pub fn meridian_agent_copy(&self) -> Option<&AgentCopyConfig> {
         self.meridian.agent_copy.as_ref()
+    }
+
+    /// Fanout agent list from `[settings.meridian.fanout]`.
+    pub fn meridian_fanout_agents(&self) -> &[String] {
+        self.meridian
+            .fanout
+            .as_ref()
+            .map(|f| f.agents.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -1243,6 +1267,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.meridian.agent_copy changed during roundtrip ({:?} -> {:?})",
                 original.settings.meridian.agent_copy, reparsed.settings.meridian.agent_copy
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.meridian.fanout != original.settings.meridian.fanout {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.meridian.fanout changed during roundtrip ({:?} -> {:?})",
+                original.settings.meridian.fanout, reparsed.settings.meridian.fanout
             ),
         }
         .into());

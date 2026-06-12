@@ -83,6 +83,9 @@ impl LocalSettings {
         if let Some(value) = &self.meridian.agent_copy {
             merged.meridian.agent_copy = Some(value.clone());
         }
+        if let Some(value) = &self.meridian.fanout {
+            merged.meridian.fanout = Some(value.clone());
+        }
         if let Some(value) = &self.model_policies {
             merged.model_policies = value.clone();
         }

@@ -301,6 +301,7 @@ fn link_suppress_all_reconciles_selective_native_target() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: Some(&[HarnessKind::Claude]),
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut diag,
@@ -336,7 +337,6 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
-        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(
@@ -367,6 +367,7 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut router,
@@ -376,6 +377,58 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
     assert!(
         !dir.path().join(".claude/agents/coder.md").exists(),
         "openai-bound model should not qualify for claude selective reconcile"
+    );
+}
+
+#[test]
+fn emit_selective_fanout_agents_match_case_insensitively() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let agent = parse_mars_agent(
+        "---\nname: reviewer\nmodel: gpt-5.3-codex\nmodel-policies:\n  - match:\n      alias: opus\n    override: {}\n---\n# Reviewer\n",
+        "reviewer",
+    );
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let spec = agent_copy::AgentCopySpec {
+        harnesses: vec![HarnessKind::Claude],
+        include_fanout: false,
+    };
+    let fanout_agents = vec!["Reviewer".to_string()];
+    let mut diag = DiagnosticCollector::new();
+    let models_cache = empty_models_cache();
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir.path(),
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: &[HarnessKind::Claude],
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+        fanout_agents: &fanout_agents,
+    };
+    let mut router = test_router(&aliases, &models_cache);
+    let records = compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitSelective(spec),
+        std::slice::from_ref(&agent),
+        &mut router,
+        &mut diag,
+    );
+
+    assert_eq!(records.len(), 1);
+    assert!(dir.path().join(".claude/agents/reviewer.md").exists());
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/reviewer.md")).unwrap();
+    assert!(
+        native.contains("model: claude-opus-4-6"),
+        "fanout list entry must qualify reviewer via model-policies despite casing mismatch: {native}"
     );
 }
 
@@ -419,7 +472,6 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     let spec = agent_copy::AgentCopySpec {
         harnesses: vec![HarnessKind::Claude],
         include_fanout: false,
-        fanout_agents: Vec::new(),
     };
     let mut aliases = IndexMap::new();
     aliases.insert(
@@ -450,6 +502,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
+            fanout_agents: &[],
         },
         &mars_agents,
         &mut router,
@@ -500,6 +553,7 @@ fn compile_emit_all_agents(
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
         },
+        fanout_agents: &[],
     };
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
@@ -665,6 +719,7 @@ fn compile_emit_all_with_overlays(
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
         },
+        fanout_agents: &[],
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
     let resolved = resolve_native_agent_profiles(agents, overlays);

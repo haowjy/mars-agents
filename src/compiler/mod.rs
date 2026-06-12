@@ -123,6 +123,7 @@ pub fn compile(
         );
         &ownership_lock
     };
+    let fanout_agents = loaded.effective.settings.meridian_fanout_agents();
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
         policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
@@ -130,6 +131,7 @@ pub fn compile(
         old_lock,
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
+        fanout_agents,
     };
     let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
         None
@@ -144,6 +146,7 @@ pub fn compile(
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: request.options.dry_run,
             },
+            fanout_agents,
         })
     };
     (
@@ -296,7 +299,6 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
-            fanout_agents: Vec::new(),
         };
         assert!(matches!(
             agent_surface_policy(Some(&AgentEmission::Auto), Some(&spec), true),
@@ -309,7 +311,6 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
-            fanout_agents: Vec::new(),
         };
         assert!(matches!(
             agent_surface_policy(Some(&AgentEmission::Never), Some(&spec), false),
@@ -322,7 +323,6 @@ mod skill_surface_tests {
         let spec = agent_copy::AgentCopySpec {
             harnesses: vec![HarnessKind::Claude],
             include_fanout: false,
-            fanout_agents: Vec::new(),
         };
         assert_eq!(
             agent_surface_policy(Some(&AgentEmission::Always), Some(&spec), true),

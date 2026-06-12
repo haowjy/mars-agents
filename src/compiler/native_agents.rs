@@ -28,6 +28,8 @@ pub(crate) struct NativeAgentReconcileCtx<'a> {
     pub dry_run: bool,
     /// When set (e.g. `mars link <target>`), selective reconcile only touches these harnesses.
     pub selective_harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
+    /// Agents from `[settings.meridian.fanout].agents` for per-agent fanout qualification.
+    pub fanout_agents: &'a [String],
 }
 
 pub(crate) struct NativeAgentSurfaceCompileOptions {
@@ -43,6 +45,8 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
     pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
     pub configured_emit_harnesses: &'a [crate::compiler::agents::HarnessKind],
     pub options: NativeAgentSurfaceCompileOptions,
+    /// Agents from `[settings.meridian.fanout].agents` for per-agent fanout qualification.
+    pub fanout_agents: &'a [String],
 }
 
 struct NativeAgentEmit<'a> {
@@ -570,6 +574,7 @@ pub(crate) fn reconcile_native_agent_surfaces(
             reconcile_selective_native_agent_surfaces(
                 ctx,
                 spec,
+                ctx.fanout_agents,
                 harnesses,
                 mars_agents,
                 model_router,
@@ -656,6 +661,7 @@ fn remove_native_agent_shapes(
 fn reconcile_selective_native_agent_surfaces(
     ctx: &NativeAgentReconcileCtx<'_>,
     spec: &agent_copy::AgentCopySpec,
+    fanout_agents: &[String],
     harnesses: &[crate::compiler::agents::HarnessKind],
     mars_agents: &[MarsCanonicalAgent],
     model_router: &mut NativeModelRoutingRuntime<'_>,
@@ -666,8 +672,11 @@ fn reconcile_selective_native_agent_surfaces(
         // `agent.profile` is already overlay-resolved (see the lifecycle), so reconcile
         // and emission qualify against identical effective profiles.
         for harness in harnesses {
-            let effective_fanout =
-                spec.include_fanout || spec.fanout_agents.iter().any(|n| n == &agent.agent_name);
+            // Case-insensitive match — consistent with inventory dual-listing (`inventory.rs`).
+            let effective_fanout = spec.include_fanout
+                || fanout_agents
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(&agent.agent_name));
             let qualifies = spec.harnesses.contains(harness)
                 && matches!(
                     model_router.decision_for_profile(
@@ -759,6 +768,7 @@ pub(crate) fn compile_native_agents<'a>(
             effective_profile,
             &agent.agent_name,
             policy,
+            ctx.fanout_agents,
             ctx,
             model_router,
         ) {
@@ -809,6 +819,7 @@ fn qualifying_emissions(
     profile: &crate::compiler::agents::AgentProfile,
     agent_name: &str,
     policy: &AgentSurfacePolicy,
+    fanout_agents: &[String],
     ctx: &NativeAgentCompileCtx<'_>,
     model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> Vec<(
@@ -843,8 +854,10 @@ fn qualifying_emissions(
             emissions
         }
         AgentSurfacePolicy::EmitSelective(spec) => {
-            let effective_fanout =
-                spec.include_fanout || spec.fanout_agents.iter().any(|n| n == agent_name);
+            let effective_fanout = spec.include_fanout
+                || fanout_agents
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(agent_name));
             let mut emissions = Vec::new();
             for harness in &spec.harnesses {
                 if !in_scope(harness) {
@@ -1189,6 +1202,7 @@ pub(crate) fn materialize_native_agents_after_link(
         .iter()
         .filter_map(|t| HarnessKind::from_target_dir(t))
         .collect();
+    let fanout_agents = input.effective.settings.meridian_fanout_agents();
     let reconcile_ctx = NativeAgentReconcileCtx {
         policy: policy.clone(),
         project_root: &input.mars_ctx.project_root,
@@ -1196,6 +1210,7 @@ pub(crate) fn materialize_native_agents_after_link(
         old_lock: input.old_lock,
         dry_run: false,
         selective_harness_scope: harness_scope,
+        fanout_agents,
     };
     let ownership_lock;
     let compile_ctx = if matches!(policy, AgentSurfacePolicy::SuppressAll) {
@@ -1213,6 +1228,7 @@ pub(crate) fn materialize_native_agents_after_link(
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
                 dry_run: false,
             },
+            fanout_agents,
         })
     };
     let (compiled_native_outputs, removed_native_outputs) = run_native_agent_post_sync_lifecycle(

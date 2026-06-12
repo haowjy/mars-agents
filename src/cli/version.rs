@@ -5,7 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::{BuildMetadata, Prerelease, Version};
 
+use crate::diagnostic::DiagnosticLevel;
 use crate::error::{ConfigError, MarsError};
+use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
+use crate::types::MarsContext;
 
 use super::{check, output};
 
@@ -41,6 +44,8 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
         .into());
     }
+
+    require_validate_pass(&ctx.project_root, args.force)?;
 
     let current = parse_release_version(&package.version, "[package].version")?;
     let next = resolve_next_version(&args.bump, &current)?;
@@ -158,6 +163,60 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
         }
         Err(e) if force => {
             eprintln!("warning (--force): check failed: {e}");
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Run the full sync pipeline in dry-run mode and fail on errors.
+///
+/// This catches integration issues that `mars check` cannot see:
+/// dependency resolution failures, cross-package skill graph inconsistencies,
+/// and target generation errors.
+fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsError> {
+    let ctx = MarsContext {
+        project_root: project_root.to_path_buf(),
+        managed_root: project_root.join(".mars"),
+        meridian_managed: false,
+    };
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: None,
+        options: SyncOptions {
+            dry_run: true,
+            ..SyncOptions::default()
+        },
+    };
+
+    match crate::sync::execute(&ctx, &request) {
+        Ok(report)
+            if report
+                .diagnostics
+                .iter()
+                .all(|d| d.level != DiagnosticLevel::Error) =>
+        {
+            Ok(())
+        }
+        Ok(report) if force => {
+            for d in &report.diagnostics {
+                if d.level == DiagnosticLevel::Error {
+                    eprintln!("warning (--force): [{}] {}", d.code, d.message);
+                }
+            }
+            Ok(())
+        }
+        Ok(report) => {
+            let mut message = "validate failed:".to_string();
+            for d in &report.diagnostics {
+                if d.level == DiagnosticLevel::Error {
+                    message.push_str(&format!("\n  - [{}] {}", d.code, d.message));
+                }
+            }
+            Err(ConfigError::Invalid { message }.into())
+        }
+        Err(e) if force => {
+            eprintln!("warning (--force): validate failed: {e}");
             Ok(())
         }
         Err(e) => Err(e),

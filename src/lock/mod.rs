@@ -1343,7 +1343,7 @@ installed_checksum = "sha256:bbb"
         let err = load_for_runtime_aliases(dir.path()).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
-        assert!(message.contains("run `mars sync`"));
+        assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));
     }
 
     #[test]

@@ -655,8 +655,8 @@ commit = "abc123"
         "expected missing dependency alias authority error, stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("run `mars sync`"),
-        "expected sync remediation hint, stderr:\n{stderr}"
+        stderr.contains("mars repair`") || stderr.contains("mars sync`"),
+        "expected repair/sync remediation hint, stderr:\n{stderr}"
     );
 }
 

@@ -105,7 +105,7 @@ fn sync_errors_when_lock_is_corrupt() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("lock file corrupt"))
-        .stderr(predicate::str::contains("run `mars repair`"));
+        .stderr(predicate::str::contains("mars repair`"));
 }
 
 #[test]

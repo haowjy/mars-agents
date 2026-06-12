@@ -107,6 +107,11 @@ fn build_launch_bundle_fanout_agent_dual_lists_in_inventory() {
 }
 
 #[test]
+fn build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents() {
+    prompt_surface::build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents();
+}
+
+#[test]
 fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
     prompt_surface::build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout(
     );

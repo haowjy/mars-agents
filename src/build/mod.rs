@@ -81,6 +81,11 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
+        effective_project_config.settings.meridian_agent_copy(),
+    ) {
+        warnings.push(message);
+    }
     let lock = crate::lock::load_for_runtime_aliases(&ctx.project_root)?;
     let runtime_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,

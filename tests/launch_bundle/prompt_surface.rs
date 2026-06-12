@@ -484,6 +484,44 @@ agents = ["reviewer"]
     assert!(inventory_prompt.contains("- reviewer: Review implementation"));
 }
 
+pub(crate) fn build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents() {
+    let temp = TempDir::new().unwrap();
+    let reviewer_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+---
+Review code changes."#;
+
+    let extra_toml = r#"
+[settings.meridian.agent_copy]
+fanout_agents = ["reviewer"]
+"#;
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        reviewer_content,
+        &[],
+        extra_toml,
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("[settings.meridian.fanout].agents")
+    }));
+}
+
 pub(crate) fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---

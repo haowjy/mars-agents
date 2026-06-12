@@ -12,6 +12,18 @@ pub struct AgentCopySpec {
     pub include_fanout: bool,
 }
 
+/// Migration notice when the deprecated `agent_copy.fanout_agents` key is set.
+/// Returns `None` when the key is absent/empty.
+pub fn deprecated_fanout_agents_warning(config: Option<&AgentCopyConfig>) -> Option<String> {
+    config
+        .filter(|c| !c.deprecated_fanout_agents.is_empty())
+        .map(|_| {
+            "settings.meridian.agent_copy.fanout_agents is deprecated; move agents to \
+             [settings.meridian.fanout].agents (old value ignored)"
+                .to_string()
+        })
+}
+
 /// Validate `agent_copy.harnesses` and build a spec for the compiler.
 pub fn build_agent_copy_spec(
     config: Option<&AgentCopyConfig>,
@@ -19,12 +31,8 @@ pub fn build_agent_copy_spec(
     diag: &mut DiagnosticCollector,
 ) -> Option<AgentCopySpec> {
     let config = config?;
-    if !config.deprecated_fanout_agents.is_empty() {
-        diag.warn(
-            "agent-copy-fanout-moved",
-            "settings.meridian.agent_copy.fanout_agents is deprecated; move agents to \
-             [settings.meridian.fanout].agents (old value ignored)",
-        );
+    if let Some(message) = deprecated_fanout_agents_warning(Some(config)) {
+        diag.warn("agent-copy-fanout-moved", message);
     }
     if config.harnesses.is_empty() {
         return None;

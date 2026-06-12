@@ -9,6 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fanout agents that are native-for-harness now appear in both the Meridian spawn inventory and the native harness agents section.
 - Fanout agent list matching is case-insensitive for native emission, consistent with inventory dual-listing.
 
+### Fixed
+- `mars build launch-bundle` now surfaces the deprecated `agent_copy.fanout_agents` migration warning in bundle `warnings`.
+
 ## [0.8.4] - 2026-06-11
 
 ### Added

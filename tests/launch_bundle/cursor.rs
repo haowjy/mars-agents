@@ -5,7 +5,7 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_accepts_cursor_harness_flag_and_marks_experimental() {
+pub(crate) fn build_launch_bundle_accepts_cursor_harness_flag() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
@@ -32,17 +32,10 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(
-        bundle["provenance"]["harness_stability"].as_str(),
-        Some("experimental")
+    assert!(
+        bundle["provenance"].get("harness_stability").is_none(),
+        "cursor should not be marked experimental"
     );
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default()
-            == "Cursor is an experimental launch-bundle target. The contract may change without notice."
-    }));
 }
 
 pub(crate) fn build_launch_bundle_accepts_profile_cursor_harness() {
@@ -70,9 +63,9 @@ Review code changes."#;
         bundle["provenance"]["harness_source"].as_str(),
         Some("profile")
     );
-    assert_eq!(
-        bundle["provenance"]["harness_stability"].as_str(),
-        Some("experimental")
+    assert!(
+        bundle["provenance"].get("harness_stability").is_none(),
+        "cursor should not be marked experimental"
     );
 }
 
@@ -151,9 +144,9 @@ harness = "cursor""#;
         bundle["provenance"]["harness_source"].as_str(),
         Some("alias")
     );
-    assert_eq!(
-        bundle["provenance"]["harness_stability"].as_str(),
-        Some("experimental")
+    assert!(
+        bundle["provenance"].get("harness_stability").is_none(),
+        "cursor should not be marked experimental"
     );
     assert_eq!(
         bundle["skills"]["loaded"][0]["name"].as_str(),

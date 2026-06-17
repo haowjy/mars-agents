@@ -24,8 +24,7 @@ meridian -C "$MERIDIAN_TASK_DIR" mars sync
 
 ## Target Support Status
 
-- `.claude`, `.codex`, `.opencode` are first-class targets.
-- `.cursor` is **experimental**.
+- `.claude`, `.codex`, `.opencode`, `.cursor` are first-class targets.
 - `.pi` is under active design/development.
 
 ## Critical Invariants

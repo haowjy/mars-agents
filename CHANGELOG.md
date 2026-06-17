@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-06-17
+
 ### Changed
 - Cursor promoted from experimental to first-class launch-bundle target. Removed `is_experimental` flag, `harness_stability` provenance, and user-facing warning.
 - Inventory prompt-file idiom updated from `/tmp/<name>.md` to `$(meridian work path prompts/<name>.md)`.

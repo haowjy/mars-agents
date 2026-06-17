@@ -20,7 +20,6 @@ pub(super) struct HarnessResolution {
     /// Set to Some(()) when a soft-fail cleared the model so harness could proceed.
     /// Downstream routing should treat model/provider fields as empty when this is Some.
     pub(super) model_override: Option<()>,
-    pub(super) is_experimental: bool,
     pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
 }
@@ -275,7 +274,6 @@ where
     })?;
 
     Ok(HarnessResolution {
-        is_experimental: harness.value == "cursor",
         resolved_harness,
         harness,
         harness_order_position: selected_harness_order_position,

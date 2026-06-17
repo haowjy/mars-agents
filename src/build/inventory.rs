@@ -126,7 +126,7 @@ pub fn build_inventory_prompt(
     let mut lines = vec![
         "# Meridian Agents".to_string(),
         "".to_string(),
-        "Write prompts to `/tmp/<name>.md`.".to_string(),
+        "Write prompts to `$(meridian work path prompts/<name>.md)`.".to_string(),
         "Use `--bg` + `meridian spawn wait` for parallel work.".to_string(),
         "Use `/handoff` when passing control back to the user.".to_string(),
     ];
@@ -377,7 +377,7 @@ mod tests {
         let inventory =
             build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
 
-        assert!(inventory.contains("Write prompts to `/tmp/<name>.md`."));
+        assert!(inventory.contains("Write prompts to `$(meridian work path prompts/<name>.md)`."));
         assert!(inventory.contains("## Subagent"));
         assert!(
             inventory.contains(

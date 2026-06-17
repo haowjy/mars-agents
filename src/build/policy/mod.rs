@@ -464,13 +464,6 @@ pub fn resolve_policy(
     {
         provenance.insert("harness_order_position".to_string(), position.to_string());
     }
-    if harness_resolution.is_experimental {
-        warnings.push(
-            "Cursor is an experimental launch-bundle target. The contract may change without notice.".to_string(),
-        );
-        provenance.insert("harness_stability".to_string(), "experimental".to_string());
-    }
-
     let matched_harness_override = input
         .profile
         .harness_overrides

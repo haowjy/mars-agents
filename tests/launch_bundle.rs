@@ -542,8 +542,8 @@ fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
 }
 
 #[test]
-fn build_launch_bundle_accepts_cursor_harness_flag_and_marks_experimental() {
-    cursor::build_launch_bundle_accepts_cursor_harness_flag_and_marks_experimental();
+fn build_launch_bundle_accepts_cursor_harness_flag() {
+    cursor::build_launch_bundle_accepts_cursor_harness_flag();
 }
 
 #[test]

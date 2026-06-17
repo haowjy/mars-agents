@@ -246,7 +246,8 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
         .env("XDG_DATA_HOME", &xdg_data)
         .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
-        .env_remove("MARS_OFFLINE");
+        .env_remove("MARS_OFFLINE")
+        .env_remove("MERIDIAN_MANAGED");
 }
 
 pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) {
@@ -265,7 +266,8 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
         .env("XDG_DATA_HOME", &xdg_data)
         .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
-        .env_remove("MARS_OFFLINE");
+        .env_remove("MARS_OFFLINE")
+        .env_remove("MERIDIAN_MANAGED");
 }
 
 pub fn mars_cmd(project_root: &Path, temp_root: &Path, api_url: &str) -> Command {

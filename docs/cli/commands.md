@@ -301,7 +301,7 @@ mars link <target> [--force]
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
-mars link .cursor            # Copy skills/MCP into .cursor (experimental)
+mars link .cursor            # Copy skills/MCP into .cursor
 mars link .claude --force    # Adopt untracked collisions in .claude/
 ```
 
@@ -588,7 +588,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 
-**Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: linked harness constraints exhausting auto-routing candidates, or Cursor experimental target.
+**Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: linked harness constraints exhausting auto-routing candidates.
 
 **`harness_model` resolution:** Alias `provider` does not always become `provider/model` in
 `routing.harness_model`. Native Codex/Claude use bare canonical ids when the provider matches;

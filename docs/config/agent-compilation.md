@@ -13,7 +13,7 @@ When native emission selects an agent for a harness, a second artifact is emitte
 | `claude` | `.claude/agents/<name>.md` |
 | `codex` | `.codex/agents/<name>.toml` |
 | `opencode` | `.opencode/agents/<name>.md` |
-| `cursor` (experimental) | `.cursor/agents/<name>.md` |
+| `cursor` | `.cursor/agents/<name>.md` |
 | `pi` | `.pi/agents/<name>.md` |
 
 Harness-native artifacts are format-translated and field-stripped. They serve as agent discovery surfaces for harness-native invocation (e.g. `codex --agent coder`). Meridian always uses the `.mars/` artifact for its own spawn logic and applies all policy fields through its own projection layer.

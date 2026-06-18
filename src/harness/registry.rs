@@ -41,7 +41,6 @@ pub struct HarnessDescriptor {
     pub name: &'static str,
     pub binary: &'static str,
     pub default_target: &'static str,
-    pub experimental: bool,
     pub class: HarnessClass,
 }
 
@@ -67,7 +66,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "claude",
         binary: "claude",
         default_target: ".claude",
-        experimental: false,
         class: HarnessClass::Native {
             provider: "anthropic",
         },
@@ -77,7 +75,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "codex",
         binary: "codex",
         default_target: ".codex",
-        experimental: false,
         class: HarnessClass::Native { provider: "openai" },
     },
     HarnessDescriptor {
@@ -85,7 +82,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "pi",
         binary: "pi",
         default_target: ".pi",
-        experimental: false,
         class: HarnessClass::ProbeBacked,
     },
     HarnessDescriptor {
@@ -93,7 +89,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "opencode",
         binary: "opencode",
         default_target: ".opencode",
-        experimental: false,
         class: HarnessClass::ProbeBacked,
     },
     HarnessDescriptor {
@@ -101,7 +96,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "cursor",
         binary: "cursor",
         default_target: ".cursor",
-        experimental: true,
         class: HarnessClass::ProbeBacked,
     },
 ];
@@ -226,9 +220,8 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_flags_experimental_cursor() {
+    fn descriptor_cursor_is_first_class() {
         let cursor = descriptor(HarnessId::Cursor);
         assert_eq!(cursor.default_target, ".cursor");
-        assert!(cursor.experimental);
     }
 }

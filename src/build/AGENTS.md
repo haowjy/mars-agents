@@ -37,7 +37,6 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- Cursor is experimental target
 - Unknown tool name on first-class harness
 
 **NOT warnings** (go to routing/provenance fields):

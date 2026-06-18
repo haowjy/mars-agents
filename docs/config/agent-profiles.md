@@ -123,12 +123,10 @@ model: claude-opus-4-6  # concrete ID
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `claude`, `codex`, `opencode`, `cursor` (experimental), `pi` |
+| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi` |
 | Default | none (universal agent) |
 
 Execution target. When set, mars compiles a harness-native artifact in addition to the canonical `.mars/` artifact. Universal agents (no `harness:`) are installed to `.mars/agents/` only and launched by Meridian against any harness.
-
-`cursor` is experimental: supported, but contract details may change.
 
 ```yaml
 harness: claude

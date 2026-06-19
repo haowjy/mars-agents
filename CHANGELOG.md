@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-06-19
+
 ### Added
 - `mars agents list` and `mars skills list` subcommands (aliases for the bare listing commands).
 

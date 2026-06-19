@@ -31,6 +31,8 @@ pub struct AgentsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum AgentsCommand {
+    /// List all agents (same as bare `mars agents`).
+    List,
     /// Show full metadata for a named agent.
     Show {
         /// Agent name.
@@ -41,6 +43,7 @@ pub enum AgentsCommand {
 /// Run `mars agents`.
 pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
+        Some(AgentsCommand::List) => run_list(args, ctx, json),
         Some(AgentsCommand::Show { name }) => run_show(name, ctx, json),
         None => run_list(args, ctx, json),
     }

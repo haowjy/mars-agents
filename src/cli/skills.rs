@@ -38,6 +38,8 @@ pub struct SkillsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum SkillsCommand {
+    /// List all skills (same as bare `mars skills`).
+    List,
     /// Show full metadata for a named skill.
     Show {
         /// Skill name.
@@ -48,6 +50,7 @@ pub enum SkillsCommand {
 /// Run `mars skills`.
 pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
+        Some(SkillsCommand::List) => run_list(args, ctx, json),
         Some(SkillsCommand::Show { name }) => run_show(name, ctx, json),
         None => run_list(args, ctx, json),
     }

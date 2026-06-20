@@ -5,12 +5,14 @@ use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
+use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{
     CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, collect_capability_snapshot,
 };
+use crate::lock::ItemKind;
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
@@ -37,6 +39,9 @@ pub enum ModelsCommand {
     List(ListArgs),
     /// Show resolution chain for a specific alias.
     Resolve(ResolveAliasArgs),
+    /// Show prompting guidance for an agent or model alias.
+    #[command(name = "prompt", alias = "prompting")]
+    Prompt(PromptArgs),
     /// Quick-add a pinned alias to mars.toml [models].
     Alias(AddAliasArgs),
     #[command(name = "__refresh-probe", hide = true)]
@@ -90,6 +95,13 @@ pub struct RefreshProbeArgs {
 }
 
 #[derive(Debug, Parser)]
+#[command(after_help = "Examples:\n  mars models prompt @explorer\n  mars models prompt gpt55")]
+pub struct PromptArgs {
+    /// Agent name/ref or model alias to look up prompting guidance for.
+    pub reference: String,
+}
+
+#[derive(Debug, Parser)]
 pub struct AddAliasArgs {
     /// Alias name.
     pub name: String,
@@ -108,6 +120,7 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
         ModelsCommand::Refresh => run_refresh(ctx, json),
         ModelsCommand::List(args) => run_list(args, ctx, json),
         ModelsCommand::Resolve(a) => run_resolve(a, ctx, json),
+        ModelsCommand::Prompt(a) => run_prompt(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
         ModelsCommand::RefreshProbe(a) => run_refresh_probe(a),
     }
@@ -1810,6 +1823,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
         ModelAlias {
             harness: Some(normalized_harness.clone()),
             description: args.description.clone(),
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -1840,6 +1854,277 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
     }
 
     Ok(0)
+}
+
+fn run_prompt(args: &PromptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
+    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
+
+    let target = resolve_prompt_ref(&args.reference, ctx, &merged, project_config.as_ref())?;
+
+    if json {
+        let out = target.to_json(&args.reference);
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else if target.found {
+        print_prompt_target(&target);
+    } else {
+        eprintln!(
+            "Unknown agent or model ref `{}`. Run `mars agents` or `mars models list` to see available refs.",
+            args.reference
+        );
+        eprintln!("Examples:");
+        eprintln!("  mars models prompt @explorer");
+        eprintln!("  mars models prompt gpt55");
+        return Ok(1);
+    }
+
+    Ok(if target.found { 0 } else { 1 })
+}
+
+#[derive(Debug)]
+struct PromptTarget {
+    found: bool,
+    ref_kind: Option<PromptRefKind>,
+    agent_name: Option<String>,
+    model_alias: Option<String>,
+    model_name: Option<String>,
+    prompting: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PromptRefKind {
+    Agent,
+    Model,
+}
+
+impl PromptRefKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Model => "model",
+        }
+    }
+}
+
+impl PromptTarget {
+    fn unknown() -> Self {
+        Self {
+            found: false,
+            ref_kind: None,
+            agent_name: None,
+            model_alias: None,
+            model_name: None,
+            prompting: None,
+        }
+    }
+
+    fn to_json(&self, input_ref: &str) -> serde_json::Value {
+        serde_json::json!({
+            "ref": input_ref,
+            "ref_kind": self.ref_kind.map(PromptRefKind::as_str),
+            "agent_name": self.agent_name,
+            "model_alias": self.model_alias,
+            "model_name": self.model_name,
+            "found": self.found,
+            "prompting": self.prompting,
+        })
+    }
+}
+
+fn resolve_prompt_ref(
+    input_ref: &str,
+    ctx: &MarsContext,
+    aliases: &IndexMap<String, ModelAlias>,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> Result<PromptTarget, MarsError> {
+    if let Some(agent) = resolve_prompt_agent(input_ref, ctx, project_config)? {
+        return Ok(prompt_target_for_agent(agent, aliases));
+    }
+
+    if input_ref.starts_with('@') {
+        return Ok(PromptTarget::unknown());
+    }
+
+    Ok(aliases
+        .get(input_ref)
+        .map(|alias| prompt_target_for_model(input_ref, alias))
+        .unwrap_or_else(PromptTarget::unknown))
+}
+
+struct PromptAgent {
+    name: String,
+    model_token: Option<String>,
+}
+
+fn resolve_prompt_agent(
+    input_ref: &str,
+    ctx: &MarsContext,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> Result<Option<PromptAgent>, MarsError> {
+    let lookup_name = agent_ref_lookup_name(input_ref);
+    let lock = crate::lock::load(&ctx.project_root)?;
+    let mars_dir = ctx.project_root.join(".mars");
+
+    for (dest_path, item) in lock.canonical_flat_items() {
+        if item.kind != ItemKind::Agent {
+            continue;
+        }
+
+        let disk_path = dest_path.resolve(&mars_dir);
+        let content = match std::fs::read_to_string(&disk_path) {
+            Ok(content) => content,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
+        };
+
+        let mut diags = Vec::new();
+        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
+        };
+        if let Some(fatal) = diags.iter().find(|diag| diag.is_error()) {
+            eprintln!(
+                "warning: skipping {}: {}",
+                disk_path.display(),
+                fatal.message()
+            );
+            continue;
+        }
+
+        let stem = prompt_path_stem(&disk_path);
+        let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
+        if !agent_name.eq_ignore_ascii_case(lookup_name) && !stem.eq_ignore_ascii_case(lookup_name)
+        {
+            continue;
+        }
+
+        let model_token = effective_prompt_agent_model(agent_name, &profile, project_config);
+        return Ok(Some(PromptAgent {
+            name: agent_name.to_string(),
+            model_token,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn agent_ref_lookup_name(input_ref: &str) -> &str {
+    input_ref.strip_prefix('@').unwrap_or(input_ref)
+}
+
+fn prompt_path_stem(path: &std::path::Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn effective_prompt_agent_model(
+    agent_name: &str,
+    profile: &AgentProfile,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> Option<String> {
+    project_config
+        .and_then(|loaded| loaded.effective.agents.get(agent_name))
+        .and_then(|overlay| overlay.model.as_deref())
+        .or(profile.model.as_deref())
+        .or_else(|| {
+            project_config.and_then(|loaded| loaded.effective.settings.default_model.as_deref())
+        })
+        .map(ToOwned::to_owned)
+}
+
+fn prompt_target_for_agent(
+    agent: PromptAgent,
+    aliases: &IndexMap<String, ModelAlias>,
+) -> PromptTarget {
+    let (model_alias, model_name, prompting) = agent
+        .model_token
+        .as_deref()
+        .map(|token| match aliases.get(token) {
+            Some(alias) => (
+                Some(token.to_string()),
+                Some(model_name_for_alias(token, alias)),
+                alias.prompting.clone(),
+            ),
+            None => (None, Some(token.to_string()), None),
+        })
+        .unwrap_or((None, None, None));
+
+    PromptTarget {
+        found: true,
+        ref_kind: Some(PromptRefKind::Agent),
+        agent_name: Some(agent.name),
+        model_alias,
+        model_name,
+        prompting,
+    }
+}
+
+fn prompt_target_for_model(alias_name: &str, alias: &ModelAlias) -> PromptTarget {
+    PromptTarget {
+        found: true,
+        ref_kind: Some(PromptRefKind::Model),
+        agent_name: None,
+        model_alias: Some(alias_name.to_string()),
+        model_name: Some(model_name_for_alias(alias_name, alias)),
+        prompting: alias.prompting.clone(),
+    }
+}
+
+fn model_name_for_alias(alias_name: &str, alias: &ModelAlias) -> String {
+    alias.pinned_model_id().unwrap_or(alias_name).to_string()
+}
+
+fn print_prompt_target(target: &PromptTarget) {
+    if let Some(text) = target.prompting.as_deref() {
+        println!("{text}");
+        return;
+    }
+
+    match target.ref_kind {
+        Some(PromptRefKind::Agent) => {
+            let agent_name = target.agent_name.as_deref().unwrap_or("unknown");
+            match target.model_alias.as_deref() {
+                Some(model_alias) => {
+                    println!(
+                        "No prompting guidance defined for agent `{agent_name}` (model alias `{model_alias}`)."
+                    );
+                    print_prompting_field_hint(model_alias);
+                }
+                None => {
+                    let model = target.model_name.as_deref().unwrap_or("no model");
+                    println!(
+                        "No prompting guidance defined for agent `{agent_name}` (model `{model}`)."
+                    );
+                    println!("Prompting guidance is read from a known model alias.");
+                }
+            }
+        }
+        Some(PromptRefKind::Model) => {
+            let model_alias = target.model_alias.as_deref().unwrap_or("unknown");
+            println!("No prompting guidance defined for model alias `{model_alias}`.");
+            print_prompting_field_hint(model_alias);
+        }
+        None => {}
+    }
+
+    println!();
+    println!("Examples:");
+    println!("  mars models prompt @explorer");
+    println!("  mars models prompt gpt55");
+}
+
+fn print_prompting_field_hint(model_alias: &str) {
+    println!("Add a `prompting` field to the alias in mars.toml:");
+    println!();
+    println!("  [models.{model_alias}]");
+    println!("  prompting = \"Prompting tips for this model.\"");
 }
 
 enum FreshOrJsonError {
@@ -2925,6 +3210,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2945,6 +3231,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2961,6 +3248,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2975,6 +3263,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

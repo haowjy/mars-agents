@@ -43,6 +43,7 @@ fn pinned_alias_with_harness(
     ModelAlias {
         harness: Some(harness.to_string()),
         description: None,
+        prompting: None,
         default_effort: default_effort.map(str::to_owned),
         autocompact: None,
         autocompact_pct: None,
@@ -115,6 +116,7 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
         ModelAlias {
             harness: Some("codex".to_string()),
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -167,6 +169,7 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
         ModelAlias {
             harness: Some("claude".to_string()),
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -211,6 +214,7 @@ fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -344,6 +348,7 @@ fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -479,6 +484,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -618,6 +624,7 @@ fn emit_all_emits_to_every_configured_target() {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -672,6 +679,7 @@ fn emit_all_ignores_authored_harness_pin_for_coverage() {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

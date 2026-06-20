@@ -492,6 +492,80 @@ prompting = "Wrong profile-name collision guidance."
 }
 
 #[test]
+fn models_prompting_profile_name_ref_uses_profile_name_overlay() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "src",
+        &[(
+            "explorer",
+            r#"---
+name: stemmed-explorer
+model: gpt55
+---
+# Renamed explorer
+"#,
+        )],
+        &[],
+    );
+    let project = dir.child("proj");
+    project.create_dir_all().unwrap();
+    let toml = format!(
+        r#"[dependencies]
+src = {{ path = "{}" }}
+
+[agents.stemmed-explorer]
+model = "sonnet"
+
+[models.gpt55]
+harness = "codex"
+model = "gpt-5"
+prompting = "Wrong profile default guidance."
+
+[models.sonnet]
+harness = "claude"
+model = "claude-opus-4-6"
+prompting = "Use the profile-name overlay guidance."
+"#,
+        source.display().to_string().replace('\\', "/")
+    );
+    project.child("mars.toml").write_str(&toml).unwrap();
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
+    let bin_dir = install_fake_harnesses(dir.path(), &["codex", "claude"]);
+
+    for reference in ["stemmed-explorer", "explorer"] {
+        let output = mars()
+            .args([
+                "--json",
+                "models",
+                "prompting",
+                reference,
+                "--root",
+                project.path().to_str().unwrap(),
+            ])
+            .env("PATH", replace_path_with(&bin_dir))
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
+
+        assert_eq!(json["ref"], reference);
+        assert_eq!(json["ref_kind"], "agent");
+        assert_eq!(json["agent_name"], "stemmed-explorer");
+        assert_eq!(json["model_alias"], "sonnet");
+        assert_eq!(json["model_name"], "claude-opus-4-6");
+        assert_eq!(json["prompting"], "Use the profile-name overlay guidance.");
+    }
+}
+
+#[test]
 fn models_prompting_known_model_without_guidance_exits_zero_and_shows_examples() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);

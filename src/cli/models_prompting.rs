@@ -248,7 +248,7 @@ fn prompt_target_for_agent(
         PolicyInput {
             project_root: &ctx.project_root,
             runtime_aliases: aliases,
-            agent: Some(&agent.file_stem),
+            agent: Some(&agent.name),
             profile: &agent.profile,
             model_override: None,
             harness_override: None,

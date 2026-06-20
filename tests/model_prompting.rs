@@ -15,7 +15,7 @@ model: gpt55
 # Explorer
 ";
 
-fn setup_model_prompt_project(dir: &TempDir) -> std::path::PathBuf {
+fn setup_model_prompting_project(dir: &TempDir) -> std::path::PathBuf {
     let source = create_source(dir, "src", &[("explorer", EXPLORER_AGENT)], &[]);
     let project = dir.child("proj");
     project.create_dir_all().unwrap();
@@ -51,15 +51,15 @@ prompting = "This model alias should lose to the agent ref."
 }
 
 #[test]
-fn models_prompt_json_resolves_agent_first_and_uses_agent_model_guidance() {
+fn models_prompting_json_resolves_agent_first_and_uses_agent_model_guidance() {
     let dir = TempDir::new().unwrap();
-    let project = setup_model_prompt_project(&dir);
+    let project = setup_model_prompting_project(&dir);
 
     let output = mars()
         .args([
             "--json",
             "models",
-            "prompt",
+            "prompting",
             "explorer",
             "--root",
             project.to_str().unwrap(),
@@ -70,7 +70,7 @@ fn models_prompt_json_resolves_agent_first_and_uses_agent_model_guidance() {
         .clone();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompt --json must be valid JSON:\n{stdout}"));
+        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
 
     assert_eq!(json["ref"], "explorer");
     assert_eq!(json["ref_kind"], "agent");
@@ -85,15 +85,15 @@ fn models_prompt_json_resolves_agent_first_and_uses_agent_model_guidance() {
 }
 
 #[test]
-fn models_prompt_json_resolves_direct_model_alias() {
+fn models_prompting_json_resolves_direct_model_alias() {
     let dir = TempDir::new().unwrap();
-    let project = setup_model_prompt_project(&dir);
+    let project = setup_model_prompting_project(&dir);
 
     let output = mars()
         .args([
             "--json",
             "models",
-            "prompt",
+            "prompting",
             "gpt55",
             "--root",
             project.to_str().unwrap(),
@@ -104,7 +104,7 @@ fn models_prompt_json_resolves_direct_model_alias() {
         .clone();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompt --json must be valid JSON:\n{stdout}"));
+        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
 
     assert_eq!(json["ref"], "gpt55");
     assert_eq!(json["ref_kind"], "model");
@@ -119,14 +119,14 @@ fn models_prompt_json_resolves_direct_model_alias() {
 }
 
 #[test]
-fn models_prompt_known_model_without_guidance_exits_zero_and_shows_examples() {
+fn models_prompting_known_model_without_guidance_exits_zero_and_shows_examples() {
     let dir = TempDir::new().unwrap();
-    let project = setup_model_prompt_project(&dir);
+    let project = setup_model_prompting_project(&dir);
 
     mars()
         .args([
             "models",
-            "prompt",
+            "prompting",
             "naked",
             "--root",
             project.to_str().unwrap(),
@@ -136,20 +136,20 @@ fn models_prompt_known_model_without_guidance_exits_zero_and_shows_examples() {
         .stdout(predicate::str::contains(
             "No prompting guidance defined for model alias `naked`.",
         ))
-        .stdout(predicate::str::contains("mars models prompt @explorer"))
-        .stdout(predicate::str::contains("mars models prompt gpt55"));
+        .stdout(predicate::str::contains("mars models prompting @explorer"))
+        .stdout(predicate::str::contains("mars models prompting gpt55"));
 }
 
 #[test]
-fn models_prompt_unknown_ref_json_exits_nonzero_with_found_false() {
+fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     let dir = TempDir::new().unwrap();
-    let project = setup_model_prompt_project(&dir);
+    let project = setup_model_prompting_project(&dir);
 
     let output = mars()
         .args([
             "--json",
             "models",
-            "prompt",
+            "prompting",
             "missing",
             "--root",
             project.to_str().unwrap(),
@@ -160,7 +160,7 @@ fn models_prompt_unknown_ref_json_exits_nonzero_with_found_false() {
         .clone();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompt --json must be valid JSON:\n{stdout}"));
+        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
 
     assert_eq!(json["ref"], "missing");
     assert_eq!(json["ref_kind"], Value::Null);

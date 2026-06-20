@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `mars models prompt <ref>` resolves agent refs before model aliases and shows model prompting guidance, with JSON output for the resolved ref.
+- `mars models prompting <ref>` resolves agent refs before model aliases and shows model prompting guidance, with JSON output for the resolved ref.
 
 ## [0.8.9] - 2026-06-19
 

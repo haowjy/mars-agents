@@ -40,8 +40,7 @@ pub enum ModelsCommand {
     /// Show resolution chain for a specific alias.
     Resolve(ResolveAliasArgs),
     /// Show prompting guidance for an agent or model alias.
-    #[command(name = "prompt", alias = "prompting")]
-    Prompt(PromptArgs),
+    Prompting(PromptingArgs),
     /// Quick-add a pinned alias to mars.toml [models].
     Alias(AddAliasArgs),
     #[command(name = "__refresh-probe", hide = true)]
@@ -95,8 +94,10 @@ pub struct RefreshProbeArgs {
 }
 
 #[derive(Debug, Parser)]
-#[command(after_help = "Examples:\n  mars models prompt @explorer\n  mars models prompt gpt55")]
-pub struct PromptArgs {
+#[command(
+    after_help = "Examples:\n  mars models prompting @explorer\n  mars models prompting gpt55"
+)]
+pub struct PromptingArgs {
     /// Agent name/ref or model alias to look up prompting guidance for.
     pub reference: String,
 }
@@ -120,7 +121,7 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
         ModelsCommand::Refresh => run_refresh(ctx, json),
         ModelsCommand::List(args) => run_list(args, ctx, json),
         ModelsCommand::Resolve(a) => run_resolve(a, ctx, json),
-        ModelsCommand::Prompt(a) => run_prompt(a, ctx, json),
+        ModelsCommand::Prompting(a) => run_prompting(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
         ModelsCommand::RefreshProbe(a) => run_refresh_probe(a),
     }
@@ -1856,7 +1857,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
     Ok(0)
 }
 
-fn run_prompt(args: &PromptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+fn run_prompting(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
     let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
 
@@ -1873,8 +1874,8 @@ fn run_prompt(args: &PromptArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
             args.reference
         );
         eprintln!("Examples:");
-        eprintln!("  mars models prompt @explorer");
-        eprintln!("  mars models prompt gpt55");
+        eprintln!("  mars models prompting @explorer");
+        eprintln!("  mars models prompting gpt55");
         return Ok(1);
     }
 
@@ -2116,8 +2117,8 @@ fn print_prompt_target(target: &PromptTarget) {
 
     println!();
     println!("Examples:");
-    println!("  mars models prompt @explorer");
-    println!("  mars models prompt gpt55");
+    println!("  mars models prompting @explorer");
+    println!("  mars models prompting gpt55");
 }
 
 fn print_prompting_field_hint(model_alias: &str) {

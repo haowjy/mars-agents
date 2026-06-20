@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `mars models prompting <ref>` resolves agent refs before model aliases and shows model prompting guidance, with JSON output for the resolved ref.
+- `mars models prompting` accepts `--refresh-models` / `--no-refresh-models` for launch-policy model resolution.
+
+### Fixed
+- `mars models prompting <agent>` now reports guidance for the launch-resolved runnable model, including overlays, model policies, fallbacks, and model clearing.
 
 ## [0.8.9] - 2026-06-19
 

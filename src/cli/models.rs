@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 
+use crate::build::policy::{PolicyInput, resolve_policy};
 use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
@@ -100,6 +101,12 @@ pub struct RefreshProbeArgs {
 pub struct PromptingArgs {
     /// Agent name/ref or model alias to look up prompting guidance for.
     pub reference: String,
+    /// Refresh models.dev catalog and harness probes synchronously before resolving an agent.
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    refresh_models: bool,
+    /// Skip automatic models-cache refresh; use whatever is on disk.
+    #[arg(long, conflicts_with = "refresh_models")]
+    no_refresh_models: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -1860,8 +1867,16 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
 fn run_prompting(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
     let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
+    let refresh =
+        models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
 
-    let target = resolve_prompt_ref(&args.reference, ctx, &merged, project_config.as_ref())?;
+    let target = resolve_prompt_ref(
+        &args.reference,
+        ctx,
+        &merged,
+        project_config.as_ref(),
+        refresh,
+    )?;
 
     if json {
         let out = target.to_json(&args.reference);
@@ -1937,9 +1952,10 @@ fn resolve_prompt_ref(
     ctx: &MarsContext,
     aliases: &IndexMap<String, ModelAlias>,
     project_config: Option<&crate::config::LoadedProjectConfig>,
+    refresh: models::ModelsRefreshControl,
 ) -> Result<PromptTarget, MarsError> {
-    if let Some(agent) = resolve_prompt_agent(input_ref, ctx, project_config)? {
-        return Ok(prompt_target_for_agent(agent, aliases));
+    if let Some(agent) = resolve_prompt_agent(input_ref, ctx)? {
+        return prompt_target_for_agent(agent, ctx, aliases, project_config, refresh);
     }
 
     if input_ref.starts_with('@') {
@@ -1948,23 +1964,45 @@ fn resolve_prompt_ref(
 
     Ok(aliases
         .get(input_ref)
-        .map(|alias| prompt_target_for_model(input_ref, alias))
+        .map(|alias| prompt_target_for_model(input_ref, alias, ctx, project_config, refresh))
         .unwrap_or_else(PromptTarget::unknown))
 }
 
 struct PromptAgent {
     name: String,
-    model_token: Option<String>,
+    file_stem: String,
+    profile: AgentProfile,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PromptAgentMatch {
+    FileStem,
+    ProfileName,
 }
 
 fn resolve_prompt_agent(
     input_ref: &str,
     ctx: &MarsContext,
-    project_config: Option<&crate::config::LoadedProjectConfig>,
 ) -> Result<Option<PromptAgent>, MarsError> {
     let lookup_name = agent_ref_lookup_name(input_ref);
+    let mut agents = load_prompt_agents(ctx)?;
+
+    for match_kind in [PromptAgentMatch::FileStem, PromptAgentMatch::ProfileName] {
+        if let Some(index) = agents
+            .iter()
+            .position(|agent| prompt_agent_matches(agent, lookup_name, match_kind))
+        {
+            return Ok(Some(agents.remove(index)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> {
     let lock = crate::lock::load(&ctx.project_root)?;
     let mars_dir = ctx.project_root.join(".mars");
+    let mut agents = Vec::new();
 
     for (dest_path, item) in lock.canonical_flat_items() {
         if item.kind != ItemKind::Agent {
@@ -1999,19 +2037,25 @@ fn resolve_prompt_agent(
 
         let stem = prompt_path_stem(&disk_path);
         let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
-        if !agent_name.eq_ignore_ascii_case(lookup_name) && !stem.eq_ignore_ascii_case(lookup_name)
-        {
-            continue;
-        }
-
-        let model_token = effective_prompt_agent_model(agent_name, &profile, project_config);
-        return Ok(Some(PromptAgent {
+        agents.push(PromptAgent {
             name: agent_name.to_string(),
-            model_token,
-        }));
+            file_stem: stem,
+            profile,
+        });
     }
 
-    Ok(None)
+    Ok(agents)
+}
+
+fn prompt_agent_matches(
+    agent: &PromptAgent,
+    lookup_name: &str,
+    match_kind: PromptAgentMatch,
+) -> bool {
+    match match_kind {
+        PromptAgentMatch::FileStem => agent.file_stem.eq_ignore_ascii_case(lookup_name),
+        PromptAgentMatch::ProfileName => agent.name.eq_ignore_ascii_case(lookup_name),
+    }
 }
 
 fn agent_ref_lookup_name(input_ref: &str) -> &str {
@@ -2025,61 +2069,115 @@ fn prompt_path_stem(path: &std::path::Path) -> String {
         .to_string()
 }
 
-fn effective_prompt_agent_model(
-    agent_name: &str,
-    profile: &AgentProfile,
-    project_config: Option<&crate::config::LoadedProjectConfig>,
-) -> Option<String> {
-    project_config
-        .and_then(|loaded| loaded.effective.agents.get(agent_name))
-        .and_then(|overlay| overlay.model.as_deref())
-        .or(profile.model.as_deref())
-        .or_else(|| {
-            project_config.and_then(|loaded| loaded.effective.settings.default_model.as_deref())
-        })
-        .map(ToOwned::to_owned)
-}
-
 fn prompt_target_for_agent(
     agent: PromptAgent,
+    ctx: &MarsContext,
+    aliases: &IndexMap<String, ModelAlias>,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+    refresh: models::ModelsRefreshControl,
+) -> Result<PromptTarget, MarsError> {
+    let effective_config = project_config
+        .map(|loaded| loaded.effective.clone())
+        .unwrap_or_default();
+    let policy = resolve_policy(
+        &effective_config,
+        PolicyInput {
+            project_root: &ctx.project_root,
+            runtime_aliases: aliases,
+            agent: Some(&agent.file_stem),
+            profile: &agent.profile,
+            model_override: None,
+            harness_override: None,
+            effort_override: None,
+            approval_override: None,
+            sandbox_override: None,
+            models_refresh: refresh,
+        },
+    )?;
+
+    Ok(prompt_target_for_routing(
+        Some(agent.name),
+        PromptRefKind::Agent,
+        &policy.routing,
+        aliases,
+    ))
+}
+
+fn prompt_target_for_routing(
+    agent_name: Option<String>,
+    ref_kind: PromptRefKind,
+    routing: &crate::build::bundle::Routing,
     aliases: &IndexMap<String, ModelAlias>,
 ) -> PromptTarget {
-    let (model_alias, model_name, prompting) = agent
-        .model_token
+    let token = routing.model_token.trim();
+    let model_alias = (!token.is_empty() && aliases.contains_key(token)).then(|| token.to_string());
+    let prompting = model_alias
         .as_deref()
-        .map(|token| match aliases.get(token) {
-            Some(alias) => (
-                Some(token.to_string()),
-                Some(model_name_for_alias(token, alias)),
-                alias.prompting.clone(),
-            ),
-            None => (None, Some(token.to_string()), None),
-        })
-        .unwrap_or((None, None, None));
+        .and_then(|alias| aliases.get(alias))
+        .and_then(|alias| alias.prompting.clone());
+    let model_name = runnable_model_name(routing);
 
     PromptTarget {
         found: true,
-        ref_kind: Some(PromptRefKind::Agent),
-        agent_name: Some(agent.name),
+        ref_kind: Some(ref_kind),
+        agent_name,
         model_alias,
         model_name,
         prompting,
     }
 }
 
-fn prompt_target_for_model(alias_name: &str, alias: &ModelAlias) -> PromptTarget {
+fn runnable_model_name(routing: &crate::build::bundle::Routing) -> Option<String> {
+    let harness_model = routing.harness_model.trim();
+    if !harness_model.is_empty() {
+        return Some(harness_model.to_string());
+    }
+
+    let model = routing.model.trim();
+    (!model.is_empty()).then(|| model.to_string())
+}
+
+fn prompt_target_for_model(
+    alias_name: &str,
+    alias: &ModelAlias,
+    ctx: &MarsContext,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+    refresh: models::ModelsRefreshControl,
+) -> PromptTarget {
+    let cache = prompt_model_cache(ctx, project_config, refresh);
     PromptTarget {
         found: true,
         ref_kind: Some(PromptRefKind::Model),
         agent_name: None,
         model_alias: Some(alias_name.to_string()),
-        model_name: Some(model_name_for_alias(alias_name, alias)),
+        model_name: Some(model_name_for_alias(alias_name, alias, &cache)),
         prompting: alias.prompting.clone(),
     }
 }
 
-fn model_name_for_alias(alias_name: &str, alias: &ModelAlias) -> String {
-    alias.pinned_model_id().unwrap_or(alias_name).to_string()
+fn prompt_model_cache(
+    ctx: &MarsContext,
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+    refresh: models::ModelsRefreshControl,
+) -> models::ModelsCache {
+    let mars_dir = ctx.project_root.join(".mars");
+    let ttl = models_cache_ttl_hours(project_config);
+    models::ensure_fresh(&mars_dir, ttl, refresh.catalog_mode)
+        .map(|(cache, _)| cache)
+        .or_else(|_| models::read_cache(&mars_dir))
+        .unwrap_or(models::ModelsCache {
+            models: Vec::new(),
+            fetched_at: None,
+        })
+}
+
+fn model_name_for_alias(
+    alias_name: &str,
+    alias: &ModelAlias,
+    cache: &models::ModelsCache,
+) -> String {
+    models::resolve_model_id_for_alias(alias, cache)
+        .unwrap_or_else(|| alias.pinned_model_id().unwrap_or(alias_name).to_string())
 }
 
 fn print_prompt_target(target: &PromptTarget) {

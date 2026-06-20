@@ -157,6 +157,41 @@ fn models_prompting_json_resolves_agent_first_and_uses_agent_model_guidance() {
 }
 
 #[test]
+fn models_prompting_at_agent_ref_resolves_agent() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_model_prompting_project(&dir);
+    let bin_dir = install_fake_harnesses(dir.path(), &["codex"]);
+
+    let output = mars()
+        .args([
+            "--json",
+            "models",
+            "prompting",
+            "@explorer",
+            "--root",
+            project.to_str().unwrap(),
+        ])
+        .env("PATH", replace_path_with(&bin_dir))
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
+
+    assert_eq!(json["ref"], "@explorer");
+    assert_eq!(json["ref_kind"], "agent");
+    assert_eq!(json["agent_name"], "explorer");
+    assert_eq!(json["model_alias"], "gpt55");
+    assert_eq!(json["model_name"], "gpt-5");
+    assert_eq!(
+        json["prompting"],
+        "Brief GPT with tight acceptance criteria."
+    );
+}
+
+#[test]
 fn models_prompting_json_resolves_direct_model_alias() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
@@ -188,6 +223,24 @@ fn models_prompting_json_resolves_direct_model_alias() {
         json["prompting"],
         "Brief GPT with tight acceptance criteria."
     );
+}
+
+#[test]
+fn models_prompt_singular_subcommand_stays_rejected() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_model_prompting_project(&dir);
+
+    mars()
+        .args([
+            "models",
+            "prompt",
+            "gpt55",
+            "--root",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand 'prompt'"));
 }
 
 #[test]

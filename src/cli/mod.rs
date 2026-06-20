@@ -19,6 +19,8 @@ pub mod init;
 pub mod link;
 pub mod list;
 pub mod models;
+mod models_common;
+mod models_prompting;
 pub mod outdated;
 pub mod output;
 pub mod override_cmd;

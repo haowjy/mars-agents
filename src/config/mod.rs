@@ -1938,6 +1938,7 @@ override = { effort = "high" }
             ModelAlias {
                 harness: Some("codex".to_string()),
                 description: Some("base".to_string()),
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -1952,6 +1953,7 @@ override = { effort = "high" }
             ModelAlias {
                 harness: Some("claude".to_string()),
                 description: None,
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -1970,6 +1972,7 @@ override = { effort = "high" }
                     ModelAlias {
                         harness: Some("cursor".to_string()),
                         description: Some("local".to_string()),
+                        prompting: None,
                         default_effort: None,
                         autocompact: None,
                         autocompact_pct: None,
@@ -1984,6 +1987,7 @@ override = { effort = "high" }
                     ModelAlias {
                         harness: Some("pi".to_string()),
                         description: None,
+                        prompting: None,
                         default_effort: None,
                         autocompact: None,
                         autocompact_pct: None,

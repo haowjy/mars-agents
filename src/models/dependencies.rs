@@ -141,6 +141,7 @@ mod tests {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

@@ -52,6 +52,8 @@ pub struct ModelAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompting: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<u32>,
@@ -115,6 +117,8 @@ pub struct ResolvedAlias {
     pub harness_candidates: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompting: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,6 +202,8 @@ struct RawModelAlias {
     harness: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    prompting: Option<String>,
     #[serde(default)]
     native: Option<toml::Value>,
     #[serde(default)]
@@ -315,6 +321,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
         Ok(ModelAlias {
             harness: normalized_harness,
             description: raw.description,
+            prompting: raw.prompting,
             default_effort,
             autocompact,
             autocompact_pct,
@@ -1107,6 +1114,7 @@ pub fn resolve_with_alias_prefix_with_probe(
         harness_source,
         harness_candidates: harness::harness_candidates_for_provider(&provider),
         description: winner.description,
+        prompting: base_alias.and_then(|a| a.prompting.clone()),
         default_effort,
         autocompact,
         autocompact_pct,
@@ -1266,6 +1274,7 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
             ModelAlias {
                 harness: None,
                 description: None,
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -1444,6 +1453,7 @@ pub fn resolve_all_static(
                 harness_source: HarnessSource::Unavailable,
                 harness_candidates: Vec::new(),
                 description: alias.description.clone(),
+                prompting: alias.prompting.clone(),
                 default_effort: alias.default_effort.clone(),
                 autocompact: alias.autocompact,
                 autocompact_pct: alias.autocompact_pct,
@@ -1493,6 +1503,7 @@ pub fn resolve_all_with_probe(
                 harness_source: source,
                 harness_candidates: candidates,
                 description: alias.description.clone(),
+                prompting: alias.prompting.clone(),
                 default_effort: alias.default_effort.clone(),
                 autocompact: alias.autocompact,
                 autocompact_pct: alias.autocompact_pct,
@@ -1555,6 +1566,7 @@ pub fn resolve_one_with_probe(
         harness_source,
         harness_candidates: candidates,
         description: alias.description.clone(),
+        prompting: alias.prompting.clone(),
         default_effort: alias.default_effort.clone(),
         autocompact: alias.autocompact,
         autocompact_pct: alias.autocompact_pct,
@@ -2135,6 +2147,7 @@ mod tests {
         ModelAlias {
             harness: harness.map(|h| h.to_string()),
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2153,6 +2166,7 @@ mod tests {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2173,6 +2187,7 @@ mod tests {
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2725,6 +2740,7 @@ mod tests {
             ModelAlias {
                 harness: None,
                 description: None,
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2759,6 +2775,7 @@ mod tests {
             ModelAlias {
                 harness: Some("missing-harness-xyz".to_string()),
                 description: None,
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2791,6 +2808,7 @@ mod tests {
             ModelAlias {
                 harness: Some("claude".to_string()),
                 description: None,
+                prompting: None,
                 default_effort: None,
                 autocompact: None,
                 autocompact_pct: None,
@@ -2861,6 +2879,7 @@ mod tests {
             harness_source: HarnessSource::Explicit,
             harness_candidates: vec!["codex".to_string()],
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3004,6 +3023,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3029,6 +3049,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3054,6 +3075,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -3079,6 +3101,7 @@ mod tests {
         let alias = ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

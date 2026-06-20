@@ -623,6 +623,7 @@ mod tests {
         ModelAlias {
             harness: harness.map(str::to_string),
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

@@ -22,6 +22,11 @@ use crate::models::probes::pi_cache;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
+use super::models_common::{
+    load_merged_aliases, load_project_config_layers_optional, models_cache_ttl_hours,
+};
+pub use super::models_prompting::PromptingArgs;
+
 /// Manage model aliases and the models cache.
 #[derive(Debug, Parser)]
 pub struct ModelsArgs {
@@ -37,6 +42,8 @@ pub enum ModelsCommand {
     List(ListArgs),
     /// Show resolution chain for a specific alias.
     Resolve(ResolveAliasArgs),
+    /// Show prompting guidance for an agent or model alias.
+    Prompting(PromptingArgs),
     /// Quick-add a pinned alias to mars.toml [models].
     Alias(AddAliasArgs),
     #[command(name = "__refresh-probe", hide = true)]
@@ -108,6 +115,7 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
         ModelsCommand::Refresh => run_refresh(ctx, json),
         ModelsCommand::List(args) => run_list(args, ctx, json),
         ModelsCommand::Resolve(a) => run_resolve(a, ctx, json),
+        ModelsCommand::Prompting(a) => super::models_prompting::run(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
         ModelsCommand::RefreshProbe(a) => run_refresh_probe(a),
     }
@@ -1810,6 +1818,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
         ModelAlias {
             harness: Some(normalized_harness.clone()),
             description: args.description.clone(),
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2466,35 +2475,6 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn load_project_config_layers_optional(
-    project_root: &std::path::Path,
-) -> Result<Option<crate::config::LoadedProjectConfig>, MarsError> {
-    match crate::config::load_project_config_layers(project_root) {
-        Ok(loaded) => Ok(Some(loaded)),
-        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-fn models_cache_ttl_hours(project_config: Option<&crate::config::LoadedProjectConfig>) -> u32 {
-    project_config
-        .map(|loaded| loaded.effective.settings.models_cache_ttl_hours)
-        .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours)
-}
-
-/// Load model aliases by combining lock-persisted dependency aliases with effective
-/// project/local consumer aliases.
-fn load_merged_aliases(
-    project_root: &std::path::Path,
-    project_config: Option<&crate::config::LoadedProjectConfig>,
-) -> Result<indexmap::IndexMap<String, ModelAlias>, MarsError> {
-    let lock = crate::lock::load_for_runtime_aliases(project_root)?;
-    Ok(models::merged_runtime_aliases(
-        &lock.dependency_model_aliases,
-        project_config.map(|loaded| &loaded.effective.models),
-    ))
-}
-
 /// Determine which layer provides an alias (consumer or dependency).
 fn determine_source(
     name: &str,
@@ -2925,6 +2905,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2945,6 +2926,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2961,6 +2943,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -2975,6 +2958,7 @@ description = "Old alias"
         ModelAlias {
             harness: None,
             description: None,
+            prompting: None,
             default_effort: None,
             autocompact: None,
             autocompact_pct: None,

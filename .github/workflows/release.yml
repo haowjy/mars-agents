@@ -178,7 +178,23 @@ jobs:
   pypi-wheels:
     name: Build PyPI wheels (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    env:
+      # crates.io downloads have intermittently failed with HTTP/2 framing
+      # errors ("[16] Error in the HTTP2 framing layer") during maturin's
+      # `cargo metadata`. Force HTTP/1.1 and raise the retry count. These are
+      # CARGO_*-prefixed, which maturin-action forwards into the manylinux
+      # build container automatically.
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_NET_RETRY: "10"
     strategy:
+      # Releases are infrequent and gated on full preflight (fmt/clippy/test/
+      # build) before the tag exists, so a wheel-leg failure here is an
+      # infra/network flake, never broken code. Don't cancel the sibling legs:
+      # cancellation buries the one real failure under "cancelled" noise and
+      # balloons the `gh run rerun --failed` surface (which re-runs cancelled
+      # jobs too). PyPI publish is gated on all legs regardless, so letting
+      # them finish costs only cheap CI minutes.
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -217,6 +233,10 @@ jobs:
   pypi-sdist:
     name: Build PyPI sdist
     runs-on: ubuntu-latest
+    env:
+      # Same crates.io HTTP/2 flake mitigation as pypi-wheels.
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_NET_RETRY: "10"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -256,6 +276,12 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          # Make the publish rerunnable. If a prior attempt uploaded some files
+          # for this version (or a sibling channel split a release), `gh run
+          # rerun --failed` should complete cleanly instead of erroring on
+          # already-present artifacts. Matches the already-published guards npm
+          # and cargo publish already have.
+          skip-existing: true
 
   github-release:
     name: GitHub Release

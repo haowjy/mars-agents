@@ -5,7 +5,7 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement()
+pub(crate) fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_passthrough()
 {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
@@ -13,17 +13,17 @@ pub(crate) fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_ov
 name: reviewer
 model: claude-opus-4-6
 tools:
-  bash: allow
-  agent: deny
-  edit: deny
-disallowed-tools: [write]
+  Bash: allow
+  Agent: deny
+  Edit: deny
+disallowed-tools: [Write]
 mcp-tools: [plugin:root]
 harness-overrides:
   codex:
     tools:
-      "bash(meridian spawn *)": allow
-      agent: deny
-    disallowed-tools: [edit]
+      "Bash(meridian spawn *)": allow
+      Agent: deny
+    disallowed-tools: [Edit]
     mcp-tools: [plugin:override]
 ---
 Review code changes."#;
@@ -69,7 +69,7 @@ Review code changes."#;
     let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
     assert_eq!(
         override_bundle["tools"]["allowed"],
-        serde_json::json!(["shell(meridian spawn *)"])
+        serde_json::json!(["shell"])
     );
     assert_eq!(
         override_bundle["tools"]["disallowed"],
@@ -77,6 +77,10 @@ Review code changes."#;
     );
     assert_eq!(
         override_bundle["tools"]["mcp"],
+        serde_json::json!(["plugin:root"])
+    );
+    assert_eq!(
+        override_bundle["execution_policy"]["native_config"]["mcp-tools"],
         serde_json::json!(["plugin:override"])
     );
 }
@@ -88,7 +92,7 @@ pub(crate) fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payl
 name: reviewer
 model: claude-opus-4-6
 tools:
-  "bash(git status *)": allow
+  "Bash(git status *)": allow
 ---
 Review code changes."#;
 
@@ -121,9 +125,10 @@ pub(crate) fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserv
 name: reviewer
 model: claude-opus-4-6
 tools:
-  plan_mode: deny
-  unknown_allow: allow
-  notebook: allow
+  PlanMode: deny
+  CustomDeny: deny
+  CustomTool: allow
+  Notebook: allow
 mcp-tools:
   - plugin:context7:context7
 ---
@@ -148,11 +153,11 @@ Review code changes."#;
 
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["unknown_allow", "Notebook"])
+        serde_json::json!(["CustomTool", "Notebook"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["PlanMode"])
+        serde_json::json!(["PlanMode", "CustomDeny"])
     );
     assert_eq!(
         bundle["tools"]["mcp"],
@@ -165,13 +170,19 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'unknown_allow' is not a known claude tool")
+            .contains("tool 'CustomTool' is not a known claude tool")
     }));
     assert!(!warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'plan_mode' is not a known claude tool")
+            .contains("tool 'PlanMode' is not a known claude tool")
+    }));
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("disallowed tool 'CustomDeny' is not a known claude tool")
     }));
 }
 
@@ -183,14 +194,14 @@ name: reviewer
 model: claude-opus-4-6
 tools:
   Bash: allow
-  read: allow
+  Read: allow
   Write: allow
-  unknown_allow: allow
-  edit: deny
+  CustomTool: allow
+  Edit: deny
   Agent: deny
-  web_search: allow
-  web_fetch: allow
-  plan_mode: deny
+  WebSearch: allow
+  WebFetch: allow
+  PlanMode: deny
 ---
 Review code changes."#;
 
@@ -212,11 +223,11 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["bash", "read", "write", "unknown_allow", "browser", "fetch"])
+        serde_json::json!(["bash", "read", "write", "CustomTool", "browser", "fetch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["edit", "agent"])
+        serde_json::json!(["edit", "agent", "PlanMode"])
     );
 
     let warnings = bundle["warnings"]
@@ -226,13 +237,13 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'unknown_allow' is not a known opencode tool")
+            .contains("tool 'CustomTool' is not a known opencode tool")
     }));
-    assert!(!warnings.iter().any(|warning| {
+    assert!(warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'plan_mode' is not a known opencode tool")
+            .contains("disallowed tool 'PlanMode' is not a known opencode tool")
     }));
 }
 
@@ -243,7 +254,7 @@ pub(crate) fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
 name: reviewer
 model: claude-opus-4-6
 tools:
-  web_search: allow
+  CustomTool: allow
 ---
 Review code changes."#;
 
@@ -266,7 +277,7 @@ Review code changes."#;
         let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             bundle["tools"]["allowed"],
-            serde_json::json!(["web_search"])
+            serde_json::json!(["CustomTool"])
         );
 
         let warnings = bundle["warnings"]
@@ -276,7 +287,7 @@ Review code changes."#;
             warning
                 .as_str()
                 .unwrap_or_default()
-                .contains("tool 'web_search' is not a known")
+                .contains("tool 'CustomTool' is not a known")
         }));
     }
 }

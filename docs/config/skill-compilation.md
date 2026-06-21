@@ -113,7 +113,7 @@ user-invocable: false   # user cannot trigger via /name
 | Type | string[] |
 | Default | empty |
 
-Tool allowlist for this skill. Supports scoped patterns. Dropped by some harnesses — see the lossiness table below.
+Tool allowlist for this skill. Uses Mars canonical semantic PascalCase tool names (`Bash`, `AskUser`, `WebSearch`) and supports scoped patterns. Readable aliases such as `ask_user` are accepted and canonicalized. Unknown spellings without word separators are preserved exactly and left to the target harness. Dropped by some harnesses — see the lossiness table below.
 
 ```yaml
 allowed-tools: [Bash(git *), Read]

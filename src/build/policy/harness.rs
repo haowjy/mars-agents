@@ -20,7 +20,6 @@ pub(super) struct HarnessResolution {
     /// Set to Some(()) when a soft-fail cleared the model so harness could proceed.
     /// Downstream routing should treat model/provider fields as empty when this is Some.
     pub(super) model_override: Option<()>,
-    pub(super) resolved_harness: HarnessKind,
     pub(super) warnings: Vec<String>,
 }
 
@@ -264,17 +263,7 @@ where
         ));
     }
 
-    let resolved_harness = HarnessKind::from_str(&harness.value).ok_or_else(|| {
-        MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "resolved harness `{}` is invalid; expected one of: claude, codex, opencode, cursor, pi",
-                harness.value
-            ),
-        })
-    })?;
-
     Ok(HarnessResolution {
-        resolved_harness,
         harness,
         harness_order_position: selected_harness_order_position,
         candidates_tried,

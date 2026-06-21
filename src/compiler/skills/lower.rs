@@ -4,6 +4,7 @@ use serde_yaml::{Mapping, Value};
 
 use crate::compiler::agents::lower::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::skills::SkillProfile;
+use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillHarness {
@@ -50,11 +51,33 @@ fn insert_identity(yaml: &mut Mapping, profile: &SkillProfile) {
         yaml.insert(yk("description"), ys(description));
     }
 }
-fn insert_allowed_tools(yaml: &mut Mapping, profile: &SkillProfile) {
+fn insert_allowed_tools(
+    yaml: &mut Mapping,
+    profile: &SkillProfile,
+    harness: &str,
+    lossy_fields: Option<&mut Vec<LossyField>>,
+) {
     if !profile.allowed_tools.is_empty() {
+        let mut lossy_fields = lossy_fields;
+        let mut tools = Vec::new();
+        for tool in &profile.allowed_tools {
+            let projected = project_tool_for_harness(tool, harness);
+            if projected.status == ToolProjectionStatus::Unknown
+                && let Some(lossy_fields) = lossy_fields.as_deref_mut()
+            {
+                lossy_fields.push(LossyField {
+                    field: "allowed-tools".into(),
+                    target: harness.into(),
+                    classification: Lossiness::Approximate {
+                        note: "unknown tool name passed through verbatim",
+                    },
+                });
+            }
+            tools.push(projected.name);
+        }
         yaml.insert(
             yk("allowed-tools"),
-            Value::Sequence(profile.allowed_tools.iter().map(|s| ys(s)).collect()),
+            Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
         );
     }
 }
@@ -119,12 +142,13 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
     if user_invocation_disabled(profile) {
         yaml.insert(yk("user-invocable"), Value::Bool(false));
     }
-    insert_allowed_tools(&mut yaml, profile);
+    let mut lossy_fields = Vec::new();
+    insert_allowed_tools(&mut yaml, profile, "claude", Some(&mut lossy_fields));
     insert_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     LoweredOutput {
         bytes: render(yaml, body),
-        lossy_fields: vec![],
+        lossy_fields,
     }
 }
 
@@ -179,7 +203,7 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
     if !profile.model_invocable {
         yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
     }
-    insert_allowed_tools(&mut yaml, profile);
+    insert_allowed_tools(&mut yaml, profile, "pi", None);
     insert_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
@@ -275,6 +299,21 @@ mod tests {
         // Unknown fields pass through to all targets
         assert!(out.contains("extra: stripped"));
         assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn claude_projects_canonical_allowed_tools() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nallowed-tools: [AskUser, Bash(git *)]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+
+        assert!(out.contains("- AskUser"), "AskUser not projected: {out}");
+        assert!(
+            out.contains("- Bash(git *)"),
+            "scoped Bash not projected while preserving payload: {out}"
+        );
     }
 
     #[test]

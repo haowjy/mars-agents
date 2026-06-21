@@ -1034,22 +1034,10 @@ fn cursor_effective_effort<'a>(
     alias: Option<&'a ModelAlias>,
 ) -> Option<&'a str> {
     profile
-        .harness_overrides
-        .cursor
+        .effort
         .as_ref()
-        .and_then(|overrides| overrides.effort.as_ref())
         .map(crate::compiler::agents::EffortLevel::as_str)
-        .or_else(|| {
-            profile
-                .effort
-                .as_ref()
-                .map(crate::compiler::agents::EffortLevel::as_str)
-        })
-        .or_else(|| alias.and_then(|resolved| resolved.default_effort.as_deref()))
-        .map(|effort| match effort {
-            "auto" => "medium",
-            other => other,
-        })
+        .or_else(|| alias.and_then(|entry| entry.default_effort.as_deref()))
 }
 
 fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {

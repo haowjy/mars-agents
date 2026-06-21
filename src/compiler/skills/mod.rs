@@ -4,6 +4,7 @@ pub mod lower;
 
 use serde_yaml::Value;
 
+use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
 #[derive(Debug, Clone)]
@@ -114,6 +115,24 @@ fn yaml_str_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> 
     }
 }
 
+fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> Vec<String> {
+    yaml_str_list(field, val, diags)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, tool)| match parse_mars_tool_name(&tool) {
+            Ok(ParsedToolName { name }) => Some(name),
+            Err(err) => {
+                diags.push(SkillDiagnostic::InvalidFieldValue {
+                    field: format!("{field}[{idx}]"),
+                    value: tool,
+                    allowed: err.allowed(),
+                });
+                None
+            }
+        })
+        .collect()
+}
+
 fn validate_required_string(field: &str, val: Option<&Value>, diags: &mut Vec<SkillDiagnostic>) {
     match val {
         Some(raw) if raw.is_string() => {}
@@ -169,7 +188,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     consumed_keys.push("allowed-tools");
     let allowed_tools = fm
         .get("allowed-tools")
-        .map(|v| yaml_str_list("allowed-tools", v, diags))
+        .map(|v| yaml_tool_list("allowed-tools", v, diags))
         .unwrap_or_default();
     consumed_keys.push("license");
     let license_raw = fm.get("license");
@@ -452,6 +471,25 @@ body",
         )));
     }
 
+    #[test]
+    fn separator_tool_aliases_canonicalize() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\nallowed-tools: [ask_user, bash(git *)]\n---\nbody",
+        );
+
+        assert_eq!(p.allowed_tools, vec!["AskUser", "bash(git *)"]);
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn unknown_unseparated_tool_names_pass_through() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\nallowed-tools: [askuser, Askuser, AskUser]\n---\nbody",
+        );
+
+        assert_eq!(p.allowed_tools, vec!["askuser", "Askuser", "AskUser"]);
+        assert!(d.is_empty());
+    }
     #[test]
     fn type_parses_from_frontmatter() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\ntype: guardrail\n---\nbody");

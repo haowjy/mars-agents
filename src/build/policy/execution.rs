@@ -1,12 +1,12 @@
 use crate::build::policy::PolicySource::{
-    Alias, Cli, Overlay, OverlayModelPolicy, Profile, ProfileHarnessOverride, ProfileModelPolicy,
-    SettingsModelPolicy, Unset,
+    Alias, Cli, Overlay, OverlayModelPolicy, Profile, ProfileModelPolicy, SettingsModelPolicy,
+    Unset,
 };
 use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
     matched_policy_u8_override, matched_policy_u32_override,
 };
-use crate::compiler::agents::{ApprovalMode, EffortLevel, OverrideFields, SandboxMode};
+use crate::compiler::agents::{ApprovalMode, EffortLevel, SandboxMode};
 use crate::config::AgentOverlay;
 use crate::models::ModelAlias;
 
@@ -24,35 +24,13 @@ pub(super) fn resolve_execution_policy(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
+    native_config: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> ExecutionResolution {
-    let native_config = matched_harness_override
-        .and_then(|fields| fields.native_config.clone())
-        .filter(|map| !map.is_empty());
-
-    let effort = resolve_effort(
-        input,
-        alias,
-        overlay,
-        matched_policy,
-        matched_harness_override,
-    );
-    let approval = resolve_approval(input, overlay, matched_policy, matched_harness_override);
-    let sandbox = resolve_sandbox(input, overlay, matched_policy, matched_harness_override);
-    let autocompact = resolve_autocompact(
-        input,
-        alias,
-        overlay,
-        matched_policy,
-        matched_harness_override,
-    );
-    let autocompact_pct = resolve_autocompact_pct(
-        input,
-        alias,
-        overlay,
-        matched_policy,
-        matched_harness_override,
-    );
+    let effort = resolve_effort(input, alias, overlay, matched_policy);
+    let approval = resolve_approval(input, overlay, matched_policy);
+    let sandbox = resolve_sandbox(input, overlay, matched_policy);
+    let autocompact = resolve_autocompact(input, alias, overlay, matched_policy);
+    let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy);
 
     ExecutionResolution {
         effort,
@@ -78,7 +56,6 @@ fn field_layer<T>(source: PolicySource, value: Option<T>) -> Option<ResolvedFiel
 
 struct PolicyFieldLayers<T> {
     cli: Option<T>,
-    harness_override: Option<T>,
     overlay: Option<T>,
     profile: Option<T>,
     alias: Option<T>,
@@ -96,7 +73,6 @@ fn resolve_policy_field<T>(
 ) -> ResolvedField<Option<T>> {
     [
         field_layer(Cli, layers.cli),
-        field_layer(ProfileHarnessOverride, layers.harness_override),
         field_layer(Overlay, layers.overlay),
         policy_override_by_source(matched_policy, key, OverlayModelPolicy),
         field_layer(Profile, layers.profile),
@@ -153,7 +129,6 @@ fn resolve_effort(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "effort",
@@ -161,10 +136,6 @@ fn resolve_effort(
         policy_string_override_by_source,
         PolicyFieldLayers {
             cli: input.effort_override.map(str::to_string),
-            harness_override: matched_harness_override
-                .and_then(|entry| entry.effort.as_ref())
-                .map(effort_level_to_str)
-                .map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.effort.as_deref())
                 .map(str::to_string),
@@ -183,7 +154,6 @@ fn resolve_approval(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "approval",
@@ -191,10 +161,6 @@ fn resolve_approval(
         policy_string_override_by_source,
         PolicyFieldLayers {
             cli: input.approval_override.map(str::to_string),
-            harness_override: matched_harness_override
-                .and_then(|entry| entry.approval.as_ref())
-                .map(approval_mode_to_str)
-                .map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.approval.as_deref())
                 .map(str::to_string),
@@ -213,7 +179,6 @@ fn resolve_sandbox(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "sandbox",
@@ -221,10 +186,6 @@ fn resolve_sandbox(
         policy_string_override_by_source,
         PolicyFieldLayers {
             cli: input.sandbox_override.map(str::to_string),
-            harness_override: matched_harness_override
-                .and_then(|entry| entry.sandbox.as_ref())
-                .map(sandbox_mode_to_str)
-                .map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.sandbox.as_deref())
                 .map(str::to_string),
@@ -244,7 +205,6 @@ fn resolve_autocompact(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<u32>> {
     resolve_policy_field(
         "autocompact",
@@ -252,7 +212,6 @@ fn resolve_autocompact(
         policy_u32_override_by_source,
         PolicyFieldLayers {
             cli: None,
-            harness_override: matched_harness_override.and_then(|entry| entry.autocompact),
             overlay: overlay
                 .and_then(|entry| entry.autocompact)
                 .and_then(|value| u32::try_from(value).ok()),
@@ -267,7 +226,6 @@ fn resolve_autocompact_pct(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    matched_harness_override: Option<&OverrideFields>,
 ) -> ResolvedField<Option<u8>> {
     resolve_policy_field(
         "autocompact_pct",
@@ -275,7 +233,6 @@ fn resolve_autocompact_pct(
         policy_u8_override_by_source,
         PolicyFieldLayers {
             cli: None,
-            harness_override: matched_harness_override.and_then(|entry| entry.autocompact_pct),
             overlay: overlay
                 .and_then(|entry| entry.autocompact_pct)
                 .and_then(|value| u8::try_from(value).ok())

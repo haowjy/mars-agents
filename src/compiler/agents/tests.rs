@@ -1,5 +1,4 @@
 use super::*;
-use crate::config::Config;
 use crate::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
@@ -199,12 +198,17 @@ fn autocompact_pct_zero_out_of_range() {
 }
 
 #[test]
-fn autocompact_pct_in_override() {
-    let content = "---\nharness-overrides:\n  claude:\n    autocompact_pct: 75\n---\n";
+fn harness_override_autocompact_pct_is_passthrough() {
+    let content = "---
+harness-overrides:
+  claude:
+    autocompact_pct: 75
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    let claude = p.harness_overrides.claude.as_ref().unwrap();
-    assert_eq!(claude.autocompact_pct, Some(75));
+    let claude = p.harness_overrides.entries.get("claude").unwrap();
+    assert_eq!(claude["autocompact_pct"], serde_json::json!(75));
 }
 
 #[test]
@@ -241,9 +245,9 @@ fn parses_skills_tools_disallowed_mcp() {
 }
 
 #[test]
-fn parses_tools_map_allow_and_deny_with_name_normalization() {
+fn parses_tools_map_allow_and_deny_with_canonical_names() {
     let content =
-        "---\ntools:\n  bash: allow\n  \"bash(meridian spawn *)\": allow\n  agent: deny\n---\n";
+        "---\ntools:\n  Bash: allow\n  \"Bash(meridian spawn *)\": allow\n  Agent: deny\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(p.tools, vec!["Bash", "Bash(meridian spawn *)"]);
@@ -251,280 +255,193 @@ fn parses_tools_map_allow_and_deny_with_name_normalization() {
 }
 
 #[test]
-fn effective_tool_policy_uses_harness_override_replacements() {
-    let content = "---\ntools:\n  bash: allow\n  read: deny\ndisallowed-tools: [Edit]\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    tools:\n      \"bash(meridian spawn *)\": allow\n      agent: deny\n    disallowed-tools: [Write]\n    mcp-tools: [plugin:codex]\n---\n";
+fn separator_tool_aliases_canonicalize() {
+    let content = "---\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\n";
+    let (p, diags) = parse(content);
+
+    assert_eq!(p.tools, vec!["AskUser"]);
+    assert_eq!(p.tools_denied, vec!["bash(git *)"]);
+    assert_eq!(p.disallowed_tools, vec!["WebSearch"]);
+    assert!(diags.is_empty());
+}
+
+#[test]
+fn unknown_unseparated_tool_names_pass_through() {
+    let content = "---\ntools: [askuser, Askuser, ToolSearch]\n---\n";
+    let (p, diags) = parse(content);
+
+    assert_eq!(p.tools, vec!["askuser", "Askuser", "ToolSearch"]);
+    assert!(diags.is_empty());
+}
+#[test]
+fn harness_overrides_do_not_replace_tool_policy() {
+    let content = "---
+tools:
+  Bash: allow
+  Read: deny
+disallowed-tools: [Edit]
+mcp-tools: [plugin:base]
+harness-overrides:
+  codex:
+    tools: [shell]
+    disallowed-tools: [file_write]
+    mcp-tools: [plugin:codex]
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
 
     let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
-    assert_eq!(codex_policy.allowed, vec!["Bash(meridian spawn *)"]);
-    assert_eq!(codex_policy.disallowed, vec!["Agent", "Write"]);
-    assert_eq!(codex_policy.mcp, vec!["plugin:codex"]);
-
-    let claude_policy = p.effective_tool_policy(&HarnessKind::Claude);
-    assert_eq!(claude_policy.allowed, vec!["Bash"]);
-    assert_eq!(claude_policy.disallowed, vec!["Read", "Edit"]);
-    assert_eq!(claude_policy.mcp, vec!["plugin:base"]);
+    assert_eq!(codex_policy.allowed, vec!["Bash"]);
+    assert_eq!(codex_policy.disallowed, vec!["Read", "Edit"]);
+    assert_eq!(codex_policy.mcp, vec!["plugin:base"]);
+    assert_eq!(
+        p.harness_overrides.entries["codex"]["tools"],
+        serde_json::json!(["shell"])
+    );
 }
 
 #[test]
-fn effective_skills_use_harness_override_replacement() {
-    let content =
-        "---\nskills: [base]\nharness-overrides:\n  codex:\n    skills: [codex-only]\n---\n";
+fn effective_skills_ignore_harness_overrides_passthrough() {
+    let content = "---
+skills: [base]
+harness-overrides:
+  codex:
+    skills: [codex-only]
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-
+    assert_eq!(p.effective_skills(&HarnessKind::Codex).load, vec!["base"]);
     assert_eq!(
-        p.effective_skills(&HarnessKind::Codex).load,
-        vec!["codex-only".to_string()]
-    );
-    assert_eq!(
-        p.effective_skills(&HarnessKind::Claude).load,
-        vec!["base".to_string()]
+        p.harness_overrides.entries["codex"]["skills"],
+        serde_json::json!(["codex-only"])
     );
 }
 
 #[test]
 fn parses_structured_skills_and_override() {
-    let content = "---\nskills:\n  load: [dev-principles]\n  available: [planning, spawn]\nharness-overrides:\n  codex:\n    skills:\n      load: [codex-principles]\n      available: [codex-planning]\n---\n";
+    let content = "---
+skills:
+  load: [dev-principles]
+  available: [planning, spawn]
+harness-overrides:
+  codex:
+    skills:
+      load: [codex-principles]
+      available: [codex-planning]
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
 
-    assert_eq!(p.skills.load, vec!["dev-principles"]);
-    assert_eq!(p.skills.available, vec!["planning", "spawn"]);
     let codex = p.effective_skills(&HarnessKind::Codex);
-    assert_eq!(codex.load, vec!["codex-principles"]);
-    assert_eq!(codex.available, vec!["codex-planning"]);
+    assert_eq!(codex.load, vec!["dev-principles"]);
+    assert_eq!(codex.available, vec!["planning", "spawn"]);
+    assert!(p.harness_overrides.entries.contains_key("codex"));
 }
 
 #[test]
-fn effective_native_config_uses_matching_harness_override() {
-    let content = "---\nharness-overrides:\n  claude:\n    native-config:\n      ui.theme: dark\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n---\n";
+fn effective_native_config_uses_matching_harness_passthrough() {
+    let content = "---
+harness-overrides:
+  claude:
+    ui.theme: dark
+  codex:
+    sandbox_workspace_write.network_access: true
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-
     assert_eq!(
-        p.effective_native_config(&HarnessKind::Codex)
-            .expect("codex native config"),
-        &serde_json::Map::from_iter([(
-            "sandbox_workspace_write.network_access".to_string(),
-            serde_json::json!(true)
-        )])
+        p.effective_native_config(&HarnessKind::Codex).unwrap()["sandbox_workspace_write.network_access"],
+        serde_json::json!(true)
     );
     assert_eq!(
-        p.effective_native_config(&HarnessKind::Claude)
-            .expect("claude native config"),
-        &serde_json::Map::from_iter([("ui.theme".to_string(), serde_json::json!("dark"))])
+        p.effective_native_config(&HarnessKind::Claude).unwrap()["ui.theme"],
+        serde_json::json!("dark")
     );
     assert!(p.effective_native_config(&HarnessKind::OpenCode).is_none());
-}
-
-// --- 3.1: model-policies ---
-
-#[test]
-fn model_policies_are_parsed_as_raw_entries() {
-    let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n    override:\n      harness: codex\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.model_policies.len(), 1);
-    assert_eq!(p.model_policies[0].match_type, ModelPolicyMatchType::Model);
-    assert_eq!(p.model_policies[0].match_value, "gpt-5.5");
-    assert!(p.model_policies[0].overrides.contains_key("harness"));
-}
-
-#[test]
-fn model_policy_empty_override_is_valid_for_fallback_candidate() {
-    let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    override: {}\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.model_policies.len(), 1);
-    assert!(p.model_policies[0].overrides.is_empty());
-}
-
-#[test]
-fn model_policy_empty_override_is_valid_for_no_fallback_rule() {
-    let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    no-fallback: true\n    override: {}\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.model_policies.len(), 1);
-    assert!(p.model_policies[0].no_fallback);
-    assert!(p.model_policies[0].overrides.is_empty());
-}
-
-#[test]
-fn model_policy_missing_override_is_valid() {
-    let content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.model_policies.len(), 1);
-    assert!(p.model_policies[0].overrides.is_empty());
-}
-
-#[test]
-fn malformed_model_policy_produces_diagnostic() {
-    let content = "---\nmodel-policies:\n  - match:\n      model: gpt-5.5\n      alias: gpt55\n    override:\n      harness: codex\n---\n";
-    let (p, diags) = parse(content);
-    assert!(p.model_policies.is_empty());
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-policies[1].match")
-    );
-}
-
-#[test]
-fn model_policy_rule_type_is_shared_across_profile_overlay_and_settings() {
-    let profile_content = "---\nmodel-policies:\n  - match:\n      alias: gpt55\n    override:\n      harness: codex\n---\n";
-    let (profile, diags) = parse(profile_content);
-    assert!(diags.is_empty());
-
-    let config: Config = toml::from_str(
-        r#"
-[agents.reviewer]
-
-[[agents.reviewer.model-policies]]
-match = { alias = "gpt55" }
-override = { harness = "codex" }
-
-[settings]
-
-[[settings.model-policies]]
-match = { alias = "gpt55" }
-override = { harness = "codex" }
-"#,
-    )
-    .unwrap();
-
-    assert_eq!(profile.model_policies.len(), 1);
-    assert_eq!(config.agents["reviewer"].model_policies.len(), 1);
-    assert_eq!(config.settings.model_policies.len(), 1);
-    assert_eq!(
-        profile.model_policies[0],
-        config.agents["reviewer"].model_policies[0]
-    );
-    assert_eq!(profile.model_policies[0], config.settings.model_policies[0]);
-}
-
-// --- 3.1: fanout ---
-
-#[test]
-fn fanout_entries_are_parsed_as_raw() {
-    let content = "---\nfanout:\n  - alias: opus\n  - model: gpt-5.5\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.fanout.len(), 2);
 }
 
 // --- 3.1: harness-overrides ---
 
 #[test]
-fn harness_overrides_parsed_for_claude_and_codex() {
-    let content = "---\nharness-overrides:\n  claude:\n    approval: auto\n  codex:\n    sandbox: workspace-write\n    effort: high\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    let claude = p.harness_overrides.claude.as_ref().unwrap();
-    assert_eq!(claude.approval, Some(ApprovalMode::Auto));
-    let codex = p.harness_overrides.codex.as_ref().unwrap();
-    assert_eq!(codex.sandbox, Some(SandboxMode::WorkspaceWrite));
-    assert_eq!(codex.effort, Some(EffortLevel::High));
-}
-
-#[test]
-fn harness_override_native_config_parses_shape_only() {
-    let content = "---\nharness-overrides:\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n      limits:\n        max_tokens: 4096\n---\n";
+fn harness_overrides_preserve_target_native_passthrough() {
+    let content = "---
+harness-overrides:
+  codex:
+    tools: [shell, ask_user, askuser]
+    sandbox_workspace_write.network_access: true
+    limits:
+      max_tokens: 4096
+---
+";
     let (p, diags) = parse(content);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-    let codex = p.harness_overrides.codex.as_ref().unwrap();
-    let native_config = codex.native_config.as_ref().unwrap();
+    let codex = p.harness_overrides.entries.get("codex").unwrap();
     assert_eq!(
-        native_config["sandbox_workspace_write.network_access"],
+        codex["tools"],
+        serde_json::json!(["shell", "ask_user", "askuser"])
+    );
+    assert_eq!(
+        codex["sandbox_workspace_write.network_access"],
         serde_json::json!(true)
     );
-    assert_eq!(
-        native_config["limits"],
-        serde_json::json!({"max_tokens": 4096})
-    );
+    assert_eq!(codex["limits"], serde_json::json!({"max_tokens": 4096}));
 }
 
 #[test]
-fn harness_override_native_config_accepts_arrays_and_rejects_null_values() {
-    let valid_content = "---\nharness-overrides:\n  codex:\n    native-config:\n      allowlist: [Bash, Read]\n      nested:\n        values: [1, 2]\n---\n";
-    let (valid_profile, valid_diags) = parse(valid_content);
+fn harness_overrides_reject_non_serializable_null_values() {
+    let content = "---
+harness-overrides:
+  codex:
+    maybe_null: null
+---
+";
+    let (p, diags) = parse(content);
+    assert!(!p.harness_overrides.entries.contains_key("codex"));
     assert!(
-        valid_diags.is_empty(),
-        "unexpected diagnostics: {valid_diags:?}"
-    );
-    let valid_native_config = valid_profile
-        .harness_overrides
-        .codex
-        .as_ref()
-        .unwrap()
-        .native_config
-        .as_ref()
-        .unwrap();
-    assert_eq!(
-        valid_native_config["allowlist"],
-        serde_json::json!(["Bash", "Read"])
-    );
-    assert_eq!(
-        valid_native_config["nested"],
-        serde_json::json!({"values": [1, 2]})
-    );
-
-    let null_content =
-        "---\nharness-overrides:\n  codex:\n    native-config:\n      maybe_null: null\n---\n";
-    let (null_profile, null_diags) = parse(null_content);
-    let codex = null_profile.harness_overrides.codex.as_ref().unwrap();
-    assert!(
-        codex.native_config.is_none(),
-        "native-config with a null value should be rejected"
-    );
-    assert!(
-        null_diags.iter().any(|diag| {
+        diags.iter().any(|diag| {
             matches!(
                 diag,
                 AgentDiagnostic::InvalidFieldValue { field, .. }
-                    if field == "harness-overrides.codex.native-config.maybe_null"
+                    if field == "harness-overrides.codex.maybe_null"
             )
         }),
-        "missing nested null diagnostic: {null_diags:?}"
+        "missing nested null diagnostic: {diags:?}"
     );
 }
 
 #[test]
-fn harness_override_native_config_invalid_shape_produces_diagnostic() {
-    let content = "---\nharness-overrides:\n  codex:\n    native-config: [1, 2]\n---\n";
+fn harness_overrides_require_mapping_values() {
+    let content = "---
+harness-overrides:
+  codex: [1, 2]
+---
+";
+    let (_p, diags) = parse(content);
+    assert!(
+        diags.iter().any(|diag| {
+            matches!(diag, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "harness-overrides.codex")
+        }),
+        "missing invalid shape diagnostic: {diags:?}"
+    );
+}
+
+#[test]
+fn harness_overrides_unknown_harness_still_warns_but_preserves_block() {
+    let content = "---
+harness-overrides:
+  future:
+    nativeTool: true
+---
+";
     let (p, diags) = parse(content);
-    let codex = p.harness_overrides.codex.as_ref().unwrap();
-    assert!(codex.native_config.is_none());
-    assert!(
-            diags.iter().any(|diag| {
-                matches!(diag, AgentDiagnostic::InvalidFieldValue { field, .. } if field == "harness-overrides.codex.native-config")
-            }),
-            "missing native-config invalid shape diagnostic: {diags:?}"
-        );
-}
-
-#[test]
-fn harness_override_native_config_portable_key_collision_warns() {
-    let content =
-        "---\nharness-overrides:\n  codex:\n    native-config:\n      sandbox: true\n---\n";
-    let (_p, diags) = parse(content);
-    assert!(
-            diags.iter().any(|diag| {
-                matches!(diag, AgentDiagnostic::NativeConfigPortableKeyCollision { key, .. } if key == "sandbox")
-            }),
-            "expected portable key collision warning: {diags:?}"
-        );
-}
-
-#[test]
-fn harness_override_with_non_overridable_field_produces_diagnostic() {
-    let content = "---\nharness-overrides:\n  claude:\n    name: bad\n---\n";
-    let (_p, diags) = parse(content);
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::NonOverridableFieldInOverride { field, .. } if field == "name")
-    );
+    assert!(p.harness_overrides.entries.contains_key("future"));
+    assert!(diags.iter().any(
+        |diag| matches!(diag, AgentDiagnostic::UnknownHarnessOverride { value } if value == "future")
+    ));
 }
 
 // --- 3.1: legacy models field ---

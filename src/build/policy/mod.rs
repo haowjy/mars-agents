@@ -68,7 +68,6 @@ pub(super) enum PolicySource {
     ConfigOrder,
     Config,
     Provider,
-    ProfileHarnessOverride,
     Unset,
 }
 
@@ -86,7 +85,6 @@ impl PolicySource {
             Self::ConfigOrder => "config-order",
             Self::Config => "config",
             Self::Provider => "provider",
-            Self::ProfileHarnessOverride => "profile-harness-override",
             Self::Unset => "unset",
         }
     }
@@ -95,7 +93,7 @@ impl PolicySource {
         match self {
             Self::Cli => 5,
             Self::Overlay | Self::OverlayModelPolicy => 4,
-            Self::Profile | Self::ProfileModelPolicy | Self::ProfileHarnessOverride => 3,
+            Self::Profile | Self::ProfileModelPolicy => 3,
             Self::SettingsModelPolicy | Self::Project | Self::Config => 2,
             Self::Alias => 1,
             Self::Unset | Self::ConfigOrder | Self::Provider => 0,
@@ -464,16 +462,15 @@ pub fn resolve_policy(
     {
         provenance.insert("harness_order_position".to_string(), position.to_string());
     }
-    let matched_harness_override = input
-        .profile
-        .harness_overrides
-        .get(&harness_resolution.resolved_harness);
+    let native_config =
+        crate::compiler::agents::HarnessKind::from_str(harness_resolution.harness.value.as_str())
+            .and_then(|harness| input.profile.effective_native_config(&harness).cloned());
     let execution_resolution = execution::resolve_execution_policy(
         &input,
         resolved_model.alias,
         overlay,
         matched_policy.as_ref(),
-        matched_harness_override,
+        native_config,
     );
 
     provenance.insert(
@@ -503,7 +500,7 @@ pub fn resolve_policy(
     if execution_resolution.native_config.is_some() {
         provenance.insert(
             "native_config_source".to_string(),
-            PolicySource::ProfileHarnessOverride.label().to_string(),
+            PolicySource::Profile.label().to_string(),
         );
     }
     let matched_rule = harness_resolution

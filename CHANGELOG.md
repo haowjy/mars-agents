@@ -10,7 +10,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars models prompting <ref>` resolves agent refs before model aliases and shows model prompting guidance, with JSON output for the resolved ref.
 - `mars models prompting` accepts `--refresh-models` / `--no-refresh-models` for launch-policy model resolution.
 
+### Changed
+- `harness-overrides.<harness>` is now exact target-native passthrough: Mars preserves the matching block in launch-bundle `execution_policy.native_config` without using it to replace top-level Mars fields.
+
 ### Fixed
+- Mars tool fields now normalize separator-aware aliases like `ask_user` to PascalCase (`AskUser`) before lowering, while preserving unknown tool spellings exactly for the target harness.
 - `mars models prompting <agent>` now reports guidance for the launch-resolved runnable model, including overlays, model policies, fallbacks, and model clearing.
 
 ## [0.8.9] - 2026-06-19

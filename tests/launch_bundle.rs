@@ -72,6 +72,11 @@ fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
 }
 
 #[test]
+fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
+    prompt_surface::build_launch_bundle_keeps_skill_with_snake_case_tool_alias();
+}
+
+#[test]
 fn build_launch_bundle_splits_loaded_and_available_skills() {
     prompt_surface::build_launch_bundle_splits_loaded_and_available_skills();
 }
@@ -82,8 +87,9 @@ fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
 }
 
 #[test]
-fn build_launch_bundle_uses_harness_override_skills_for_prompt_surface() {
-    prompt_surface::build_launch_bundle_uses_harness_override_skills_for_prompt_surface();
+fn build_launch_bundle_harness_override_skills_are_passthrough_for_prompt_surface() {
+    prompt_surface::build_launch_bundle_harness_override_skills_are_passthrough_for_prompt_surface(
+    );
 }
 
 #[test]
@@ -506,8 +512,8 @@ fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
 }
 
 #[test]
-fn build_launch_bundle_harness_override_execution_policy_applies_before_profile_and_alias() {
-    execution_policy::build_launch_bundle_harness_override_execution_policy_applies_before_profile_and_alias();
+fn build_launch_bundle_harness_override_is_passthrough_not_execution_policy() {
+    execution_policy::build_launch_bundle_harness_override_is_passthrough_not_execution_policy();
 }
 
 #[test]
@@ -516,8 +522,8 @@ fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
 }
 
 #[test]
-fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement() {
-    tool_policy::build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_replacement();
+fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_passthrough() {
+    tool_policy::build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_passthrough();
 }
 
 #[test]
@@ -552,8 +558,8 @@ fn build_launch_bundle_accepts_profile_cursor_harness() {
 }
 
 #[test]
-fn build_launch_bundle_cursor_alias_uses_cursor_overrides_for_model_facing_policy() {
-    cursor::build_launch_bundle_cursor_alias_uses_cursor_overrides_for_model_facing_policy();
+fn build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only() {
+    cursor::build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only();
 }
 
 #[test]
@@ -562,8 +568,13 @@ fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt
 }
 
 #[test]
-fn build_launch_bundle_invalid_native_config_shape_fails_with_diagnostic() {
-    native_config::build_launch_bundle_invalid_native_config_shape_fails_with_diagnostic();
+fn build_launch_bundle_native_config_shape_is_passthrough() {
+    native_config::build_launch_bundle_native_config_shape_is_passthrough();
+}
+
+#[test]
+fn build_launch_bundle_unknown_harness_override_warns_and_preserves_block() {
+    native_config::build_launch_bundle_unknown_harness_override_warns_and_preserves_block();
 }
 
 #[test]
@@ -577,8 +588,8 @@ fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
 }
 
 #[test]
-fn build_launch_bundle_fails_on_non_overridable_model_invocable_override() {
-    errors::build_launch_bundle_fails_on_non_overridable_model_invocable_override();
+fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
+    errors::build_launch_bundle_accepts_model_invocable_passthrough_override();
 }
 
 #[test]

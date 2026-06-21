@@ -751,8 +751,7 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("mcp-tools"))
-        .stderr(predicate::str::contains("Cursor"));
+        .stderr(predicate::str::is_empty());
 
     assert!(project.child(".mars/agents/cursor-worker.md").exists());
     assert!(project.child(".cursor/agents/cursor-worker.md").exists());

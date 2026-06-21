@@ -51,6 +51,48 @@ Review code changes."#;
     assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
 }
 
+pub(crate) fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
+    let temp = TempDir::new().unwrap();
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+skills: [planning]
+---
+Review code changes."#;
+    let skill_content = "---\nname: planning\ndescription: Plan tasks\nallowed-tools: [ask_user]\n---\nUse this skill.";
+
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[("planning", skill_content)],
+        "",
+    );
+
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["skills"]["loaded"][0]["name"].as_str(),
+        Some("planning")
+    );
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
+    let warnings = bundle["warnings"].as_array().unwrap();
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+}
+
 pub(crate) fn build_launch_bundle_splits_loaded_and_available_skills() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
@@ -148,7 +190,7 @@ Review code changes."#;
     std::fs::create_dir_all(&codex_variant_path).unwrap();
     std::fs::write(
         codex_variant_path.join("SKILL.md"),
-        "---\nname: planning\ndescription: Plan tasks\n---\nCodex variant content.",
+        "---\nname: planning\ndescription: Variant metadata ignored\ntype: reference\nallowed-tools: [askuser]\n---\nCodex variant content.",
     )
     .unwrap();
 
@@ -177,9 +219,15 @@ Review code changes."#;
             .unwrap()
             .contains("Codex variant content.")
     );
+    let warnings = bundle["warnings"].as_array().unwrap();
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or_default().contains("askuser"))
+    );
 }
 
-pub(crate) fn build_launch_bundle_uses_harness_override_skills_for_prompt_surface() {
+pub(crate) fn build_launch_bundle_harness_override_skills_are_passthrough_for_prompt_surface() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -222,23 +270,27 @@ Review code changes."#;
         .as_array()
         .expect("supplemental_documents should be an array");
     assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"].as_str(), Some("codex_skill"));
+    assert_eq!(docs[0]["name"].as_str(), Some("planning"));
     assert!(
         docs[0]["content"]
             .as_str()
             .unwrap()
-            .contains("Codex-specific content.")
+            .contains("Planning base content.")
     );
 
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
         .expect("system instruction should be string");
-    assert!(system_instruction.contains("# Skill: codex_skill"));
-    assert!(!system_instruction.contains("# Skill: planning"));
+    assert!(system_instruction.contains("# Skill: planning"));
+    assert!(!system_instruction.contains("# Skill: codex_skill"));
 
     assert_eq!(
         bundle["skills"]["loaded"][0]["name"].as_str(),
-        Some("codex_skill")
+        Some("planning")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["native_config"]["skills"],
+        serde_json::json!(["codex_skill"])
     );
     assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
     assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));

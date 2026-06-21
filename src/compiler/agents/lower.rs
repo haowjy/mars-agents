@@ -1,3 +1,4 @@
+use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 /// harness-native format bytes.
 ///
@@ -10,7 +11,7 @@
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
-use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind, OverrideFields};
+use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -42,45 +43,36 @@ pub struct LoweredOutput {
 }
 
 // ---------------------------------------------------------------------------
-// Effective field resolution — applies harness-overrides before lowering
+// Effective field access for target lowering
 // ---------------------------------------------------------------------------
 
-/// Effective field values after merging profile defaults + harness override.
+/// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
     harness: &'a HarnessKind,
     profile: &'a AgentProfile,
-    over: Option<&'a OverrideFields>,
     tools: EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
     fn new(profile: &'a AgentProfile, harness: &'a HarnessKind) -> Self {
-        let over = profile.harness_overrides.get(harness);
         let tools = profile.effective_tool_policy(harness);
         Self {
             harness,
             profile,
-            over,
             tools,
         }
     }
 
     fn effort(&self) -> Option<&crate::compiler::agents::EffortLevel> {
-        self.over
-            .and_then(|o| o.effort.as_ref())
-            .or(self.profile.effort.as_ref())
+        self.profile.effort.as_ref()
     }
 
     fn approval(&self) -> Option<&crate::compiler::agents::ApprovalMode> {
-        self.over
-            .and_then(|o| o.approval.as_ref())
-            .or(self.profile.approval.as_ref())
+        self.profile.approval.as_ref()
     }
 
     fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
-        self.over
-            .and_then(|o| o.sandbox.as_ref())
-            .or(self.profile.sandbox.as_ref())
+        self.profile.sandbox.as_ref()
     }
 
     fn skills(&self) -> Vec<String> {
@@ -100,14 +92,36 @@ impl<'a> Effective<'a> {
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
-        self.over
-            .and_then(|o| o.autocompact_pct)
-            .or(self.profile.autocompact_pct)
+        self.profile.autocompact_pct
     }
 
     fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.profile.effective_native_config(self.harness)
     }
+}
+
+fn normalize_tools_for_harness(
+    tools: &[String],
+    harness: &str,
+    field: &'static str,
+    lossy: &mut Vec<LossyField>,
+) -> Vec<String> {
+    tools
+        .iter()
+        .map(|tool| {
+            let projected = project_tool_for_harness(tool, harness);
+            if projected.status == ToolProjectionStatus::Unknown {
+                lossy.push(LossyField {
+                    field: field.into(),
+                    target: harness.into(),
+                    classification: Lossiness::Approximate {
+                        note: "unknown tool name passed through verbatim",
+                    },
+                });
+            }
+            projected.name
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -119,11 +133,9 @@ impl<'a> Effective<'a> {
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, skills, tools, disallowed-tools, body
 /// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact, autocompact_pct,
-///   model-policies, harness-overrides (claude entry merged before lowering),
+///   model-policies, harness-overrides,
 ///   fanout, legacy-models
 ///
-/// `harness-overrides.claude` values are merged into top-level fields
-/// before lowering (D42 — compile-time merge).
 /// What model field a lowered native agent should carry. The native compiler is the
 /// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible
 /// authoritatively, without mutating the profile to strip its model.
@@ -182,15 +194,20 @@ pub fn lower_to_claude(
             serde_yaml::Value::Sequence(skills.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("skills"), seq);
     }
-    // tools — exact
-    let tools = eff.tools();
+    // tools — native spelling
+    let tools = normalize_tools_for_harness(eff.tools(), "claude", "tools", &mut lossy);
     if !tools.is_empty() {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(tools.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("tools"), seq);
     }
-    // disallowed-tools — exact
-    let dt = eff.disallowed_tools();
+    // disallowed-tools — native spelling
+    let dt = normalize_tools_for_harness(
+        eff.disallowed_tools(),
+        "claude",
+        "disallowed-tools",
+        &mut lossy,
+    );
     if !dt.is_empty() {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(dt.iter().map(|s| yv(s)).collect());
@@ -269,7 +286,7 @@ pub fn lower_to_claude(
         });
     }
     // harness: field is dropped (the native artifact's location IS the harness)
-    // harness-overrides: merged above, then dropped
+    // harness-overrides: launch-bundle passthrough only, dropped from native artifacts
 
     // Serialize
     let yaml_str = if yaml.is_empty() {
@@ -308,7 +325,7 @@ pub fn lower_to_claude(
 ///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
 ///   mcp-tools (approximate), mode, autocompact, model-policies, fanout
-/// - Merged: harness-overrides.codex applied to top-level fields before lowering
+/// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
     body: &str,
@@ -962,6 +979,22 @@ mod tests {
     }
 
     #[test]
+    fn claude_lowering_projects_canonical_tool_names() {
+        let content = "---\nname: coder\nharness: claude\ntools: [Bash, AskUser]\ndisallowed-tools: [Bash(git reset *)]\n---\n# Body";
+        let (profile, fm, diags) = profile_from(content);
+        assert!(diags.is_empty());
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+
+        assert!(text.contains("- Bash"), "Bash not projected: {text}");
+        assert!(text.contains("- AskUser"), "AskUser not projected: {text}");
+        assert!(
+            text.contains("- Bash(git reset *)"),
+            "scoped Bash not projected while preserving payload: {text}"
+        );
+    }
+
+    #[test]
     fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
         let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
@@ -991,23 +1024,23 @@ mod tests {
     }
 
     #[test]
-    fn claude_harness_override_applied_before_lowering() {
+    fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            text.contains("override-skill"),
-            "override not applied: {text}"
+            text.contains("base-skill"),
+            "top-level skill should be lowered: {text}"
         );
         assert!(
-            !text.contains("base-skill"),
-            "base skill not overridden: {text}"
+            !text.contains("override-skill"),
+            "harness-overrides passthrough should not replace skills: {text}"
         );
     }
 
     #[test]
-    fn claude_harness_override_replaces_mcp_tools() {
+    fn claude_harness_override_does_not_replace_mcp_tools() {
         let content = "---\nname: r\nharness: claude\nmcp-tools: [plugin:base]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
@@ -1016,8 +1049,11 @@ mod tests {
             text.contains("mcp-tools"),
             "mcp-tools should be emitted for claude: {text}"
         );
-        assert!(text.contains("plugin:claude"), "override missing: {text}");
-        assert!(!text.contains("plugin:base"), "base leaked: {text}");
+        assert!(text.contains("plugin:base"), "base mcp missing: {text}");
+        assert!(
+            !text.contains("plugin:claude"),
+            "harness-overrides passthrough should not replace mcp-tools: {text}"
+        );
     }
 
     #[test]
@@ -1097,31 +1133,31 @@ mod tests {
     }
 
     #[test]
-    fn codex_harness_override_applied() {
+    fn codex_harness_override_does_not_replace_execution_policy() {
         let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            text.contains("model_reasoning_effort = \"high\""),
-            "override not applied: {text}"
+            text.contains("model_reasoning_effort = \"low\""),
+            "top-level effort should be lowered: {text}"
         );
         assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox override not applied: {text}"
+            !text.contains("sandbox_mode = \"workspace-write\""),
+            "harness-overrides passthrough should not replace sandbox: {text}"
         );
     }
 
     #[test]
-    fn codex_mcp_lossiness_uses_effective_override() {
+    fn codex_mcp_lossiness_uses_top_level_policy() {
         let content = "---\nname: r\nharness: codex\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         assert!(
-            !out.lossy_fields
+            out.lossy_fields
                 .iter()
                 .any(|field| field.field == "mcp-tools"),
-            "empty codex override should suppress mcp lossiness: {:?}",
+            "top-level mcp-tools should remain lossy for codex: {:?}",
             out.lossy_fields
                 .iter()
                 .map(|field| field.field.clone())
@@ -1184,24 +1220,24 @@ mod tests {
     }
 
     #[test]
-    fn cursor_lowering_uses_cursor_override_not_opencode_override() {
+    fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
         let content = "---\nname: r\nharness: cursor\ntools: [Read]\nmcp-tools: [plugin:base]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
         assert!(
-            !opencode
+            opencode
                 .lossy_fields
                 .iter()
                 .any(|field| field.field == "tools"),
-            "opencode override should clear tools lossiness",
+            "harness-overrides passthrough should not clear tools lossiness",
         );
         assert!(
-            !opencode
+            opencode
                 .lossy_fields
                 .iter()
                 .any(|field| field.field == "mcp-tools"),
-            "opencode override should clear mcp lossiness",
+            "harness-overrides passthrough should not clear mcp lossiness",
         );
 
         let cursor = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);

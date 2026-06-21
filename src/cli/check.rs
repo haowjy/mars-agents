@@ -204,43 +204,80 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
                 };
 
                 match std::fs::read_to_string(&skill_md) {
-                    Ok(content) => match frontmatter::parse(&content) {
-                        Ok(fm) => {
-                            let name = fm
-                                .name()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| dirname.clone());
+                    Ok(content) => {
+                        let mut skill_diags = Vec::new();
+                        match crate::compiler::skills::parse_skill_content(
+                            &content,
+                            &mut skill_diags,
+                        ) {
+                            Ok((profile, fm)) => {
+                                let name = profile
+                                    .name
+                                    .clone()
+                                    .or_else(|| fm.name().map(str::to_string))
+                                    .unwrap_or_else(|| dirname.clone());
 
-                            if fm.name().is_none() {
-                                warnings.push(format!(
-                                    "skill `{dirname}` has no `name` in frontmatter"
-                                ));
+                                let schema_missing_name = skill_diags.iter().any(|diagnostic| {
+                                    matches!(
+                                        diagnostic,
+                                        crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
+                                            if field == "name" && value == "missing"
+                                    )
+                                });
+                                let schema_missing_description =
+                                    skill_diags.iter().any(|diagnostic| {
+                                        matches!(
+                                            diagnostic,
+                                            crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
+                                                if field == "description" && value == "missing"
+                                        )
+                                    });
+
+                                for diagnostic in skill_diags {
+                                    let message =
+                                        format!("skill `{name}`: {}", diagnostic.message());
+                                    if diagnostic.is_error() {
+                                        errors.push(message);
+                                    } else {
+                                        warnings.push(message);
+                                    }
+                                }
+
+                                if fm.name().is_none() && !schema_missing_name {
+                                    warnings.push(format!(
+                                        "skill `{dirname}` has no `name` in frontmatter"
+                                    ));
+                                }
+
+                                if fm.get("description").and_then(|v| v.as_str()).is_none()
+                                    && !schema_missing_description
+                                {
+                                    warnings.push(format!("skill `{name}` has no `description`"));
+                                }
+
+                                if fm.name().is_some() && name != dirname {
+                                    warnings.push(format!(
+                                        "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
+                                    ));
+                                }
+
+                                if let Some(existing) = skill_names.get(&name) {
+                                    errors.push(format!(
+                                        "duplicate skill name `{name}` in {} and {}",
+                                        existing.display(),
+                                        duplicate_path.display()
+                                    ));
+                                } else {
+                                    skill_names.insert(name, duplicate_path);
+                                }
                             }
-
-                            if fm.get("description").and_then(|v| v.as_str()).is_none() {
-                                warnings.push(format!("skill `{name}` has no `description`"));
-                            }
-
-                            if fm.name().is_some() && name != dirname {
-                                warnings.push(format!(
-                                    "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
-                                ));
-                            }
-
-                            if let Some(existing) = skill_names.get(&name) {
+                            Err(e) => {
                                 errors.push(format!(
-                                    "duplicate skill name `{name}` in {} and {}",
-                                    existing.display(),
-                                    duplicate_path.display()
+                                    "skill `{dirname}` has invalid frontmatter: {e}"
                                 ));
-                            } else {
-                                skill_names.insert(name, duplicate_path);
                             }
                         }
-                        Err(e) => {
-                            errors.push(format!("skill `{dirname}` has invalid frontmatter: {e}"));
-                        }
-                    },
+                    }
                     Err(e) => {
                         errors.push(format!("cannot read {}: {e}", skill_md.display()));
                     }
@@ -627,6 +664,66 @@ mod tests {
         assert!(
             joined.contains("model-policies[1].match"),
             "expected model-policies match error: {joined}"
+        );
+    }
+
+    #[test]
+    fn check_accepts_snake_case_skill_tool_alias() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skills").join("planning");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---
+name: planning
+description: plan
+allowed-tools: [ask_user]
+---
+# Skill",
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+
+        assert!(
+            report.errors.is_empty(),
+            "unexpected errors: {:?}",
+            report.errors
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn check_passes_through_unseparated_skill_tool_name() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skills").join("planning");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---
+name: planning
+description: plan
+allowed-tools: [askuser]
+---
+# Skill",
+        )
+        .unwrap();
+
+        let report = super::check_dir(dir.path()).unwrap();
+
+        assert!(
+            report.errors.is_empty(),
+            "unexpected errors: {:?}",
+            report.errors
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            report.warnings
         );
     }
 

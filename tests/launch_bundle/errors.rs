@@ -1,4 +1,7 @@
-use super::common::{setup_bundle_project, setup_bundle_project_with_agents};
+use super::common::{
+    install_fake_harnesses, replace_path_with, setup_bundle_project,
+    setup_bundle_project_with_agents,
+};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 
@@ -42,8 +45,9 @@ Review code changes."#;
         .stderr(predicates::str::contains("model-invocable"));
 }
 
-pub(crate) fn build_launch_bundle_fails_on_non_overridable_model_invocable_override() {
+pub(crate) fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -58,10 +62,13 @@ Review code changes."#;
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("not overridable"));
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        bundle["execution_policy"]["native_config"]["model-invocable"].as_bool(),
+        Some(false)
+    );
 }
 
 pub(crate) fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {

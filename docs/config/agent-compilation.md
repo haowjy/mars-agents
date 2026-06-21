@@ -61,17 +61,13 @@ When a native artifact is not emitted because emission is disabled or selective 
 
 This cleanup only removes the native artifact for the agent's current `harness:` value. If an agent previously targeted a different harness, the old native artifact may remain stale; run `mars sync` after changing an agent's harness to clean up the previous target.
 
-## Harness-Override Merge
+## Harness Override Passthrough
 
-Before lowering to a native artifact, mars merges the `harness-overrides.<target>` fields currently consulted by lowering into the top-level profile values: `effort`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, and `mcp-tools`.
+Mars does not merge `harness-overrides.<target>` into top-level profile values. Top-level fields are the semantic controls for native lowering, prompt assembly, tool policy, and launch-bundle execution policy.
 
-1. Start with the agent's top-level field values.
-2. If `harness-overrides.<target>` exists, overlay those fields (replace semantics — a field present in the override block replaces the top-level value).
-3. Lower the merged field values to the target's native format.
+For launch bundles, Mars selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`. The block is target-native passthrough: Mars validates the outer shape and serializability, then leaves nested keys and values alone.
 
-Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. The Codex artifact gets `model_reasoning_effort = "high"`. The `.mars/` artifact preserves both the top-level `effort: low` and the full `harness-overrides:` table for Meridian's runtime use.
-
-`OverrideFields` also contains `native-config`, `autocompact`, and `autocompact_pct`. Current native lowering treats these as Meridian runtime-only: they are visible in lossiness diagnostics (`meridian-only`) and preserved in `.mars/`, but not emitted into harness-native agent artifacts in this slice.
+Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. Codex native lowering still receives `effort: low`; the launch bundle carries `{ "effort": "high" }` under `execution_policy.native_config` for the harness/runtime to interpret.
 
 ## Per-Target Field Mapping
 
@@ -89,8 +85,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` | exact |
-| `disallowed-tools` | `disallowed-tools:` | exact |
+| `tools` | `tools:` | mapped from Mars canonical names to Claude native names |
+| `disallowed-tools` | `disallowed-tools:` | mapped from Mars canonical names to Claude native names |
 | `mcp-tools` | `mcp-tools:` | exact |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
@@ -99,9 +95,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
-| `harness-overrides` | merged, then dropped | — |
+| `harness-overrides` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
-| `harness-overrides.claude.native-config` | dropped | meridian-only |
 | `harness` | dropped | dropped |
 
 `approval` and `sandbox` policy fields are applied at launch time by Meridian through its harness projection layer, not stored in the agent file.
@@ -128,7 +123,6 @@ TOML format. Codex reads this for native agent invocation.
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
-| `harness-overrides.codex.native-config` | dropped | meridian-only |
 
 **Approval value mapping:**
 
@@ -177,7 +171,6 @@ YAML frontmatter + markdown body.
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
-| `harness-overrides.opencode.native-config` | dropped | meridian-only |
 
 `skills` are not emitted into the OpenCode agent artifact. Skill availability comes from separate skill-surface compilation to `.opencode/skills/`.
 
@@ -205,7 +198,6 @@ YAML frontmatter + markdown body.
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
-| `harness-overrides.cursor.native-config` | dropped | meridian-only |
 
 **Approval value mapping:**
 
@@ -245,7 +237,6 @@ YAML frontmatter + markdown body.
 | `effort` | dropped | approximate |
 | All other policy fields | dropped | dropped |
 | `autocompact`, `autocompact_pct`, `model-policies`, `fanout` | dropped | meridian-only |
-| `harness-overrides.pi.native-config` | dropped | meridian-only |
 
 ## Lossiness Model
 
@@ -289,9 +280,9 @@ Compact per-field, per-target classification:
 | `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `skills` | preserved | exact | dropped | dropped | exact | dropped |
-| `native-config` (matched `harness-overrides.<target>`) | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| matched `harness-overrides.<target>` passthrough | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
-| `harness-overrides` | preserved | merged | merged | merged | merged | merged |
+| `harness-overrides` | preserved | passthrough | passthrough | passthrough | passthrough | passthrough |
 | `fanout` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | body | preserved | exact | approximate | exact | exact | exact |
 

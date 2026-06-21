@@ -2,14 +2,15 @@ pub mod bundle;
 pub mod inventory;
 pub mod policy;
 pub mod prompt;
-pub mod tool_normalize;
 
 use std::path::PathBuf;
 
+use crate::compiler::tool_names::{
+    ToolProjectionStatus, is_first_class_harness, project_tool_for_harness,
+};
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
-use tool_normalize::{ToolProjectionStatus, is_first_class_harness, normalize_tool_for_harness};
 
 use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
@@ -238,13 +239,15 @@ fn normalize_and_dedupe_tools(
     let mut projected = Vec::new();
 
     for tool in tools {
-        let normalized = normalize_tool_for_harness(tool, harness);
+        let normalized = project_tool_for_harness(tool, harness);
         if normalized.status == ToolProjectionStatus::Unknown && is_first_class_harness(harness) {
             match kind {
                 ToolPolicyKind::Allowed => warnings.push(format!(
                     "tool '{tool}' is not a known {harness} tool; passing through verbatim"
                 )),
-                ToolPolicyKind::Disallowed => continue,
+                ToolPolicyKind::Disallowed => warnings.push(format!(
+                    "disallowed tool '{tool}' is not a known {harness} tool; passing through verbatim"
+                )),
             }
         }
 

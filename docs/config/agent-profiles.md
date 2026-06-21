@@ -298,16 +298,18 @@ subagents: [explorer, reviewer, coder]
 | Required | no |
 | Default | empty (harness default tool set) |
 
-Tool allowlist. Only these tools are available to the agent. Supports scoped patterns for fine-grained control. Native support varies by harness — see [agent-compilation.md](agent-compilation.md).
+Tool allowlist. Only these tools are available to the agent. Tool names use Mars canonical semantic PascalCase (`Bash`, `AskUser`, `WebSearch`). Scoped patterns keep the canonical head and put the native payload in parentheses. Mars maps canonical names to target-native names while lowering.
+
+Readable aliases such as `ask_user` and `bash` are accepted and canonicalized. Unknown spellings without word separators are preserved exactly and left to the target harness.
 
 ```yaml
 tools: [Bash, Write, Edit]
 tools: [Bash(git status), Write, Read]   # scoped pattern
 tools:
-  bash: allow
-  "bash(meridian spawn *)": allow
-  agent: deny
-  edit: deny
+  Bash: allow
+  "Bash(meridian spawn *)": allow
+  Agent: deny
+  Edit: deny
 ```
 
 ---
@@ -320,7 +322,7 @@ tools:
 | Required | no |
 | Default | empty |
 
-Tool denylist. These tools are blocked even if they'd otherwise be available. Supports scoped patterns. Native support varies by harness.
+Tool denylist. These tools are blocked even if they'd otherwise be available. Uses the same canonical tool-name grammar and scoped pattern syntax as `tools`.
 
 ```yaml
 disallowed-tools: [Agent]
@@ -347,29 +349,25 @@ mcp-tools: [context7, memory-bank]
 
 ### `harness-overrides`
 
-Per-harness override table. Overrides top-level field values when a specific harness compiles the agent. Only the fields relevant to the target harness are applied; the rest are ignored.
+Per-harness target-native passthrough table. Mars selects the block matching the resolved harness and preserves its keys/values exactly for the launch bundle's `execution_policy.native_config`. Nested keys are target-native: Mars validates only that the block is a mapping of serializable values.
 
-**Overridable fields:** `effort`, `autocompact`, `autocompact_pct`, `approval`, `sandbox`, `skills`, `tools`, `disallowed-tools`, `mcp-tools`, `native-config`
-
-**Non-overridable fields (warning if present; field is skipped):** `name`, `description`, `model`, `harness`, `mode`, `harness-overrides`
+Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace the top-level field with the same name.
 
 ```yaml
 harness-overrides:
   claude:
-    approval: auto
-    skills: [dev-principles, shared-workspace]
+    customClaudeKey: true
+    tools: [ask_user, askuser]  # preserved exactly in passthrough
   codex:
-    effort: high
-    sandbox: workspace-write
-    native-config:
+    sandbox_workspace_write:
+      network_access: true
+    native-config:            # preserved as a target-native key, not parsed by Mars
       sandbox_workspace_write.network_access: true
 ```
 
-Override semantics are **replace**: if a field is set in the override block, it fully replaces the top-level value. If it's absent from the override block, the top-level value is used.
+Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting.
 
-At compile time, the matching override block is merged into the lowered artifact. At runtime, Meridian applies the full override table when launching the agent.
-
-`native-config` is shape-validated only (mapping with string keys and non-null serializable values). Mars preserves entries as target-harness native passthrough and does not interpret key semantics.
+Nested values are serializability-validated only. Mars preserves entries as target-harness native passthrough and does not interpret key semantics.
 
 ---
 
@@ -420,8 +418,7 @@ Mars validates agent profiles at compile time and emits diagnostics:
 | Condition | Severity |
 |---|---|
 | Invalid field value (e.g. `effort: ultra`, malformed `model-policies`) | Error — field is skipped |
-| Unknown harness name | Warning — field is skipped |
-| Non-overridable field in override block | Warning — field is skipped |
+| Unknown harness name | Warning — block is preserved for forward compatibility |
 | Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |
 | Unknown top-level fields | Tolerated (forward compatibility) |
 

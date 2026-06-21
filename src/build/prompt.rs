@@ -68,7 +68,7 @@ pub fn compile_prompt_surface(
     let mut warnings = Vec::new();
 
     for (requested_index, skill) in requested_load_skills.iter().enumerate() {
-        match load_skill_document(mars_dir, skill, harness_id) {
+        match load_skill_document(mars_dir, skill, harness_id, &mut warnings) {
             Ok(SkillLoadOutcome::Loaded(data)) => {
                 loaded_documents.push(LoadedSkillDocument {
                     requested_index,
@@ -113,7 +113,7 @@ pub fn compile_prompt_surface(
 
     let mut available_skills = Vec::new();
     for skill in &requested_available_skills {
-        match resolve_available_skill(mars_dir, skill, harness_id) {
+        match resolve_available_skill(mars_dir, skill, &mut warnings) {
             Ok(AvailableSkillOutcome::Available(skill)) => available_skills.push(skill),
             Ok(AvailableSkillOutcome::Missing) => missing_skills.push(skill.clone()),
 
@@ -203,6 +203,7 @@ fn load_skill_document(
     mars_dir: &Path,
     skill_name: &str,
     harness_id: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<SkillLoadOutcome, String> {
     let skill_dir = mars_dir.join("skills").join(skill_name);
     let base_skill_path = skill_dir.join("SKILL.md");
@@ -212,18 +213,21 @@ fn load_skill_document(
 
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile lists a skill, it loads regardless.
-    let (_base_profile, base_frontmatter) = parse_skill_file(skill_name, &base_skill_path)?;
+    let (_base_profile, base_frontmatter) =
+        parse_skill_file(skill_name, &base_skill_path, warnings)?;
 
-    let selected_skill_path =
-        harness_skill_variant_path(&skill_dir, harness_id).unwrap_or(base_skill_path);
-    let (_, selected_frontmatter) = parse_skill_file(skill_name, &selected_skill_path)?;
+    let selected_skill_path = harness_skill_variant_path(&skill_dir, harness_id)
+        .unwrap_or_else(|| base_skill_path.clone());
+    let selected_body = if selected_skill_path == base_skill_path {
+        base_frontmatter.body().trim().to_string()
+    } else {
+        read_skill_body(skill_name, &selected_skill_path)?
+    };
 
-    let skill_type = skill_type_from_frontmatter(&selected_frontmatter)
-        .or_else(|| skill_type_from_frontmatter(&base_frontmatter));
+    let skill_type = skill_type_from_frontmatter(&base_frontmatter);
     let skill_type = skill_type.unwrap_or_else(|| "reference".to_string());
 
-    let body = selected_frontmatter.body().trim().to_string();
-    let content = render_skill_content_block(skill_name, &body);
+    let content = render_skill_content_block(skill_name, &selected_body);
 
     Ok(SkillLoadOutcome::Loaded(LoadedSkillData {
         document: SupplementalDoc {
@@ -232,14 +236,14 @@ fn load_skill_document(
             content,
             skill_type,
         },
-        body,
+        body: selected_body,
     }))
 }
 
 fn resolve_available_skill(
     mars_dir: &Path,
     skill_name: &str,
-    harness_id: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<AvailableSkillOutcome, String> {
     let skill_dir = mars_dir.join("skills").join(skill_name);
     let base_skill_path = skill_dir.join("SKILL.md");
@@ -248,20 +252,12 @@ fn resolve_available_skill(
     }
 
     // model-invocable gates global discovery, not explicit profile references.
-    let (base_profile, base_frontmatter) = parse_skill_file(skill_name, &base_skill_path)?;
+    let (base_profile, base_frontmatter) =
+        parse_skill_file(skill_name, &base_skill_path, warnings)?;
 
-    let selected_skill_path =
-        harness_skill_variant_path(&skill_dir, harness_id).unwrap_or(base_skill_path);
-    let (selected_profile, selected_frontmatter) =
-        parse_skill_file(skill_name, &selected_skill_path)?;
-
-    let skill_type = skill_type_from_frontmatter(&selected_frontmatter)
-        .or_else(|| skill_type_from_frontmatter(&base_frontmatter))
-        .unwrap_or_else(|| "reference".to_string());
-    let description = selected_profile
-        .description
-        .or(base_profile.description)
-        .unwrap_or_default();
+    let skill_type =
+        skill_type_from_frontmatter(&base_frontmatter).unwrap_or_else(|| "reference".to_string());
+    let description = base_profile.description.unwrap_or_default();
 
     Ok(AvailableSkillOutcome::Available(AvailableSkill {
         name: skill_name.to_string(),
@@ -270,9 +266,26 @@ fn resolve_available_skill(
     }))
 }
 
+fn read_skill_body(skill_name: &str, skill_path: &Path) -> Result<String, String> {
+    let raw = std::fs::read_to_string(skill_path).map_err(|err| {
+        format!(
+            "failed to read skill `{skill_name}` from {}: {err}",
+            skill_path.display()
+        )
+    })?;
+    let frontmatter = Frontmatter::parse(&raw).map_err(|err| {
+        format!(
+            "failed to parse skill `{skill_name}` from {}: {err}",
+            skill_path.display()
+        )
+    })?;
+    Ok(frontmatter.body().trim().to_string())
+}
+
 fn parse_skill_file(
     skill_name: &str,
     skill_path: &Path,
+    warnings: &mut Vec<String>,
 ) -> Result<(crate::compiler::skills::SkillProfile, Frontmatter), String> {
     let raw = std::fs::read_to_string(skill_path).map_err(|err| {
         format!(
@@ -289,9 +302,16 @@ fn parse_skill_file(
         )
     })?;
 
-    if let Some(diag) = skill_diags.first() {
-        return Err(format!(
-            "skill `{skill_name}` has invalid frontmatter in {}: {}",
+    for diag in skill_diags {
+        if diag.is_error() {
+            return Err(format!(
+                "skill `{skill_name}` has invalid frontmatter in {}: {}",
+                skill_path.display(),
+                diag.message()
+            ));
+        }
+        warnings.push(format!(
+            "skill `{skill_name}` has frontmatter warning in {}: {}",
             skill_path.display(),
             diag.message()
         ));

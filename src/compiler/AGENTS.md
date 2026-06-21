@@ -84,9 +84,9 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 
-### Non-Overridable Fields
+### Harness Override Passthrough
 
-These fields cannot appear inside `harness-overrides` blocks: `name`, `description`, `model`, `harness`, `mode`, `model-invocable`, `model-overrides`, `harness-overrides`.
+`harness-overrides.<harness>` blocks are target-native passthrough. Mars validates only the outer mapping shape and serializability; nested keys do not replace top-level Mars semantic fields. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
 ## Skill Compilation (`skills/`)
 

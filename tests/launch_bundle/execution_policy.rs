@@ -54,8 +54,7 @@ Review code changes."#;
     assert_eq!(bundle["provenance"]["sandbox_source"].as_str(), Some("cli"));
 }
 
-pub(crate) fn build_launch_bundle_harness_override_execution_policy_applies_before_profile_and_alias()
- {
+pub(crate) fn build_launch_bundle_harness_override_is_passthrough_not_execution_policy() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -103,27 +102,27 @@ autocompact_pct = 55"#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
-    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("low"));
     assert_eq!(
         bundle["execution_policy"]["approval"].as_str(),
         Some("never"),
-        "CLI approval must beat harness override",
+        "CLI approval must beat profile and passthrough",
     );
     assert_eq!(
         bundle["execution_policy"]["sandbox"].as_str(),
-        Some("workspace-write")
+        Some("read-only")
     );
     assert_eq!(
         bundle["execution_policy"]["autocompact"].as_u64(),
-        Some(2400)
+        Some(1200)
     );
     assert_eq!(
         bundle["execution_policy"]["autocompact_pct"].as_u64(),
-        Some(70)
+        Some(40)
     );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
     );
     assert_eq!(
         bundle["provenance"]["approval_source"].as_str(),
@@ -131,19 +130,29 @@ autocompact_pct = 55"#;
     );
     assert_eq!(
         bundle["provenance"]["sandbox_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
     );
     assert_eq!(
         bundle["provenance"]["autocompact_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
     );
     assert_eq!(
         bundle["provenance"]["autocompact_pct_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
     );
     assert_eq!(
         bundle["provenance"]["native_config_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["native_config"]["effort"].as_str(),
+        Some("high")
+    );
+    assert_eq!(
+        bundle["execution_policy"]["native_config"]["native-config"]
+            ["sandbox_workspace_write.network_access"]
+            .as_bool(),
+        Some(true)
     );
 }
 

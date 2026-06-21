@@ -69,7 +69,7 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_alias_uses_cursor_overrides_for_model_facing_policy() {
+pub(crate) fn build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
@@ -77,23 +77,23 @@ name: reviewer
 model: claude-opus-4-6
 skills: [root_skill]
 tools:
-  read: allow
-  edit: deny
+  Read: allow
+  Edit: deny
 mcp-tools: [plugin:root]
 harness-overrides:
   opencode:
     skills: [opencode_skill]
     tools:
-      write: allow
+      Write: allow
     mcp-tools: [plugin:opencode]
     native-config:
       opencode.only: true
   cursor:
     skills: [cursor_skill]
     tools:
-      bash: allow
-      agent: deny
-    disallowed-tools: [edit]
+      Bash: allow
+      Agent: deny
+    disallowed-tools: [Edit]
     mcp-tools: [plugin:cursor]
     native-config:
       cursor.only: true
@@ -103,7 +103,7 @@ Review code changes."#;
     let root_skill = "---\nname: root_skill\ndescription: Root\n---\nRoot skill content.";
     let opencode_skill =
         "---\nname: opencode_skill\ndescription: OpenCode\n---\nOpenCode skill content.";
-    let cursor_skill = "---\nname: cursor_skill\ndescription: Cursor\n---\nCursor skill content.";
+    let cursor_skill = "---\nname: cursor_skill\ndescription: Cursor\n---\nRoot skill content.";
 
     let extra_toml = r#"[models.cursoralias]
 model = "claude-opus-4-6"
@@ -150,42 +150,45 @@ harness = "cursor""#;
     );
     assert_eq!(
         bundle["skills"]["loaded"][0]["name"].as_str(),
-        Some("cursor_skill")
+        Some("root_skill")
     );
     assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
-    assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
-    assert_eq!(
-        bundle["tools"]["disallowed"],
-        serde_json::json!(["Agent", "Edit"])
-    );
-    assert_eq!(bundle["tools"]["mcp"], serde_json::json!(["plugin:cursor"]));
+    assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Read"]));
+    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["Edit"]));
+    assert_eq!(bundle["tools"]["mcp"], serde_json::json!(["plugin:root"]));
     assert_eq!(
         bundle["execution_policy"]["native_config"],
         serde_json::json!({
-            "cursor.only": true,
-            "cursor.array": ["alpha", "beta"]
+            "skills": ["cursor_skill"],
+            "tools": {"Bash": "allow", "Agent": "deny"},
+            "disallowed-tools": ["Edit"],
+            "mcp-tools": ["plugin:cursor"],
+            "native-config": {
+                "cursor.only": true,
+                "cursor.array": ["alpha", "beta"]
+            }
         })
     );
     assert_eq!(
         bundle["provenance"]["native_config_source"].as_str(),
-        Some("profile-harness-override")
+        Some("profile")
     );
 
     let docs = bundle["prompt_surface"]["supplemental_documents"]
         .as_array()
         .expect("supplemental_documents should be an array");
     assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"].as_str(), Some("cursor_skill"));
+    assert_eq!(docs[0]["name"].as_str(), Some("root_skill"));
     assert!(
         docs[0]["content"]
             .as_str()
             .unwrap()
-            .contains("Cursor skill content.")
+            .contains("Root skill content.")
     );
     assert_prompt_surface_excludes(
         &bundle,
         &[
-            "Root skill content.",
+            "Cursor skill content.",
             "OpenCode skill content.",
             "opencode.only",
             "cursor.only",

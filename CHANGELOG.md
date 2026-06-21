@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-06-21
+
 ### Fixed
 - `mars agents list` / `mars skills list` now accept their filter flags (`--mode`, `--source`, `--type`, `--model-invocable`). The filters are global, so they work on both the bare form (`mars agents --mode subagent`) and the discoverable subcommand form (`mars agents list --mode subagent`), which previously errored with "unexpected argument".
 

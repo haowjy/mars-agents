@@ -11,36 +11,9 @@ use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind};
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
+pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 use crate::frontmatter::Frontmatter;
-
-// ---------------------------------------------------------------------------
-// Lossiness result types
-// ---------------------------------------------------------------------------
-
-/// A field that was dropped or only approximately lowered in the native artifact.
-#[derive(Debug, Clone)]
-pub struct LossyField {
-    pub field: String,
-    pub target: String,
-    pub classification: Lossiness,
-}
-
-/// Lossiness classification for a single field in a target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Lossiness {
-    Approximate { note: &'static str },
-    Dropped,
-    MeridianOnly,
-}
-
-/// Output from a single lowering pass.
-pub struct LoweredOutput {
-    /// Serialized bytes for the native artifact.
-    pub bytes: Vec<u8>,
-    /// Lossiness findings for fields that were dropped or approximated.
-    pub lossy_fields: Vec<LossyField>,
-}
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering

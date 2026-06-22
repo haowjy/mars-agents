@@ -1,12 +1,35 @@
-//! Summarized lossiness diagnostics for agent/skill lowering.
+//! Shared lowering lossiness types and summarized diagnostics.
 //!
 //! Lowerers record per-field [`LossyField`] entries; callers aggregate by
 //! `(item, target)` before emitting so re-sync does not spam one line per field.
 
 use std::collections::BTreeMap;
 
-use crate::compiler::agents::lower::{Lossiness, LossyField};
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
+
+/// A field that was dropped or only approximately lowered in the native artifact.
+#[derive(Debug, Clone)]
+pub struct LossyField {
+    pub field: String,
+    pub target: String,
+    pub classification: Lossiness,
+}
+
+/// Lossiness classification for a single field in a target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lossiness {
+    Approximate { note: &'static str },
+    Dropped,
+    MeridianOnly,
+}
+
+/// Output from a single lowering pass.
+pub struct LoweredOutput {
+    /// Serialized bytes for the native artifact.
+    pub bytes: Vec<u8>,
+    /// Lossiness findings for fields that were dropped or approximated.
+    pub lossy_fields: Vec<LossyField>,
+}
 
 fn target_label(target: &str) -> String {
     format!(".{}", target.to_lowercase())

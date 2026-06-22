@@ -256,7 +256,6 @@ fn compile_projected_skill_frontmatter(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<(), MarsError> {
-    use crate::compiler::agents::lower::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
     use crate::compiler::skills::parse_skill_content;
 
@@ -316,19 +315,7 @@ fn compile_projected_skill_frontmatter(
     };
     let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
 
-    for lf in &lowered.lossy_fields {
-        match &lf.classification {
-            // Dropped/MeridianOnly fields are expected target-format gaps — not actionable.
-            Lossiness::Dropped | Lossiness::MeridianOnly => {}
-            Lossiness::Approximate { note } => diag.warn(
-                "skill-field-approximate",
-                format!(
-                    "skill `{skill_name}`: field `{}` approximately mapped in {} ({note})",
-                    lf.field, lf.target
-                ),
-            ),
-        }
-    }
+    crate::compiler::lossiness::emit_skill_lossiness_warnings(skill_name, &lowered.lossy_fields, diag);
 
     fs::write(projected_skill, lowered.bytes)?;
     Ok(())
@@ -500,8 +487,15 @@ mod tests {
         assert!(!out.contains("name: ignored"));
         assert!(!out.contains("allowed-tools"));
         assert!(out.ends_with("Codex body\n"));
-        // Dropped fields are silently suppressed (not actionable), so no diagnostics expected.
-        assert!(diag.drain().is_empty());
+        // Dropped fields surface as one summarized lossiness warning per target.
+        let warnings: Vec<_> = diag
+            .drain()
+            .into_iter()
+            .filter(|d| d.code == "skill-field-dropped")
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("allowed-tools"));
+        assert!(warnings[0].message.contains(".codex"));
     }
 
     #[test]

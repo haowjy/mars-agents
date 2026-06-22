@@ -894,21 +894,11 @@ fn emit_lowered_native_agent(
         agent.model,
     );
 
-    for lf in &lowered.lossy_fields {
-        use crate::compiler::agents::lower::Lossiness;
-        match &lf.classification {
-            Lossiness::Dropped | Lossiness::MeridianOnly => {}
-            Lossiness::Approximate { note } => {
-                diag.warn(
-                    "agent-field-approximate",
-                    format!(
-                        "agent `{}`: field `{}` approximately mapped in {} ({note})",
-                        agent.agent_name, lf.field, lf.target
-                    ),
-                );
-            }
-        }
-    }
+    crate::compiler::lossiness::emit_agent_lossiness_warnings(
+        agent.agent_name,
+        &lowered.lossy_fields,
+        diag,
+    );
 
     let harness_dir = ctx.project_root.join(agent.harness.target_dir());
     let native_agents_dir = harness_dir.join("agents");

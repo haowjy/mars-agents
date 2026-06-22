@@ -751,7 +751,9 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
+        .stderr(predicate::str::contains(
+            "agent `cursor-worker`: 1 field not lowered (meridian-only) for .cursor (native-config)",
+        ));
 
     assert!(project.child(".mars/agents/cursor-worker.md").exists());
     assert!(project.child(".cursor/agents/cursor-worker.md").exists());

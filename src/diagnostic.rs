@@ -85,6 +85,21 @@ impl DiagnosticCollector {
         });
     }
 
+    pub fn warn_with_category(
+        &mut self,
+        code: &'static str,
+        message: impl Into<String>,
+        category: DiagnosticCategory,
+    ) {
+        self.diagnostics.push(Diagnostic {
+            level: DiagnosticLevel::Warning,
+            code,
+            message: message.into(),
+            context: None,
+            category: Some(category),
+        });
+    }
+
     pub fn info(&mut self, code: &'static str, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,

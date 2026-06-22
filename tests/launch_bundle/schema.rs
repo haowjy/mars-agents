@@ -83,9 +83,12 @@ Review code changes.
     assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["shell", "file_write"])
+        serde_json::json!(["exec_command", "apply_patch"])
     );
-    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["agent"]));
+    assert_eq!(
+        bundle["tools"]["disallowed"],
+        serde_json::json!(["spawn_agent"])
+    );
     assert_eq!(
         bundle["tools"]["mcp"],
         serde_json::json!(["plugin:context7:context7"])

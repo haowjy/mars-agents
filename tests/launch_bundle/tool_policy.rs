@@ -69,11 +69,11 @@ Review code changes."#;
     let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
     assert_eq!(
         override_bundle["tools"]["allowed"],
-        serde_json::json!(["shell"])
+        serde_json::json!(["exec_command"])
     );
     assert_eq!(
         override_bundle["tools"]["disallowed"],
-        serde_json::json!(["agent", "file_write"])
+        serde_json::json!(["spawn_agent", "apply_patch"])
     );
     assert_eq!(
         override_bundle["tools"]["mcp"],

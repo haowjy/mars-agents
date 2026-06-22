@@ -47,7 +47,7 @@ struct CanonicalTool {
 const CANONICAL_TOOLS: &[CanonicalTool] = &[
     CanonicalTool {
         name: "bash",
-        aliases: &["shell", "terminal"],
+        aliases: &["shell", "terminal", "exec_command", "shell_command"],
     },
     CanonicalTool {
         name: "read",
@@ -55,15 +55,15 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "write",
-        aliases: &["file_write"],
+        aliases: &["file_write", "apply_patch"],
     },
     CanonicalTool {
         name: "edit",
-        aliases: &["sed"],
+        aliases: &["sed", "str_replace"],
     },
     CanonicalTool {
         name: "agent",
-        aliases: &["subagent"],
+        aliases: &["subagent", "spawn_agent", "task"],
     },
     CanonicalTool {
         name: "glob",
@@ -87,7 +87,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "ask_user",
-        aliases: &["askuser"],
+        aliases: &["askuser", "request_user_input", "ask_question"],
     },
     CanonicalTool {
         name: "todo_read",
@@ -107,7 +107,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "plan_mode",
-        aliases: &["planmode"],
+        aliases: &["planmode", "update_plan", "switch_mode"],
     },
     CanonicalTool {
         name: "worktree",
@@ -146,25 +146,43 @@ struct SemanticOverride {
 }
 
 const SEMANTIC_OVERRIDES: &[SemanticOverride] = &[
+    // Codex — tool names verified from codex-rs source (openai/codex), 2026-06-22
+    // exec_command = shell execution, apply_patch = file edits/writes,
+    // spawn_agent = sub-agents. No separate file_read/file_write tools exist.
     SemanticOverride {
         canonical: "bash",
         harness: "codex",
-        native: "shell",
+        native: "exec_command",
     },
     SemanticOverride {
         canonical: "read",
         harness: "codex",
-        native: "file_read",
+        native: "exec_command",
     },
     SemanticOverride {
         canonical: "write",
         harness: "codex",
-        native: "file_write",
+        native: "apply_patch",
     },
     SemanticOverride {
         canonical: "edit",
         harness: "codex",
-        native: "file_write",
+        native: "apply_patch",
+    },
+    SemanticOverride {
+        canonical: "agent",
+        harness: "codex",
+        native: "spawn_agent",
+    },
+    SemanticOverride {
+        canonical: "ask_user",
+        harness: "codex",
+        native: "request_user_input",
+    },
+    SemanticOverride {
+        canonical: "plan_mode",
+        harness: "codex",
+        native: "update_plan",
     },
     SemanticOverride {
         canonical: "read",
@@ -476,10 +494,10 @@ mod tests {
     fn target_projection_maps_canonical_to_native_by_convention_and_override() {
         let cases = [
             ("bash", "claude", "Bash", ToolProjectionStatus::Known),
-            ("bash", "codex", "shell", ToolProjectionStatus::Known),
+            ("bash", "codex", "exec_command", ToolProjectionStatus::Known),
             ("bash", "opencode", "bash", ToolProjectionStatus::Known),
             ("read", "opencode", "view", ToolProjectionStatus::Known),
-            ("read", "codex", "file_read", ToolProjectionStatus::Known),
+            ("read", "codex", "exec_command", ToolProjectionStatus::Known),
             (
                 "web_search",
                 "claude",
@@ -499,7 +517,12 @@ mod tests {
                 ToolProjectionStatus::Known,
             ),
             ("ask_user", "claude", "AskUser", ToolProjectionStatus::Known),
-            ("ask_user", "codex", "ask_user", ToolProjectionStatus::Known),
+            (
+                "ask_user",
+                "codex",
+                "request_user_input",
+                ToolProjectionStatus::Known,
+            ),
             ("lsp", "claude", "LSP", ToolProjectionStatus::Known),
             (
                 "CustomTool",
@@ -516,7 +539,7 @@ mod tests {
             (
                 "bash(git *)",
                 "codex",
-                "shell(git *)",
+                "exec_command(git *)",
                 ToolProjectionStatus::Known,
             ),
         ];
@@ -536,10 +559,10 @@ mod tests {
 
     #[test]
     fn projection_accepts_input_aliases_and_pascal_case() {
-        assert_eq!(project("Bash", "codex").name, "shell");
+        assert_eq!(project("Bash", "codex").name, "exec_command");
         assert_eq!(project("shell", "claude").name, "Bash");
         assert_eq!(project("WebSearch", "opencode").name, "browser");
-        assert_eq!(project("BASH(git *)", "codex").name, "shell(git *)");
+        assert_eq!(project("BASH(git *)", "codex").name, "exec_command(git *)");
     }
 
     #[test]

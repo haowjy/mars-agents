@@ -5,7 +5,7 @@ pub mod lower;
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis, value_label};
-use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
 #[derive(Debug, Clone)]
@@ -16,9 +16,11 @@ pub struct SkillProfile {
     pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
-    pub allowed_tools: Vec<String>,
+    pub tools: Vec<String>,
+    pub tools_denied: Vec<String>,
     /// Canonical tool denylist — lowered to harness-native denylist fields where supported.
     pub disallowed_tools: Vec<String>,
+    pub mcp_tools: Vec<String>,
     pub license: Option<String>,
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
@@ -28,6 +30,17 @@ pub struct SkillProfile {
     pub has_frontmatter: bool,
     /// Frontmatter fields not recognized by mars — passed through to all targets.
     pub passthrough_fields: Vec<(String, Value)>,
+}
+
+impl SkillProfile {
+    pub fn effective_tool_policy(&self) -> EffectiveToolPolicy {
+        tool_policy::effective_tool_policy(
+            &self.tools,
+            &self.tools_denied,
+            &self.disallowed_tools,
+            &self.mcp_tools,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,51 +97,35 @@ impl SkillDiagnostic {
     }
 }
 
-fn yaml_str_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> Vec<String> {
-    match val {
-        Value::Sequence(seq) => seq
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, item)| match item.as_str() {
-                Some(s) => Some(s.to_owned()),
-                None => {
-                    diags.push(SkillDiagnostic::InvalidFieldType {
-                        field: format!("{field}[{idx}]"),
-                        value: value_label(item),
-                        allowed: "string",
-                    });
-                    None
-                }
-            })
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => {
-            diags.push(SkillDiagnostic::InvalidFieldType {
-                field: field.to_string(),
-                value: value_label(val),
-                allowed: "string or list of strings",
-            });
-            vec![]
-        }
-    }
+fn push_skill_tool_invalid(
+    diags: &mut Vec<SkillDiagnostic>,
+    field: &str,
+    value: &str,
+    allowed: &'static str,
+) {
+    diags.push(SkillDiagnostic::InvalidFieldValue {
+        field: field.to_string(),
+        value: value.to_string(),
+        allowed,
+    });
 }
 
 fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> Vec<String> {
-    yaml_str_list(field, val, diags)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, tool)| match parse_mars_tool_name(&tool) {
-            Ok(ParsedToolName { name, .. }) => Some(name),
-            Err(err) => {
-                diags.push(SkillDiagnostic::InvalidFieldValue {
-                    field: format!("{field}[{idx}]"),
-                    value: tool,
-                    allowed: err.allowed(),
-                });
-                None
-            }
-        })
-        .collect()
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_skill_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::yaml_tool_list(field, val, &mut push)
+}
+
+fn parse_tools_field(
+    field: &str,
+    val: &Value,
+    diags: &mut Vec<SkillDiagnostic>,
+) -> ParsedToolsField {
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_skill_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::parse_tools_field(field, val, &mut push)
 }
 
 fn validate_required_string(field: &str, val: Option<&Value>, diags: &mut Vec<SkillDiagnostic>) {
@@ -190,19 +187,26 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         validate_required_string("name", name_raw, diags);
         validate_required_string("description", description_raw, diags);
     }
-    consumed_keys.push("allowed-tools".to_string());
-    consumed_keys.push("allowed_tools".to_string());
-    let allowed_tools = fm
-        .get("allowed-tools")
-        .or_else(|| fm.get("allowed_tools"))
-        .map(|v| yaml_tool_list("allowed-tools", v, diags))
+    consumed_keys.push("tools".to_string());
+    let parsed_tools = fm
+        .get("tools")
+        .map(|v| parse_tools_field("tools", v, diags))
         .unwrap_or_default();
+    let tools = parsed_tools.allowed;
+    let tools_denied = parsed_tools.denied;
     consumed_keys.push("disallowed-tools".to_string());
     consumed_keys.push("disallowed_tools".to_string());
     let disallowed_tools = fm
         .get("disallowed-tools")
         .or_else(|| fm.get("disallowed_tools"))
         .map(|v| yaml_tool_list("disallowed-tools", v, diags))
+        .unwrap_or_default();
+    consumed_keys.push("mcp-tools".to_string());
+    consumed_keys.push("mcp_tools".to_string());
+    let mcp_tools = fm
+        .get("mcp-tools")
+        .or_else(|| fm.get("mcp_tools"))
+        .map(tool_policy::yaml_str_list)
         .unwrap_or_default();
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
@@ -278,8 +282,10 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         skill_type,
         model_invocable,
         user_invocable,
-        allowed_tools,
+        tools,
+        tools_denied,
         disallowed_tools,
+        mcp_tools,
         license,
         metadata,
         had_model_invocable_field,
@@ -500,12 +506,8 @@ body",
     #[test]
     fn warns_for_filtered_non_string_fields() {
         let (_, d, _) = parse(
-            "---\nname: a\ndescription: b\nallowed-tools: [Bash(git *), 7]\nlicense: false\n---\nbody",
+            "---\nname: a\ndescription: b\ntools: [Bash(git *)]\nlicense: false\n---\nbody",
         );
-        assert!(d.iter().any(|d| matches!(
-            d,
-            SkillDiagnostic::InvalidFieldType { field, .. } if field == "allowed-tools[1]"
-        )));
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, .. } if field == "license"
@@ -515,11 +517,27 @@ body",
     #[test]
     fn separator_tool_aliases_canonicalize() {
         let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\nallowed-tools: [ask_user, bash(git *)]\n---\nbody",
+            "---\nname: a\ndescription: b\ntools: [ask_user, bash(git *)]\n---\nbody",
         );
 
-        assert_eq!(p.allowed_tools, vec!["ask_user", "bash(git *)"]);
+        assert_eq!(p.tools, vec!["ask_user", "bash(git *)"]);
         assert!(d.is_empty());
+    }
+
+    #[test]
+    fn tools_map_allow_and_deny_parse() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\nbody",
+        );
+        assert!(d.is_empty());
+        assert_eq!(p.tools, vec!["ask_user"]);
+        assert_eq!(p.tools_denied, vec!["bash(git *)"]);
+        let policy = p.effective_tool_policy();
+        assert_eq!(policy.allowed, vec!["ask_user"]);
+        assert_eq!(
+            policy.disallowed,
+            vec!["bash(git *)", "web_search"]
+        );
     }
 
     #[test]
@@ -528,12 +546,12 @@ body",
             "---
 name: a
 description: b
-allowed-tools: [customtool, CustomTool]
+tools: [customtool, CustomTool]
 ---
 body",
         );
 
-        assert_eq!(p.allowed_tools, vec!["customtool", "custom_tool"]);
+        assert_eq!(p.tools, vec!["customtool", "custom_tool"]);
         assert!(d.is_empty());
     }
 

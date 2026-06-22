@@ -132,10 +132,6 @@ fn foreign_container_has_items(package_root: &Path, container: &str) -> bool {
     false
 }
 
-/// Staging-only marker key written when dialect is explicitly configured.
-/// B3 replaces this with real lift tables; C-skills applies overrides after lift.
-pub(crate) const EXPLICIT_DIALECT_MARKER: &str = "_mars-inbound-dialect";
-
 #[cfg(test)]
 mod tests {
     use super::*;

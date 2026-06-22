@@ -177,6 +177,11 @@ impl Frontmatter {
         self.yaml.insert(yaml_key(key), value);
     }
 
+    /// Remove a top-level frontmatter field.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.yaml.remove(yaml_key(key))
+    }
+
     /// Serialize back to full markdown.
     pub fn render(&self) -> String {
         if !self.has_frontmatter && self.yaml.is_empty() {

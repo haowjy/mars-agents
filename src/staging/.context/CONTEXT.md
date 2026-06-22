@@ -29,30 +29,27 @@ Per-consumer under `<project>/.mars/staging/<source-name>/<dialect>/`.
 
 The canonical store (`.mars/`) is installed from the **staged** tree, not raw
 fetched bytes. For inferred/default dialects with identity lift, content matches
-the source. With explicit non-`mars-native` dialect, a temporary
-`_mars-inbound-dialect` marker is written until B3 lift tables replace it.
+the source. With explicit non-`mars-native` dialect, foreign frontmatter is lifted to
+canonical mars fields per `staging/lift.rs`. Default/inferred `Claude` lift is
+idempotent on already-canonical packages.
 
-`.mars/` content is **normalized canonical**, not guaranteed byte-identical to
-upstream source repositories.
-
-## `lift_frontmatter` (B3 extension point)
+## `lift_frontmatter` (B3)
 
 ```rust
 pub fn lift_frontmatter(
     dialect: Dialect,
     item_kind: ItemKind,
     frontmatter: &Frontmatter,
-    explicit_dialect: bool,
 ) -> Frontmatter
 ```
 
-B3 fills per-dialect tables. C-skills applies `[skills.<name>]` overrides after lift
-in the same staging hook.
+C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
+(`staging/overlay.rs`). Lookup key is the skill directory name (parent of `SKILL.md`).
 
 ## Threading
 
 - `EffectiveDependency.dialect` — explicit `[dependencies.<dep>].dialect`
-- `EffectiveConfig.skills` — `[skills.<name>]` overlay carriage (not applied yet)
+- `EffectiveConfig.skills` — `[skills.<name>]` overlays applied in `process_markdown_file`
 - `ResolveOptions.staging_root` — set by sync to `.mars/staging`
 
 Dialect resolution (`crate::dialect::Dialect::resolve`):

@@ -6,8 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.
+- Per-dialect frontmatter lift tables (Claude/Codex/Cursor/OpenCode) in `staging/lift.rs`; default/inferred Claude lift is idempotent on mars-native packages.
+- `when_to_use` on `SkillProfile` with lowering to Claude/Pi and warn-drop on other harnesses.
 - `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
-- `[skills.<name>]` overlay carriage in config (application deferred to C-skills).
+- `[skills.<name>]` overlay carriage in config; applied at staging after lift (description, invocability, tool policy).
 
 ## [0.9.0] - 2026-06-22
 

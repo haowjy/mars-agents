@@ -12,6 +12,7 @@ use crate::frontmatter::{Frontmatter, FrontmatterError};
 pub struct SkillProfile {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub when_to_use: Option<String>,
     pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
@@ -173,13 +174,27 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     consumed_keys.push("description".to_string());
     let description_raw = fm.get("description");
     let description = description_raw.and_then(Value::as_str).map(str::to_owned);
+    consumed_keys.push("when_to_use".to_string());
+    let when_to_use_raw = fm.get("when_to_use");
+    let when_to_use = when_to_use_raw.and_then(Value::as_str).map(str::to_owned);
+    if let Some(raw) = when_to_use_raw
+        && !raw.is_string()
+    {
+        diags.push(SkillDiagnostic::InvalidFieldType {
+            field: "when_to_use".to_string(),
+            value: value_label(raw),
+            allowed: "string",
+        });
+    }
     if fm.has_frontmatter() {
         validate_required_string("name", name_raw, diags);
         validate_required_string("description", description_raw, diags);
     }
     consumed_keys.push("allowed-tools".to_string());
+    consumed_keys.push("allowed_tools".to_string());
     let allowed_tools = fm
         .get("allowed-tools")
+        .or_else(|| fm.get("allowed_tools"))
         .map(|v| yaml_tool_list("allowed-tools", v, diags))
         .unwrap_or_default();
     consumed_keys.push("disallowed-tools".to_string());
@@ -259,6 +274,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     SkillProfile {
         name,
         description,
+        when_to_use,
         skill_type,
         model_invocable,
         user_invocable,

@@ -118,6 +118,9 @@ fn insert_disallowed_tools(
     }
 }
 fn insert_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
+    if let Some(when_to_use) = &profile.when_to_use {
+        yaml.insert(yk("when_to_use"), ys(when_to_use));
+    }
     if let Some(license) = &profile.license {
         yaml.insert(yk("license"), ys(license));
     }
@@ -219,6 +222,9 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Codex));
     }
+    if profile.when_to_use.is_some() {
+        lossy_fields.push(dropped("when_to_use", SkillHarness::Codex));
+    }
     LoweredOutput {
         bytes: render(yaml, body),
         lossy_fields,
@@ -247,6 +253,9 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
         "opencode",
         &mut lossy_fields,
     );
+    if profile.when_to_use.is_some() {
+        lossy_fields.push(dropped("when_to_use", SkillHarness::OpenCode));
+    }
     LoweredOutput {
         bytes: render(yaml, body),
         lossy_fields,
@@ -294,6 +303,9 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
     );
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Cursor));
+    }
+    if profile.when_to_use.is_some() {
+        lossy_fields.push(dropped("when_to_use", SkillHarness::Cursor));
     }
     LoweredOutput {
         bytes: render(yaml, body),

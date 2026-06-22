@@ -253,8 +253,6 @@ pub struct AgentOverlay {
 }
 
 /// Per-skill overlay policy in mars.toml `[skills.<name>]`.
-///
-/// Carried for staging; application lands in C-skills.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SkillOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -271,6 +269,17 @@ pub struct SkillOverlay {
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
+    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
+    pub tools: AgentOverlayTools,
+}
+
+impl SkillOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.description.is_none()
+            && self.model_invocable.is_none()
+            && self.user_invocable.is_none()
+            && self.tools.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1842,6 +1851,65 @@ override = { effort = "high" }
             ModelPolicyMatchType::ModelGlob
         );
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+    }
+
+    #[test]
+    fn parse_skill_overlay_tools_and_invocability() {
+        let config: Config = toml::from_str(
+            r#"
+[skills.planning]
+description = "Planning overlay"
+user_invocable = false
+model-invocable = true
+tools.disallowed = ["Agent", "Write"]
+tools.allowed = ["Bash(git *)"]
+tools.mcp = ["plugin:demo"]
+"#,
+        )
+        .unwrap();
+
+        let overlay = config.skills.get("planning").expect("planning overlay");
+        assert_eq!(overlay.description.as_deref(), Some("Planning overlay"));
+        assert_eq!(overlay.user_invocable, Some(false));
+        assert_eq!(overlay.model_invocable, Some(true));
+        assert_eq!(
+            overlay.tools.disallowed,
+            vec!["Agent".to_string(), "Write".to_string()]
+        );
+        assert_eq!(overlay.tools.allowed, vec!["Bash(git *)".to_string()]);
+        assert_eq!(overlay.tools.mcp, vec!["plugin:demo".to_string()]);
+    }
+
+    #[test]
+    fn merged_skill_overlays_local_replaces_fields() {
+        let mut base_skills = IndexMap::new();
+        base_skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Base description".to_string()),
+                user_invocable: Some(true),
+                ..SkillOverlay::default()
+            },
+        );
+
+        let mut local_skills = IndexMap::new();
+        local_skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Local description".to_string()),
+                user_invocable: Some(false),
+                ..SkillOverlay::default()
+            },
+        );
+        let local = LocalConfig {
+            skills: local_skills,
+            ..LocalConfig::default()
+        };
+
+        let merged = overlay_skills_replace_by_key(&base_skills, &local.skills);
+        let replaced = merged.get("planning").expect("planning overlay");
+        assert_eq!(replaced.description.as_deref(), Some("Local description"));
+        assert_eq!(replaced.user_invocable, Some(false));
     }
 
     #[test]

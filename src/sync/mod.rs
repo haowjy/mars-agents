@@ -297,7 +297,6 @@ pub(crate) fn build_target(
             &item.disk_path(),
             item.discovered.id.kind,
             crate::dialect::Dialect::resolve(None, &item.root),
-            false,
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,
@@ -1479,7 +1478,7 @@ mod tests {
             &[],
             &[(
                 "planning",
-                "---\nname: planning\n---\n# Planning\n",
+                "---\nname: planning\ndescription: d\ndisable-model-invocation: true\n---\n# Planning\n",
             )],
         );
         let tree_path = fixture.tree_path(src_idx);
@@ -1494,7 +1493,6 @@ mod tests {
                     package_root: tree_path.clone(),
                 },
                 dialect,
-                true,
                 &indexmap::IndexMap::new(),
                 &staging_root,
             )

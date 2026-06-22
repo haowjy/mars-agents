@@ -501,6 +501,140 @@ fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fiel
 }
 
 #[test]
+fn sync_skill_overlay_stages_canonical_and_lowers_native_target() {
+    let dir = TempDir::new().unwrap();
+    let source_skill = "---\nname: planning\ndescription: base skill\nuser-invocable: true\n---\n# Base\n";
+    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[dependencies.base]
+path = "{}"
+
+[skills.planning]
+description = "Overridden planning"
+user_invocable = false
+tools.disallowed = ["Agent"]
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(canonical.contains("description: Overridden planning"));
+    assert!(canonical.contains("user-invocable: false"));
+    assert!(canonical.contains("disallowed-tools:"));
+
+    let native = fs::read_to_string(
+        project
+            .child(".codex")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(!native.contains("user-invocable"));
+    assert!(!native.contains("disallowed-tools"));
+    assert_ne!(native, canonical);
+}
+
+#[test]
+fn sync_mars_local_skill_overlay_overrides_mars_toml() {
+    let dir = TempDir::new().unwrap();
+    let source_skill = "---\nname: planning\ndescription: base\n---\n# Base\n";
+    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[dependencies.base]
+path = "{}"
+
+[skills.planning]
+description = "Committed overlay"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    project
+        .child("mars.local.toml")
+        .write_str(
+            r#"
+[skills.planning]
+description = "Local overlay"
+"#,
+        )
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(canonical.contains("description: Local overlay"));
+    assert!(!canonical.contains("Committed overlay"));
+}
+
+#[test]
 fn sync_codex_projection_warn_drops_explicit_model_invocable_true() {
     let dir = TempDir::new().unwrap();
     let source_skill = "---

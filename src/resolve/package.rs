@@ -390,13 +390,11 @@ fn stage_rooted_package(
     };
 
     let dep = effective_config.dependencies.get(source_name);
-    let explicit_dialect = dep.and_then(|entry| entry.dialect);
-    let dialect = Dialect::resolve(explicit_dialect, &rooted.package_root);
+    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
     staging::stage_rooted_source(
         source_name,
         rooted,
         dialect,
-        explicit_dialect.is_some(),
         &effective_config.skills,
         staging_root,
     )

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use serde_yaml::Value;
 
-use crate::compiler::invocability::{get_invocability_field, parse_invocability_axis};
+use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
@@ -834,14 +834,16 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         });
 
     // model-invocable / user-invocable:
+    let model_invocability = find_invocability_field(fm, "model-invocable");
     let (model_invocable, had_model_invocable_field) = parse_invocability_field(
         "model-invocable",
-        get_invocability_field(fm, "model-invocable"),
+        model_invocability.as_ref().map(|f| &f.value),
         diags,
     );
+    let user_invocability = find_invocability_field(fm, "user-invocable");
     let (user_invocable, had_user_invocable_field) = parse_invocability_field(
         "user-invocable",
-        get_invocability_field(fm, "user-invocable"),
+        user_invocability.as_ref().map(|f| &f.value),
         diags,
     );
 

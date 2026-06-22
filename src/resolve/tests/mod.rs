@@ -3,6 +3,7 @@
 mod filter_tests;
 mod integration_tests;
 mod skill_tests;
+mod staging_tests;
 mod tracker_tests;
 mod version_tests;
 
@@ -334,6 +335,7 @@ fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
+                dialect: None,
                 is_overridden: false,
                 original_git: None,
             },
@@ -342,6 +344,7 @@ fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
     EffectiveConfig {
         dependencies: map,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     }
 }
 

@@ -300,12 +300,15 @@ pub enum ResolveMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
+    /// Per-project directory for dependency-scoped canonical source staging.
+    pub staging_root: Option<std::path::PathBuf>,
 }
 
 impl Default for ResolveOptions {
     fn default() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            staging_root: None,
         }
     }
 }
@@ -325,12 +328,14 @@ impl ResolveOptions {
     pub fn sync() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            staging_root: None,
         }
     }
 
     pub fn frozen() -> Self {
         Self {
             mode: ResolveMode::Frozen,
+            staging_root: None,
         }
     }
 
@@ -340,7 +345,13 @@ impl ResolveOptions {
                 targets,
                 bump_direct_constraints,
             },
+            staging_root: None,
         }
+    }
+
+    pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
+        self.staging_root = Some(staging_root);
+        self
     }
 
     pub(crate) fn direct_constraint_for(

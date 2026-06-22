@@ -222,7 +222,8 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
-    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
+    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
+        .with_staging_root(ctx.project_root.join(".mars/staging"));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -290,7 +291,18 @@ pub(crate) fn build_target(
     let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
 
     for item in local_items {
-        let source_path = item.disk_path();
+        let staging_root = ctx.project_root.join(".mars/staging");
+        let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
+        let staged_path = crate::staging::stage_local_item(
+            &item.disk_path(),
+            item.discovered.id.kind,
+            crate::dialect::Dialect::resolve(None, &item.root),
+            false,
+            &resolved.loaded.effective.skills,
+            &staging_root,
+            &item_key,
+        )?;
+        let source_path = staged_path;
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
             && item.discovered.source_path == Path::new(".");
         let source_hash = if is_flat_skill {
@@ -1025,6 +1037,7 @@ mod tests {
                     subpath: None,
                     filter,
                     rename: crate::types::RenameMap::new(),
+                    dialect: None,
                     is_overridden: false,
                     original_git: None,
                 },
@@ -1041,6 +1054,7 @@ mod tests {
             EffectiveConfig {
                 dependencies: config_dependencies,
                 settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
             },
         )
     }
@@ -1051,6 +1065,7 @@ mod tests {
             path: Some(path.to_path_buf()),
             subpath: None,
             version: None,
+            dialect: None,
             filter: FilterConfig::default(),
         }
     }
@@ -1061,6 +1076,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some(version.to_string()),
+            dialect: None,
             filter,
         }
     }
@@ -1174,6 +1190,7 @@ mod tests {
                 path: None,
                 subpath: None,
                 version: None,
+            dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -1453,6 +1470,92 @@ mod tests {
         for action in &sync_plan2.actions {
             assert!(matches!(action, plan::PlannedAction::Skip { .. }));
         }
+    }
+
+    #[test]
+    fn explicit_dialect_change_triggers_update() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(
+            &[],
+            &[(
+                "planning",
+                "---\nname: planning\n---\n# Planning\n",
+            )],
+        );
+        let tree_path = fixture.tree_path(src_idx);
+        let staging_root = fixture.project_root().join(".mars/staging");
+        fs::create_dir_all(&staging_root).unwrap();
+
+        let stage = |dialect: crate::dialect::Dialect| {
+            crate::staging::stage_rooted_source(
+                &"base".into(),
+                crate::resolve::RootedSourceRef {
+                    checkout_root: tree_path.clone(),
+                    package_root: tree_path.clone(),
+                },
+                dialect,
+                true,
+                &indexmap::IndexMap::new(),
+                &staging_root,
+            )
+            .unwrap()
+        };
+
+        let mut config = EffectiveConfig {
+            dependencies: indexmap::IndexMap::from([(
+                "base".into(),
+                EffectiveDependency {
+                    name: "base".into(),
+                    id: crate::types::SourceId::Path {
+                        canonical: tree_path.clone(),
+                        subpath: None,
+                    },
+                    spec: SourceSpec::Path(tree_path.clone()),
+                    subpath: None,
+                    filter: FilterMode::All,
+                    rename: crate::types::RenameMap::new(),
+                    dialect: Some(crate::dialect::Dialect::MarsNative),
+                    is_overridden: false,
+                    original_git: None,
+                },
+            )]),
+            settings: Settings::default(),
+            skills: indexmap::IndexMap::new(),
+        };
+
+        let mut graph = {
+            let (mut g, _) =
+                make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
+            g.nodes.get_mut("base").unwrap().rooted_ref = stage(crate::dialect::Dialect::MarsNative);
+            g
+        };
+
+        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let lock = LockFile::empty();
+        let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
+        let options = SyncOptions::default();
+        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
+        let result =
+            apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+        let first_lock =
+            crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
+
+        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(crate::dialect::Dialect::Claude);
+        config.dependencies.get_mut("base").unwrap().dialect =
+            Some(crate::dialect::Dialect::Claude);
+
+        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let sync_diff2 =
+            diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+        assert!(
+            sync_diff2
+                .items
+                .iter()
+                .any(|entry| matches!(entry, diff::DiffEntry::Update { .. })),
+            "expected Update after dialect change, got {:?}",
+            sync_diff2.items
+        );
     }
 
     #[test]

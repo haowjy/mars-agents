@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.
+- `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
+- `[skills.<name>]` overlay carriage in config (application deferred to C-skills).
+
 ## [0.9.0] - 2026-06-22
 
 ### Fixed

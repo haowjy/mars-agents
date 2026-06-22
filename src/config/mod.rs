@@ -7,6 +7,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{
@@ -20,6 +21,7 @@ pub mod targets;
 
 pub use layering::{
     merged_settings, overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
+    overlay_skills_replace_by_key,
 };
 
 /// Top-level mars.toml configuration.
@@ -44,6 +46,8 @@ pub struct Config {
     pub models: IndexMap<String, crate::models::ModelAlias>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
 /// Package metadata.
@@ -118,6 +122,9 @@ pub struct InstallDep {
     pub subpath: Option<SourceSubpath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Inbound lift dialect for this dependency (see `crate::dialect::Dialect`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialect: Option<Dialect>,
     #[serde(flatten)]
     pub filter: FilterConfig,
 }
@@ -243,6 +250,27 @@ pub struct AgentOverlay {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub model_policies: Vec<ModelPolicyRule>,
+}
+
+/// Per-skill overlay policy in mars.toml `[skills.<name>]`.
+///
+/// Carried for staging; application lands in C-skills.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SkillOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(
+        default,
+        alias = "model-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_invocable: Option<bool>,
+    #[serde(
+        default,
+        alias = "user-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_invocable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -457,6 +485,8 @@ pub struct LocalConfig {
     pub models: IndexMap<String, crate::models::ModelAlias>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub skills: IndexMap<String, SkillOverlay>,
     #[serde(default, skip_serializing_if = "LocalSettings::is_empty")]
     pub settings: LocalSettings,
 }
@@ -718,6 +748,8 @@ pub enum FilterMode {
 pub struct EffectiveConfig {
     pub dependencies: IndexMap<SourceName, EffectiveDependency>,
     pub settings: Settings,
+    /// Skill overlays from mars.toml / mars.local.toml (carried for staging).
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
 /// Layered project-level config used by routing and policy consumers.
@@ -746,6 +778,7 @@ pub struct EffectiveDependency {
     pub subpath: Option<SourceSubpath>,
     pub filter: FilterMode,
     pub rename: RenameMap,
+    pub dialect: Option<Dialect>,
     pub is_overridden: bool,
     pub original_git: Option<GitSpec>,
 }
@@ -1009,6 +1042,7 @@ pub fn merge_with_root(
             (base_spec, false, None)
         };
         let subpath = entry.subpath.clone();
+        let dialect = entry.dialect;
         let id = source_id_for_spec(root, &spec, subpath.clone());
 
         dependencies.insert(
@@ -1020,11 +1054,14 @@ pub fn merge_with_root(
                 subpath,
                 filter,
                 rename,
+                dialect,
                 is_overridden,
                 original_git,
             },
         );
     }
+
+    let skills = overlay_skills_replace_by_key(&config.skills, &local.skills);
 
     // Warn if override references a dependency not in config
     for override_name in local.overrides.keys() {
@@ -1045,6 +1082,7 @@ pub fn merge_with_root(
         EffectiveConfig {
             dependencies,
             settings: merged_settings,
+            skills,
         },
         diagnostics,
     ))
@@ -2158,6 +2196,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2193,6 +2232,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2247,6 +2287,7 @@ future_nested_key = true
                         path: None,
                         subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                         version: Some("v1.0".into()),
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2298,6 +2339,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: None,
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2326,6 +2368,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v2.0".into()),
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2556,6 +2599,7 @@ only_agents = true
                 path: None,
                 subpath: None,
                 version: Some("v1.0".into()),
+            dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -2712,6 +2756,7 @@ exclude = ["deprecated"]
                         path: None,
                         subpath: None,
                         version: None,
+            dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -3369,6 +3414,7 @@ skills = ["prompt-helper"]
                 path: Some(PathBuf::from("C:\\Users\\dev\\src")),
                 subpath: None,
                 version: None,
+            dialect: None,
                 filter: FilterConfig::default(),
             },
         );

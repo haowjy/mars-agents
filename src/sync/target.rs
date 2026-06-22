@@ -448,6 +448,7 @@ mod tests {
                     subpath: None,
                     filter,
                     rename: RenameMap::new(),
+                    dialect: None,
                     is_overridden: false,
                     original_git: url_str.map(|u| GitSpec {
                         url: crate::types::SourceUrl::from(u),
@@ -466,6 +467,7 @@ mod tests {
         let config = EffectiveConfig {
             dependencies: config_dependencies,
             settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
         };
         (graph, config)
     }

@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use super::{AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings};
+use super::{AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings, SkillOverlay};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
@@ -25,6 +25,13 @@ pub fn overlay_agent_overlays_replace_by_key(
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
     overlay_map_replace_by_key(base, &local.agents)
+}
+
+pub fn overlay_skills_replace_by_key(
+    base: &IndexMap<String, SkillOverlay>,
+    local: &IndexMap<String, SkillOverlay>,
+) -> IndexMap<String, SkillOverlay> {
+    overlay_map_replace_by_key(base, local)
 }
 
 pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {

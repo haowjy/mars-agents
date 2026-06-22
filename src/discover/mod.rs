@@ -22,8 +22,16 @@ const SKILL_CONTAINER_ROOTS: &[&str] = &[
     "skills/.system",
     ".claude/skills",
     ".codex/skills",
+    ".opencode/skills",
+    ".cursor/skills",
 ];
-const AGENT_CONTAINER_ROOTS: &[&str] = &["agents", ".claude/agents", ".codex/agents"];
+const AGENT_CONTAINER_ROOTS: &[&str] = &[
+    "agents",
+    ".claude/agents",
+    ".codex/agents",
+    ".opencode/agents",
+    ".cursor/agents",
+];
 const BOOTSTRAP_CONTAINER_ROOTS: &[&str] = &["bootstrap"];
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];

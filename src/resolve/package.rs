@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::config::{FilterMode, GitSpec, Manifest, SourceSpec};
+use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
+use crate::dialect::Dialect;
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::{ItemKind, LockFile};
+use crate::staging;
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
 use indexmap::IndexMap;
 
@@ -72,12 +74,14 @@ impl RegisteredPackage {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_package_bottom_up(
     pending_src: &PendingSource,
     seed_items: bool,
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
+    effective_config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
     ctx: &mut ResolverContext,
 ) -> Result<(), MarsError> {
@@ -174,6 +178,12 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
+                    let new_rooted = stage_rooted_package(
+                        &pending_src.name,
+                        new_rooted,
+                        effective_config,
+                        options,
+                    )?;
                     ctx.set_pending_restart(
                         pending_src.name.clone(),
                         new_ref,
@@ -252,6 +262,12 @@ pub(crate) fn resolve_package_bottom_up(
                 &ref_.tree_path,
                 pending_src.subpath.as_ref(),
             )?;
+            let rooted = stage_rooted_package(
+                &pending_src.name,
+                rooted,
+                effective_config,
+                options,
+            )?;
             (ref_, latest, rooted)
         };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
@@ -308,6 +324,7 @@ pub(crate) fn resolve_package_bottom_up(
             provider,
             locked,
             options,
+            effective_config,
             diag,
             ctx,
         )?;
@@ -316,7 +333,16 @@ pub(crate) fn resolve_package_bottom_up(
         .iter()
         .filter(|request| !is_unfiltered_request(&request.filter))
     {
-        resolve_package_bottom_up(request, false, provider, locked, options, diag, ctx)?;
+        resolve_package_bottom_up(
+            request,
+            false,
+            provider,
+            locked,
+            options,
+            effective_config,
+            diag,
+            ctx,
+        )?;
     }
 
     let mut deferred_seed_requests = Vec::new();
@@ -351,6 +377,29 @@ pub(crate) fn resolve_package_bottom_up(
     }
 
     Ok(())
+}
+
+fn stage_rooted_package(
+    source_name: &SourceName,
+    rooted: super::types::RootedSourceRef,
+    effective_config: &EffectiveConfig,
+    options: &ResolveOptions,
+) -> Result<super::types::RootedSourceRef, MarsError> {
+    let Some(staging_root) = options.staging_root.as_deref() else {
+        return Ok(rooted);
+    };
+
+    let dep = effective_config.dependencies.get(source_name);
+    let explicit_dialect = dep.and_then(|entry| entry.dialect);
+    let dialect = Dialect::resolve(explicit_dialect, &rooted.package_root);
+    staging::stage_rooted_source(
+        source_name,
+        rooted,
+        dialect,
+        explicit_dialect.is_some(),
+        &effective_config.skills,
+        staging_root,
+    )
 }
 
 fn package_has_unfiltered_materialization_request(

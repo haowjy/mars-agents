@@ -792,11 +792,15 @@ pub(crate) fn compile_native_agents<'a>(
     records
 }
 
-/// Merge a per-agent overlay's model selection over the canonical profile for native
-/// emission: `overlay.model` wins over `profile.model`, and overlay policies take
+/// Merge a per-agent overlay over the canonical profile for native emission.
+///
+/// Routing: `overlay.model` wins over `profile.model`, and overlay policies take
 /// precedence over profile policies (shared with launch-bundle via the config helpers).
 /// `overlay.harness` is intentionally ignored — native coverage is configured-target
 /// driven, not overlay-routed.
+///
+/// Content/policy: optional overlay fields replace the corresponding profile values;
+/// absent/`None`/empty overlay slots leave the profile unchanged.
 fn effective_native_profile(
     profile: &crate::compiler::agents::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
@@ -812,6 +816,34 @@ fn effective_native_profile(
         crate::config::overlay_then_profile_policies(Some(overlay), &profile.model_policies)
             .map(|(_, _, rule)| rule.clone())
             .collect();
+
+    if let Some(description) = &overlay.description {
+        effective.description = Some(description.clone());
+    }
+
+    // Overlay-provided invocation axes must flip the profile presence bits: lowering
+    // keys off `had_*_invocable_field` to decide explicit false is warn-dropped vs
+    // omitted-by-default, and those bits only reflect YAML authorship otherwise.
+    if let Some(model_invocable) = overlay.model_invocable {
+        effective.model_invocable = model_invocable;
+        effective.had_model_invocable_field = true;
+    }
+    if let Some(user_invocable) = overlay.user_invocable {
+        effective.user_invocable = user_invocable;
+        effective.had_user_invocable_field = true;
+    }
+
+    if !overlay.tools.allowed.is_empty() {
+        effective.tools = overlay.tools.allowed.clone();
+    }
+    if !overlay.tools.disallowed.is_empty() {
+        effective.disallowed_tools = overlay.tools.disallowed.clone();
+        effective.tools_denied.clear();
+    }
+    if !overlay.tools.mcp.is_empty() {
+        effective.mcp_tools = overlay.tools.mcp.clone();
+    }
+
     effective
 }
 
@@ -1098,9 +1130,9 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     (compiled_native_outputs, removed_native_outputs)
 }
 
-/// Apply each agent's overlay (`overlay.model` / `overlay.model_policies`) over its
-/// canonical profile, yielding agents whose `profile` is the effective native profile.
-/// Single source of overlay merging for the native lifecycle.
+/// Apply each agent's overlay over its canonical profile, yielding agents whose
+/// `profile` is the effective native profile. Single source of overlay merging
+/// for the native lifecycle (routing, description, invocation axes, tool policy).
 fn resolve_native_agent_profiles(
     mars_agents: &[MarsCanonicalAgent],
     agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,

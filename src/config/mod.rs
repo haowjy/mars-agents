@@ -187,9 +187,28 @@ impl ModelVisibility {
     }
 }
 
+/// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed` / `mcp`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentOverlayTools {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disallowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<String>,
+}
+
+impl AgentOverlayTools {
+    pub fn is_empty(&self) -> bool {
+        self.allowed.is_empty() && self.disallowed.is_empty() && self.mcp.is_empty()
+    }
+}
+
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -204,6 +223,20 @@ pub struct AgentOverlay {
     pub autocompact: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocompact_pct: Option<i64>,
+    #[serde(
+        default,
+        alias = "model-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_invocable: Option<bool>,
+    #[serde(
+        default,
+        alias = "user-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_invocable: Option<bool>,
+    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
+    pub tools: AgentOverlayTools,
     #[serde(
         default,
         rename = "model-policies",
@@ -1719,6 +1752,7 @@ path = "/home/dev/local-base"
         let config: Config = toml::from_str(
             r#"
 [agents.tech-lead]
+description = "Tech lead overlay"
 model = "gpt55"
 harness = "codex"
 effort = "medium"
@@ -1726,6 +1760,9 @@ approval = "default"
 sandbox = "default"
 autocompact = 1200
 autocompact_pct = 80
+user_invocable = false
+model-invocable = true
+tools.disallowed = ["Bash(rm *)", "Write"]
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "gpt55" }
@@ -1742,10 +1779,17 @@ override = { effort = "high" }
         .unwrap();
 
         let overlay = config.agents.get("tech-lead").expect("tech-lead overlay");
+        assert_eq!(overlay.description.as_deref(), Some("Tech lead overlay"));
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
         assert_eq!(overlay.autocompact, Some(1200));
         assert_eq!(overlay.autocompact_pct, Some(80));
+        assert_eq!(overlay.user_invocable, Some(false));
+        assert_eq!(overlay.model_invocable, Some(true));
+        assert_eq!(
+            overlay.tools.disallowed,
+            vec!["Bash(rm *)".to_string(), "Write".to_string()]
+        );
         assert_eq!(overlay.model_policies.len(), 1);
         assert_eq!(
             overlay.model_policies[0].match_type,
@@ -1760,6 +1804,38 @@ override = { effort = "high" }
             ModelPolicyMatchType::ModelGlob
         );
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+    }
+
+    #[test]
+    fn merged_agent_overlays_local_replaces_widened_fields() {
+        let mut base_agents = IndexMap::new();
+        base_agents.insert(
+            "worker".to_string(),
+            AgentOverlay {
+                description: Some("Base description".to_string()),
+                user_invocable: Some(true),
+                ..AgentOverlay::default()
+            },
+        );
+
+        let mut local_agents = IndexMap::new();
+        local_agents.insert(
+            "worker".to_string(),
+            AgentOverlay {
+                description: Some("Local description".to_string()),
+                user_invocable: Some(false),
+                ..AgentOverlay::default()
+            },
+        );
+        let local = LocalConfig {
+            agents: local_agents,
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_agent_overlays(&base_agents, &local);
+        let replaced = merged.get("worker").expect("worker overlay");
+        assert_eq!(replaced.description.as_deref(), Some("Local description"));
+        assert_eq!(replaced.user_invocable, Some(false));
     }
 
     #[test]

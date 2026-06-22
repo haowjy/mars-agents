@@ -99,10 +99,13 @@ pub fn discover_fallback(
     let source_name = source_name.unwrap_or("unknown-source");
 
     if package_root.join("SKILL.md").is_file() {
+        // Flat-root foreign skills are keyed by dependency source name during
+        // staging overlay lookup; discovery must use the same name (not the
+        // staged directory basename, which is the inbound dialect).
         let mut items = vec![DiscoveredItem {
             id: ItemId {
                 kind: ItemKind::Skill,
-                name: ItemName::from(package_basename(package_root)),
+                name: ItemName::from(source_name),
             },
             source_path: PathBuf::from("."),
         }];
@@ -1112,11 +1115,122 @@ mod tests {
 
         let items = discover_fallback(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name.as_str(), "demo");
+        assert_eq!(items[0].source_path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn fallback_flat_root_skill_uses_source_name_not_staged_dialect_dir() {
+        let dir = TempDir::new().unwrap();
+        // Simulates staged package root named after inbound dialect (e.g. codex/).
+        let staged = dir.path().join("codex");
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("SKILL.md"), "# flat foreign skill").unwrap();
+
+        let items = discover_fallback(&staged, Some("base")).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name.as_str(), "base");
+        assert_eq!(items[0].source_path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn fallback_flat_root_skill_overlay_applies_under_source_name() {
+        use crate::config::SkillOverlay;
+        use crate::dialect::Dialect;
+        use crate::staging::stage_canonical_source;
+        use crate::types::RenameMap;
+        use indexmap::IndexMap;
+
+        let source = TempDir::new().unwrap();
+        fs::write(
+            source.path().join("SKILL.md"),
+            "---\nname: base\ndescription: base desc\n---\n# Flat\n",
+        )
+        .unwrap();
+
+        let mut overrides = IndexMap::new();
+        overrides.insert(
+            "base".to_string(),
+            SkillOverlay {
+                description: Some("overlay desc".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+
+        let staged = TempDir::new().unwrap();
+        let staged_root = staged.path().join("codex");
+        stage_canonical_source(
+            source.path(),
+            &staged_root,
+            Dialect::Codex,
+            &overrides,
+            &RenameMap::new(),
+            Some("base"),
+        )
+        .unwrap();
+
+        let items = discover_fallback(&staged_root, Some("base")).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name.as_str(), "base");
+
+        let content = fs::read_to_string(staged_root.join("SKILL.md")).unwrap();
+        assert!(
+            content.contains("description: overlay desc"),
+            "skills.base overlay must apply during staging: {content}"
+        );
+    }
+
+    #[test]
+    fn fallback_flat_root_skill_overlay_applies_after_rename() {
+        use crate::config::SkillOverlay;
+        use crate::dialect::Dialect;
+        use crate::staging::stage_canonical_source;
+        use crate::types::{ItemName, RenameMap};
+        use indexmap::IndexMap;
+
+        let source = TempDir::new().unwrap();
+        fs::write(
+            source.path().join("SKILL.md"),
+            "---\nname: base\ndescription: base desc\n---\n# Flat\n",
+        )
+        .unwrap();
+
+        let mut overrides = IndexMap::new();
+        overrides.insert(
+            "renamed-skill".to_string(),
+            SkillOverlay {
+                description: Some("renamed overlay".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+        let mut renames = RenameMap::new();
+        renames.insert(ItemName::from("base"), ItemName::from("renamed-skill"));
+
+        let staged = TempDir::new().unwrap();
+        let staged_root = staged.path().join("codex");
+        stage_canonical_source(
+            source.path(),
+            &staged_root,
+            Dialect::Codex,
+            &overrides,
+            &renames,
+            Some("base"),
+        )
+        .unwrap();
+
+        let items = discover_fallback(&staged_root, Some("base")).unwrap();
+        assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].id.name.as_str(),
-            dir.path().file_name().unwrap().to_string_lossy().as_ref()
+            "base",
+            "discovery keys flat skills by source name; rename applies later in target build"
         );
-        assert_eq!(items[0].source_path, PathBuf::from("."));
+
+        let content = fs::read_to_string(staged_root.join("SKILL.md")).unwrap();
+        assert!(
+            content.contains("description: renamed overlay"),
+            "skills.renamed-skill overlay must apply after rename during staging: {content}"
+        );
     }
 
     #[test]

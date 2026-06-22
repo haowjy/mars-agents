@@ -494,14 +494,14 @@ fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fiel
 
     let native_skill = project.child(".codex/skills/planning/SKILL.md");
     let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(native_bytes.contains("allow_implicit_invocation: false"));
+    assert!(!native_bytes.contains("allow_implicit_invocation"));
     assert!(!native_bytes.contains("user-invocable"));
     assert!(!native_bytes.contains("allowed-tools"));
     assert_ne!(native_bytes, source_skill);
 }
 
 #[test]
-fn sync_codex_projection_preserves_explicit_true_and_emits_allow_implicit_invocation_true() {
+fn sync_codex_projection_warn_drops_explicit_model_invocable_true() {
     let dir = TempDir::new().unwrap();
     let source_skill = "---
 name: planning
@@ -537,7 +537,7 @@ user-invocable: true
 
     let native_skill = project.child(".codex/skills/planning/SKILL.md");
     let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(native_bytes.contains("allow_implicit_invocation: true"));
+    assert!(!native_bytes.contains("allow_implicit_invocation"));
     assert!(!native_bytes.contains("user-invocable"));
     assert_ne!(native_bytes, source_skill);
 }

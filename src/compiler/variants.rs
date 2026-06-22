@@ -483,7 +483,7 @@ mod tests {
 
         let out = std::fs::read_to_string(dest.join("SKILL.md")).unwrap();
         assert!(out.contains("name: planning"));
-        assert!(out.contains("allow_implicit_invocation: false"));
+        assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("name: ignored"));
         assert!(!out.contains("allowed-tools"));
         assert!(out.ends_with("Codex body\n"));
@@ -495,6 +495,7 @@ mod tests {
             .collect();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.contains("allowed-tools"));
+        assert!(warnings[0].message.contains("model-invocable"));
         assert!(warnings[0].message.contains(".codex"));
     }
 

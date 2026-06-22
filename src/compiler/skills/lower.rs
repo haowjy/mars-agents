@@ -2,7 +2,7 @@
 
 use serde_yaml::{Mapping, Value};
 
-use crate::compiler::agents::lower::{Lossiness, LossyField, LoweredOutput};
+use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 
@@ -198,17 +198,14 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
 pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput {
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
-    if profile.had_model_invocable_field {
-        // TODO(phase-B): Codex reads `allow_implicit_invocation` from a sibling
-        // `policy` file, not SKILL.md frontmatter — see findings-verified-schemas.md.
-        yaml.insert(
-            yk("allow_implicit_invocation"),
-            Value::Bool(profile.model_invocable),
-        );
-    }
     insert_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
+    if profile.had_model_invocable_field {
+        // TODO(phase-B): emit Codex sibling `policy` file for faithful
+        // invocability — see findings-verified-schemas.md.
+        lossy_fields.push(dropped("model-invocable", SkillHarness::Codex));
+    }
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Codex));
     }
@@ -479,12 +476,17 @@ mod tests {
     }
 
     #[test]
-    fn codex_maps_model_invocation_and_drops_tools() {
+    fn codex_warn_drops_model_invocable_and_tools() {
         let lowered = lower_skill_to_codex(&profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("allow_implicit_invocation: false"));
+        assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("allowed-tools"));
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Codex"
+        ));
         assert!(has_dropped(&lowered.lossy_fields, "allowed-tools", "Codex"));
     }
 
@@ -498,11 +500,16 @@ mod tests {
     }
 
     #[test]
-    fn codex_explicit_true_emits_allow_implicit_invocation_true() {
+    fn codex_explicit_true_warn_drops_model_invocable() {
         let lowered = lower_skill_to_codex(&explicit_true_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("allow_implicit_invocation: true"));
+        assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("disable-model-invocation"));
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Codex"
+        ));
         assert!(!has_dropped(
             &lowered.lossy_fields,
             "user-invocable",
@@ -628,6 +635,29 @@ mod tests {
             "user-invocable",
             "Cursor"
         ));
+    }
+
+    #[test]
+    fn snake_case_model_invocable_not_leaked_to_any_target() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nmodel_invocable: false\n---\nBody\n",
+        );
+        for harness in [
+            SkillHarness::Claude,
+            SkillHarness::Codex,
+            SkillHarness::OpenCode,
+            SkillHarness::Pi,
+            SkillHarness::Cursor,
+        ] {
+            let lowered = lower_skill_for_harness(harness, &profile, "Body\n");
+            let out = String::from_utf8(lowered.bytes).unwrap();
+            assert!(
+                !out.contains("model_invocable"),
+                "leaked snake key for {harness:?}: {out}"
+            );
+        }
+        let claude = String::from_utf8(lower_skill_to_claude(&profile, "Body\n").bytes).unwrap();
+        assert!(claude.contains("disable-model-invocation: true"));
     }
 
     #[test]

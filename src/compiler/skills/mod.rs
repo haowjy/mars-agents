@@ -16,8 +16,7 @@ pub struct SkillProfile {
     pub model_invocable: bool,
     pub user_invocable: bool,
     pub allowed_tools: Vec<String>,
-    /// Canonical tool denylist — parsed for follow-on lowering; not emitted yet.
-    #[allow(dead_code)]
+    /// Canonical tool denylist — lowered to harness-native denylist fields where supported.
     pub disallowed_tools: Vec<String>,
     pub license: Option<String>,
     pub metadata: Option<Value>,

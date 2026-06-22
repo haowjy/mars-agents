@@ -81,6 +81,42 @@ fn insert_allowed_tools(
         );
     }
 }
+fn insert_disallowed_tools(
+    yaml: &mut Mapping,
+    profile: &SkillProfile,
+    harness: SkillHarness,
+    harness_str: &str,
+    lossy_fields: &mut Vec<LossyField>,
+) {
+    if profile.disallowed_tools.is_empty() {
+        return;
+    }
+    match harness {
+        SkillHarness::Claude | SkillHarness::Pi => {
+            let mut tools = Vec::new();
+            for tool in &profile.disallowed_tools {
+                let projected = project_tool_for_harness(tool, harness_str);
+                if projected.status == ToolProjectionStatus::Unknown {
+                    lossy_fields.push(LossyField {
+                        field: "disallowed-tools".into(),
+                        target: harness.target_name().into(),
+                        classification: Lossiness::Approximate {
+                            note: "unknown tool name passed through verbatim",
+                        },
+                    });
+                }
+                tools.push(projected.name);
+            }
+            yaml.insert(
+                yk("disallowed-tools"),
+                Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
+            );
+        }
+        SkillHarness::Codex | SkillHarness::OpenCode | SkillHarness::Cursor => {
+            lossy_fields.push(dropped("disallowed-tools", harness));
+        }
+    }
+}
 fn insert_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
     if let Some(license) = &profile.license {
         yaml.insert(yk("license"), ys(license));
@@ -144,6 +180,13 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
     }
     let mut lossy_fields = Vec::new();
     insert_allowed_tools(&mut yaml, profile, "claude", Some(&mut lossy_fields));
+    insert_disallowed_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::Claude,
+        "claude",
+        &mut lossy_fields,
+    );
     insert_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     LoweredOutput {
@@ -156,6 +199,8 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
     if profile.had_model_invocable_field {
+        // TODO(phase-B): Codex reads `allow_implicit_invocation` from a sibling
+        // `policy` file, not SKILL.md frontmatter — see findings-verified-schemas.md.
         yaml.insert(
             yk("allow_implicit_invocation"),
             Value::Bool(profile.model_invocable),
@@ -167,6 +212,13 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Codex));
     }
+    insert_disallowed_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::Codex,
+        "codex",
+        &mut lossy_fields,
+    );
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Codex));
     }
@@ -191,6 +243,13 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::OpenCode));
     }
+    insert_disallowed_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::OpenCode,
+        "opencode",
+        &mut lossy_fields,
+    );
     LoweredOutput {
         bytes: render(yaml, body),
         lossy_fields,
@@ -204,9 +263,10 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
         yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
     }
     insert_allowed_tools(&mut yaml, profile, "pi", None);
+    let mut lossy_fields = Vec::new();
+    insert_disallowed_tools(&mut yaml, profile, SkillHarness::Pi, "pi", &mut lossy_fields);
     insert_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
-    let mut lossy_fields = Vec::new();
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Pi));
     }
@@ -228,6 +288,13 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Cursor));
     }
+    insert_disallowed_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::Cursor,
+        "cursor",
+        &mut lossy_fields,
+    );
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Cursor));
     }
@@ -285,6 +352,66 @@ mod tests {
         lossy_fields.iter().any(|f| {
             f.field == field && f.target == target && f.classification == Lossiness::Dropped
         })
+    }
+
+    fn disallowed_tools_profile() -> SkillProfile {
+        parse_profile(
+            "---\nname: skill\ndescription: desc\ndisallowed-tools: [Agent, Bash(git *)]\n---\nBody\n",
+        )
+    }
+
+    #[test]
+    fn claude_emits_disallowed_tools_projected() {
+        let lowered = lower_skill_to_claude(&disallowed_tools_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("disallowed-tools:"));
+        assert!(out.contains("- Agent"));
+        assert!(
+            out.contains("- Bash(git *)"),
+            "scoped payload preserved: {out}"
+        );
+        assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn pi_emits_disallowed_tools() {
+        let lowered = lower_skill_to_pi(&disallowed_tools_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("disallowed-tools:"));
+        assert!(out.contains("- agent"));
+        assert!(!has_dropped(&lowered.lossy_fields, "disallowed-tools", "Pi"));
+    }
+
+    #[test]
+    fn codex_warn_drops_disallowed_tools() {
+        let lowered = lower_skill_to_codex(&disallowed_tools_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(!out.contains("disallowed-tools"));
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "disallowed-tools",
+            "Codex"
+        ));
+    }
+
+    #[test]
+    fn opencode_warn_drops_disallowed_tools() {
+        let lowered = lower_skill_to_opencode(&disallowed_tools_profile(), "Body\n");
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "disallowed-tools",
+            "OpenCode"
+        ));
+    }
+
+    #[test]
+    fn cursor_warn_drops_disallowed_tools() {
+        let lowered = lower_skill_to_cursor(&disallowed_tools_profile(), "Body\n");
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "disallowed-tools",
+            "Cursor"
+        ));
     }
 
     #[test]

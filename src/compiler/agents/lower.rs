@@ -124,6 +124,32 @@ fn normalize_tools_for_harness(
         .collect()
 }
 
+/// Record invocation-axis lossiness for agent lowering.
+///
+/// Subagents have no native `disable-model-invocation` / `user-invocable` fields
+/// (those are skill-only keys per findings-verified-schemas.md). Explicit `false`
+/// values warn-drop on every harness in v1 — no agent frontmatter carries them.
+fn record_agent_invocation_lossiness(
+    profile: &AgentProfile,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) {
+    if profile.had_model_invocable_field && !profile.model_invocable {
+        lossy.push(LossyField {
+            field: "model-invocable".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if profile.had_user_invocable_field && !profile.user_invocable {
+        lossy.push(LossyField {
+            field: "user-invocable".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Claude native artifact
 // ---------------------------------------------------------------------------
@@ -287,6 +313,7 @@ pub fn lower_to_claude(
     }
     // harness: field is dropped (the native artifact's location IS the harness)
     // harness-overrides: launch-bundle passthrough only, dropped from native artifacts
+    record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     // Serialize
     let yaml_str = if yaml.is_empty() {
@@ -428,6 +455,7 @@ pub fn lower_to_codex(
             classification: Lossiness::MeridianOnly,
         });
     }
+    record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     #[derive(serde::Serialize)]
     struct CodexAgentToml<'a> {
@@ -594,6 +622,7 @@ fn lower_to_opencode_like(
             classification: Lossiness::MeridianOnly,
         });
     }
+    record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     // Serialize
     let yaml_str = if yaml.is_empty() {
@@ -765,6 +794,7 @@ fn lower_to_cursor_with_model(
             classification: Lossiness::MeridianOnly,
         });
     }
+    record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     let yaml_str = if yaml.is_empty() {
         String::new()
@@ -900,6 +930,7 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
             classification: Lossiness::MeridianOnly,
         });
     }
+    record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     let yaml_str = if yaml.is_empty() {
         String::new()
@@ -1075,6 +1106,37 @@ mod tests {
             .collect();
         assert!(meridian_only.contains(&"model-policies"));
         assert!(meridian_only.contains(&"fanout"));
+    }
+
+    #[test]
+    fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
+        let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("disable-model-invocation"),
+            "subagents have no invocation frontmatter; must not emit skill-only key: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|f| {
+            f.field == "model-invocable"
+                && f.target == "Claude"
+                && f.classification == Lossiness::Dropped
+        }));
+    }
+
+    #[test]
+    fn claude_agent_user_invocable_false_warn_drops() {
+        let content = "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("user-invocable"), "no native agent key: {text}");
+        assert!(out.lossy_fields.iter().any(|f| {
+            f.field == "user-invocable"
+                && f.target == "Claude"
+                && f.classification == Lossiness::Dropped
+        }));
     }
 
     // --- 3.3: Codex lowering ---

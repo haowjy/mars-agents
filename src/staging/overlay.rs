@@ -1,17 +1,71 @@
 //! Apply `[skills.<name>]` overlays after dialect lift (Phase C-skills).
 
+use std::path::Path;
+
 use serde_yaml::Value;
 
 use crate::config::SkillOverlay;
 use crate::frontmatter::Frontmatter;
+use crate::types::RenameMap;
 
-/// Installed skill name for overlay lookup — parent directory of `SKILL.md`.
-pub fn skill_installed_name(skill_md_path: &std::path::Path) -> Option<String> {
+/// Installed skill name for `[skills.<name>]` overlay lookup.
+///
+/// Keys match the post-materialization name users configure in mars.toml
+/// (after explicit rename), not the source directory basename alone.
+pub fn skill_overlay_lookup_name(
+    skill_md_path: &Path,
+    package_root: &Path,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
+) -> Option<String> {
+    let source_name = skill_source_name(skill_md_path, package_root, fallback_skill_name)?;
+    Some(installed_skill_name(&source_name, renames))
+}
+
+fn skill_source_name(
+    skill_md_path: &Path,
+    package_root: &Path,
+    fallback_skill_name: Option<&str>,
+) -> Option<String> {
+    if skill_md_path == package_root.join("SKILL.md") {
+        return Some(
+            fallback_skill_name
+                .map(str::to_owned)
+                .or_else(|| {
+                    package_root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                })?,
+        );
+    }
+
     skill_md_path
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
         .map(str::to_owned)
+}
+
+fn installed_skill_name(source_name: &str, renames: &RenameMap) -> String {
+    let default_key = format!("skills/{source_name}");
+    match renames
+        .get(default_key.as_str())
+        .or_else(|| renames.get(source_name))
+    {
+        Some(dest) => skill_name_from_rename_dest(dest.as_str()),
+        None => source_name.to_string(),
+    }
+}
+
+fn skill_name_from_rename_dest(rename_value: &str) -> String {
+    let normalized = rename_value.replace('\\', "/");
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 /// Merge overlay fields into lifted canonical frontmatter.
@@ -139,6 +193,7 @@ fn yaml_string_list(value: &Value) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::config::AgentOverlayTools;
+    use crate::types::ItemName;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()
@@ -189,11 +244,40 @@ mod tests {
     }
 
     #[test]
-    fn skill_installed_name_is_parent_directory() {
-        let path = std::path::Path::new("/pkg/skills/planning/SKILL.md");
+    fn overlay_lookup_uses_installed_name_after_rename() {
+        let package = std::path::Path::new("/pkg");
+        let skill_md = package.join("skills/planning/SKILL.md");
+        let mut renames = RenameMap::new();
+        renames.insert(ItemName::from("planning"), ItemName::from("research-planning"));
+
         assert_eq!(
-            skill_installed_name(path).as_deref(),
-            Some("planning")
+            skill_overlay_lookup_name(&skill_md, package, &renames, None).as_deref(),
+            Some("research-planning")
+        );
+    }
+
+    #[test]
+    fn overlay_lookup_flat_skill_uses_fallback_name() {
+        let package = std::path::Path::new("/pkg");
+        let skill_md = package.join("SKILL.md");
+
+        assert_eq!(
+            skill_overlay_lookup_name(&skill_md, package, &RenameMap::new(), Some("my-skill"))
+                .as_deref(),
+            Some("my-skill")
+        );
+    }
+
+    #[test]
+    fn overlay_lookup_rename_applies_to_flat_skill() {
+        let package = std::path::Path::new("/pkg");
+        let skill_md = package.join("SKILL.md");
+        let mut renames = RenameMap::new();
+        renames.insert(ItemName::from("base"), ItemName::from("renamed-skill"));
+
+        assert_eq!(
+            skill_overlay_lookup_name(&skill_md, package, &renames, Some("base")).as_deref(),
+            Some("renamed-skill")
         );
     }
 }

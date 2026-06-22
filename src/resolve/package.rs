@@ -391,11 +391,15 @@ fn stage_rooted_package(
 
     let dep = effective_config.dependencies.get(source_name);
     let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
+    let renames = dep
+        .map(|entry| entry.rename.clone())
+        .unwrap_or_default();
     staging::stage_rooted_source(
         source_name,
         rooted,
         dialect,
         &effective_config.skills,
+        &renames,
         staging_root,
     )
 }

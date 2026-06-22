@@ -300,6 +300,8 @@ pub(crate) fn build_target(
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,
+            (item.discovered.id.kind == ItemKind::Skill)
+                .then(|| item.discovered.id.name.as_str()),
         )?;
         let source_path = staged_path;
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
@@ -1494,6 +1496,7 @@ mod tests {
                 },
                 dialect,
                 &indexmap::IndexMap::new(),
+                &crate::types::RenameMap::new(),
                 &staging_root,
             )
             .unwrap()

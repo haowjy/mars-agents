@@ -44,11 +44,15 @@ pub fn lift_frontmatter(
 ```
 
 C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
-(`staging/overlay.rs`). Lookup key is the skill directory name (parent of `SKILL.md`).
+(`staging/overlay.rs`). Lookup key is the **installed** skill name (after
+explicit rename), matching `[skills.<name>]` in mars.toml — not the source
+directory basename alone. Flat/root `SKILL.md` skills use the discovered item
+name (dependency source name or configured fallback).
 
 ## Threading
 
 - `EffectiveDependency.dialect` — explicit `[dependencies.<dep>].dialect`
+- `EffectiveDependency.rename` — overlay lookup uses installed names after rename
 - `EffectiveConfig.skills` — `[skills.<name>]` overlays applied in `process_markdown_file`
 - `ResolveOptions.staging_root` — set by sync to `.mars/staging`
 

@@ -19,10 +19,10 @@ use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
-use crate::types::SourceName;
+use crate::types::{RenameMap, SourceName};
 
 pub use lift::{lift_frontmatter, lift_frontmatter_with_change};
-pub use overlay::{apply_skill_overlay, skill_installed_name};
+pub use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
 /// Stage a package tree and repoint `package_root` at the staged output.
 pub fn stage_rooted_source(
@@ -30,6 +30,7 @@ pub fn stage_rooted_source(
     rooted: RootedSourceRef,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
     staging_root: &Path,
 ) -> Result<RootedSourceRef, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, dialect);
@@ -38,6 +39,8 @@ pub fn stage_rooted_source(
         &staged_package_root,
         dialect,
         skill_overrides,
+        renames,
+        Some(source_name.as_ref()),
     )?;
     Ok(RootedSourceRef {
         checkout_root: rooted.checkout_root,
@@ -51,12 +54,22 @@ pub fn stage_canonical_source(
     dest_root: &Path,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
 ) -> Result<(), MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
     }
     fs::create_dir_all(dest_root)?;
-    copy_and_lift_tree(source_root, dest_root, source_root, dialect, skill_overrides)
+    copy_and_lift_tree(
+        source_root,
+        dest_root,
+        source_root,
+        dialect,
+        skill_overrides,
+        renames,
+        fallback_skill_name,
+    )
 }
 
 /// Stage a single local item path (agent file or skill directory).
@@ -67,6 +80,7 @@ pub fn stage_local_item(
     skill_overrides: &IndexMap<String, SkillOverlay>,
     staging_root: &Path,
     item_key: &str,
+    skill_overlay_key: Option<&str>,
 ) -> Result<PathBuf, MarsError> {
     let dest = staging_root
         .join("_local")
@@ -91,11 +105,28 @@ pub fn stage_local_item(
                         ),
                     })?,
             );
-            process_markdown_file(source_path, &dest_file, kind, dialect, skill_overrides)?;
+            process_markdown_file(
+                source_path,
+                &dest_file,
+                kind,
+                dialect,
+                skill_overrides,
+                &RenameMap::new(),
+                source_path.parent().unwrap_or(source_path),
+                None,
+                skill_overlay_key,
+            )?;
             Ok(dest_file)
         }
         ItemKind::Skill | ItemKind::BootstrapDoc => {
-            stage_canonical_source(source_path, &dest, dialect, skill_overrides)?;
+            stage_canonical_source(
+                source_path,
+                &dest,
+                dialect,
+                skill_overrides,
+                &RenameMap::new(),
+                skill_overlay_key,
+            )?;
             Ok(dest)
         }
     }
@@ -113,6 +144,8 @@ fn copy_and_lift_tree(
     current: &Path,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
 ) -> Result<(), MarsError> {
     let mut entries: Vec<_> = fs::read_dir(current)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -132,7 +165,15 @@ fn copy_and_lift_tree(
 
         if file_type.is_dir() {
             fs::create_dir_all(&dest_path)?;
-            copy_and_lift_tree(source_root, dest_root, &src_path, dialect, skill_overrides)?;
+            copy_and_lift_tree(
+                source_root,
+                dest_root,
+                &src_path,
+                dialect,
+                skill_overrides,
+                renames,
+                fallback_skill_name,
+            )?;
         } else if should_lift_markdown(&src_path) {
             let kind = item_kind_for_markdown(&src_path);
             process_markdown_file(
@@ -141,6 +182,10 @@ fn copy_and_lift_tree(
                 kind,
                 dialect,
                 skill_overrides,
+                renames,
+                source_root,
+                fallback_skill_name,
+                None,
             )?;
         } else {
             if let Some(parent) = dest_path.parent() {
@@ -174,13 +219,23 @@ fn process_markdown_file(
     kind: ItemKind,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    package_root: &Path,
+    fallback_skill_name: Option<&str>,
+    skill_overlay_key: Option<&str>,
 ) -> Result<(), MarsError> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
     let skill_overlay = (kind == ItemKind::Skill)
-        .then(|| skill_installed_name(src))
+        .then(|| {
+            skill_overlay_key
+                .map(str::to_owned)
+                .or_else(|| {
+                    skill_overlay_lookup_name(src, package_root, renames, fallback_skill_name)
+                })
+        })
         .flatten()
         .and_then(|name| skill_overrides.get(&name));
 
@@ -221,6 +276,7 @@ mod tests {
     use super::*;
     use crate::config::{AgentOverlayTools, SkillOverlay};
     use crate::hash;
+    use crate::types::{ItemName, RenameMap};
     use tempfile::TempDir;
 
     #[test]
@@ -261,6 +317,8 @@ mod tests {
             dest.path(),
             Dialect::Claude,
             &overrides,
+            &RenameMap::new(),
+            None,
         )
         .unwrap();
 
@@ -293,6 +351,8 @@ mod tests {
             dest.path(),
             Dialect::Claude,
             &overrides,
+            &RenameMap::new(),
+            None,
         )
         .unwrap();
 
@@ -316,6 +376,8 @@ mod tests {
             dest.path(),
             Dialect::Claude,
             &IndexMap::new(),
+            &RenameMap::new(),
+            None,
         )
         .unwrap();
 
@@ -348,6 +410,8 @@ mod tests {
             native.path(),
             Dialect::MarsNative,
             &IndexMap::new(),
+            &RenameMap::new(),
+            None,
         )
         .unwrap();
 
@@ -357,6 +421,8 @@ mod tests {
             claude.path(),
             Dialect::Claude,
             &IndexMap::new(),
+            &RenameMap::new(),
+            None,
         )
         .unwrap();
 
@@ -371,5 +437,76 @@ mod tests {
         let claude_hash =
             hash::compute_hash(&claude.path().join("skills/demo"), ItemKind::Skill).unwrap();
         assert_ne!(native_hash, claude_hash);
+    }
+
+    #[test]
+    fn stage_skill_overlay_keys_by_installed_name_after_rename() {
+        let source = TempDir::new().unwrap();
+        let skill = source.path().join("skills/planning");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: planning\ndescription: base\n---\n# Planning\n",
+        )
+        .unwrap();
+
+        let mut renames = RenameMap::new();
+        renames.insert(ItemName::from("planning"), ItemName::from("research-planning"));
+
+        let mut overrides = IndexMap::new();
+        overrides.insert(
+            "research-planning".to_string(),
+            SkillOverlay {
+                description: Some("Renamed overlay".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+
+        let dest = TempDir::new().unwrap();
+        stage_canonical_source(
+            source.path(),
+            dest.path(),
+            Dialect::Claude,
+            &overrides,
+            &renames,
+            None,
+        )
+        .unwrap();
+
+        let staged = fs::read_to_string(dest.path().join("skills/planning/SKILL.md")).unwrap();
+        assert!(staged.contains("description: Renamed overlay"));
+    }
+
+    #[test]
+    fn stage_flat_skill_overlay_uses_fallback_name() {
+        let source = TempDir::new().unwrap();
+        fs::write(
+            source.path().join("SKILL.md"),
+            "---\nname: base\ndescription: base\n---\n# Flat\n",
+        )
+        .unwrap();
+
+        let mut overrides = IndexMap::new();
+        overrides.insert(
+            "my-flat-skill".to_string(),
+            SkillOverlay {
+                description: Some("Flat overlay".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+
+        let dest = TempDir::new().unwrap();
+        stage_canonical_source(
+            source.path(),
+            dest.path(),
+            Dialect::Claude,
+            &overrides,
+            &RenameMap::new(),
+            Some("my-flat-skill"),
+        )
+        .unwrap();
+
+        let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
+        assert!(staged.contains("description: Flat overlay"));
     }
 }

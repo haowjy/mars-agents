@@ -37,6 +37,15 @@ fn model_invocable_defaults_true() {
     let (p, diags) = parse("---\nmode: subagent\n---\n");
     assert!(diags.is_empty());
     assert!(p.model_invocable);
+    assert!(!p.had_model_invocable_field);
+}
+
+#[test]
+fn user_invocable_defaults_true() {
+    let (p, diags) = parse("---\nmode: subagent\n---\n");
+    assert!(diags.is_empty());
+    assert!(p.user_invocable);
+    assert!(!p.had_user_invocable_field);
 }
 
 #[test]
@@ -44,15 +53,58 @@ fn parses_model_invocable_false() {
     let (p, diags) = parse("---\nmodel-invocable: false\n---\n");
     assert!(diags.is_empty());
     assert!(!p.model_invocable);
+    assert!(p.had_model_invocable_field);
+}
+
+#[test]
+fn parses_user_invocable_false() {
+    let (p, diags) = parse("---\nuser-invocable: false\n---\n");
+    assert!(diags.is_empty());
+    assert!(!p.user_invocable);
+    assert!(p.had_user_invocable_field);
+    assert!(p.model_invocable);
+    assert!(!p.had_model_invocable_field);
+}
+
+#[test]
+fn explicit_true_invocability_sets_presence_flags() {
+    let (p, diags) = parse("---\nmodel-invocable: true\nuser-invocable: true\n---\n");
+    assert!(diags.is_empty());
+    assert!(p.model_invocable);
+    assert!(p.user_invocable);
+    assert!(p.had_model_invocable_field);
+    assert!(p.had_user_invocable_field);
+}
+
+#[test]
+fn snake_case_invocability_keys_parse() {
+    let (p, diags) = parse("---\nmodel_invocable: false\nuser_invocable: false\n---\n");
+    assert!(diags.is_empty());
+    assert!(!p.model_invocable);
+    assert!(!p.user_invocable);
+    assert!(p.had_model_invocable_field);
+    assert!(p.had_user_invocable_field);
 }
 
 #[test]
 fn invalid_model_invocable_produces_diagnostic() {
     let (p, diags) = parse("---\nmodel-invocable: nope\n---\n");
     assert!(p.model_invocable);
+    assert!(!p.had_model_invocable_field);
     assert_eq!(diags.len(), 1);
     assert!(
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-invocable")
+    );
+}
+
+#[test]
+fn invalid_user_invocable_produces_diagnostic() {
+    let (p, diags) = parse("---\nuser-invocable: 7\n---\n");
+    assert!(p.user_invocable);
+    assert!(!p.had_user_invocable_field);
+    assert_eq!(diags.len(), 1);
+    assert!(
+        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "user-invocable")
     );
 }
 

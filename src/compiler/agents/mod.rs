@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use serde_yaml::Value;
 
+use crate::compiler::invocability::{get_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
@@ -266,6 +267,12 @@ pub struct AgentProfile {
     // --- Runtime policy fields ---
     pub mode: Option<AgentMode>,
     pub model_invocable: bool,
+    /// Whether the user can invoke this agent directly (slash command, picker, etc.).
+    pub user_invocable: bool,
+    /// `true` when source frontmatter explicitly set `model-invocable` (kebab or snake).
+    pub had_model_invocable_field: bool,
+    /// `true` when source frontmatter explicitly set `user-invocable` (kebab or snake).
+    pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
@@ -755,6 +762,22 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     out
 }
 
+fn parse_invocability_field(
+    field: &str,
+    raw: Option<&Value>,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> (bool, bool) {
+    let (value, had_field, invalid) = parse_invocability_axis(raw);
+    if let Some(invalid) = invalid {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: invalid,
+            allowed: "boolean",
+        });
+    }
+    (value, had_field)
+}
+
 fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
     match val {
         Value::Sequence(seq) => seq.iter().map(|_| FanoutEntry).collect(),
@@ -810,19 +833,17 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         });
 
-    // model-invocable:
-    let model_invocable = match fm.get("model-invocable") {
-        None => true,
-        Some(Value::Bool(value)) => *value,
-        Some(value) => {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "model-invocable".to_string(),
-                value: format!("{value:?}"),
-                allowed: "boolean",
-            });
-            true
-        }
-    };
+    // model-invocable / user-invocable:
+    let (model_invocable, had_model_invocable_field) = parse_invocability_field(
+        "model-invocable",
+        get_invocability_field(fm, "model-invocable"),
+        diags,
+    );
+    let (user_invocable, had_user_invocable_field) = parse_invocability_field(
+        "user-invocable",
+        get_invocability_field(fm, "user-invocable"),
+        diags,
+    );
 
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
@@ -968,6 +989,9 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         model,
         mode,
         model_invocable,
+        user_invocable,
+        had_model_invocable_field,
+        had_user_invocable_field,
         approval,
         sandbox,
         effort,

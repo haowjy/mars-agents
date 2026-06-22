@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
-use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
@@ -293,14 +293,6 @@ pub struct AgentProfile {
     pub fanout: Vec<FanoutEntry>,
 }
 
-/// Portable tool policy from top-level Mars fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EffectiveToolPolicy {
-    pub allowed: Vec<String>,
-    pub disallowed: Vec<String>,
-    pub mcp: Vec<String>,
-}
-
 impl AgentProfile {
     pub fn effective_skills(&self, _harness: &HarnessKind) -> &SkillsSpec {
         &self.skills
@@ -316,17 +308,12 @@ impl AgentProfile {
     }
 
     pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
-        EffectiveToolPolicy {
-            allowed: dedupe_ordered(self.tools.clone()),
-            disallowed: dedupe_ordered(
-                self.tools_denied
-                    .iter()
-                    .chain(self.disallowed_tools.iter())
-                    .cloned()
-                    .collect(),
-            ),
-            mcp: dedupe_ordered(self.mcp_tools.clone()),
-        }
+        tool_policy::effective_tool_policy(
+            &self.tools,
+            &self.tools_denied,
+            &self.disallowed_tools,
+            &self.mcp_tools,
+        )
     }
 }
 // ---------------------------------------------------------------------------
@@ -390,68 +377,24 @@ impl AgentDiagnostic {
     }
 }
 
-fn yaml_str_list(val: &Value) -> Vec<String> {
-    match val {
-        Value::Sequence(seq) => seq
-            .iter()
-            .filter_map(|v| v.as_str())
-            .map(str::to_owned)
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => vec![],
-    }
-}
-
-fn parse_tool_name_field(
-    field: &str,
-    raw: &str,
+fn push_agent_tool_invalid(
     diags: &mut Vec<AgentDiagnostic>,
-) -> Option<String> {
-    match parse_mars_tool_name(raw) {
-        Ok(ParsedToolName { name, .. }) => Some(name),
-        Err(err) => {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: field.to_string(),
-                value: raw.to_string(),
-                allowed: err.allowed(),
-            });
-            None
-        }
-    }
-}
-
-fn dedupe_ordered(values: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let key = trimmed.to_string();
-        if seen.insert(key.clone()) {
-            out.push(key);
-        }
-    }
-    out
+    field: &str,
+    value: &str,
+    allowed: &'static str,
+) {
+    diags.push(AgentDiagnostic::InvalidFieldValue {
+        field: field.to_string(),
+        value: value.to_string(),
+        allowed,
+    });
 }
 
 fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<String> {
-    dedupe_ordered(
-        yaml_str_list(val)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tool)| {
-                parse_tool_name_field(&format!("{field}[{idx}]"), &tool, diags)
-            })
-            .collect(),
-    )
-}
-
-#[derive(Default)]
-struct ParsedToolsField {
-    allowed: Vec<String>,
-    denied: Vec<String>,
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_agent_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::yaml_tool_list(field, val, &mut push)
 }
 
 fn parse_tools_field(
@@ -459,57 +402,10 @@ fn parse_tools_field(
     val: &Value,
     diags: &mut Vec<AgentDiagnostic>,
 ) -> ParsedToolsField {
-    match val {
-        Value::Mapping(mapping) => {
-            let mut allowed = Vec::new();
-            let mut denied = Vec::new();
-            for (key, value) in mapping {
-                let Some(tool_name) = key.as_str() else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: field.to_string(),
-                        value: format!("{key:?}"),
-                        allowed: "string tool keys",
-                    });
-                    continue;
-                };
-
-                let Some(policy) = value.as_str() else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: format!("{field}.{tool_name}"),
-                        value: format!("{value:?}"),
-                        allowed: "allow or deny",
-                    });
-                    continue;
-                };
-
-                let normalized_tool =
-                    parse_tool_name_field(&format!("{field}.{tool_name}"), tool_name, diags);
-                if policy.eq_ignore_ascii_case("allow") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        allowed.push(normalized_tool);
-                    }
-                } else if policy.eq_ignore_ascii_case("deny") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        denied.push(normalized_tool);
-                    }
-                } else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: format!("{field}.{tool_name}"),
-                        value: policy.to_string(),
-                        allowed: "allow or deny",
-                    });
-                }
-            }
-            ParsedToolsField {
-                allowed: dedupe_ordered(allowed),
-                denied: dedupe_ordered(denied),
-            }
-        }
-        _ => ParsedToolsField {
-            allowed: yaml_tool_list(field, val, diags),
-            denied: vec![],
-        },
-    }
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_agent_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::parse_tools_field(field, val, &mut push)
 }
 
 fn parse_native_config_value(
@@ -951,7 +847,10 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // skills/subagents/tools/disallowed-tools/mcp-tools:
     let skills = fm.skills_structured();
-    let subagents = fm.get("subagents").map(yaml_str_list).unwrap_or_default();
+    let subagents = fm
+        .get("subagents")
+        .map(tool_policy::yaml_str_list)
+        .unwrap_or_default();
     let parsed_tools = fm
         .get("tools")
         .map(|value| parse_tools_field("tools", value, diags))
@@ -962,7 +861,10 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("disallowed-tools")
         .map(|value| yaml_tool_list("disallowed-tools", value, diags))
         .unwrap_or_default();
-    let mcp_tools = fm.get("mcp-tools").map(yaml_str_list).unwrap_or_default();
+    let mcp_tools = fm
+        .get("mcp-tools")
+        .map(tool_policy::yaml_str_list)
+        .unwrap_or_default();
 
     // harness-overrides:
     let harness_overrides = fm

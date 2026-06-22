@@ -1,6 +1,6 @@
-use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind};
+pub use crate::compiler::tool_policy::EffectiveToolPolicy;
+use crate::compiler::agents::{AgentProfile, HarnessKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
-/// harness-native format bytes.
 ///
 /// # Lossiness classification (per agent-compilation-mapping.md §6)
 ///

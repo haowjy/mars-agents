@@ -4,6 +4,7 @@ pub mod lower;
 
 use serde_yaml::Value;
 
+use crate::compiler::invocability::{get_invocability_field, parse_invocability_axis, value_label};
 use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
@@ -15,6 +16,9 @@ pub struct SkillProfile {
     pub model_invocable: bool,
     pub user_invocable: bool,
     pub allowed_tools: Vec<String>,
+    /// Canonical tool denylist — parsed for follow-on lowering; not emitted yet.
+    #[allow(dead_code)]
+    pub disallowed_tools: Vec<String>,
     pub license: Option<String>,
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
@@ -78,12 +82,6 @@ impl SkillDiagnostic {
             }
         }
     }
-}
-
-fn value_label(val: &Value) -> String {
-    val.as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("{val:?}"))
 }
 
 fn yaml_str_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> Vec<String> {
@@ -154,20 +152,15 @@ fn parse_invocability_bool(
     raw: Option<&Value>,
     diags: &mut Vec<SkillDiagnostic>,
 ) -> (bool, bool) {
-    match raw {
-        Some(raw) => match raw.as_bool() {
-            Some(value) => (value, true),
-            None => {
-                diags.push(SkillDiagnostic::InvalidFieldType {
-                    field: field.to_string(),
-                    value: value_label(raw),
-                    allowed: "boolean",
-                });
-                (true, false)
-            }
-        },
-        None => (true, false),
+    let (value, had_field, invalid) = parse_invocability_axis(raw);
+    if let Some(invalid) = invalid {
+        diags.push(SkillDiagnostic::InvalidFieldType {
+            field: field.to_string(),
+            value: invalid,
+            allowed: "boolean",
+        });
     }
+    (value, had_field)
 }
 
 pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -> SkillProfile {
@@ -189,6 +182,13 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     let allowed_tools = fm
         .get("allowed-tools")
         .map(|v| yaml_tool_list("allowed-tools", v, diags))
+        .unwrap_or_default();
+    consumed_keys.push("disallowed-tools");
+    consumed_keys.push("disallowed_tools");
+    let disallowed_tools = fm
+        .get("disallowed-tools")
+        .or_else(|| fm.get("disallowed_tools"))
+        .map(|v| yaml_tool_list("disallowed-tools", v, diags))
         .unwrap_or_default();
     consumed_keys.push("license");
     let license_raw = fm.get("license");
@@ -218,11 +218,17 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     let metadata = fm.get("metadata").cloned();
 
     consumed_keys.push("model-invocable");
-    let (model_invocable, had_model_invocable_field) =
-        parse_invocability_bool("model-invocable", fm.get("model-invocable"), diags);
+    let (model_invocable, had_model_invocable_field) = parse_invocability_bool(
+        "model-invocable",
+        get_invocability_field(fm, "model-invocable"),
+        diags,
+    );
     consumed_keys.push("user-invocable");
-    let (user_invocable, had_user_invocable_field) =
-        parse_invocability_bool("user-invocable", fm.get("user-invocable"), diags);
+    let (user_invocable, had_user_invocable_field) = parse_invocability_bool(
+        "user-invocable",
+        get_invocability_field(fm, "user-invocable"),
+        diags,
+    );
 
     for field in [
         "invocation",
@@ -252,6 +258,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         model_invocable,
         user_invocable,
         allowed_tools,
+        disallowed_tools,
         license,
         metadata,
         had_model_invocable_field,
@@ -519,6 +526,31 @@ body",
             SkillDiagnostic::InvalidFieldType { field, allowed, .. }
                 if field == "type" && *allowed == "string"
         )));
+    }
+
+    #[test]
+    fn disallowed_tools_defaults_empty() {
+        let (p, d, _) = parse("---\nname: a\ndescription: b\n---\nbody");
+        assert!(d.is_empty());
+        assert!(p.disallowed_tools.is_empty());
+    }
+
+    #[test]
+    fn disallowed_tools_parses_and_canonicalizes() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ndisallowed-tools: [Agent, web_search]\n---\nbody",
+        );
+        assert!(d.is_empty());
+        assert_eq!(p.disallowed_tools, vec!["agent", "web_search"]);
+    }
+
+    #[test]
+    fn disallowed_tools_snake_key_parses() {
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody",
+        );
+        assert!(d.is_empty());
+        assert_eq!(p.disallowed_tools, vec!["write"]);
     }
 
     #[test]

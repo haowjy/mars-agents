@@ -181,6 +181,43 @@ const SEMANTIC_OVERRIDES: &[SemanticOverride] = &[
         harness: "opencode",
         native: "fetch",
     },
+    // Cursor — PascalCase convention covers most, but these names diverge
+    SemanticOverride {
+        canonical: "bash",
+        harness: "cursor",
+        native: "Shell",
+    },
+    SemanticOverride {
+        canonical: "edit",
+        harness: "cursor",
+        native: "StrReplace",
+    },
+    SemanticOverride {
+        canonical: "agent",
+        harness: "cursor",
+        native: "Task",
+    },
+    SemanticOverride {
+        canonical: "ask_user",
+        harness: "cursor",
+        native: "AskQuestion",
+    },
+    SemanticOverride {
+        canonical: "plan_mode",
+        harness: "cursor",
+        native: "SwitchMode",
+    },
+    SemanticOverride {
+        canonical: "notebook",
+        harness: "cursor",
+        native: "EditNotebook",
+    },
+    // Pi — lowercase convention covers most, but glob is called find
+    SemanticOverride {
+        canonical: "glob",
+        harness: "pi",
+        native: "find",
+    },
 ];
 
 pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolNameParseError> {
@@ -249,7 +286,7 @@ fn convention_for_harness(harness: &str) -> NamingConvention {
         "codex" => NamingConvention::SnakeCase,
         "opencode" => NamingConvention::Lowercase,
         "cursor" => NamingConvention::PascalCase,
-        "pi" => NamingConvention::PascalCase,
+        "pi" => NamingConvention::Lowercase,
         _ => NamingConvention::PascalCase,
     }
 }
@@ -503,5 +540,92 @@ mod tests {
         assert_eq!(project("shell", "claude").name, "Bash");
         assert_eq!(project("WebSearch", "opencode").name, "browser");
         assert_eq!(project("BASH(git *)", "codex").name, "shell(git *)");
+    }
+
+    #[test]
+    fn cursor_projection_uses_semantic_overrides() {
+        let cases = [
+            ("bash", "cursor", "Shell", ToolProjectionStatus::Known),
+            ("edit", "cursor", "StrReplace", ToolProjectionStatus::Known),
+            ("agent", "cursor", "Task", ToolProjectionStatus::Known),
+            (
+                "ask_user",
+                "cursor",
+                "AskQuestion",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "plan_mode",
+                "cursor",
+                "SwitchMode",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "notebook",
+                "cursor",
+                "EditNotebook",
+                ToolProjectionStatus::Known,
+            ),
+            // Convention handles the rest
+            ("read", "cursor", "Read", ToolProjectionStatus::Known),
+            ("write", "cursor", "Write", ToolProjectionStatus::Known),
+            ("grep", "cursor", "Grep", ToolProjectionStatus::Known),
+            ("glob", "cursor", "Glob", ToolProjectionStatus::Known),
+            (
+                "web_search",
+                "cursor",
+                "WebSearch",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "web_fetch",
+                "cursor",
+                "WebFetch",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "todo_write",
+                "cursor",
+                "TodoWrite",
+                ToolProjectionStatus::Known,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "raw: {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "raw: {raw}, harness: {harness}"
+            );
+        }
+    }
+
+    #[test]
+    fn pi_projection_uses_lowercase_convention_and_overrides() {
+        let cases = [
+            ("bash", "pi", "bash", ToolProjectionStatus::Known),
+            ("read", "pi", "read", ToolProjectionStatus::Known),
+            ("write", "pi", "write", ToolProjectionStatus::Known),
+            ("edit", "pi", "edit", ToolProjectionStatus::Known),
+            ("grep", "pi", "grep", ToolProjectionStatus::Known),
+            ("glob", "pi", "find", ToolProjectionStatus::Known), // semantic override
+            ("ask_user", "pi", "askuser", ToolProjectionStatus::Known), // convention strips _
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "raw: {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "raw: {raw}, harness: {harness}"
+            );
+        }
     }
 }

@@ -66,15 +66,28 @@ impl Dialect {
         }
     }
 
-    /// Resolve dialect for a package: explicit config > container inference > Claude.
+    /// Resolve dialect for a dependency: explicit config > container inference > Claude.
     pub fn resolve(explicit: Option<Self>, package_root: &Path) -> Self {
+        Self::resolve_with_default(explicit, package_root, Self::Claude)
+    }
+
+    /// Resolve dialect for local project items: explicit > container inference > MarsNative.
+    pub fn resolve_local(explicit: Option<Self>, package_root: &Path) -> Self {
+        Self::resolve_with_default(explicit, package_root, Self::MarsNative)
+    }
+
+    fn resolve_with_default(
+        explicit: Option<Self>,
+        package_root: &Path,
+        default: Self,
+    ) -> Self {
         if let Some(dialect) = explicit {
             return dialect;
         }
         if let Some(inferred) = infer_from_foreign_containers(package_root) {
             return inferred;
         }
-        Self::Claude
+        default
     }
 }
 
@@ -162,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_skills_default_to_claude() {
+    fn bare_skills_default_to_claude_for_dependencies() {
         let dir = TempDir::new().unwrap();
         let skill = dir.path().join("skills/demo");
         std::fs::create_dir_all(&skill).unwrap();
@@ -170,6 +183,29 @@ mod tests {
 
         assert_eq!(infer_from_foreign_containers(dir.path()), None);
         assert_eq!(Dialect::resolve(None, dir.path()), Dialect::Claude);
+    }
+
+    #[test]
+    fn bare_skills_default_to_mars_native_for_local_items() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/demo");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "# demo").unwrap();
+
+        assert_eq!(Dialect::resolve_local(None, dir.path()), Dialect::MarsNative);
+    }
+
+    #[test]
+    fn local_claude_container_still_infers_claude() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join(".claude/skills/demo");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "# demo").unwrap();
+
+        assert_eq!(
+            Dialect::resolve_local(None, dir.path()),
+            Dialect::Claude
+        );
     }
 
     #[test]

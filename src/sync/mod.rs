@@ -296,7 +296,7 @@ pub(crate) fn build_target(
         let staged_path = crate::staging::stage_local_item(
             &item.disk_path(),
             item.discovered.id.kind,
-            crate::dialect::Dialect::resolve(None, &item.root),
+            crate::dialect::Dialect::resolve_local(None, &item.root),
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,

@@ -509,4 +509,70 @@ mod tests {
         let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert!(staged.contains("description: Flat overlay"));
     }
+
+    #[test]
+    fn local_bare_skill_keeps_foreign_key_for_mars_native_validation() {
+        let root = TempDir::new().unwrap();
+        let mars_src = root.path().join(".mars-src");
+        let skill = mars_src.join("skills/demo");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            Dialect::resolve_local(None, &mars_src),
+            Dialect::MarsNative
+        );
+
+        let staged = stage_local_item(
+            &skill,
+            ItemKind::Skill,
+            Dialect::MarsNative,
+            &IndexMap::new(),
+            &root.path().join("staging"),
+            "skill:demo",
+            Some("demo"),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
+        assert!(content.contains("disable-model-invocation"));
+
+        let mut diags = Vec::new();
+        crate::compiler::skills::parse_skill_content(&content, &mut diags).unwrap();
+        assert!(diags.iter().any(|d| d.is_error()));
+    }
+
+    #[test]
+    fn local_claude_container_infers_claude_and_lifts_foreign_keys() {
+        let root = TempDir::new().unwrap();
+        let mars_src = root.path().join(".mars-src");
+        let skill = mars_src.join(".claude/skills/demo");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
+        )
+        .unwrap();
+
+        assert_eq!(Dialect::resolve_local(None, &mars_src), Dialect::Claude);
+
+        let staged = stage_local_item(
+            &skill,
+            ItemKind::Skill,
+            Dialect::Claude,
+            &IndexMap::new(),
+            &root.path().join("staging"),
+            "skill:demo",
+            Some("demo"),
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
+        assert!(!content.contains("disable-model-invocation"));
+        assert!(content.contains("model-invocable: false"));
+    }
 }

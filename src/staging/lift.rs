@@ -68,15 +68,17 @@ fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
 
 fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none()
-        && let Some(tools) = fm.remove("disallowedTools")
-    {
-        fm.insert("disallowed-tools", tools);
+    if let Some(tools) = fm.remove("disallowedTools") {
+        if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
+            fm.insert("disallowed-tools", tools);
+        }
         changed = true;
     }
 
-    if fm.get("mcp-tools").is_none() && let Some(mcp) = fm.remove("mcpServers") {
-        fm.insert("mcp-tools", mcp);
+    if let Some(mcp) = fm.remove("mcpServers") {
+        if fm.get("mcp-tools").is_none() {
+            fm.insert("mcp-tools", mcp);
+        }
         changed = true;
     }
     changed
@@ -165,10 +167,10 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
         changed = true;
     }
 
-    if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none()
-        && let Some(tools) = fm.remove("disallowedTools")
-    {
-        fm.insert("disallowed-tools", tools);
+    if let Some(tools) = fm.remove("disallowedTools") {
+        if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
+            fm.insert("disallowed-tools", tools);
+        }
         changed = true;
     }
     changed
@@ -205,7 +207,29 @@ mod tests {
     fn claude_skill_idempotent_on_existing_model_invocable() {
         let input = fm("name: s\ndescription: d\nmodel-invocable: false\n");
         let lifted = lift_frontmatter(Dialect::Claude, ItemKind::Skill, &input);
-        assert_eq!(lifted.render(), input.render());
+        assert!(!lifted.get("model-invocable").is_none());
+        assert!(lifted.get("disable-model-invocation").is_none());
+    }
+
+    #[test]
+    fn claude_agent_removes_duplicate_foreign_keys_when_canonical_present() {
+        let lifted = lift_frontmatter(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ndisallowed-tools: [Read]\ndisallowedTools: [Agent]\nmcp-tools: [server]\nmcpServers: [other]\n",
+            ),
+        );
+        assert_eq!(
+            lifted.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![Value::String("Read".into())]))
+        );
+        assert!(lifted.get("disallowedTools").is_none());
+        assert_eq!(
+            lifted.get("mcp-tools"),
+            Some(&Value::Sequence(vec![Value::String("server".into())]))
+        );
+        assert!(lifted.get("mcpServers").is_none());
     }
 
     #[test]

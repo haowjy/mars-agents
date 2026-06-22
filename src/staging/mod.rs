@@ -21,11 +21,11 @@ use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
 use crate::types::{RenameMap, SourceName};
 
-pub use lift::{lift_frontmatter, lift_frontmatter_with_change};
-pub use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
+pub(crate) use lift::lift_frontmatter_with_change;
+pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
 /// Stage a package tree and repoint `package_root` at the staged output.
-pub fn stage_rooted_source(
+pub(crate) fn stage_rooted_source(
     source_name: &SourceName,
     rooted: RootedSourceRef,
     dialect: Dialect,
@@ -49,7 +49,7 @@ pub fn stage_rooted_source(
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.
-pub fn stage_canonical_source(
+pub(crate) fn stage_canonical_source(
     source_root: &Path,
     dest_root: &Path,
     dialect: Dialect,
@@ -73,7 +73,7 @@ pub fn stage_canonical_source(
 }
 
 /// Stage a single local item path (agent file or skill directory).
-pub fn stage_local_item(
+pub(crate) fn stage_local_item(
     source_path: &Path,
     kind: ItemKind,
     dialect: Dialect,

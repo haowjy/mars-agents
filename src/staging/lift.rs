@@ -7,17 +7,8 @@ use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 
-/// Lift foreign frontmatter to canonical mars fields for the resolved dialect.
-pub fn lift_frontmatter(
-    dialect: Dialect,
-    item_kind: ItemKind,
-    frontmatter: &Frontmatter,
-) -> Frontmatter {
-    lift_frontmatter_with_change(dialect, item_kind, frontmatter).0
-}
-
 /// Lift frontmatter, returning whether any field was rewritten.
-pub fn lift_frontmatter_with_change(
+pub(crate) fn lift_frontmatter_with_change(
     dialect: Dialect,
     item_kind: ItemKind,
     frontmatter: &Frontmatter,
@@ -189,9 +180,13 @@ mod tests {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()
     }
 
+    fn lift(dialect: Dialect, item_kind: ItemKind, frontmatter: &Frontmatter) -> Frontmatter {
+        lift_frontmatter_with_change(dialect, item_kind, frontmatter).0
+    }
+
     #[test]
     fn claude_skill_disable_model_invocation_inverts_to_model_invocable() {
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Claude,
             ItemKind::Skill,
             &fm("name: s\ndescription: d\ndisable-model-invocation: true\n"),
@@ -206,14 +201,14 @@ mod tests {
     #[test]
     fn claude_skill_idempotent_on_existing_model_invocable() {
         let input = fm("name: s\ndescription: d\nmodel-invocable: false\n");
-        let lifted = lift_frontmatter(Dialect::Claude, ItemKind::Skill, &input);
+        let lifted = lift(Dialect::Claude, ItemKind::Skill, &input);
         assert!(!lifted.get("model-invocable").is_none());
         assert!(lifted.get("disable-model-invocation").is_none());
     }
 
     #[test]
     fn claude_agent_removes_duplicate_foreign_keys_when_canonical_present() {
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Claude,
             ItemKind::Agent,
             &fm(
@@ -234,7 +229,7 @@ mod tests {
 
     #[test]
     fn claude_agent_disallowed_tools_camel_case() {
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Claude,
             ItemKind::Agent,
             &fm("name: a\ndescription: d\ndisallowedTools: [Agent]\n"),
@@ -248,7 +243,7 @@ mod tests {
 
     #[test]
     fn opencode_primary_mode_sets_user_invocable_false() {
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::OpenCode,
             ItemKind::Agent,
             &fm("name: a\ndescription: d\nmode: primary\n"),
@@ -261,7 +256,7 @@ mod tests {
 
     #[test]
     fn cursor_always_apply_lifts_model_invocable() {
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Cursor,
             ItemKind::Skill,
             &fm("description: rule\nalwaysApply: true\nglobs: \"**/*\"\n"),
@@ -286,7 +281,7 @@ disallowed-tools: [Agent]
 when_to_use: Use when git history matters
 ";
         let source = format!("---\n{source_yaml}---\n# Body\n");
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Claude,
             ItemKind::Skill,
             &Frontmatter::parse(&source).unwrap(),
@@ -362,7 +357,7 @@ when_to_use: Use when git history matters
     #[test]
     fn claude_agent_disallowed_tools_round_trip_through_stage() {
         let source = "---\nname: reviewer\ndescription: Reviews code\ndisallowedTools: [WebSearch]\n---\n# Body\n";
-        let lifted = lift_frontmatter(
+        let lifted = lift(
             Dialect::Claude,
             ItemKind::Agent,
             &Frontmatter::parse(source).unwrap(),

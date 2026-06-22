@@ -12,7 +12,7 @@ use crate::types::RenameMap;
 ///
 /// Keys match the post-materialization name users configure in mars.toml
 /// (after explicit rename), not the source directory basename alone.
-pub fn skill_overlay_lookup_name(
+pub(crate) fn skill_overlay_lookup_name(
     skill_md_path: &Path,
     package_root: &Path,
     renames: &RenameMap,
@@ -68,7 +68,7 @@ fn skill_name_from_rename_dest(rename_value: &str) -> String {
 ///
 /// Returns whether any field value changed. When `false`, callers should preserve
 /// source bytes (idempotent staging).
-pub fn apply_skill_overlay(
+pub(crate) fn apply_skill_overlay(
     frontmatter: &Frontmatter,
     overlay: &SkillOverlay,
 ) -> (Frontmatter, bool) {

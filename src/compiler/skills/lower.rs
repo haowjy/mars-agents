@@ -117,10 +117,13 @@ fn insert_disallowed_tools(
         }
     }
 }
-fn insert_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
+fn insert_when_to_use(yaml: &mut Mapping, profile: &SkillProfile) {
     if let Some(when_to_use) = &profile.when_to_use {
         yaml.insert(yk("when_to_use"), ys(when_to_use));
     }
+}
+
+fn insert_license_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
     if let Some(license) = &profile.license {
         yaml.insert(yk("license"), ys(license));
     }
@@ -190,7 +193,8 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
         "claude",
         &mut lossy_fields,
     );
-    insert_metadata(&mut yaml, profile);
+    insert_when_to_use(&mut yaml, profile);
+    insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     LoweredOutput {
         bytes: render(yaml, body),
@@ -201,7 +205,7 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
 pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput {
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
-    insert_metadata(&mut yaml, profile);
+    insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if profile.had_model_invocable_field {
@@ -234,7 +238,7 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
 pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOutput {
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
-    insert_metadata(&mut yaml, profile);
+    insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if !profile.model_invocable {
@@ -271,7 +275,8 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
     insert_allowed_tools(&mut yaml, profile, "pi", None);
     let mut lossy_fields = Vec::new();
     insert_disallowed_tools(&mut yaml, profile, SkillHarness::Pi, "pi", &mut lossy_fields);
-    insert_metadata(&mut yaml, profile);
+    insert_when_to_use(&mut yaml, profile);
+    insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Pi));
@@ -285,12 +290,16 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
     let mut yaml = Mapping::new();
     insert_identity(&mut yaml, profile);
-    if !profile.model_invocable {
-        yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
-    }
-    insert_metadata(&mut yaml, profile);
+    insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
+    if profile.had_model_invocable_field {
+        if profile.model_invocable {
+            yaml.insert(yk("alwaysApply"), Value::Bool(true));
+        } else {
+            lossy_fields.push(dropped("model-invocable", SkillHarness::Cursor));
+        }
+    }
     if !profile.allowed_tools.is_empty() {
         lossy_fields.push(dropped("allowed-tools", SkillHarness::Cursor));
     }
@@ -616,12 +625,28 @@ mod tests {
     }
 
     #[test]
+    fn codex_warn_drops_when_to_use_without_emitting() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_codex(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(!out.contains("when_to_use"));
+        assert!(has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
+    }
+
+    #[test]
     fn cursor_drops_tools() {
         let lowered = lower_skill_to_cursor(&profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("disable-model-invocation: true"));
+        assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("allowed-tools"));
-        assert_eq!(lowered.lossy_fields.len(), 1);
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Cursor"
+        ));
+        assert_eq!(lowered.lossy_fields.len(), 2);
     }
 
     #[test]
@@ -637,9 +662,10 @@ mod tests {
     }
 
     #[test]
-    fn cursor_model_true_omits_disable_model_invocation_and_user_true_no_lossiness() {
+    fn cursor_model_true_emits_always_apply_not_claude_keys() {
         let lowered = lower_skill_to_cursor(&explicit_true_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("alwaysApply: true"));
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("user-invocable"));
         assert!(!has_dropped(

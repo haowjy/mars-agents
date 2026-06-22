@@ -318,18 +318,20 @@ when_to_use: Use when git history matters
         );
 
         let cursor = lower_skill_for_harness(SkillHarness::Cursor, &profile, body);
+        let cursor_out = String::from_utf8(cursor.bytes).unwrap();
         assert!(
             cursor
                 .lossy_fields
                 .iter()
                 .any(|f| f.field == "allowed-tools")
         );
+        assert!(!cursor_out.contains("when_to_use"));
+        assert!(!cursor_out.contains("disable-model-invocation"));
         assert!(
             cursor
                 .lossy_fields
                 .iter()
                 .any(|f| f.field == "when_to_use" || f.field == "user-invocable")
-                || !String::from_utf8(cursor.bytes).unwrap().contains("when_to_use")
         );
     }
 

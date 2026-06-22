@@ -120,7 +120,7 @@ fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) ->
         .into_iter()
         .enumerate()
         .filter_map(|(idx, tool)| match parse_mars_tool_name(&tool) {
-            Ok(ParsedToolName { name }) => Some(name),
+            Ok(ParsedToolName { name, .. }) => Some(name),
             Err(err) => {
                 diags.push(SkillDiagnostic::InvalidFieldValue {
                     field: format!("{field}[{idx}]"),
@@ -477,19 +477,25 @@ body",
             "---\nname: a\ndescription: b\nallowed-tools: [ask_user, bash(git *)]\n---\nbody",
         );
 
-        assert_eq!(p.allowed_tools, vec!["AskUser", "bash(git *)"]);
+        assert_eq!(p.allowed_tools, vec!["ask_user", "bash(git *)"]);
         assert!(d.is_empty());
     }
 
     #[test]
-    fn unknown_unseparated_tool_names_pass_through() {
+    fn unknown_pascal_case_tool_names_convert_to_snake_case() {
         let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\nallowed-tools: [askuser, Askuser, AskUser]\n---\nbody",
+            "---
+name: a
+description: b
+allowed-tools: [customtool, CustomTool]
+---
+body",
         );
 
-        assert_eq!(p.allowed_tools, vec!["askuser", "Askuser", "AskUser"]);
+        assert_eq!(p.allowed_tools, vec!["customtool", "custom_tool"]);
         assert!(d.is_empty());
     }
+
     #[test]
     fn type_parses_from_frontmatter() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\ntype: guardrail\n---\nbody");

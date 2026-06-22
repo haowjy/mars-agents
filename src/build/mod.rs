@@ -5,9 +5,7 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_names::{
-    ToolProjectionStatus, is_first_class_harness, project_tool_for_harness,
-};
+use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
@@ -240,7 +238,7 @@ fn normalize_and_dedupe_tools(
 
     for tool in tools {
         let normalized = project_tool_for_harness(tool, harness);
-        if normalized.status == ToolProjectionStatus::Unknown && is_first_class_harness(harness) {
+        if normalized.status == ToolProjectionStatus::Unknown {
             match kind {
                 ToolPolicyKind::Allowed => warnings.push(format!(
                     "tool '{tool}' is not a known {harness} tool; passing through verbatim"

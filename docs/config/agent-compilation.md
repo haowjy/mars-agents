@@ -85,8 +85,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` | mapped from Mars canonical names to Claude native names |
-| `disallowed-tools` | `disallowed-tools:` | mapped from Mars canonical names to Claude native names |
+| `tools` | `tools:` | projected from Mars snake_case canonical names to Claude PascalCase native names |
+| `disallowed-tools` | `disallowed-tools:` | projected from Mars snake_case canonical names to Claude PascalCase native names |
 | `mcp-tools` | `mcp-tools:` | exact |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
@@ -100,6 +100,10 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `harness` | dropped | dropped |
 
 `approval` and `sandbox` policy fields are applied at launch time by Meridian through its harness projection layer, not stored in the agent file.
+
+### Tool name projection
+
+Mars stores recognized tool names in snake_case (`bash`, `read`, `web_search`). Native output is convention-based: Claude, Cursor, and Pi use PascalCase; Codex uses snake_case; OpenCode uses lowercase without underscores. Semantic exceptions are table-driven, for example `bash` → `shell` for Codex, `read` → `view` for OpenCode, and `web_search` → `browser` for OpenCode. Unknown tool names pass through to the target harness and are reported as approximate.
 
 ### `.codex/agents/<name>.toml`
 
@@ -258,7 +262,7 @@ warning[agent-field-approximate]: agent `reviewer`: field `mode` approximately m
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like `tools: [Bash, Write]` targeting Codex, which cannot honor the allowlist.
+Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like `tools: [bash, write]` targeting Codex, which cannot honor the allowlist.
 
 ## Lossiness Matrix
 

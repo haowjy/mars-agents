@@ -543,8 +543,8 @@ fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_un
 }
 
 #[test]
-fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
-    tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently();
+fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
+    tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through();
 }
 
 #[test]
@@ -570,6 +570,11 @@ fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt
 #[test]
 fn build_launch_bundle_native_config_shape_is_passthrough() {
     native_config::build_launch_bundle_native_config_shape_is_passthrough();
+}
+
+#[test]
+fn build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings() {
+    native_config::build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings();
 }
 
 #[test]

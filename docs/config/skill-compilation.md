@@ -11,7 +11,7 @@ All skill fields below are optional. A skill with no frontmatter is valid and is
 name: my-skill
 description: What this skill does
 model-invocable: false
-allowed-tools: [Bash(git *), Read, Write]
+allowed-tools: [bash(git *), read, write]
 license: MIT
 metadata:
   owner: platform-team
@@ -113,10 +113,10 @@ user-invocable: false   # user cannot trigger via /name
 | Type | string[] |
 | Default | empty |
 
-Tool allowlist for this skill. Uses Mars canonical semantic PascalCase tool names (`Bash`, `AskUser`, `WebSearch`) and supports scoped patterns. Readable aliases such as `ask_user` are accepted and canonicalized. Unknown spellings without word separators are preserved exactly and left to the target harness. Dropped by some harnesses — see the lossiness table below.
+Tool allowlist for this skill. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case. Dropped by some harnesses — see the lossiness table below.
 
 ```yaml
-allowed-tools: [Bash(git *), Read]
+allowed-tools: [bash(git *), read]
 ```
 
 ---
@@ -246,7 +246,7 @@ Source tree:
 
 ```
 skills/my-skill/
-  SKILL.md          # base: model-invocable: false, allowed-tools: [Bash(git *)]
+  SKILL.md          # base: model-invocable: false, allowed-tools: [bash(git *)]
   variants/
     claude/
       SKILL.md      # Claude-specific instructions

@@ -109,12 +109,14 @@ pub fn stage_local_item(
                 source_path,
                 &dest_file,
                 kind,
-                dialect,
-                skill_overrides,
-                &RenameMap::new(),
-                source_path.parent().unwrap_or(source_path),
-                None,
-                skill_overlay_key,
+                &StageOverlayContext {
+                    dialect,
+                    skill_overrides,
+                    renames: &RenameMap::new(),
+                    package_root: source_path.parent().unwrap_or(source_path),
+                    fallback_skill_name: None,
+                    skill_overlay_key,
+                },
             )?;
             Ok(dest_file)
         }
@@ -136,6 +138,15 @@ fn staging_dir_for(staging_root: &Path, source_name: &SourceName, dialect: Diale
     staging_root
         .join(safe_component(source_name.as_ref()))
         .join(dialect.as_str())
+}
+
+struct StageOverlayContext<'a> {
+    dialect: Dialect,
+    skill_overrides: &'a IndexMap<String, SkillOverlay>,
+    renames: &'a RenameMap,
+    package_root: &'a Path,
+    fallback_skill_name: Option<&'a str>,
+    skill_overlay_key: Option<&'a str>,
 }
 
 fn copy_and_lift_tree(
@@ -180,12 +191,14 @@ fn copy_and_lift_tree(
                 &src_path,
                 &dest_path,
                 kind,
-                dialect,
-                skill_overrides,
-                renames,
-                source_root,
-                fallback_skill_name,
-                None,
+                &StageOverlayContext {
+                    dialect,
+                    skill_overrides,
+                    renames,
+                    package_root: source_root,
+                    fallback_skill_name,
+                    skill_overlay_key: None,
+                },
             )?;
         } else {
             if let Some(parent) = dest_path.parent() {
@@ -217,12 +230,7 @@ fn process_markdown_file(
     src: &Path,
     dest: &Path,
     kind: ItemKind,
-    dialect: Dialect,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    package_root: &Path,
-    fallback_skill_name: Option<&str>,
-    skill_overlay_key: Option<&str>,
+    ctx: &StageOverlayContext<'_>,
 ) -> Result<(), MarsError> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -230,26 +238,31 @@ fn process_markdown_file(
 
     let skill_overlay = (kind == ItemKind::Skill)
         .then(|| {
-            skill_overlay_key
+            ctx.skill_overlay_key
                 .map(str::to_owned)
                 .or_else(|| {
-                    skill_overlay_lookup_name(src, package_root, renames, fallback_skill_name)
+                    skill_overlay_lookup_name(
+                        src,
+                        ctx.package_root,
+                        ctx.renames,
+                        ctx.fallback_skill_name,
+                    )
                 })
         })
         .flatten()
-        .and_then(|name| skill_overrides.get(&name));
+        .and_then(|name| ctx.skill_overrides.get(&name));
 
-    if dialect == Dialect::MarsNative && skill_overlay.is_none() {
+    if ctx.dialect == Dialect::MarsNative && skill_overlay.is_none() {
         fs::copy(src, dest)?;
         return Ok(());
     }
 
     let original = fs::read_to_string(src)?;
     if let Ok(parsed) = Frontmatter::parse(&original) {
-        let (mut fm, mut changed) = if dialect == Dialect::MarsNative {
+        let (mut fm, mut changed) = if ctx.dialect == Dialect::MarsNative {
             (parsed, false)
         } else {
-            lift_frontmatter_with_change(dialect, kind, &parsed)
+            lift_frontmatter_with_change(ctx.dialect, kind, &parsed)
         };
 
         if let Some(overlay) = skill_overlay

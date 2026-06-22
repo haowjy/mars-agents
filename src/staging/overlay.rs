@@ -28,17 +28,13 @@ fn skill_source_name(
     fallback_skill_name: Option<&str>,
 ) -> Option<String> {
     if skill_md_path == package_root.join("SKILL.md") {
-        return Some(
-            fallback_skill_name
+        return fallback_skill_name.map(str::to_owned).or_else(|| {
+            package_root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
                 .map(str::to_owned)
-                .or_else(|| {
-                    package_root
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_owned)
-                })?,
-        );
+        });
     }
 
     skill_md_path

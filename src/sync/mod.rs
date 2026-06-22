@@ -1474,33 +1474,18 @@ mod tests {
     }
 
     #[test]
-    fn explicit_dialect_change_triggers_update() {
+    fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         let mut fixture = TestFixture::new();
         let src_idx = fixture.add_source(
             &[],
             &[(
                 "planning",
-                "---\nname: planning\ndescription: d\ndisable-model-invocation: true\n---\n# Planning\n",
+                "---\nname: planning\ndescription: base\ndisable-model-invocation: true\nuser-invocable: true\n---\n# Planning\n",
             )],
         );
         let tree_path = fixture.tree_path(src_idx);
         let staging_root = fixture.project_root().join(".mars/staging");
         fs::create_dir_all(&staging_root).unwrap();
-
-        let stage = |dialect: crate::dialect::Dialect| {
-            crate::staging::stage_rooted_source(
-                &"base".into(),
-                crate::resolve::RootedSourceRef {
-                    checkout_root: tree_path.clone(),
-                    package_root: tree_path.clone(),
-                },
-                dialect,
-                &indexmap::IndexMap::new(),
-                &crate::types::RenameMap::new(),
-                &staging_root,
-            )
-            .unwrap()
-        };
 
         let mut config = EffectiveConfig {
             dependencies: indexmap::IndexMap::from([(
@@ -1515,7 +1500,7 @@ mod tests {
                     subpath: None,
                     filter: FilterMode::All,
                     rename: crate::types::RenameMap::new(),
-                    dialect: Some(crate::dialect::Dialect::MarsNative),
+                    dialect: Some(crate::dialect::Dialect::Claude),
                     is_overridden: false,
                     original_git: None,
                 },
@@ -1524,38 +1509,112 @@ mod tests {
             skills: indexmap::IndexMap::new(),
         };
 
+        let stage = |cfg: &EffectiveConfig| {
+            crate::staging::stage_rooted_source(
+                &"base".into(),
+                crate::resolve::RootedSourceRef {
+                    checkout_root: tree_path.clone(),
+                    package_root: tree_path.clone(),
+                },
+                cfg.dependencies["base"].dialect.unwrap(),
+                &cfg.skills,
+                &cfg.dependencies["base"].rename,
+                &staging_root,
+            )
+            .unwrap()
+        };
+
         let mut graph = {
             let (mut g, _) =
                 make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-            g.nodes.get_mut("base").unwrap().rooted_ref = stage(crate::dialect::Dialect::MarsNative);
+            g.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
             g
         };
 
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let lock = LockFile::empty();
-        let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
         let options = SyncOptions::default();
-        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-        let result =
-            apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
-        let first_lock =
-            crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
-        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(crate::dialect::Dialect::Claude);
-        config.dependencies.get_mut("base").unwrap().dialect =
-            Some(crate::dialect::Dialect::Claude);
+        let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
+            let (target, _) = target::build_with_collisions(graph, cfg).unwrap();
+            let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
+            let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
+            let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir)
+                .unwrap();
+            let new_lock = crate::lock::build(
+                graph,
+                &result,
+                lock,
+                std::collections::BTreeMap::new(),
+            )
+            .unwrap();
+            (sync_diff, sync_plan, new_lock)
+        };
 
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
-        let sync_diff2 =
-            diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+        let lock = LockFile::empty();
+        let (first_diff, _, first_lock) = apply_sync(&graph, &config, &lock);
         assert!(
-            sync_diff2
+            first_diff
+                .items
+                .iter()
+                .all(|entry| matches!(entry, diff::DiffEntry::Add { .. }))
+        );
+
+        let (unchanged_diff, unchanged_plan, _) =
+            apply_sync(&graph, &config, &first_lock);
+        assert!(
+            unchanged_diff
+                .items
+                .iter()
+                .all(|entry| matches!(entry, diff::DiffEntry::Unchanged { .. }))
+        );
+        assert!(
+            unchanged_plan
+                .actions
+                .iter()
+                .all(|action| matches!(action, plan::PlannedAction::Skip { .. }))
+        );
+
+        config.skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Overridden".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
+        let (overlay_diff, _, overlay_lock) = apply_sync(&graph, &config, &first_lock);
+        assert!(
+            overlay_diff
+                .items
+                .iter()
+                .any(|entry| matches!(entry, diff::DiffEntry::Update { .. })),
+            "expected Update after overlay change, got {:?}",
+            overlay_diff.items
+        );
+
+        config.dependencies.get_mut("base").unwrap().dialect =
+            Some(crate::dialect::Dialect::MarsNative);
+        config.skills.clear();
+        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
+        let (dialect_diff, _, dialect_lock) = apply_sync(&graph, &config, &overlay_lock);
+        assert!(
+            dialect_diff
                 .items
                 .iter()
                 .any(|entry| matches!(entry, diff::DiffEntry::Update { .. })),
             "expected Update after dialect change, got {:?}",
-            sync_diff2.items
+            dialect_diff.items
+        );
+
+        let (_, frozen_plan, _) = apply_sync(&graph, &config, &dialect_lock);
+        assert!(
+            frozen_plan.actions.iter().all(|action| {
+                matches!(
+                    action,
+                    plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+                )
+            }),
+            "frozen-equivalent re-run should not schedule installs or removals"
         );
     }
 

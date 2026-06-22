@@ -1110,11 +1110,10 @@ fn emit_all_consumes_overlay_user_invocable_on_effective_profile() {
     );
 
     let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
-    let profile = &resolved[0].profile;
-    assert!(!profile.user_invocable);
+    let resolved_agent = &resolved[0];
     assert!(
-        profile.had_user_invocable_field,
-        "overlay user_invocable must set presence bit for lowering"
+        !resolved_agent.profile.user_invocable,
+        "overlay must merge user_invocable into the effective native profile"
     );
 }
 

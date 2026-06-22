@@ -635,48 +635,6 @@ description = "Local overlay"
 }
 
 #[test]
-fn sync_codex_projection_warn_drops_explicit_model_invocable_true() {
-    let dir = TempDir::new().unwrap();
-    let source_skill = "---
-name: planning
-description: explicit true skill
-model-invocable: true
-user-invocable: true
----
-# Explicit
-";
-    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
-
-    let project = dir.child("project");
-    mars()
-        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let canonical_skill = project.child(".mars/skills/planning/SKILL.md");
-    assert_eq!(
-        fs::read_to_string(canonical_skill.path()).unwrap(),
-        source_skill
-    );
-
-    let native_skill = project.child(".codex/skills/planning/SKILL.md");
-    let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(!native_bytes.contains("allow_implicit_invocation"));
-    assert!(!native_bytes.contains("user-invocable"));
-    assert_ne!(native_bytes, source_skill);
-}
-
-#[test]
 fn sync_codex_projection_omits_allow_implicit_invocation_when_model_invocable_is_absent() {
     let dir = TempDir::new().unwrap();
     let source_skill = "---

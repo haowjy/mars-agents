@@ -210,6 +210,7 @@ mod tests {
                     subpath: None,
                     filter: FilterMode::All,
                     rename: crate::types::RenameMap::new(),
+                    dialect: None,
                     is_overridden: false,
                     original_git: None,
                 },
@@ -218,6 +219,7 @@ mod tests {
         EffectiveConfig {
             dependencies,
             settings: Settings::default(),
+            skills: indexmap::IndexMap::new(),
         }
     }
 

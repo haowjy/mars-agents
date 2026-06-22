@@ -469,7 +469,7 @@ mod tests {
         std::fs::create_dir_all(source.join("variants/codex")).unwrap();
         std::fs::write(
             source.join("SKILL.md"),
-            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\nBase body\n",
+            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools: [Bash(git *)]\n---\nBase body\n",
         )
         .unwrap();
         std::fs::write(
@@ -494,7 +494,7 @@ mod tests {
             .filter(|d| d.code == "skill-field-dropped")
             .collect();
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].message.contains("allowed-tools"));
+        assert!(warnings[0].message.contains("tools"));
         assert!(warnings[0].message.contains("model-invocable"));
         assert!(warnings[0].message.contains(".codex"));
     }

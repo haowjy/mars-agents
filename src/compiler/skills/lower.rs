@@ -57,16 +57,17 @@ fn insert_allowed_tools(
     harness: &str,
     lossy_fields: Option<&mut Vec<LossyField>>,
 ) {
-    if !profile.allowed_tools.is_empty() {
+    let allowed = profile.effective_tool_policy().allowed;
+    if !allowed.is_empty() {
         let mut lossy_fields = lossy_fields;
         let mut tools = Vec::new();
-        for tool in &profile.allowed_tools {
+        for tool in &allowed {
             let projected = project_tool_for_harness(tool, harness);
             if projected.status == ToolProjectionStatus::Unknown
                 && let Some(lossy_fields) = lossy_fields.as_deref_mut()
             {
                 lossy_fields.push(LossyField {
-                    field: "allowed-tools".into(),
+                    field: "tools".into(),
                     target: harness.into(),
                     classification: Lossiness::Approximate {
                         note: "unknown tool name passed through verbatim",
@@ -213,8 +214,9 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
         // invocation/tool gating — see https://github.com/haowjy/mars-agents/issues/116
         lossy_fields.push(dropped("model-invocable", SkillHarness::Codex));
     }
-    if !profile.allowed_tools.is_empty() {
-        lossy_fields.push(dropped("allowed-tools", SkillHarness::Codex));
+    let tool_policy = profile.effective_tool_policy();
+    if !tool_policy.allowed.is_empty() {
+        lossy_fields.push(dropped("tools", SkillHarness::Codex));
     }
     insert_disallowed_tools(
         &mut yaml,
@@ -247,8 +249,9 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::OpenCode));
     }
-    if !profile.allowed_tools.is_empty() {
-        lossy_fields.push(dropped("allowed-tools", SkillHarness::OpenCode));
+    let tool_policy = profile.effective_tool_policy();
+    if !tool_policy.allowed.is_empty() {
+        lossy_fields.push(dropped("tools", SkillHarness::OpenCode));
     }
     insert_disallowed_tools(
         &mut yaml,
@@ -300,8 +303,9 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
             lossy_fields.push(dropped("model-invocable", SkillHarness::Cursor));
         }
     }
-    if !profile.allowed_tools.is_empty() {
-        lossy_fields.push(dropped("allowed-tools", SkillHarness::Cursor));
+    let tool_policy = profile.effective_tool_policy();
+    if !tool_policy.allowed.is_empty() {
+        lossy_fields.push(dropped("tools", SkillHarness::Cursor));
     }
     insert_disallowed_tools(
         &mut yaml,
@@ -342,7 +346,7 @@ mod tests {
 
     fn profile() -> SkillProfile {
         parse_profile(
-            "---\nname: skill\ndescription: desc\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\nlicense: MIT\nmetadata:\n  owner: team\nextra: stripped\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\nmodel-invocable: false\ntools: [Bash(git *)]\nlicense: MIT\nmetadata:\n  owner: team\nextra: stripped\n---\nBody\n",
         )
     }
 
@@ -449,7 +453,7 @@ mod tests {
     #[test]
     fn claude_projects_canonical_allowed_tools() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nallowed-tools: [AskUser, Bash(git *)]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools: [AskUser, Bash(git *)]\n---\nBody\n",
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
@@ -459,6 +463,19 @@ mod tests {
             out.contains("- Bash(git *)"),
             "scoped Bash not projected while preserving payload: {out}"
         );
+    }
+
+    #[test]
+    fn claude_lowers_tools_map_allow_and_deny() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("allowed-tools:"));
+        assert!(out.contains("- AskUser"));
+        assert!(!out.contains("bash(git *)"), "denied tools must not appear in allowlist: {out}");
+        assert!(lowered.lossy_fields.is_empty());
     }
 
     #[test]
@@ -508,7 +525,7 @@ mod tests {
             "model-invocable",
             "Codex"
         ));
-        assert!(has_dropped(&lowered.lossy_fields, "allowed-tools", "Codex"));
+        assert!(has_dropped(&lowered.lossy_fields, "tools", "Codex"));
     }
 
     #[test]
@@ -568,7 +585,7 @@ mod tests {
         ));
         assert!(has_dropped(
             &lowered.lossy_fields,
-            "allowed-tools",
+            "tools",
             "OpenCode"
         ));
         assert_eq!(lowered.lossy_fields.len(), 2);

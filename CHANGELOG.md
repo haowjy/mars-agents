@@ -10,6 +10,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `when_to_use` on `SkillProfile` with lowering to Claude/Pi and warn-drop on other harnesses.
 - `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
 - `[skills.<name>]` overlay carriage in config; applied at staging after lift (description, invocability, tool policy).
+- Skills `disallowed-tools` canonical denylist.
+
+### Changed
+- Agents honor `user-invocable` (was skills-only).
+- Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.
+- `[agents.<name>]` overrides now adjust description, invocation axes, and tool policy (was routing fields only).
+- Codex skills: `model-invocable` warn-dropped (Codex reads invocation from sibling policy file, not SKILL.md) instead of emitting ignored `allow_implicit_invocation` frontmatter.
 
 ## [0.9.0] - 2026-06-22
 

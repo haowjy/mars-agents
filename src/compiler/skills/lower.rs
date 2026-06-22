@@ -209,8 +209,8 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
     insert_passthrough(&mut yaml, profile);
     let mut lossy_fields = Vec::new();
     if profile.had_model_invocable_field {
-        // TODO(phase-B): emit Codex sibling `policy` file for faithful
-        // invocability — see findings-verified-schemas.md.
+        // TODO(#116): emit Codex sibling `policy` file for faithful
+        // invocation/tool gating — see https://github.com/haowjy/mars-agents/issues/116
         lossy_fields.push(dropped("model-invocable", SkillHarness::Codex));
     }
     if !profile.allowed_tools.is_empty() {

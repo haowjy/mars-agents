@@ -1095,7 +1095,16 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
 }
 
 #[test]
-fn emit_all_consumes_overlay_user_invocable_on_effective_profile() {
+fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
     let agent = parse_mars_agent(
         "---\nname: worker\nmodel: opus\n---\n# Worker\n",
         "worker",
@@ -1109,11 +1118,47 @@ fn emit_all_consumes_overlay_user_invocable_on_effective_profile() {
         },
     );
 
+    let mut diag = DiagnosticCollector::new();
+    let models_cache = empty_models_cache();
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir.path(),
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: &[HarnessKind::Claude],
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+        fanout_agents: &[],
+    };
     let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
-    let resolved_agent = &resolved[0];
+    let mut router = test_router(&aliases, &models_cache);
+    let records = compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        &resolved,
+        &mut router,
+        &mut diag,
+    );
+    assert_eq!(records.len(), 1);
+
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
     assert!(
-        !resolved_agent.profile.user_invocable,
-        "overlay must merge user_invocable into the effective native profile"
+        !native.contains("user-invocable"),
+        "agents have no native user-invocable key: {native}"
+    );
+
+    let dropped: Vec<_> = diag
+        .drain()
+        .into_iter()
+        .filter(|d| d.code == "agent-field-dropped")
+        .collect();
+    assert_eq!(dropped.len(), 1, "overlay false must warn-drop on emit");
+    assert!(
+        dropped[0].message.contains("user-invocable"),
+        "expected user-invocable in lossiness summary: {}",
+        dropped[0].message
     );
 }
 

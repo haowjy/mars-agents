@@ -1,4 +1,6 @@
 use super::*;
+use crate::compiler::agents::lower::{self, NativeModel};
+use crate::compiler::lossiness::Lossiness;
 use crate::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
@@ -6,6 +8,20 @@ fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
     let mut diags = Vec::new();
     let profile = parse_agent_profile(&fm, &mut diags);
     (profile, diags)
+}
+
+fn lower_claude(content: &str) -> (AgentProfile, lower::LoweredOutput, Vec<AgentDiagnostic>) {
+    let fm = Frontmatter::parse(content).unwrap();
+    let mut diags = Vec::new();
+    let profile = parse_agent_profile(&fm, &mut diags);
+    let out = lower::lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+    (profile, out, diags)
+}
+
+fn dropped_invocability(out: &lower::LoweredOutput, field: &str) -> bool {
+    out.lossy_fields.iter().any(|f| {
+        f.field == field && matches!(f.classification, Lossiness::Dropped)
+    })
 }
 
 // --- 3.1: Basic field parsing ---
@@ -33,79 +49,91 @@ fn parses_mode_subagent() {
 }
 
 #[test]
-fn model_invocable_defaults_true() {
-    let (p, diags) = parse("---\nmode: subagent\n---\n");
+fn model_invocable_defaults_true_without_lowering_lossiness() {
+    let (p, out, diags) = lower_claude("---\nname: coder\nharness: claude\n---\n# Body");
     assert!(diags.is_empty());
     assert!(p.model_invocable);
-    assert!(!p.had_model_invocable_field);
+    assert!(!dropped_invocability(&out, "model-invocable"));
 }
 
 #[test]
-fn user_invocable_defaults_true() {
-    let (p, diags) = parse("---\nmode: subagent\n---\n");
+fn user_invocable_defaults_true_without_lowering_lossiness() {
+    let (p, out, diags) = lower_claude("---\nname: coder\nharness: claude\n---\n# Body");
     assert!(diags.is_empty());
     assert!(p.user_invocable);
-    assert!(!p.had_user_invocable_field);
+    assert!(!dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]
 fn parses_model_invocable_false() {
-    let (p, diags) = parse("---\nmodel-invocable: false\n---\n");
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body",
+    );
     assert!(diags.is_empty());
     assert!(!p.model_invocable);
-    assert!(p.had_model_invocable_field);
+    assert!(dropped_invocability(&out, "model-invocable"));
 }
 
 #[test]
 fn parses_user_invocable_false() {
-    let (p, diags) = parse("---\nuser-invocable: false\n---\n");
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body",
+    );
     assert!(diags.is_empty());
     assert!(!p.user_invocable);
-    assert!(p.had_user_invocable_field);
     assert!(p.model_invocable);
-    assert!(!p.had_model_invocable_field);
+    assert!(dropped_invocability(&out, "user-invocable"));
+    assert!(!dropped_invocability(&out, "model-invocable"));
 }
 
 #[test]
-fn explicit_true_invocability_sets_presence_flags() {
-    let (p, diags) = parse("---\nmodel-invocable: true\nuser-invocable: true\n---\n");
+fn explicit_true_invocability_lowers_without_lossiness() {
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nmodel-invocable: true\nuser-invocable: true\n---\n# Body",
+    );
     assert!(diags.is_empty());
     assert!(p.model_invocable);
     assert!(p.user_invocable);
-    assert!(p.had_model_invocable_field);
-    assert!(p.had_user_invocable_field);
+    assert!(!dropped_invocability(&out, "model-invocable"));
+    assert!(!dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]
-fn snake_case_invocability_keys_parse() {
-    let (p, diags) = parse("---\nmodel_invocable: false\nuser_invocable: false\n---\n");
+fn snake_case_invocability_keys_parse_and_warn_drop_when_false() {
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nmodel_invocable: false\nuser_invocable: false\n---\n# Body",
+    );
     assert!(diags.is_empty());
     assert!(!p.model_invocable);
     assert!(!p.user_invocable);
-    assert!(p.had_model_invocable_field);
-    assert!(p.had_user_invocable_field);
+    assert!(dropped_invocability(&out, "model-invocable"));
+    assert!(dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]
-fn invalid_model_invocable_produces_diagnostic() {
-    let (p, diags) = parse("---\nmodel-invocable: nope\n---\n");
+fn invalid_model_invocable_produces_diagnostic_and_omits_lossiness() {
+    let content = "---\nname: coder\nharness: claude\nmodel-invocable: nope\n---\n# Body";
+    let (p, _, diags) = lower_claude(content);
     assert!(p.model_invocable);
-    assert!(!p.had_model_invocable_field);
     assert_eq!(diags.len(), 1);
     assert!(
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-invocable")
     );
+    let (_, out, _) = lower_claude(content);
+    assert!(!dropped_invocability(&out, "model-invocable"));
 }
 
 #[test]
-fn invalid_user_invocable_produces_diagnostic() {
-    let (p, diags) = parse("---\nuser-invocable: 7\n---\n");
+fn invalid_user_invocable_produces_diagnostic_and_omits_lossiness() {
+    let content = "---\nname: coder\nharness: claude\nuser-invocable: 7\n---\n# Body";
+    let (p, _, diags) = lower_claude(content);
     assert!(p.user_invocable);
-    assert!(!p.had_user_invocable_field);
     assert_eq!(diags.len(), 1);
     assert!(
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "user-invocable")
     );
+    let (_, out, _) = lower_claude(content);
+    assert!(!dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]

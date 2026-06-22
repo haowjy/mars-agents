@@ -11,6 +11,7 @@ pub mod agents;
 pub mod config_entries;
 pub mod context;
 /// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
+pub(crate) mod invocability;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;

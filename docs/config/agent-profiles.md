@@ -14,8 +14,8 @@ effort: high
 autocompact: 200000
 autocompact_pct: 80
 skills: [dev-principles, shared-workspace]
-tools: [Bash, Write, Edit, Read]
-disallowed-tools: [Agent, Bash(git revert:*)]
+tools: [bash, write, edit, read]
+disallowed-tools: [agent, bash(git revert:*)]
 harness-overrides:
   codex:
     effort: medium
@@ -54,7 +54,7 @@ description: Implementation agent for code changes
 model: gpt55
 harness: claude
 skills: [dev-principles, shared-workspace]
-tools: [Bash, Write, Edit]
+tools: [bash, write, edit]
 ---
 
 # Coder
@@ -298,18 +298,18 @@ subagents: [explorer, reviewer, coder]
 | Required | no |
 | Default | empty (harness default tool set) |
 
-Tool allowlist. Only these tools are available to the agent. Tool names use Mars canonical semantic PascalCase (`Bash`, `AskUser`, `WebSearch`). Scoped patterns keep the canonical head and put the native payload in parentheses. Mars maps canonical names to target-native names while lowering.
+Tool allowlist. Only these tools are available to the agent. Tool names use Mars canonical semantic snake_case (`bash`, `ask_user`, `web_search`). Scoped patterns keep the canonical head and put the native payload in parentheses. Mars maps canonical names to target-native names while lowering.
 
-Readable aliases such as `ask_user` and `bash` are accepted and canonicalized. Unknown spellings without word separators are preserved exactly and left to the target harness.
+Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case.
 
 ```yaml
-tools: [Bash, Write, Edit]
-tools: [Bash(git status), Write, Read]   # scoped pattern
+tools: [bash, write, edit]
+tools: [bash(git status), write, read]   # scoped pattern
 tools:
-  Bash: allow
-  "Bash(meridian spawn *)": allow
-  Agent: deny
-  Edit: deny
+  bash: allow
+  "bash(meridian spawn *)": allow
+  agent: deny
+  edit: deny
 ```
 
 ---
@@ -325,8 +325,8 @@ tools:
 Tool denylist. These tools are blocked even if they'd otherwise be available. Uses the same canonical tool-name grammar and scoped pattern syntax as `tools`.
 
 ```yaml
-disallowed-tools: [Agent]
-disallowed-tools: [Bash(git revert:*), Bash(git reset:*)]
+disallowed-tools: [agent]
+disallowed-tools: [bash(git revert:*), bash(git reset:*)]
 ```
 
 ---

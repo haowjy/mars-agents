@@ -92,6 +92,65 @@ Review code changes."#;
     );
 }
 
+pub(crate) fn build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: gpt-5
+harness-overrides:
+  codex:
+    kept: true
+    bad-top: null
+    seq: [one, null, two]
+    nested-map:
+      kept-nested: 1
+      bad-nested: null
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        bundle["execution_policy"]["native_config"],
+        serde_json::json!({
+            "kept": true,
+            "seq": ["one", "two"],
+            "nested-map": {"kept-nested": 1}
+        })
+    );
+
+    let warnings = bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    for field in [
+        "harness-overrides.codex.bad-top",
+        "harness-overrides.codex.seq[1]",
+        "harness-overrides.codex.nested-map.bad-nested",
+    ] {
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().unwrap_or_default().contains(field)),
+            "missing warning for {field}: {warnings:?}"
+        );
+    }
+}
+
 pub(crate) fn build_launch_bundle_unknown_harness_override_warns_and_preserves_block() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);

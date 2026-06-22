@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Tool policy names now normalize from lowercase, aliases, and PascalCase into Mars snake_case before projecting to each harness native convention.
+- `harness-overrides.<harness>` now skips invalid nested values without dropping valid sibling passthrough keys.
+
 ## [0.8.12] - 2026-06-21
 
 ### Fixed

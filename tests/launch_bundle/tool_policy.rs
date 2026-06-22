@@ -69,11 +69,11 @@ Review code changes."#;
     let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
     assert_eq!(
         override_bundle["tools"]["allowed"],
-        serde_json::json!(["shell"])
+        serde_json::json!(["exec_command"])
     );
     assert_eq!(
         override_bundle["tools"]["disallowed"],
-        serde_json::json!(["agent", "file_write"])
+        serde_json::json!(["spawn_agent", "apply_patch"])
     );
     assert_eq!(
         override_bundle["tools"]["mcp"],
@@ -153,11 +153,11 @@ Review code changes."#;
 
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["CustomTool", "Notebook"])
+        serde_json::json!(["custom_tool", "Notebook"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["PlanMode", "CustomDeny"])
+        serde_json::json!(["PlanMode", "custom_deny"])
     );
     assert_eq!(
         bundle["tools"]["mcp"],
@@ -170,7 +170,7 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'CustomTool' is not a known claude tool")
+            .contains("tool 'custom_tool' is not a known claude tool")
     }));
     assert!(!warnings.iter().any(|warning| {
         warning
@@ -182,7 +182,7 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("disallowed tool 'CustomDeny' is not a known claude tool")
+            .contains("disallowed tool 'custom_deny' is not a known claude tool")
     }));
 }
 
@@ -223,11 +223,11 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["bash", "read", "write", "CustomTool", "browser", "fetch"])
+        serde_json::json!(["bash", "view", "write", "custom_tool", "browser", "fetch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["edit", "agent", "PlanMode"])
+        serde_json::json!(["edit", "agent", "planmode"])
     );
 
     let warnings = bundle["warnings"]
@@ -237,17 +237,17 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'CustomTool' is not a known opencode tool")
+            .contains("tool 'custom_tool' is not a known opencode tool")
     }));
-    assert!(warnings.iter().any(|warning| {
+    assert!(!warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("disallowed tool 'PlanMode' is not a known opencode tool")
+            .contains("disallowed tool 'plan_mode' is not a known opencode tool")
     }));
 }
 
-pub(crate) fn build_launch_bundle_cursor_and_pi_unknown_tools_pass_silently() {
+pub(crate) fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
     let agent_content = r#"---
@@ -277,17 +277,17 @@ Review code changes."#;
         let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             bundle["tools"]["allowed"],
-            serde_json::json!(["CustomTool"])
+            serde_json::json!(["custom_tool"])
         );
 
         let warnings = bundle["warnings"]
             .as_array()
             .expect("warnings should be an array");
-        assert!(!warnings.iter().any(|warning| {
+        assert!(warnings.iter().any(|warning| {
             warning
                 .as_str()
                 .unwrap_or_default()
-                .contains("tool 'CustomTool' is not a known")
+                .contains("tool 'custom_tool' is not a known")
         }));
     }
 }

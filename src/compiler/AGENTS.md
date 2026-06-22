@@ -88,6 +88,10 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 `harness-overrides.<harness>` blocks are target-native passthrough. Mars validates only the outer mapping shape and serializability; nested keys do not replace top-level Mars semantic fields. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
+## Tool Name Projection
+
+Mars canonical tool names are snake_case. `tool_names.rs` recognizes canonical names plus aliases/native spellings, then projects by target convention: Claude/Cursor/Pi PascalCase, Codex snake_case, OpenCode lowercase-without-underscores. Only true semantic exceptions live in the override table (for example Codex `bash` → `shell`, OpenCode `read` → `view`). Harness support for a specific known tool is separate from name recognition.
+
 ## Skill Compilation (`skills/`)
 
 Universal schema parsing and native lowering. Skills support variant layouts per harness target.

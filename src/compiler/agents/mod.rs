@@ -347,10 +347,15 @@ pub enum AgentDiagnostic {
 
 impl AgentDiagnostic {
     pub fn is_error(&self) -> bool {
-        matches!(
-            self,
-            AgentDiagnostic::InvalidFieldValue { .. } | AgentDiagnostic::UnknownHarness { .. }
-        )
+        match self {
+            AgentDiagnostic::InvalidFieldValue { field, .. } => {
+                !field.starts_with("harness-overrides")
+            }
+            AgentDiagnostic::UnknownHarness { .. } => true,
+            AgentDiagnostic::LegacyModelsField
+            | AgentDiagnostic::DeprecatedApprovalYolo
+            | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
+        }
     }
 
     pub fn message(&self) -> String {
@@ -396,7 +401,7 @@ fn parse_tool_name_field(
     diags: &mut Vec<AgentDiagnostic>,
 ) -> Option<String> {
     match parse_mars_tool_name(raw) {
-        Ok(ParsedToolName { name }) => Some(name),
+        Ok(ParsedToolName { name, .. }) => Some(name),
         Err(err) => {
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: field.to_string(),
@@ -546,8 +551,9 @@ fn parse_native_config_value(
             let mut out = Vec::with_capacity(seq.len());
             for (index, entry) in seq.iter().enumerate() {
                 let child_field = format!("{field}[{index}]");
-                let parsed = parse_native_config_value(&child_field, entry, diags)?;
-                out.push(parsed);
+                if let Some(parsed) = parse_native_config_value(&child_field, entry, diags) {
+                    out.push(parsed);
+                }
             }
             Some(serde_json::Value::Array(out))
         }
@@ -560,11 +566,12 @@ fn parse_native_config_value(
                         value: format!("{key:?}"),
                         allowed: "string keys",
                     });
-                    return None;
+                    continue;
                 };
                 let child_field = format!("{field}.{key_text}");
-                let parsed = parse_native_config_value(&child_field, entry, diags)?;
-                out.insert(key_text.to_string(), parsed);
+                if let Some(parsed) = parse_native_config_value(&child_field, entry, diags) {
+                    out.insert(key_text.to_string(), parsed);
+                }
             }
             Some(serde_json::Value::Object(out))
         }
@@ -616,7 +623,6 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
             });
         }
         let mut parsed = serde_json::Map::new();
-        let mut valid = true;
         for (target_key, target_value) in sub_mapping {
             let Some(key_text) = target_key.as_str() else {
                 diags.push(AgentDiagnostic::InvalidFieldValue {
@@ -624,18 +630,14 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
                     value: format!("{target_key:?}"),
                     allowed: "string target-native keys",
                 });
-                valid = false;
                 continue;
             };
             let value_field = format!("harness-overrides.{harness_name}.{key_text}");
-            match parse_native_config_value(&value_field, target_value, diags) {
-                Some(value) => {
-                    parsed.insert(key_text.to_string(), value);
-                }
-                None => valid = false,
+            if let Some(value) = parse_native_config_value(&value_field, target_value, diags) {
+                parsed.insert(key_text.to_string(), value);
             }
         }
-        if valid {
+        if !parsed.is_empty() {
             out.entries.insert(harness_name.to_string(), parsed);
         }
     }

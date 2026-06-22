@@ -238,9 +238,9 @@ fn parses_skills_tools_disallowed_mcp() {
     assert!(diags.is_empty());
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
     assert!(p.skills.available.is_empty());
-    assert_eq!(p.tools, vec!["Bash", "Write"]);
+    assert_eq!(p.tools, vec!["bash", "write"]);
     assert!(p.tools_denied.is_empty());
-    assert_eq!(p.disallowed_tools, vec!["Agent"]);
+    assert_eq!(p.disallowed_tools, vec!["agent"]);
     assert_eq!(p.mcp_tools, vec!["server"]);
 }
 
@@ -250,8 +250,8 @@ fn parses_tools_map_allow_and_deny_with_canonical_names() {
         "---\ntools:\n  Bash: allow\n  \"Bash(meridian spawn *)\": allow\n  Agent: deny\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    assert_eq!(p.tools, vec!["Bash", "Bash(meridian spawn *)"]);
-    assert_eq!(p.tools_denied, vec!["Agent"]);
+    assert_eq!(p.tools, vec!["bash", "bash(meridian spawn *)"]);
+    assert_eq!(p.tools_denied, vec!["agent"]);
 }
 
 #[test]
@@ -259,20 +259,24 @@ fn separator_tool_aliases_canonicalize() {
     let content = "---\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\n";
     let (p, diags) = parse(content);
 
-    assert_eq!(p.tools, vec!["AskUser"]);
+    assert_eq!(p.tools, vec!["ask_user"]);
     assert_eq!(p.tools_denied, vec!["bash(git *)"]);
-    assert_eq!(p.disallowed_tools, vec!["WebSearch"]);
+    assert_eq!(p.disallowed_tools, vec!["web_search"]);
     assert!(diags.is_empty());
 }
 
 #[test]
-fn unknown_unseparated_tool_names_pass_through() {
-    let content = "---\ntools: [askuser, Askuser, ToolSearch]\n---\n";
+fn unknown_pascal_case_tool_names_convert_to_snake_case() {
+    let content = "---
+tools: [customtool, CustomTool]
+---
+";
     let (p, diags) = parse(content);
 
-    assert_eq!(p.tools, vec!["askuser", "Askuser", "ToolSearch"]);
+    assert_eq!(p.tools, vec!["customtool", "custom_tool"]);
     assert!(diags.is_empty());
 }
+
 #[test]
 fn harness_overrides_do_not_replace_tool_policy() {
     let content = "---
@@ -292,8 +296,8 @@ harness-overrides:
     assert!(diags.is_empty());
 
     let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
-    assert_eq!(codex_policy.allowed, vec!["Bash"]);
-    assert_eq!(codex_policy.disallowed, vec!["Read", "Edit"]);
+    assert_eq!(codex_policy.allowed, vec!["bash"]);
+    assert_eq!(codex_policy.disallowed, vec!["read", "edit"]);
     assert_eq!(codex_policy.mcp, vec!["plugin:base"]);
     assert_eq!(
         p.harness_overrides.entries["codex"]["tools"],
@@ -411,6 +415,49 @@ harness-overrides:
         }),
         "missing nested null diagnostic: {diags:?}"
     );
+}
+
+#[test]
+fn harness_overrides_preserve_valid_siblings_when_values_are_invalid() {
+    let content = "---
+harness-overrides:
+  codex:
+    valid: true
+    maybe_null: null
+    sequence: [one, null, two]
+    mapping:
+      kept: 1
+      dropped: null
+---
+";
+    let (p, diags) = parse(content);
+
+    let codex = p.harness_overrides.entries.get("codex").unwrap();
+    assert_eq!(codex["valid"], serde_json::json!(true));
+    assert_eq!(codex["sequence"], serde_json::json!(["one", "two"]));
+    assert_eq!(codex["mapping"], serde_json::json!({"kept": 1}));
+    assert!(!codex.contains_key("maybe_null"));
+    assert!(diags.iter().any(|diag| {
+        matches!(
+            diag,
+            AgentDiagnostic::InvalidFieldValue { field, .. }
+                if field == "harness-overrides.codex.maybe_null"
+        )
+    }));
+    assert!(diags.iter().any(|diag| {
+        matches!(
+            diag,
+            AgentDiagnostic::InvalidFieldValue { field, .. }
+                if field == "harness-overrides.codex.sequence[1]"
+        )
+    }));
+    assert!(diags.iter().any(|diag| {
+        matches!(
+            diag,
+            AgentDiagnostic::InvalidFieldValue { field, .. }
+                if field == "harness-overrides.codex.mapping.dropped"
+        )
+    }));
 }
 
 #[test]

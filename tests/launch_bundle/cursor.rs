@@ -154,7 +154,10 @@ harness = "cursor""#;
     );
     assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
     assert_eq!(bundle["tools"]["allowed"], serde_json::json!(["Read"]));
-    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["Edit"]));
+    assert_eq!(
+        bundle["tools"]["disallowed"],
+        serde_json::json!(["StrReplace"])
+    );
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!(["plugin:root"]));
     assert_eq!(
         bundle["execution_policy"]["native_config"],

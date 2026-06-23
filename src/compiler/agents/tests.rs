@@ -376,7 +376,11 @@ harness-overrides:
     let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
     assert_eq!(codex_policy.allowed, vec!["bash"]);
     assert_eq!(codex_policy.disallowed, vec!["read", "edit"]);
-    assert_eq!(codex_policy.mcp, vec!["plugin:base"]);
+    assert_eq!(codex_policy.mcp_allowed.len(), 1);
+    assert_eq!(
+        codex_policy.mcp_allowed[0].to_canonical(),
+        "mcp(plugin:base/*)"
+    );
     assert_eq!(
         p.harness_overrides.entries["codex"]["tools"],
         serde_json::json!(["shell"])

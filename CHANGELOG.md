@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:`, `disallowed-tools:`, `mcp-tools:`).
 
 ### Changed
+- MCP emission (Phase 4b): `EffectiveToolPolicy` carries structured `mcp_allowed` / `mcp_disallowed` [`McpRef`] values; harness lowering and launch bundles project them via `project_mcp_ref` instead of verbatim `mcp-tools:` strings. Claude agents emit `mcp__…` tokens in `tools:` / `disallowed-tools:` (no `mcp-tools:` field); Claude skills grant MCP into `allowed-tools:` with a lossiness note. Unsupported projections (e.g. Claude `mcp(*/tool)`, Codex/Pi MCP) record lossiness and omit the token.
 - MCP input unification (Phase 2): legacy `mcp-tools:` / `mcp_tools` and inline `mcp(...)` entries in `tools:` converge on one internal policy model; agent and skill parsers share the same key set; harness emission unchanged.
 - Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and `mcp-tools:`. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
 - Agents honor `user-invocable` (was skills-only).

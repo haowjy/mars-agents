@@ -202,6 +202,8 @@ fn resolve_bundle_tools(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
 ) -> Result<(ToolsSpec, Vec<String>), MarsError> {
+    use crate::compiler::mcp_ref::project_mcp_ref_tokens;
+
     let harness_kind = parse_harness_kind(harness)?;
 
     let effective_tools = profile.effective_tool_policy(&harness_kind);
@@ -213,18 +215,39 @@ fn resolve_bundle_tools(
         ToolPolicyKind::Allowed,
         &mut warnings,
     );
-    let disallowed = normalize_and_dedupe_tools(
+    let mut disallowed = normalize_and_dedupe_tools(
         &effective_tools.disallowed,
         harness,
         ToolPolicyKind::Disallowed,
         &mut warnings,
     );
 
+    // Harness-native MCP tokens: allowed refs → `tools.mcp`; disallowed refs fold into
+    // `tools.disallowed` with the same per-harness projection (never broaden on unsupported).
+    let (mcp_allowed, mcp_allowed_unsupported) =
+        project_mcp_ref_tokens(&effective_tools.mcp_allowed, harness);
+    for (canonical, reason) in mcp_allowed_unsupported {
+        warnings.push(format!(
+            "MCP ref `{canonical}` cannot be represented for {harness}: {}",
+            reason.message()
+        ));
+    }
+
+    let (mcp_disallowed, mcp_disallowed_unsupported) =
+        project_mcp_ref_tokens(&effective_tools.mcp_disallowed, harness);
+    for (canonical, reason) in mcp_disallowed_unsupported {
+        warnings.push(format!(
+            "disallowed MCP ref `{canonical}` cannot be represented for {harness}: {}",
+            reason.message()
+        ));
+    }
+    disallowed.extend(mcp_disallowed);
+
     Ok((
         ToolsSpec {
             allowed,
             disallowed,
-            mcp: effective_tools.mcp,
+            mcp: mcp_allowed,
         },
         warnings,
     ))

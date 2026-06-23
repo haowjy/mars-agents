@@ -12,7 +12,7 @@
 
 use serde_yaml::Value;
 
-use crate::compiler::mcp_ref::{mcp_ref_to_emission_value, try_parse_mcp_tool_name};
+use crate::compiler::mcp_ref::{McpRef, mcp_ref_from_legacy_server_name, try_parse_mcp_tool_name};
 use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 use crate::frontmatter::Frontmatter;
 
@@ -21,7 +21,8 @@ use crate::frontmatter::Frontmatter;
 pub struct EffectiveToolPolicy {
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
-    pub mcp: Vec<String>,
+    pub(crate) mcp_allowed: Vec<McpRef>,
+    pub(crate) mcp_disallowed: Vec<McpRef>,
 }
 
 /// Parsed `tools:` field — allowlist entries and map-form denials before merge.
@@ -48,10 +49,9 @@ pub(crate) fn legacy_mcp_tools_from_frontmatter(fm: &Frontmatter) -> Vec<String>
 /// Merge top-level tool fields into one effective policy.
 ///
 /// Allowed MCP refs may appear in `allowed` as `mcp(...)` tool-list entries and/or via
-/// legacy `legacy_mcp` whole-server names. Both converge on [`EffectiveToolPolicy::mcp`]
-/// using [`mcp_ref_to_emission_value`] so harness emission stays byte-identical with
-/// historical `mcp-tools:` output. Disallowed MCP refs remain in `disallowed` as
-/// canonical `mcp(...)` strings.
+/// legacy `legacy_mcp` whole-server names. Disallowed MCP refs appear in `denied` /
+/// `disallowed` as canonical `mcp(...)` strings. Harness emission projects structured
+/// [`McpRef`] values per target via [`crate::compiler::mcp_ref::project_mcp_ref`].
 pub fn effective_tool_policy(
     allowed: &[String],
     denied: &[String],
@@ -59,11 +59,11 @@ pub fn effective_tool_policy(
     legacy_mcp: &[String],
 ) -> EffectiveToolPolicy {
     let mut allowed_tools = Vec::new();
-    let mut mcp_emission = Vec::new();
+    let mut mcp_allowed = Vec::new();
 
     for tool in allowed {
         if let Some(mcp_ref) = try_parse_mcp_tool_name(tool) {
-            mcp_emission.push(mcp_ref_to_emission_value(&mcp_ref));
+            mcp_allowed.push(mcp_ref);
         } else {
             allowed_tools.push(tool.clone());
         }
@@ -72,14 +72,25 @@ pub fn effective_tool_policy(
     for server in legacy_mcp {
         let trimmed = server.trim();
         if !trimmed.is_empty() {
-            mcp_emission.push(trimmed.to_string());
+            mcp_allowed.push(mcp_ref_from_legacy_server_name(trimmed));
+        }
+    }
+
+    let mut disallowed_tools = Vec::new();
+    let mut mcp_disallowed = Vec::new();
+    for tool in denied.iter().chain(disallowed.iter()) {
+        if let Some(mcp_ref) = try_parse_mcp_tool_name(tool) {
+            mcp_disallowed.push(mcp_ref);
+        } else {
+            disallowed_tools.push(tool.clone());
         }
     }
 
     EffectiveToolPolicy {
         allowed: dedupe_ordered(allowed_tools),
-        disallowed: dedupe_ordered(denied.iter().chain(disallowed.iter()).cloned().collect()),
-        mcp: dedupe_ordered(mcp_emission),
+        disallowed: dedupe_ordered(disallowed_tools),
+        mcp_allowed: dedupe_mcp_refs(mcp_allowed),
+        mcp_disallowed: dedupe_mcp_refs(mcp_disallowed),
     }
 }
 
@@ -94,6 +105,18 @@ pub(crate) fn dedupe_ordered(values: Vec<String>) -> Vec<String> {
         let key = trimmed.to_string();
         if seen.insert(key.clone()) {
             out.push(key);
+        }
+    }
+    out
+}
+
+fn dedupe_mcp_refs(refs: Vec<McpRef>) -> Vec<McpRef> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for mcp_ref in refs {
+        let key = mcp_ref.to_canonical();
+        if seen.insert(key) {
+            out.push(mcp_ref);
         }
     }
     out
@@ -215,6 +238,7 @@ pub(crate) fn non_canonical_aliases_for(canonical_key: &str) -> Vec<&'static str
 mod tests {
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
+    use crate::compiler::mcp_ref::{McpSegment, parse_mcp_ref};
     use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
     use crate::frontmatter::Frontmatter;
 
@@ -253,9 +277,15 @@ mod tests {
     fn tools_mcp_entry_matches_legacy_mcp_tools_field() {
         let legacy = agent_policy("---\nname: a\ndescription: d\nmcp-tools: [context7]\n---\n");
         let inline = agent_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\n");
-        assert_eq!(legacy, inline);
-        assert_eq!(legacy.mcp, vec!["context7"]);
+        assert_eq!(legacy.mcp_allowed, inline.mcp_allowed);
         assert!(legacy.allowed.is_empty());
+        assert_eq!(
+            legacy.mcp_allowed,
+            vec![McpRef {
+                server: McpSegment::Named("context7".into()),
+                tool: McpSegment::Any,
+            }]
+        );
     }
 
     #[test]
@@ -263,8 +293,8 @@ mod tests {
         let legacy = skill_policy("---\nname: a\ndescription: d\nmcp-tools: [context7]\n---\nbody");
         let inline =
             skill_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\nbody");
-        assert_eq!(legacy, inline);
-        assert_eq!(legacy.mcp, vec!["context7"]);
+        assert_eq!(legacy.mcp_allowed, inline.mcp_allowed);
+        assert_eq!(legacy.mcp_allowed.len(), 1);
     }
 
     #[test]
@@ -289,8 +319,13 @@ mod tests {
             "---\nname: a\ndescription: d\ndisallowed-tools: [mcp(github/delete_repo)]\n---\n",
         );
         assert!(policy.allowed.is_empty());
-        assert!(policy.mcp.is_empty());
-        assert_eq!(policy.disallowed, vec!["mcp(github/delete_repo)"]);
+        assert!(policy.mcp_allowed.is_empty());
+        assert!(policy.disallowed.is_empty());
+        assert_eq!(policy.mcp_disallowed.len(), 1);
+        assert_eq!(
+            policy.mcp_disallowed[0].to_canonical(),
+            "mcp(github/delete_repo)"
+        );
     }
 
     #[test]
@@ -302,10 +337,14 @@ mod tests {
     }
 
     #[test]
-    fn plugin_colon_server_names_preserve_verbatim_in_emission() {
+    fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools: [mcp(plugin:context7:context7)]\n---\n",
         );
-        assert_eq!(policy.mcp, vec!["plugin:context7:context7"]);
+        assert_eq!(policy.mcp_allowed.len(), 1);
+        assert_eq!(
+            policy.mcp_allowed[0],
+            parse_mcp_ref("plugin:context7:context7").unwrap()
+        );
     }
 }

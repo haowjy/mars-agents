@@ -11,6 +11,7 @@ use crate::compiler::agents::{AgentProfile, HarnessKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+use crate::compiler::mcp_ref::{McpRef, McpUnsupportedReason, project_mcp_ref_tokens};
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::frontmatter::Frontmatter;
@@ -60,8 +61,12 @@ impl<'a> Effective<'a> {
         &self.tools.disallowed
     }
 
-    fn mcp_tools(&self) -> &[String] {
-        &self.tools.mcp
+    fn mcp_allowed(&self) -> &[McpRef] {
+        &self.tools.mcp_allowed
+    }
+
+    fn mcp_disallowed(&self) -> &[McpRef] {
+        &self.tools.mcp_disallowed
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
@@ -95,6 +100,42 @@ fn normalize_tools_for_harness(
             projected.name
         })
         .collect()
+}
+
+fn record_mcp_projection_lossiness(
+    unsupported: &[(String, McpUnsupportedReason)],
+    field: &str,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) {
+    for (_canonical, reason) in unsupported {
+        lossy.push(LossyField {
+            field: field.into(),
+            target: target.into(),
+            classification: Lossiness::Approximate {
+                note: reason.message(),
+            },
+        });
+    }
+}
+
+fn has_mcp_policy(eff: &Effective<'_>) -> bool {
+    !eff.mcp_allowed().is_empty() || !eff.mcp_disallowed().is_empty()
+}
+
+fn record_native_mcp_lossiness(
+    eff: &Effective<'_>,
+    target: &str,
+    note: &'static str,
+    lossy: &mut Vec<LossyField>,
+) {
+    if has_mcp_policy(eff) {
+        lossy.push(LossyField {
+            field: "mcp-tools".into(),
+            target: target.into(),
+            classification: Lossiness::Approximate { note },
+        });
+    }
 }
 
 /// Record invocation-axis lossiness for agent lowering.
@@ -168,6 +209,7 @@ pub fn lower_to_claude(
 ) -> LoweredOutput {
     let eff = Effective::new(profile, &HarnessKind::Claude);
     let mut lossy = Vec::new();
+    let target = "Claude";
 
     // Build the native frontmatter mapping
     let mut yaml = serde_yaml::Mapping::new();
@@ -193,32 +235,37 @@ pub fn lower_to_claude(
             serde_yaml::Value::Sequence(skills.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("skills"), seq);
     }
-    // tools — native spelling
-    let tools = normalize_tools_for_harness(eff.tools(), "claude", "tools", &mut lossy);
+    // tools — native spelling plus projected MCP grants
+    let mut tools = normalize_tools_for_harness(eff.tools(), "claude", "tools", &mut lossy);
+    let (mcp_allowed, mcp_allowed_unsupported) =
+        project_mcp_ref_tokens(eff.mcp_allowed(), "claude");
+    record_mcp_projection_lossiness(&mcp_allowed_unsupported, "tools", target, &mut lossy);
+    tools.extend(mcp_allowed);
     if !tools.is_empty() {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(tools.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("tools"), seq);
     }
-    // disallowed-tools — native spelling
-    let dt = normalize_tools_for_harness(
+    // disallowed-tools — native spelling plus projected MCP denials
+    let mut dt = normalize_tools_for_harness(
         eff.disallowed_tools(),
         "claude",
         "disallowed-tools",
         &mut lossy,
     );
+    let (mcp_disallowed, mcp_disallowed_unsupported) =
+        project_mcp_ref_tokens(eff.mcp_disallowed(), "claude");
+    record_mcp_projection_lossiness(
+        &mcp_disallowed_unsupported,
+        "disallowed-tools",
+        target,
+        &mut lossy,
+    );
+    dt.extend(mcp_disallowed);
     if !dt.is_empty() {
         let seq: serde_yaml::Value =
             serde_yaml::Value::Sequence(dt.iter().map(|s| yv(s)).collect());
         yaml.insert(yk("disallowed-tools"), seq);
-    }
-
-    // mcp-tools — exact
-    let mcp = eff.mcp_tools();
-    if !mcp.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(mcp.iter().map(|s| yv(s)).collect());
-        yaml.insert(yk("mcp-tools"), seq);
     }
 
     // effort — exact (passed as frontmatter hint; Claude reads it)
@@ -227,7 +274,6 @@ pub fn lower_to_claude(
     }
 
     // --- Dropped / meridian-only fields ---
-    let target = "Claude";
     if profile.approval.is_some() {
         lossy.push(LossyField {
             field: "approval".into(),
@@ -377,15 +423,12 @@ pub fn lower_to_codex(
             classification: Lossiness::Dropped,
         });
     }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Codex uses -c mcp.servers.<name>.command",
-            },
-        });
-    }
+    record_native_mcp_lossiness(
+        &eff,
+        target,
+        "Codex per-tool MCP gating lives in server config, not the tool list",
+        &mut lossy,
+    );
     if profile.mode.is_some() {
         lossy.push(LossyField {
             field: "mode".into(),
@@ -551,15 +594,12 @@ fn lower_to_opencode_like(
             },
         });
     }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "mcp-tools on subprocess errors; streaming uses session payload",
-            },
-        });
-    }
+    record_native_mcp_lossiness(
+        &eff,
+        target,
+        "mcp-tools on subprocess errors; streaming uses session payload",
+        &mut lossy,
+    );
     if profile.autocompact.is_some() {
         lossy.push(LossyField {
             field: "autocompact".into(),
@@ -723,15 +763,12 @@ fn lower_to_cursor_with_model(
             },
         });
     }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "mcp-tools on subprocess errors; streaming uses session payload",
-            },
-        });
-    }
+    record_native_mcp_lossiness(
+        &eff,
+        target,
+        "mcp-tools on subprocess errors; streaming uses session payload",
+        &mut lossy,
+    );
     if profile.autocompact.is_some() {
         lossy.push(LossyField {
             field: "autocompact".into(),
@@ -866,6 +903,13 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
             classification: Lossiness::Approximate {
                 note: "Pi effort semantics unverified",
             },
+        });
+    }
+    if has_mcp_policy(&eff) {
+        lossy.push(LossyField {
+            field: "mcp-tools".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
         });
     }
     if profile.autocompact.is_some() {
@@ -1106,14 +1150,62 @@ mod tests {
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            text.contains("mcp-tools"),
-            "mcp-tools should be emitted for claude: {text}"
+            !text.contains("mcp-tools:"),
+            "MCP grants belong in tools:, not mcp-tools: {text}"
         );
-        assert!(text.contains("plugin:base"), "base mcp missing: {text}");
+        assert!(
+            text.contains("mcp__plugin:base__*"),
+            "base mcp should project into tools: {text}"
+        );
         assert!(
             !text.contains("plugin:claude"),
             "harness-overrides passthrough should not replace mcp-tools: {text}"
         );
+    }
+
+    #[test]
+    fn claude_agent_projects_mcp_refs_into_tools_and_disallowed() {
+        let content = "---\nname: r\nharness: claude\ntools: [mcp(github/create_issue), mcp(context7)]\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("mcp__github__create_issue"),
+            "per-tool MCP should land in tools: {text}"
+        );
+        assert!(
+            text.contains("mcp__context7__*"),
+            "whole-server MCP should land in tools: {text}"
+        );
+        assert!(
+            text.contains("mcp__github__delete_repo"),
+            "disallowed MCP should project into disallowed-tools: {text}"
+        );
+        assert!(
+            !text.contains("mcp__*__cross_server_tool"),
+            "cross-server MCP must not be emitted: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "disallowed-tools"
+                && matches!(
+                    field.classification,
+                    Lossiness::Approximate {
+                        note: "Claude cannot scope a single MCP tool across all servers"
+                    }
+                )
+        }));
+    }
+
+    #[test]
+    fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
+        let content = "---\nname: r\nharness: pi\nmcp-tools: [plugin:demo]\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "mcp-tools"
+                && field.target == "Pi"
+                && matches!(field.classification, Lossiness::Dropped)
+        }));
     }
 
     #[test]

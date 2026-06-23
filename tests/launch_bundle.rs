@@ -537,6 +537,11 @@ fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
 }
 
 #[test]
+fn build_launch_bundle_projects_mcp_refs_per_harness() {
+    tool_policy::build_launch_bundle_projects_mcp_refs_per_harness();
+}
+
+#[test]
 fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
     tool_policy::build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown(
     );

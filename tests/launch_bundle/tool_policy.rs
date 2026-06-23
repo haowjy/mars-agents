@@ -50,7 +50,7 @@ Review code changes."#;
     );
     assert_eq!(
         root_bundle["tools"]["mcp"],
-        serde_json::json!(["plugin:root"])
+        serde_json::json!(["mcp__plugin:root__*"])
     );
 
     let mut override_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
@@ -75,9 +75,16 @@ Review code changes."#;
         override_bundle["tools"]["disallowed"],
         serde_json::json!(["spawn_agent", "apply_patch"])
     );
-    assert_eq!(
-        override_bundle["tools"]["mcp"],
-        serde_json::json!(["plugin:root"])
+    assert_eq!(override_bundle["tools"]["mcp"], serde_json::json!([]));
+    assert!(
+        override_bundle["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("MCP ref `mcp(plugin:root/*)` cannot be represented for codex"))
     );
     assert_eq!(
         override_bundle["execution_policy"]["native_config"]["mcp-tools"],
@@ -161,7 +168,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["tools"]["mcp"],
-        serde_json::json!(["plugin:context7:context7"])
+        serde_json::json!(["mcp__plugin:context7:context7__*"])
     );
     let warnings = bundle["warnings"]
         .as_array()
@@ -401,4 +408,73 @@ Review code changes."#;
             .unwrap_or_default()
             .contains("tool 'custom_tool' is not a known")
     }));
+}
+
+pub(crate) fn build_launch_bundle_projects_mcp_refs_per_harness() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(
+        temp.path(),
+        &["claude", "cursor", "opencode", "codex", "pi"],
+    );
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools: [mcp(github/create_issue)]
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let cases = [
+        (
+            "claude",
+            serde_json::json!(["mcp__github__create_issue"]),
+            false,
+        ),
+        (
+            "cursor",
+            serde_json::json!(["Mcp(github:create_issue)"]),
+            false,
+        ),
+        (
+            "opencode",
+            serde_json::json!(["github_create_issue"]),
+            false,
+        ),
+        ("codex", serde_json::json!([]), true),
+        ("pi", serde_json::json!([]), true),
+    ];
+
+    for (harness, expected_mcp, expect_lossiness_warning) in cases {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args([
+            "build",
+            "launch-bundle",
+            "--agent",
+            "reviewer",
+            "--harness",
+            harness,
+        ]);
+        if harness == "codex" {
+            cmd.args(["--model", "gpt-5"]);
+        }
+        cmd.env("PATH", replace_path_with(&bin_dir));
+        let output = cmd.assert().success().get_output().clone();
+        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(bundle["tools"]["mcp"], expected_mcp, "harness={harness}");
+        let warnings = bundle["warnings"]
+            .as_array()
+            .expect("warnings should be an array");
+        let has_mcp_warning = warnings.iter().any(|warning| {
+            warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
+        });
+        assert_eq!(
+            has_mcp_warning, expect_lossiness_warning,
+            "harness={harness}, warnings={warnings:?}"
+        );
+    }
 }

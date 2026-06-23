@@ -71,6 +71,7 @@ impl McpRef {
     }
 
     /// Whole-server ref: named server segment and wildcard (or implicit) tool.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_whole_server(&self) -> bool {
         matches!(&self.tool, McpSegment::Any) && matches!(&self.server, McpSegment::Named(_))
     }
@@ -199,20 +200,11 @@ fn extract_scoped_payload(payload: &str) -> Option<&str> {
     Some(&trimmed[1..trimmed.len() - 1])
 }
 
-/// Derive the legacy `mcp-tools:` emission value for an allowed MCP ref.
-///
-/// Whole-server refs (including `mcp(server)` shorthand) render as the server segment
-/// verbatim — matching historical `mcp-tools: [server]` spelling. Per-tool allowed refs
-/// render as canonical `mcp(server/tool)` until Phase 4 per-harness projection exists.
-pub(crate) fn mcp_ref_to_emission_value(mcp_ref: &McpRef) -> String {
-    if mcp_ref.is_whole_server() {
-        match &mcp_ref.server {
-            McpSegment::Named(server) => server.clone(),
-            McpSegment::Any => mcp_ref.to_canonical(),
-        }
-    } else {
-        // Phase 4: real per-harness projection for per-tool allowed MCP refs.
-        mcp_ref.to_canonical()
+/// Build a whole-server [`McpRef`] from a legacy `mcp-tools:` server name.
+pub(crate) fn mcp_ref_from_legacy_server_name(server: &str) -> McpRef {
+    McpRef {
+        server: McpSegment::Named(server.to_string()),
+        tool: McpSegment::Any,
     }
 }
 
@@ -224,7 +216,6 @@ fn segment_display(segment: &McpSegment) -> String {
 }
 
 /// Per-harness native MCP token projection from a canonical [`McpRef`].
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum McpProjection {
     /// Emit this native token in the harness tool/permission list (or launch bundle).
@@ -233,7 +224,6 @@ pub(crate) enum McpProjection {
     Unsupported(McpUnsupportedReason),
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum McpUnsupportedReason {
     /// Harness cannot scope one tool across all servers (e.g. Claude `mcp(*/tool)`).
@@ -244,6 +234,18 @@ pub(crate) enum McpUnsupportedReason {
     HarnessDropsMcp,
 }
 
+impl McpUnsupportedReason {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::CrossServerTool => "Claude cannot scope a single MCP tool across all servers",
+            Self::PerToolNeedsServerConfig => {
+                "Codex per-tool MCP gating lives in server config, not the tool list"
+            }
+            Self::HarnessDropsMcp => "Harness has no MCP tool surface",
+        }
+    }
+}
+
 /// Project a canonical MCP ref to a harness-native permission token.
 ///
 /// `harness` is a lowercase id (`claude`, `codex`, `cursor`, `opencode`, `pi`).
@@ -251,7 +253,6 @@ pub(crate) enum McpUnsupportedReason {
 ///
 /// Unknown harness ids passthrough canonical `mcp(server/tool)` rather than inventing
 /// a native wire form that might be wrong for that target.
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
 pub(crate) fn project_mcp_ref(r: &McpRef, harness: &str) -> McpProjection {
     match harness.trim().to_ascii_lowercase().as_str() {
         "claude" => project_claude(r),
@@ -263,7 +264,6 @@ pub(crate) fn project_mcp_ref(r: &McpRef, harness: &str) -> McpProjection {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
 fn project_claude(r: &McpRef) -> McpProjection {
     match (&r.server, &r.tool) {
         (McpSegment::Any, McpSegment::Named(_)) => {
@@ -277,7 +277,6 @@ fn project_claude(r: &McpRef) -> McpProjection {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
 fn project_cursor(r: &McpRef) -> McpProjection {
     McpProjection::Token(format!(
         "Mcp({}:{})",
@@ -286,13 +285,40 @@ fn project_cursor(r: &McpRef) -> McpProjection {
     ))
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
 fn project_opencode(r: &McpRef) -> McpProjection {
     McpProjection::Token(format!(
         "{}_{}",
         segment_display(&r.server),
         segment_display(&r.tool)
     ))
+}
+
+/// Project canonical MCP refs to harness-native tokens for emission.
+///
+/// Unsupported refs are omitted from `tokens` (never broaden permissions) and returned
+/// in `unsupported` for lossiness reporting.
+pub(crate) fn project_mcp_ref_tokens(
+    refs: &[McpRef],
+    harness: &str,
+) -> (Vec<String>, Vec<(String, McpUnsupportedReason)>) {
+    let mut seen = std::collections::HashSet::new();
+    let mut tokens = Vec::new();
+    let mut unsupported = Vec::new();
+
+    for mcp_ref in refs {
+        match project_mcp_ref(mcp_ref, harness) {
+            McpProjection::Token(token) => {
+                if seen.insert(token.clone()) {
+                    tokens.push(token);
+                }
+            }
+            McpProjection::Unsupported(reason) => {
+                unsupported.push((mcp_ref.to_canonical(), reason));
+            }
+        }
+    }
+
+    (tokens, unsupported)
 }
 
 fn parse_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
@@ -402,14 +428,11 @@ mod tests {
     fn try_parse_mcp_tool_name_accepts_scoped_entries() {
         let parsed = try_parse_mcp_tool_name("mcp(context7)").unwrap();
         assert!(parsed.is_whole_server());
-        assert_eq!(mcp_ref_to_emission_value(&parsed), "context7");
+        assert_eq!(parsed.to_canonical(), "mcp(context7/*)");
 
         let per_tool = try_parse_mcp_tool_name("mcp(github/delete_repo)").unwrap();
         assert!(!per_tool.is_whole_server());
-        assert_eq!(
-            mcp_ref_to_emission_value(&per_tool),
-            "mcp(github/delete_repo)"
-        );
+        assert_eq!(per_tool.to_canonical(), "mcp(github/delete_repo)");
     }
 
     #[test]

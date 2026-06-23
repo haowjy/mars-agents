@@ -546,9 +546,22 @@ mod tests {
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("mcp-tools:"), "missing mcp-tools: {out}");
-        assert!(out.contains("plugin:demo"), "missing mcp entry: {out}");
-        assert!(lowered.lossy_fields.is_empty());
+        assert!(
+            out.contains("allowed-tools:"),
+            "MCP grants belong in allowed-tools: {out}"
+        );
+        assert!(
+            out.contains("mcp__plugin:demo__*"),
+            "missing projected mcp entry: {out}"
+        );
+        assert!(
+            !out.contains("mcp-tools:"),
+            "must not emit mcp-tools: {out}"
+        );
+        assert!(lowered.lossy_fields.iter().any(|field| {
+            field.field == "mcp-tools"
+                && matches!(field.classification, Lossiness::Approximate { .. })
+        }));
     }
 
     #[test]
@@ -575,8 +588,8 @@ mod tests {
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(
-            out.contains("mcp(github/delete_repo)"),
-            "disallowed MCP ref should emit verbatim: {out}"
+            out.contains("mcp__github__delete_repo"),
+            "disallowed MCP ref should project into disallowed-tools: {out}"
         );
         assert!(
             !out.contains("mcp-tools:"),

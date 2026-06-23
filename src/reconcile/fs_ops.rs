@@ -48,50 +48,127 @@ pub fn content_hash(path: &Path, kind: ItemKind) -> Result<ContentHash, MarsErro
 }
 
 /// Whether two regular files have identical byte content.
+///
+/// Returns `false` (not an error) when either path is missing, not a regular file,
+/// or a symlink — target sync installs copies, so symlink destinations must be rewritten.
 pub fn file_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
-    if !left.is_file() || !right.is_file() {
+    let left_meta = match fs::symlink_metadata(left) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    let right_meta = match fs::symlink_metadata(right) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    if left_meta.file_type().is_symlink() || right_meta.file_type().is_symlink() {
+        return Ok(false);
+    }
+    if !left_meta.is_file() || !right_meta.is_file() {
         return Ok(false);
     }
     Ok(fs::read(left)? == fs::read(right)?)
 }
 
-/// Whether two directory trees have identical relative paths and file bytes.
+/// Whether two directory trees have identical structure (paths + entry kinds) and file bytes.
+///
+/// Returns `false` when either root is a symlink, any nested entry is a symlink or
+/// non-regular type, directory structure differs (including empty directories), or
+/// any regular file's bytes differ.
 pub fn directory_trees_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
-    if !left.is_dir() || !right.is_dir() {
+    let left_meta = match fs::symlink_metadata(left) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    let right_meta = match fs::symlink_metadata(right) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    if left_meta.file_type().is_symlink() || right_meta.file_type().is_symlink() {
         return Ok(false);
     }
-    let left_files = collect_relative_file_paths(left, left)?;
-    let right_files = collect_relative_file_paths(right, right)?;
-    if left_files != right_files {
+    if !left_meta.is_dir() || !right_meta.is_dir() {
         return Ok(false);
     }
-    for rel in left_files {
-        if fs::read(left.join(&rel))? != fs::read(right.join(&rel))? {
+
+    let left_entries = match collect_relative_tree_entries(left, left)? {
+        TreeCollectOutcome::Reject => return Ok(false),
+        TreeCollectOutcome::Entries(entries) => entries,
+    };
+    let right_entries = match collect_relative_tree_entries(right, right)? {
+        TreeCollectOutcome::Reject => return Ok(false),
+        TreeCollectOutcome::Entries(entries) => entries,
+    };
+    if left_entries != right_entries {
+        return Ok(false);
+    }
+    for entry in &left_entries {
+        if entry.kind == TreeEntryKind::File
+            && fs::read(left.join(&entry.rel_path))? != fs::read(right.join(&entry.rel_path))?
+        {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn collect_relative_file_paths(root: &Path, current: &Path) -> Result<Vec<String>, MarsError> {
-    let mut paths = Vec::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TreeEntryKind {
+    Directory,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TreeEntry {
+    rel_path: String,
+    kind: TreeEntryKind,
+}
+
+/// Outcome of walking a directory tree for equality comparison.
+enum TreeCollectOutcome {
+    /// Symlink or other non-regular entry — trees must be considered unequal.
+    Reject,
+    Entries(Vec<TreeEntry>),
+}
+
+fn collect_relative_tree_entries(
+    root: &Path,
+    current: &Path,
+) -> Result<TreeCollectOutcome, MarsError> {
+    let mut entries = Vec::new();
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
+        let file_type = entry.file_type()?;
         let rel = path.strip_prefix(root).expect("path is always under root");
         let rel_path: String = rel
             .components()
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        if entry.file_type()?.is_dir() {
-            paths.extend(collect_relative_file_paths(root, &path)?);
-        } else if entry.file_type()?.is_file() {
-            paths.push(rel_path);
+
+        if file_type.is_symlink() {
+            return Ok(TreeCollectOutcome::Reject);
+        }
+        if file_type.is_dir() {
+            entries.push(TreeEntry {
+                rel_path: rel_path.clone(),
+                kind: TreeEntryKind::Directory,
+            });
+            match collect_relative_tree_entries(root, &path)? {
+                TreeCollectOutcome::Reject => return Ok(TreeCollectOutcome::Reject),
+                TreeCollectOutcome::Entries(mut nested) => entries.append(&mut nested),
+            }
+        } else if file_type.is_file() {
+            entries.push(TreeEntry {
+                rel_path,
+                kind: TreeEntryKind::File,
+            });
+        } else {
+            return Ok(TreeCollectOutcome::Reject);
         }
     }
-    paths.sort();
-    Ok(paths)
+    entries.sort();
+    Ok(TreeCollectOutcome::Entries(entries))
 }
 
 /// Recursively copy a directory, following symlinks on the source side.
@@ -183,6 +260,80 @@ mod tests {
 
         assert!(file_content_equal(&left, &right).expect("compare equal"));
         assert!(!file_content_equal(&left, &other).expect("compare different"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_content_equal_rejects_symlink_dest_even_when_bytes_match() {
+        let dir = TempDir::new().expect("temp dir");
+        let target = dir.path().join("target.txt");
+        fs::write(&target, "same bytes").expect("write target");
+
+        let regular = dir.path().join("regular.txt");
+        fs::write(&regular, "same bytes").expect("write regular");
+
+        let symlink = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &symlink).expect("create symlink");
+
+        assert!(
+            !file_content_equal(&regular, &symlink).expect("compare symlink dest"),
+            "symlink dest must force rewrite even when target bytes match"
+        );
+    }
+
+    #[test]
+    fn directory_trees_content_equal_detects_empty_directory_delta() {
+        let dir = TempDir::new().expect("temp dir");
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        fs::create_dir_all(left.join("empty-only")).expect("create left empty dir");
+        fs::create_dir_all(&right).expect("create right root");
+        fs::write(left.join("root.txt"), "root").expect("write left root");
+        fs::write(right.join("root.txt"), "root").expect("write right root");
+
+        assert!(
+            !directory_trees_content_equal(&left, &right).expect("compare empty-dir delta"),
+            "empty-directory-only structural delta must not compare equal"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_trees_content_equal_rejects_symlink_entry() {
+        let dir = TempDir::new().expect("temp dir");
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        let shared = dir.path().join("shared.txt");
+        fs::write(&shared, "shared").expect("write shared");
+
+        fs::create_dir_all(&left).expect("create left");
+        fs::create_dir_all(&right).expect("create right");
+        fs::write(left.join("root.txt"), "root").expect("write left root");
+        fs::write(right.join("root.txt"), "root").expect("write right root");
+        std::os::unix::fs::symlink(&shared, right.join("link.txt")).expect("create symlink");
+
+        assert!(
+            !directory_trees_content_equal(&left, &right).expect("compare symlink entry"),
+            "symlink entry in tree must force rewrite"
+        );
+    }
+
+    #[test]
+    fn directory_trees_content_equal_identical_regular_file_trees_still_equal() {
+        let dir = TempDir::new().expect("temp dir");
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        fs::create_dir_all(left.join("nested")).expect("create left nested");
+        fs::create_dir_all(right.join("nested")).expect("create right nested");
+        fs::write(left.join("root.txt"), "root").expect("write left root");
+        fs::write(left.join("nested/child.txt"), "child").expect("write left child");
+        fs::write(right.join("root.txt"), "root").expect("write right root");
+        fs::write(right.join("nested/child.txt"), "child").expect("write right child");
+
+        assert!(
+            directory_trees_content_equal(&left, &right).expect("compare identical trees"),
+            "identical all-regular-file trees must still compare equal"
+        );
     }
 
     #[test]

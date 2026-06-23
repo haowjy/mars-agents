@@ -153,6 +153,24 @@ impl DiagnosticCollector {
         });
     }
 
+    pub fn info_with_category(
+        &mut self,
+        code: &'static str,
+        message: impl Into<String>,
+        category: DiagnosticCategory,
+    ) {
+        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
+            return;
+        }
+        self.diagnostics.push(Diagnostic {
+            level: DiagnosticLevel::Info,
+            code,
+            message: message.into(),
+            context: None,
+            category: Some(category),
+        });
+    }
+
     pub fn warn_with_context(
         &mut self,
         code: &'static str,
@@ -358,6 +376,28 @@ mod tests {
             DiagnosticCategory::Lossiness,
         );
         assert_eq!(coll.drain().len(), 1);
+    }
+
+    #[test]
+    fn collector_suppresses_info_lossiness_when_hidden() {
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
+        coll.info_with_category(
+            "hook-approximate",
+            "hook `x`: approximate",
+            DiagnosticCategory::Lossiness,
+        );
+        assert!(coll.drain().is_empty());
+
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        coll.info_with_category(
+            "hook-approximate",
+            "hook `x`: approximate",
+            DiagnosticCategory::Lossiness,
+        );
+        let diags = coll.drain();
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].level, DiagnosticLevel::Info);
+        assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
     }
 
     #[test]

@@ -287,3 +287,142 @@ fn check_skips_agent_lossiness_when_emission_suppressed() {
         .success()
         .stderr(predicate::str::contains(LOSSINESS_SNIPPET).not());
 }
+
+fn create_hook_source(
+    dir: &TempDir,
+    name: &str,
+    hook_name: &str,
+    event: &str,
+) -> std::path::PathBuf {
+    let source_dir = dir.child(name);
+    let hook_dir = source_dir.child("hooks").child(hook_name);
+    hook_dir.create_dir_all().unwrap();
+    hook_dir
+        .child("hook.toml")
+        .write_str(&format!(
+            r#"
+name = "{hook_name}"
+event = "{event}"
+visibility = "exported"
+[action]
+kind = "script"
+path = "./run.sh"
+"#
+        ))
+        .unwrap();
+    source_dir.to_path_buf()
+}
+
+fn setup_hook_project(
+    dir: &TempDir,
+    source_name: &str,
+    hook_name: &str,
+    event: &str,
+    targets: &[&str],
+) -> std::path::PathBuf {
+    let source = create_hook_source(dir, source_name, hook_name, event);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    let targets_toml = targets
+        .iter()
+        .map(|t| format!("\"{t}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"[settings]
+targets = [{targets_toml}]
+
+[dependencies.{source_name}]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    project.to_path_buf()
+}
+
+#[test]
+fn validate_suppresses_dropped_hook_lossiness() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_hook_project(&dir, "hooks-pkg", "audit", "tool.pre", &[".cursor"]);
+
+    let output = mars()
+        .args(["validate", "--json", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let diags = json["diagnostics"].as_array().expect("diagnostics array");
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d["code"].as_str() == Some("hook-dropped")),
+        "validate must not surface hook-dropped: {stdout}"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        !stderr.contains("hook-dropped"),
+        "validate stderr must not contain hook-dropped: {stderr}"
+    );
+}
+
+#[test]
+fn validate_strict_passes_when_hook_dropped_for_unsupported_target() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_hook_project(&dir, "hooks-pkg", "audit", "tool.pre", &[".cursor"]);
+
+    mars()
+        .args(["validate", "--strict", "--root", project.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn sync_surfaces_dropped_hook_lossiness() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_hook_project(&dir, "hooks-pkg", "audit", "tool.pre", &[".cursor"]);
+
+    mars()
+        .args(["sync", "--root", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("dropped for target `.cursor`"));
+}
+
+#[test]
+fn validate_suppresses_approximate_hook_lossiness() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".claude"]);
+
+    let output = mars()
+        .args(["validate", "--json", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let diags = json["diagnostics"].as_array().expect("diagnostics array");
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d["code"].as_str() == Some("hook-approximate")),
+        "validate must not surface hook-approximate: {stdout}"
+    );
+}
+
+#[test]
+fn sync_surfaces_approximate_hook_lossiness() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".claude"]);
+
+    mars()
+        .args(["sync", "--root", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("approximately mapped for target `.claude`"));
+}

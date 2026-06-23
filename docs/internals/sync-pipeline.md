@@ -15,11 +15,16 @@ mars.toml + mars.local.toml
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases
+│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases,
+│                 │  STAGE: each dep through stage_rooted_package — lift foreign
+│                 │  frontmatter to canonical, apply skill overlays, repoint package_root
+│                 │  to .mars/staging/<source>/<dialect>/
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  3. Build Target│  Discover items, apply filters, detect collisions
+│  3. Build Target│  Discover items, apply filters, detect collisions.
+│                 │  STAGE: local (_self) items through staging::stage_local_item
+│                 │  before hashing — same lift/overlay path as deps.
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -80,7 +85,16 @@ Then merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`.
 
 ### 2. Resolve (`resolve_graph`)
 
-Fetches sources and resolves concrete versions.
+Fetches sources, resolves concrete versions, and stages each package.
+
+**Staging seam (dependency packages).** After selecting a concrete version,
+`stage_rooted_package` (src/resolve/package.rs:384–408) creates a dialect-scoped
+copy of the package under `.mars/staging/<source>/<dialect>/`. The copy lifts
+foreign frontmatter spellings (e.g. `allowed-tools` → `tools:`) to canonical,
+applies `[skills.<name>]` overlays, and renames items per config. The staged
+tree — not the raw source — is what downstream phases hash and discover.
+Staging requires `ResolveOptions.staging_root`; when it is unset (e.g. unit
+tests), the raw source is used directly.
 
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig
@@ -116,6 +130,12 @@ Additionally, this phase merges model aliases from the dependency tree. Each res
 Constructs the desired target state from the resolved graph.
 
 For each source in topological order:
+
+For project-local (`_self`) items, staging runs here rather than during
+resolve. `staging::stage_local_item` (src/sync/mod.rs:297–304) applies the
+same lift + overlay pipeline as dependency staging, but works from the local
+`.mars-src/` tree. Local items are staged before hashing so the sync diff
+compares the canonical form, not the raw source.
 1. **Discover** items in the source tree (`agents/*.md`, `skills/*/SKILL.md`, flat `SKILL.md`)
 2. **Apply filter** (All, Include, Exclude, OnlySkills, OnlyAgents)
 3. **Apply rename** mappings from config

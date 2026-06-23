@@ -66,6 +66,49 @@ impl McpRef {
             segment_display(&self.tool)
         )
     }
+
+    /// Whole-server ref: named server segment and wildcard (or implicit) tool.
+    pub fn is_whole_server(&self) -> bool {
+        matches!(&self.tool, McpSegment::Any) && matches!(&self.server, McpSegment::Named(_))
+    }
+}
+
+/// Parse a full `mcp(...)` tool-list entry into an [`McpRef`].
+pub(crate) fn try_parse_mcp_tool_name(raw: &str) -> Option<McpRef> {
+    let trimmed = raw.trim();
+    let open = trimmed.find('(')?;
+    let head = trimmed[..open].trim();
+    if !head.eq_ignore_ascii_case("mcp") {
+        return None;
+    }
+    let payload = &trimmed[open..];
+    let inner = extract_scoped_payload(payload)?;
+    parse_mcp_ref(inner).ok()
+}
+
+fn extract_scoped_payload(payload: &str) -> Option<&str> {
+    let trimmed = payload.trim();
+    if trimmed.len() < 2 || !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+        return None;
+    }
+    Some(&trimmed[1..trimmed.len() - 1])
+}
+
+/// Derive the legacy `mcp-tools:` emission value for an allowed MCP ref.
+///
+/// Whole-server refs (including `mcp(server)` shorthand) render as the server segment
+/// verbatim — matching historical `mcp-tools: [server]` spelling. Per-tool allowed refs
+/// render as canonical `mcp(server/tool)` until Phase 4 per-harness projection exists.
+pub(crate) fn mcp_ref_to_emission_value(mcp_ref: &McpRef) -> String {
+    if mcp_ref.is_whole_server() {
+        match &mcp_ref.server {
+            McpSegment::Named(server) => server.clone(),
+            McpSegment::Any => mcp_ref.to_canonical(),
+        }
+    } else {
+        // Phase 4: real per-harness projection for per-tool allowed MCP refs.
+        mcp_ref.to_canonical()
+    }
 }
 
 fn segment_display(segment: &McpSegment) -> String {
@@ -176,5 +219,19 @@ mod tests {
     fn error_messages_are_clear() {
         assert!(!McpRefParseError::EmptyServerSegment.message().is_empty());
         assert!(!McpRefParseError::TooManySegments.message().is_empty());
+    }
+
+    #[test]
+    fn try_parse_mcp_tool_name_accepts_scoped_entries() {
+        let parsed = try_parse_mcp_tool_name("mcp(context7)").unwrap();
+        assert!(parsed.is_whole_server());
+        assert_eq!(mcp_ref_to_emission_value(&parsed), "context7");
+
+        let per_tool = try_parse_mcp_tool_name("mcp(github/delete_repo)").unwrap();
+        assert!(!per_tool.is_whole_server());
+        assert_eq!(
+            mcp_ref_to_emission_value(&per_tool),
+            "mcp(github/delete_repo)"
+        );
     }
 }

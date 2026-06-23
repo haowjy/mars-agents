@@ -248,11 +248,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         .unwrap_or_default();
     consumed_keys.push("mcp-tools".to_string());
     consumed_keys.push("mcp_tools".to_string());
-    let mcp_tools = fm
-        .get("mcp-tools")
-        .or_else(|| fm.get("mcp_tools"))
-        .map(tool_policy::yaml_str_list)
-        .unwrap_or_default();
+    let mcp_tools = tool_policy::legacy_mcp_tools_from_frontmatter(fm);
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
     let license = license_raw.and_then(Value::as_str).map(str::to_owned);

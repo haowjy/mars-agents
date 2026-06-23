@@ -552,6 +552,39 @@ mod tests {
     }
 
     #[test]
+    fn claude_mcp_tools_list_and_legacy_field_emit_identically() {
+        let legacy = parse_profile(
+            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
+        );
+        let inline = parse_profile(
+            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
+        );
+        let legacy_out = lower_skill_to_claude(&legacy, "Body\n");
+        let inline_out = lower_skill_to_claude(&inline, "Body\n");
+        assert_eq!(
+            legacy_out.bytes, inline_out.bytes,
+            "legacy vs tools-list MCP emission must match"
+        );
+    }
+
+    #[test]
+    fn claude_emits_disallowed_mcp_ref_in_denylist() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\ndisallowed-tools: [mcp(github/delete_repo)]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(
+            out.contains("mcp(github/delete_repo)"),
+            "disallowed MCP ref should emit verbatim: {out}"
+        );
+        assert!(
+            !out.contains("mcp-tools:"),
+            "must not emit mcp-tools: {out}"
+        );
+    }
+
+    #[test]
     fn codex_warns_mcp_tools() {
         let profile = parse_profile(
             "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",

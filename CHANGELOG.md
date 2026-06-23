@@ -21,6 +21,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:`, `disallowed-tools:`, `mcp-tools:`).
 
 ### Changed
+- MCP input unification (Phase 2): legacy `mcp-tools:` / `mcp_tools` and inline `mcp(...)` entries in `tools:` converge on one internal policy model; agent and skill parsers share the same key set; harness emission unchanged.
 - Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and `mcp-tools:`. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
 - Agents honor `user-invocable` (was skills-only).
 - Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.

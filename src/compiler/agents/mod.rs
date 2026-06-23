@@ -871,10 +871,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("disallowed-tools")
         .map(|value| yaml_tool_list("disallowed-tools", value, diags))
         .unwrap_or_default();
-    let mcp_tools = fm
-        .get("mcp-tools")
-        .map(tool_policy::yaml_str_list)
-        .unwrap_or_default();
+    let mcp_tools = tool_policy::legacy_mcp_tools_from_frontmatter(fm);
 
     // harness-overrides:
     let harness_overrides = fm

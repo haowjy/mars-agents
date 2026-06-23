@@ -122,19 +122,16 @@ pub(crate) fn parse_foreign_mcp_token(
         | crate::dialect::Dialect::MarsNative => {}
     }
 
-    if try_parse_mcp_tool_name(trimmed).is_some() {
-        return None;
-    }
-
+    // Already-canonical `mcp(...)` entries are not foreign tokens.
     None
 }
 
 fn parse_claude_mcp_wire_token(raw: &str) -> Option<McpRef> {
     const PREFIX: &str = "mcp__";
-    if raw.len() < PREFIX.len() || !raw[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
-        return None;
-    }
-    let remainder = &raw[PREFIX.len()..];
+    let remainder = match raw.get(..PREFIX.len()) {
+        Some(p) if p.eq_ignore_ascii_case(PREFIX) => &raw[PREFIX.len()..],
+        _ => return None,
+    };
     if remainder.is_empty() {
         return None;
     }
@@ -162,10 +159,8 @@ fn parse_cursor_mcp_token(raw: &str) -> Option<McpRef> {
         return None;
     }
     let inner = extract_scoped_payload(&raw[open..])?;
-    let (server_part, tool_part) = inner.split_once(':')?;
-    if inner.matches(':').count() > 1 {
-        return None;
-    }
+    // Tool names are simple (no `:`); server ids may contain `:` (e.g. `plugin:context7:context7`).
+    let (server_part, tool_part) = inner.rsplit_once(':')?;
     let server = parse_wildcard_segment(server_part).ok()?;
     let tool = parse_wildcard_segment(tool_part).ok()?;
     Some(McpRef { server, tool })
@@ -450,5 +445,37 @@ mod tests {
             );
         }
         assert!(parse_foreign_mcp_token("mcp__github__tool", Dialect::Cursor).is_none());
+    }
+
+    #[test]
+    fn parse_claude_mcp_wire_token_rejects_non_ascii_near_prefix_without_panic() {
+        use crate::dialect::Dialect;
+
+        for token in ["mcp_é", "ab🚀cd"] {
+            assert!(
+                parse_foreign_mcp_token(token, Dialect::Claude).is_none(),
+                "expected None for {token:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_foreign_cursor_mcp_token_namespaced_server() {
+        use crate::dialect::Dialect;
+
+        let token = "Mcp(plugin:context7:context7:create_issue)";
+        let parsed = parse_foreign_mcp_token(token, Dialect::Cursor).unwrap();
+        assert_eq!(
+            parsed,
+            McpRef {
+                server: McpSegment::Named("plugin:context7:context7".into()),
+                tool: McpSegment::Named("create_issue".into()),
+            }
+        );
+        let canonical = parsed.to_canonical();
+        assert_eq!(canonical, "mcp(plugin:context7:context7/create_issue)");
+        let lifted = try_parse_mcp_tool_name(&canonical).unwrap();
+        assert!(!lifted.is_whole_server());
+        assert_eq!(lifted, parsed);
     }
 }

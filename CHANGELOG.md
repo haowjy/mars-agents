@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- MCP inbound lift: boundary-safe Claude `mcp__` wire parse (no UTF-8 panic on near-prefix tokens); Cursor `Mcp(server:tool)` uses the last `:` as the tool separator so namespaced server ids lift to per-tool `mcp(server/tool)` instead of whole-server; scalar `allowed-tools` / `disallowedTools` strings lift like list entries.
 - No-op `mars sync` no longer rewrites linked native skill outputs when projected bytes are already on disk (mtime churn on `.claude/skills/.../SKILL.md` etc.).
 - Hook lossiness (`hook-dropped`/`hook-approximate`) now follows the same surface/suppress policy as agent/skill lossiness — hidden on `validate`/`export`/`add` and no longer escalated into a failure by `mars validate --strict`.
 - `skill`, `workflow`, and `web` (alias of `web_search`) are recognized tool names — gating them (e.g. `skill(deep-research)`, `Workflow`) no longer emits "not a known tool; passing through verbatim" warnings and projects to native spellings (`Skill(...)`, `Workflow`, `WebSearch`). Recognition only — per-harness enforcement of `disallowed-tools` is unchanged.

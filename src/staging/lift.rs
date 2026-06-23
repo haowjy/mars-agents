@@ -11,6 +11,12 @@ use crate::lock::ItemKind;
 
 fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, bool) {
     match value {
+        Value::String(raw) => {
+            let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
+                return (value.clone(), false);
+            };
+            (Value::String(mcp_ref.to_canonical()), true)
+        }
         Value::Sequence(seq) => {
             let mut changed = false;
             let lifted: Vec<Value> = seq
@@ -563,6 +569,47 @@ when_to_use: Use when git history matters
                 Value::String("mcp(github/create_issue)".into()),
                 Value::String("Read".into()),
             ]))
+        );
+    }
+
+    #[test]
+    fn cursor_rule_lifts_namespaced_server_mcp_token() {
+        let lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &fm("description: rule\nallowed-tools: [Mcp(plugin:context7:context7:create_issue)]\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![Value::String(
+                "mcp(plugin:context7:context7/create_issue)".into()
+            )]))
+        );
+    }
+
+    #[test]
+    fn claude_skill_lifts_scalar_foreign_mcp_token_in_allowed_tools() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Skill,
+            &fm("name: s\ndescription: d\nallowed-tools: mcp__github__create_issue\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::String("mcp(github/create_issue)".into()))
+        );
+    }
+
+    #[test]
+    fn claude_agent_lifts_scalar_foreign_mcp_token_in_disallowed_tools() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ndisallowedTools: mcp__github__delete_repo\n"),
+        );
+        assert_eq!(
+            lifted.get("disallowed-tools"),
+            Some(&Value::String("mcp(github/delete_repo)".into()))
         );
     }
 }

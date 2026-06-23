@@ -32,7 +32,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, `mcp-tools:`) into `EffectiveToolPolicy`. Used by **both** `agents/` and `skills/` modules for unified frontmatter-to-native lowering.
+- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into `EffectiveToolPolicy`. Used by **both** `agents/` and `skills/` modules for unified frontmatter-to-native lowering.
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
@@ -101,7 +101,7 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 |---|---|---|
 | `tools:` | List (all allowed) or map (`tool_name: allow\|deny`) | `allowed` / `disallowed` |
 | `disallowed-tools:` | Flat string list | `disallowed` |
-| `mcp-tools:` | Flat string list | `mcp` |
+| `mcp(...)` in `tools:` / `disallowed-tools:` | Inline MCP grant/deny | `mcp_allowed` / `mcp_disallowed` |
 
 `agents/mod.rs::AgentProfile::effective_tool_policy()` and `skills/mod.rs::SkillProfile::effective_tool_policy()` both delegate to `tool_policy::effective_tool_policy()` with field-level dedup and canonical name normalization.
 

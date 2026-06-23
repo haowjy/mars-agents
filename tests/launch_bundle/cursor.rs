@@ -79,7 +79,7 @@ skills: [root_skill]
 tools:
   Read: allow
   Edit: deny
-mcp-tools: [plugin:root]
+  mcp(plugin:root): allow
 harness-overrides:
   opencode:
     skills: [opencode_skill]

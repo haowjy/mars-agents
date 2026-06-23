@@ -147,10 +147,8 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
     }
 
     if let Some(mcp) = fm.remove("mcpServers") {
-        if fm.get("mcp-tools").is_none() {
-            fm.insert("mcp-tools", mcp);
-        }
-        changed = true;
+        changed |=
+            tool_policy::append_mcp_server_entries_to_tools(fm, &tool_policy::yaml_str_list(&mcp));
     }
 
     changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
@@ -307,7 +305,7 @@ mod tests {
             Dialect::Claude,
             ItemKind::Agent,
             &fm(
-                "name: a\ndescription: d\ndisallowed-tools: [Read]\ndisallowedTools: [Agent]\nmcp-tools: [server]\nmcpServers: [other]\n",
+                "name: a\ndescription: d\ndisallowed-tools: [Read]\ndisallowedTools: [Agent]\ntools: [mcp(server)]\nmcpServers: [other]\n",
             ),
         );
         assert_eq!(
@@ -316,8 +314,11 @@ mod tests {
         );
         assert!(lifted.get("disallowedTools").is_none());
         assert_eq!(
-            lifted.get("mcp-tools"),
-            Some(&Value::Sequence(vec![Value::String("server".into())]))
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("mcp(server)".into()),
+                Value::String("mcp(other)".into())
+            ]))
         );
         assert!(lifted.get("mcpServers").is_none());
     }

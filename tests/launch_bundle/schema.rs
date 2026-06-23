@@ -20,9 +20,8 @@ pub(crate) fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write]
+tools: [Bash, Write, mcp(plugin:context7:context7)]
 disallowed-tools: [Agent]
-mcp-tools: [plugin:context7:context7]
 ---
 
 Review code changes.

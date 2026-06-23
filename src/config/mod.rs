@@ -194,20 +194,18 @@ impl ModelVisibility {
     }
 }
 
-/// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed` / `mcp`).
+/// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disallowed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mcp: Vec<String>,
 }
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
-        self.allowed.is_empty() && self.disallowed.is_empty() && self.mcp.is_empty()
+        self.allowed.is_empty() && self.disallowed.is_empty()
     }
 }
 
@@ -1862,8 +1860,7 @@ description = "Planning overlay"
 user_invocable = false
 model-invocable = true
 tools.disallowed = ["Agent", "Write"]
-tools.allowed = ["Bash(git *)"]
-tools.mcp = ["plugin:demo"]
+tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
 "#,
         )
         .unwrap();
@@ -1876,8 +1873,10 @@ tools.mcp = ["plugin:demo"]
             overlay.tools.disallowed,
             vec!["Agent".to_string(), "Write".to_string()]
         );
-        assert_eq!(overlay.tools.allowed, vec!["Bash(git *)".to_string()]);
-        assert_eq!(overlay.tools.mcp, vec!["plugin:demo".to_string()]);
+        assert_eq!(
+            overlay.tools.allowed,
+            vec!["Bash(git *)".to_string(), "mcp(plugin:demo)".to_string()]
+        );
     }
 
     #[test]

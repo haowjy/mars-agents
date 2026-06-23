@@ -200,14 +200,6 @@ fn extract_scoped_payload(payload: &str) -> Option<&str> {
     Some(&trimmed[1..trimmed.len() - 1])
 }
 
-/// Build a whole-server [`McpRef`] from a legacy `mcp-tools:` server name.
-pub(crate) fn mcp_ref_from_legacy_server_name(server: &str) -> McpRef {
-    McpRef {
-        server: McpSegment::Named(server.to_string()),
-        tool: McpSegment::Any,
-    }
-}
-
 fn segment_display(segment: &McpSegment) -> String {
     match segment {
         McpSegment::Any => "*".to_string(),

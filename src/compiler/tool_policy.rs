@@ -1,10 +1,9 @@
 //! Shared tool-policy parsing for agent and skill frontmatter.
 //!
 //! Canonical Mars profiles express tool gating with `tools:` (list or allow/deny map),
-//! `disallowed-tools:`, and legacy `mcp-tools:` (or `mcp_tools`). Allowed MCP refs live
-//! in `tools:` as `mcp(...)` entries; legacy `mcp-tools:` values normalize to the same
-//! representation at policy-merge time. [`EffectiveToolPolicy`] merges those fields into
-//! the portable allow/deny/mcp view both compilers use when lowering to harnesses.
+//! `disallowed-tools:`, and whole-server or per-tool MCP grants as `mcp(...)` entries in
+//! those lists. [`EffectiveToolPolicy`] merges those fields into the portable allow/deny/mcp
+//! view both compilers use when lowering to harnesses.
 //!
 //! [`NON_CANONICAL_TOOL_FIELD_ALIASES`] is the single source for foreign spellings that
 //! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
@@ -12,7 +11,7 @@
 
 use serde_yaml::Value;
 
-use crate::compiler::mcp_ref::{McpRef, mcp_ref_from_legacy_server_name, try_parse_mcp_tool_name};
+use crate::compiler::mcp_ref::{McpRef, try_parse_mcp_tool_name};
 use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
 use crate::frontmatter::Frontmatter;
 
@@ -32,31 +31,16 @@ pub struct ParsedToolsField {
     pub denied: Vec<String>,
 }
 
-/// Canonical frontmatter key for legacy whole-server MCP allowlists.
-pub const MCP_TOOLS_FIELD: &str = "mcp-tools";
-
-/// Snake-case alias accepted on both agents and skills (canonical key is kebab-case).
-pub const MCP_TOOLS_FIELD_ALIASES: &[&str] = &["mcp_tools"];
-
-/// Read legacy `mcp-tools:` / `mcp_tools` from frontmatter (shared agent + skill path).
-pub(crate) fn legacy_mcp_tools_from_frontmatter(fm: &Frontmatter) -> Vec<String> {
-    fm.get(MCP_TOOLS_FIELD)
-        .or_else(|| fm.get(MCP_TOOLS_FIELD_ALIASES[0]))
-        .map(yaml_str_list)
-        .unwrap_or_default()
-}
-
 /// Merge top-level tool fields into one effective policy.
 ///
-/// Allowed MCP refs may appear in `allowed` as `mcp(...)` tool-list entries and/or via
-/// legacy `legacy_mcp` whole-server names. Disallowed MCP refs appear in `denied` /
-/// `disallowed` as canonical `mcp(...)` strings. Harness emission projects structured
-/// [`McpRef`] values per target via [`crate::compiler::mcp_ref::project_mcp_ref`].
+/// Allowed MCP refs appear in `allowed` as `mcp(...)` tool-list entries. Disallowed MCP
+/// refs appear in `denied` / `disallowed` as canonical `mcp(...)` strings. Harness
+/// emission projects structured [`McpRef`] values per target via
+/// [`crate::compiler::mcp_ref::project_mcp_ref`].
 pub fn effective_tool_policy(
     allowed: &[String],
     denied: &[String],
     disallowed: &[String],
-    legacy_mcp: &[String],
 ) -> EffectiveToolPolicy {
     let mut allowed_tools = Vec::new();
     let mut mcp_allowed = Vec::new();
@@ -66,13 +50,6 @@ pub fn effective_tool_policy(
             mcp_allowed.push(mcp_ref);
         } else {
             allowed_tools.push(tool.clone());
-        }
-    }
-
-    for server in legacy_mcp {
-        let trimmed = server.trim();
-        if !trimmed.is_empty() {
-            mcp_allowed.push(mcp_ref_from_legacy_server_name(trimmed));
         }
     }
 
@@ -120,6 +97,35 @@ fn dedupe_mcp_refs(refs: Vec<McpRef>) -> Vec<McpRef> {
         }
     }
     out
+}
+
+/// Append whole-server `mcp(server)` entries to the frontmatter `tools:` list.
+pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: &[String]) -> bool {
+    let entries: Vec<String> = servers
+        .iter()
+        .map(|server| server.trim())
+        .filter(|server| !server.is_empty())
+        .map(|server| format!("mcp({server})"))
+        .collect();
+    if entries.is_empty() {
+        return false;
+    }
+
+    let mut tools = fm.get("tools").map(yaml_str_list).unwrap_or_default();
+    let mut changed = false;
+    for entry in entries {
+        if !tools.iter().any(|existing| existing == &entry) {
+            tools.push(entry);
+            changed = true;
+        }
+    }
+    if changed {
+        fm.insert(
+            "tools",
+            Value::Sequence(tools.into_iter().map(Value::String).collect()),
+        );
+    }
+    changed
 }
 
 pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
@@ -237,9 +243,9 @@ pub(crate) fn non_canonical_aliases_for(canonical_key: &str) -> Vec<&'static str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
+    use crate::compiler::agents::parse_agent_content;
     use crate::compiler::mcp_ref::{McpSegment, parse_mcp_ref};
-    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
+    use crate::compiler::skills::parse_skill_content;
     use crate::frontmatter::Frontmatter;
 
     mod non_canonical_alias_tests {
@@ -255,7 +261,6 @@ mod tests {
                 non_canonical_aliases_for("disallowed-tools"),
                 vec!["disallowed_tools"]
             );
-            assert!(non_canonical_aliases_for("mcp-tools").is_empty());
         }
     }
 
@@ -274,13 +279,11 @@ mod tests {
     }
 
     #[test]
-    fn tools_mcp_entry_matches_legacy_mcp_tools_field() {
-        let legacy = agent_policy("---\nname: a\ndescription: d\nmcp-tools: [context7]\n---\n");
-        let inline = agent_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\n");
-        assert_eq!(legacy.mcp_allowed, inline.mcp_allowed);
-        assert!(legacy.allowed.is_empty());
+    fn tools_mcp_entry_grants_whole_server() {
+        let policy = agent_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\n");
+        assert!(policy.allowed.is_empty());
         assert_eq!(
-            legacy.mcp_allowed,
+            policy.mcp_allowed,
             vec![McpRef {
                 server: McpSegment::Named("context7".into()),
                 tool: McpSegment::Any,
@@ -289,28 +292,32 @@ mod tests {
     }
 
     #[test]
-    fn skill_tools_mcp_entry_matches_legacy_mcp_tools_field() {
-        let legacy = skill_policy("---\nname: a\ndescription: d\nmcp-tools: [context7]\n---\nbody");
-        let inline =
+    fn skill_tools_mcp_entry_grants_whole_server() {
+        let policy =
             skill_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\nbody");
-        assert_eq!(legacy.mcp_allowed, inline.mcp_allowed);
-        assert_eq!(legacy.mcp_allowed.len(), 1);
+        assert_eq!(policy.mcp_allowed.len(), 1);
     }
 
     #[test]
-    fn agent_and_skill_accept_mcp_tools_snake_alias() {
-        let agent_yaml = "---\nname: a\ndescription: d\nmcp_tools: [plugin:x]\n---\n";
-        let skill_yaml = "---\nname: a\ndescription: d\nmcp_tools: [plugin:x]\n---\nbody";
+    fn append_mcp_server_entries_to_tools_merges_into_existing_list() {
+        let mut fm = Frontmatter::parse("---\ntools: [Bash]\n---\n").unwrap();
+        assert!(append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string()]
+        ));
+        assert_eq!(
+            fm.get("tools").map(yaml_str_list),
+            Some(vec!["Bash".to_string(), "mcp(context7)".to_string()])
+        );
+    }
 
-        let mut agent_diags = Vec::<AgentDiagnostic>::new();
-        let (agent, _) = parse_agent_content(agent_yaml, &mut agent_diags).unwrap();
-        assert!(agent_diags.is_empty());
-        assert_eq!(agent.mcp_tools, vec!["plugin:x"]);
-
-        let mut skill_diags = Vec::<SkillDiagnostic>::new();
-        let (skill, _) = parse_skill_content(skill_yaml, &mut skill_diags).unwrap();
-        assert!(skill_diags.is_empty());
-        assert_eq!(skill.mcp_tools, vec!["plugin:x"]);
+    #[test]
+    fn append_mcp_server_entries_to_tools_is_idempotent() {
+        let mut fm = Frontmatter::parse("---\ntools: [mcp(context7)]\n---\n").unwrap();
+        assert!(!append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string()]
+        ));
     }
 
     #[test]
@@ -326,14 +333,6 @@ mod tests {
             policy.mcp_disallowed[0].to_canonical(),
             "mcp(github/delete_repo)"
         );
-    }
-
-    #[test]
-    fn legacy_mcp_tools_from_frontmatter_unifies_kebab_and_snake() {
-        let kebab = Frontmatter::parse("---\nmcp-tools: [a]\n---\n").unwrap();
-        let snake = Frontmatter::parse("---\nmcp_tools: [b]\n---\n").unwrap();
-        assert_eq!(legacy_mcp_tools_from_frontmatter(&kebab), vec!["a"]);
-        assert_eq!(legacy_mcp_tools_from_frontmatter(&snake), vec!["b"]);
     }
 
     #[test]

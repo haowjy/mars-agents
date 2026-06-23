@@ -88,7 +88,7 @@ struct SkillLoweringPolicy {
     user_invocable: UserInvocablePolicy,
     allowed_tools: AllowedToolsPolicy,
     disallowed_tools: DisallowedToolsPolicy,
-    mcp_tools: McpToolsPolicy,
+    mcp: McpToolsPolicy,
     when_to_use: WhenToUsePolicy,
 }
 
@@ -112,7 +112,7 @@ const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         track_unknown_tool_lossiness: true,
     },
     disallowed_tools: DisallowedToolsPolicy::Emit,
-    mcp_tools: McpToolsPolicy::Emit,
+    mcp: McpToolsPolicy::Emit,
     when_to_use: WhenToUsePolicy::Emit,
 };
 
@@ -134,7 +134,7 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp_tools: McpToolsPolicy::Approximate("Codex uses -c mcp.servers.<name>.command"),
+    mcp: McpToolsPolicy::Approximate("Codex uses -c mcp.servers.<name>.command"),
     when_to_use: WhenToUsePolicy::Drop,
 };
 
@@ -156,8 +156,8 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp_tools: McpToolsPolicy::Approximate(
-        "mcp-tools on subprocess errors; streaming uses session payload",
+    mcp: McpToolsPolicy::Approximate(
+        "MCP grants on subprocess errors; streaming uses session payload",
     ),
     when_to_use: WhenToUsePolicy::Drop,
 };
@@ -182,7 +182,7 @@ const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         track_unknown_tool_lossiness: false,
     },
     disallowed_tools: DisallowedToolsPolicy::Emit,
-    mcp_tools: McpToolsPolicy::Drop,
+    mcp: McpToolsPolicy::Drop,
     when_to_use: WhenToUsePolicy::Emit,
 };
 
@@ -204,8 +204,8 @@ const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp_tools: McpToolsPolicy::Approximate(
-        "mcp-tools on subprocess errors; streaming uses session payload",
+    mcp: McpToolsPolicy::Approximate(
+        "MCP grants on subprocess errors; streaming uses session payload",
     ),
     when_to_use: WhenToUsePolicy::Drop,
 };
@@ -294,7 +294,7 @@ impl<'a> LoweringCtx<'a> {
             LoweringStep::UserInvocable => self.apply_user_invocable(),
             LoweringStep::AllowedTools => self.apply_allowed_tools(),
             LoweringStep::DisallowedTools => self.apply_disallowed_tools(),
-            LoweringStep::McpTools => self.apply_mcp_tools(),
+            LoweringStep::McpTools => self.apply_mcp(),
             LoweringStep::WhenToUse => self.apply_when_to_use(),
             LoweringStep::UserInvocableLossinessLate => self.apply_user_invocable_lossiness(),
             LoweringStep::CursorAlwaysApply => self.apply_cursor_always_apply(),
@@ -460,19 +460,19 @@ impl<'a> LoweringCtx<'a> {
         }
     }
 
-    fn apply_mcp_tools(&mut self) {
+    fn apply_mcp(&mut self) {
         let tool_policy = self.profile.effective_tool_policy();
         if tool_policy.mcp_allowed.is_empty() {
             return;
         }
         let policy = self.policy;
-        match policy.mcp_tools {
+        match policy.mcp {
             McpToolsPolicy::Emit => {
                 let (mcp_tokens, unsupported) =
                     project_mcp_ref_tokens(&tool_policy.mcp_allowed, policy.harness_key);
                 for (_, reason) in &unsupported {
                     self.lossy_fields.push(LossyField {
-                        field: "mcp-tools".into(),
+                        field: "mcp".into(),
                         target: policy.target_name.into(),
                         classification: Lossiness::Approximate {
                             note: reason.message(),
@@ -495,7 +495,7 @@ impl<'a> LoweringCtx<'a> {
                     Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
                 );
                 self.lossy_fields.push(LossyField {
-                    field: "mcp-tools".into(),
+                    field: "mcp".into(),
                     target: policy.target_name.into(),
                     classification: Lossiness::Approximate {
                         note: "Claude skill allowed-tools grants MCP access; it does not restrict invocation",
@@ -504,14 +504,13 @@ impl<'a> LoweringCtx<'a> {
             }
             McpToolsPolicy::Approximate(note) => {
                 self.lossy_fields.push(LossyField {
-                    field: "mcp-tools".into(),
+                    field: "mcp".into(),
                     target: policy.target_name.into(),
                     classification: Lossiness::Approximate { note },
                 });
             }
             McpToolsPolicy::Drop => {
-                self.lossy_fields
-                    .push(dropped("mcp-tools", policy.target_name));
+                self.lossy_fields.push(dropped("mcp", policy.target_name));
             }
         }
     }

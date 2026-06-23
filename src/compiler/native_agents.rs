@@ -841,10 +841,6 @@ fn effective_native_profile(
         effective.disallowed_tools = overlay.tools.disallowed.clone();
         effective.tools_denied.clear();
     }
-    if !overlay.tools.mcp.is_empty() {
-        effective.mcp_tools = overlay.tools.mcp.clone();
-    }
-
     effective
 }
 

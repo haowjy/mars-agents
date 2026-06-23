@@ -131,7 +131,7 @@ fn record_native_mcp_lossiness(
 ) {
     if has_mcp_policy(eff) {
         lossy.push(LossyField {
-            field: "mcp-tools".into(),
+            field: "mcp".into(),
             target: target.into(),
             classification: Lossiness::Approximate { note },
         });
@@ -370,7 +370,7 @@ pub fn lower_to_claude(
 ///   sandbox (as sandbox_mode), approval (as approval_policy), body
 ///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
-///   mcp-tools (approximate), mode, autocompact, model-policies, fanout
+///   mcp (approximate), mode, autocompact, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -519,7 +519,7 @@ pub fn lower_to_codex(
 /// - Preserved: name, description, model (normalized to provider/model), mode
 ///   (approximate — same field name), body
 /// - Dropped: most policy fields (approval, sandbox, tools, disallowed-tools,
-///   effort, mcp-tools, autocompact)
+///   effort, mcp, autocompact)
 /// - Meridian-only: model-policies, fanout
 fn lower_to_opencode_like(
     profile: &AgentProfile,
@@ -597,7 +597,7 @@ fn lower_to_opencode_like(
     record_native_mcp_lossiness(
         &eff,
         target,
-        "mcp-tools on subprocess errors; streaming uses session payload",
+        "MCP grants on subprocess errors; streaming uses session payload",
         &mut lossy,
     );
     if profile.autocompact.is_some() {
@@ -766,7 +766,7 @@ fn lower_to_cursor_with_model(
     record_native_mcp_lossiness(
         &eff,
         target,
-        "mcp-tools on subprocess errors; streaming uses session payload",
+        "MCP grants on subprocess errors; streaming uses session payload",
         &mut lossy,
     );
     if profile.autocompact.is_some() {
@@ -907,7 +907,7 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
     }
     if has_mcp_policy(&eff) {
         lossy.push(LossyField {
-            field: "mcp-tools".into(),
+            field: "mcp".into(),
             target: target.into(),
             classification: Lossiness::Dropped,
         });
@@ -1144,14 +1144,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_harness_override_does_not_replace_mcp_tools() {
-        let content = "---\nname: r\nharness: claude\nmcp-tools: [plugin:base]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+    fn claude_harness_override_does_not_replace_mcp() {
+        let content = "---\nname: r\nharness: claude\ntools: [mcp(plugin:base)]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("mcp-tools:"),
-            "MCP grants belong in tools:, not mcp-tools: {text}"
+            "MCP grants belong in tools:, not a separate field: {text}"
         );
         assert!(
             text.contains("mcp__plugin:base__*"),
@@ -1159,7 +1159,7 @@ mod tests {
         );
         assert!(
             !text.contains("plugin:claude"),
-            "harness-overrides passthrough should not replace mcp-tools: {text}"
+            "harness-overrides passthrough should not replace profile mcp: {text}"
         );
     }
 
@@ -1198,11 +1198,11 @@ mod tests {
 
     #[test]
     fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
-        let content = "---\nname: r\nharness: pi\nmcp-tools: [plugin:demo]\n---\n# body";
+        let content = "---\nname: r\nharness: pi\ntools: [mcp(plugin:demo)]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
         assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "mcp-tools"
+            field.field == "mcp"
                 && field.target == "Pi"
                 && matches!(field.classification, Lossiness::Dropped)
         }));
@@ -1336,14 +1336,12 @@ mod tests {
 
     #[test]
     fn codex_mcp_lossiness_uses_top_level_policy() {
-        let content = "---\nname: r\nharness: codex\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
+        let content = "---\nname: r\nharness: codex\ntools: [mcp(plugin:base)]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         assert!(
-            out.lossy_fields
-                .iter()
-                .any(|field| field.field == "mcp-tools"),
-            "top-level mcp-tools should remain lossy for codex: {:?}",
+            out.lossy_fields.iter().any(|field| field.field == "mcp"),
+            "top-level mcp should remain lossy for codex: {:?}",
             out.lossy_fields
                 .iter()
                 .map(|field| field.field.clone())
@@ -1407,7 +1405,7 @@ mod tests {
 
     #[test]
     fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
-        let content = "---\nname: r\nharness: cursor\ntools: [Read]\nmcp-tools: [plugin:base]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+        let content = "---\nname: r\nharness: cursor\ntools: [Read, mcp(plugin:base)]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
@@ -1422,7 +1420,7 @@ mod tests {
             opencode
                 .lossy_fields
                 .iter()
-                .any(|field| field.field == "mcp-tools"),
+                .any(|field| field.field == "mcp"),
             "harness-overrides passthrough should not clear mcp lossiness",
         );
 
@@ -1435,10 +1433,7 @@ mod tests {
             "cursor override should keep tools lossiness",
         );
         assert!(
-            cursor
-                .lossy_fields
-                .iter()
-                .any(|field| field.field == "mcp-tools"),
+            cursor.lossy_fields.iter().any(|field| field.field == "mcp"),
             "cursor override should keep mcp lossiness",
         );
         assert!(

@@ -885,6 +885,7 @@ name: cursor-worker
 description: Cursor worker
 harness: cursor
 model: gpt55
+tools: [mcp(plugin:cursor)]
 harness-overrides:
   opencode:
     mcp-tools: []

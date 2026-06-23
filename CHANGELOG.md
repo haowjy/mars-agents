@@ -12,7 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Unknown tools now project via the target harness naming convention instead of passing through verbatim (snake_case custom tools reach Claude/Cursor as PascalCase); MCP wire names (`mcp__…`) are recognized and preserved verbatim without re-casing.
 
 ### Added
-- Inbound lift of foreign MCP permission tokens to canonical `mcp(server/tool)` on import — Claude `mcp__server__tool` wire refs and Cursor `Mcp(server:tool)` refs in `allowed-tools` / `disallowed-tools` lift without case change; `mcpServers` whole-server lift unchanged.
+- Inbound lift of foreign MCP permission tokens to canonical `mcp(server/tool)` on import — Claude `mcp__server__tool` wire refs and Cursor `Mcp(server:tool)` refs in `allowed-tools` / `disallowed-tools` lift without case change; `mcpServers` whole-server entries lift into `tools:` as `mcp(server)`.
 - Canonical `mcp(server/tool)` grammar in `tools:` / `disallowed-tools:` — scoped MCP references are parsed and recognized (preserved verbatim, no convention projection or unknown-tool warning); real per-harness emission is a later phase.
 - Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.
 - Per-dialect frontmatter lift tables (Claude/Codex/Cursor/OpenCode) in `staging/lift.rs`; default/inferred Claude lift is idempotent on mars-native packages.
@@ -20,12 +20,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
 - `[skills.<name>]` overlay carriage in config; applied at staging after lift (description, invocability, tool policy).
 - Skills `disallowed-tools` canonical denylist.
-- Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:`, `disallowed-tools:`, `mcp-tools:`).
+- Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants).
 
 ### Changed
+- **Breaking:** Removed legacy `mcp-tools:` / `mcp_tools` frontmatter field and `[agents|skills].tools.mcp` overlay key. Author whole-server MCP grants as `mcp(server)` entries in `tools:` (or `tools.allowed` overlays); per-tool grants use `mcp(server/tool)`.
 - MCP emission (Phase 4b): `EffectiveToolPolicy` carries structured `mcp_allowed` / `mcp_disallowed` [`McpRef`] values; harness lowering and launch bundles project them via `project_mcp_ref` instead of verbatim `mcp-tools:` strings. Claude agents emit `mcp__…` tokens in `tools:` / `disallowed-tools:` (no `mcp-tools:` field); Claude skills grant MCP into `allowed-tools:` with a lossiness note. Unsupported projections (e.g. Claude `mcp(*/tool)`, Codex/Pi MCP) record lossiness and omit the token.
-- MCP input unification (Phase 2): legacy `mcp-tools:` / `mcp_tools` and inline `mcp(...)` entries in `tools:` converge on one internal policy model; agent and skill parsers share the same key set; harness emission unchanged.
-- Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and `mcp-tools:`. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
+- Inbound lift: Claude `mcpServers` now appends `mcp(server)` entries to `tools:` instead of lifting to `mcp-tools:`.
+- MCP input unification (Phase 2): inline `mcp(...)` entries in `tools:` / `disallowed-tools:` converge on one internal policy model; agent and skill parsers share the same key set.
+- Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and inline `mcp(...)` MCP grants. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
 - Agents honor `user-invocable` (was skills-only).
 - Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.
 - Lossiness warnings surface only on `mars sync`, `mars upgrade`, `mars init`, and `mars check`; suppressed on validate, export, add, and other sync-pipeline commands.

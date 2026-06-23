@@ -311,15 +311,16 @@ fn autocompact_pct_string_produces_diagnostic() {
 
 #[test]
 fn parses_skills_tools_disallowed_mcp() {
-    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write]\ndisallowed-tools: [Agent]\nmcp-tools: [server]\n---\n";
+    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write, mcp(server)]\ndisallowed-tools: [Agent]\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
     assert!(p.skills.available.is_empty());
-    assert_eq!(p.tools, vec!["bash", "write"]);
+    assert_eq!(p.tools, vec!["bash", "write", "mcp(server)"]);
     assert!(p.tools_denied.is_empty());
     assert_eq!(p.disallowed_tools, vec!["agent"]);
-    assert_eq!(p.mcp_tools, vec!["server"]);
+    let policy = p.effective_tool_policy(&HarnessKind::Claude);
+    assert_eq!(policy.mcp_allowed.len(), 1);
 }
 
 #[test]
@@ -361,8 +362,8 @@ fn harness_overrides_do_not_replace_tool_policy() {
 tools:
   Bash: allow
   Read: deny
+  mcp(plugin:base): allow
 disallowed-tools: [Edit]
-mcp-tools: [plugin:base]
 harness-overrides:
   codex:
     tools: [shell]

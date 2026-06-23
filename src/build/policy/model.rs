@@ -159,7 +159,6 @@ mod tests {
             tools: Vec::new(),
             tools_denied: Vec::new(),
             disallowed_tools: Vec::new(),
-            mcp_tools: Vec::new(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
             fanout: Vec::new(),

@@ -295,7 +295,6 @@ pub struct AgentProfile {
     pub tools: Vec<String>,
     pub tools_denied: Vec<String>,
     pub disallowed_tools: Vec<String>,
-    pub mcp_tools: Vec<String>,
 
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
@@ -318,12 +317,7 @@ impl AgentProfile {
     }
 
     pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
-        tool_policy::effective_tool_policy(
-            &self.tools,
-            &self.tools_denied,
-            &self.disallowed_tools,
-            &self.mcp_tools,
-        )
+        tool_policy::effective_tool_policy(&self.tools, &self.tools_denied, &self.disallowed_tools)
     }
 }
 // ---------------------------------------------------------------------------
@@ -855,7 +849,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     };
 
-    // skills/subagents/tools/disallowed-tools/mcp-tools:
+    // skills/subagents/tools/disallowed-tools:
     let skills = fm.skills_structured();
     let subagents = fm
         .get("subagents")
@@ -871,7 +865,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("disallowed-tools")
         .map(|value| yaml_tool_list("disallowed-tools", value, diags))
         .unwrap_or_default();
-    let mcp_tools = tool_policy::legacy_mcp_tools_from_frontmatter(fm);
 
     // harness-overrides:
     let harness_overrides = fm
@@ -913,7 +906,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         tools,
         tools_denied,
         disallowed_tools,
-        mcp_tools,
         harness_overrides,
         model_policies,
         fanout,

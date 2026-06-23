@@ -116,11 +116,6 @@ pub(crate) fn apply_skill_overlay(
             &tool_policy::non_canonical_aliases_for("disallowed-tools"),
         );
     }
-    if !overlay.tools.mcp.is_empty() {
-        changed |=
-            set_string_list_field(&mut merged, "mcp-tools", &overlay.tools.mcp, &["mcp_tools"]);
-    }
-
     (merged, changed)
 }
 

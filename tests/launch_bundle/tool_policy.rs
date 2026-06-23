@@ -16,8 +16,8 @@ tools:
   Bash: allow
   Agent: deny
   Edit: deny
+  mcp(plugin:root): allow
 disallowed-tools: [Write]
-mcp-tools: [plugin:root]
 harness-overrides:
   codex:
     tools:
@@ -136,8 +136,7 @@ tools:
   CustomDeny: deny
   CustomTool: allow
   Notebook: allow
-mcp-tools:
-  - plugin:context7:context7
+  mcp(plugin:context7:context7): allow
 ---
 Review code changes."#;
 

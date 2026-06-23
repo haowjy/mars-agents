@@ -31,7 +31,6 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         tools: Vec::new(),
         tools_denied: Vec::new(),
         disallowed_tools: Vec::new(),
-        mcp_tools: Vec::new(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),

@@ -23,7 +23,6 @@ pub struct SkillProfile {
     pub tools_denied: Vec<String>,
     /// Canonical tool denylist — lowered to harness-native denylist fields where supported.
     pub disallowed_tools: Vec<String>,
-    pub mcp_tools: Vec<String>,
     pub license: Option<String>,
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
@@ -37,12 +36,7 @@ pub struct SkillProfile {
 
 impl SkillProfile {
     pub fn effective_tool_policy(&self) -> EffectiveToolPolicy {
-        tool_policy::effective_tool_policy(
-            &self.tools,
-            &self.tools_denied,
-            &self.disallowed_tools,
-            &self.mcp_tools,
-        )
+        tool_policy::effective_tool_policy(&self.tools, &self.tools_denied, &self.disallowed_tools)
     }
 }
 
@@ -246,9 +240,6 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         .or_else(|| fm.get("disallowed_tools"))
         .map(|v| yaml_tool_list("disallowed-tools", v, diags))
         .unwrap_or_default();
-    consumed_keys.push("mcp-tools".to_string());
-    consumed_keys.push("mcp_tools".to_string());
-    let mcp_tools = tool_policy::legacy_mcp_tools_from_frontmatter(fm);
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
     let license = license_raw.and_then(Value::as_str).map(str::to_owned);
@@ -304,6 +295,8 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         "invocation",
         "disable-model-invocation",
         "allow_implicit_invocation",
+        "mcp-tools",
+        "mcp_tools",
     ] {
         consumed_keys.push(field.to_string());
         if fm.get(field).is_some() {
@@ -331,7 +324,6 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         tools,
         tools_denied,
         disallowed_tools,
-        mcp_tools,
         license,
         metadata,
         had_model_invocable_field,

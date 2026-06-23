@@ -123,10 +123,6 @@ fn agents_show_json_subagents_and_kebab_keys() {
         json.get("tools-denied").is_some(),
         "'tools-denied' key required (kebab):\n{stdout}"
     );
-    assert!(
-        json.get("mcp-tools").is_some(),
-        "'mcp-tools' key required (kebab):\n{stdout}"
-    );
 }
 
 #[test]

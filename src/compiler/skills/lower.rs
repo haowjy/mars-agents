@@ -540,9 +540,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_emits_mcp_tools() {
+    fn claude_emits_mcp() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
@@ -556,28 +556,11 @@ mod tests {
         );
         assert!(
             !out.contains("mcp-tools:"),
-            "must not emit mcp-tools: {out}"
+            "must not emit a separate mcp field: {out}"
         );
         assert!(lowered.lossy_fields.iter().any(|field| {
-            field.field == "mcp-tools"
-                && matches!(field.classification, Lossiness::Approximate { .. })
+            field.field == "mcp" && matches!(field.classification, Lossiness::Approximate { .. })
         }));
-    }
-
-    #[test]
-    fn claude_mcp_tools_list_and_legacy_field_emit_identically() {
-        let legacy = parse_profile(
-            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
-        );
-        let inline = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
-        );
-        let legacy_out = lower_skill_to_claude(&legacy, "Body\n");
-        let inline_out = lower_skill_to_claude(&inline, "Body\n");
-        assert_eq!(
-            legacy_out.bytes, inline_out.bytes,
-            "legacy vs tools-list MCP emission must match"
-        );
     }
 
     #[test]
@@ -593,24 +576,27 @@ mod tests {
         );
         assert!(
             !out.contains("mcp-tools:"),
-            "must not emit mcp-tools: {out}"
+            "must not emit a separate mcp field: {out}"
         );
     }
 
     #[test]
-    fn codex_warns_mcp_tools() {
+    fn codex_warns_mcp() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
         );
         let lowered = lower_skill_to_codex(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("mcp-tools"), "mcp-tools must not emit: {out}");
+        assert!(
+            !out.contains("mcp-tools"),
+            "separate mcp field must not emit: {out}"
+        );
         assert!(
             lowered
                 .lossy_fields
                 .iter()
-                .any(|field| field.field == "mcp-tools"),
-            "expected mcp-tools lossiness: {:?}",
+                .any(|field| field.field == "mcp"),
+            "expected mcp lossiness: {:?}",
             lowered.lossy_fields
         );
     }

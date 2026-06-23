@@ -172,7 +172,6 @@ fn empty_agent_profile() -> AgentProfile {
         tools: Vec::new(),
         tools_denied: Vec::new(),
         disallowed_tools: Vec::new(),
-        mcp_tools: Vec::new(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),

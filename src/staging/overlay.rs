@@ -98,9 +98,9 @@ pub(crate) fn apply_skill_overlay(
     if !overlay.tools.allowed.is_empty() {
         changed |= set_string_list_field(
             &mut merged,
-            "allowed-tools",
+            "tools",
             &overlay.tools.allowed,
-            &["allowed_tools"],
+            &["allowed-tools", "allowed_tools"],
         );
     }
     if !overlay.tools.disallowed.is_empty() {
@@ -223,6 +223,27 @@ mod tests {
             merged.get("disallowed-tools"),
             Some(&Value::Sequence(vec![Value::String("Agent".into())]))
         );
+    }
+
+    #[test]
+    fn overlay_projects_allowed_tools_to_canonical_tools() {
+        let overlay = SkillOverlay {
+            tools: AgentOverlayTools {
+                allowed: vec!["Bash(git *)".to_string()],
+                ..AgentOverlayTools::default()
+            },
+            ..SkillOverlay::default()
+        };
+        let (merged, changed) = apply_skill_overlay(
+            &fm("name: demo\ndescription: base\n"),
+            &overlay,
+        );
+        assert!(changed);
+        assert_eq!(
+            merged.get("tools"),
+            Some(&Value::Sequence(vec![Value::String("Bash(git *)".into())]))
+        );
+        assert!(merged.get("allowed-tools").is_none());
     }
 
     #[test]

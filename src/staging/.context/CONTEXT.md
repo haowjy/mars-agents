@@ -44,7 +44,8 @@ pub fn lift_frontmatter(
 ```
 
 C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
-(`staging/overlay.rs`). Lookup key is the **installed** skill name (after
+(`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
+`disallowed-tools:` / `mcp-tools:` (not legacy `allowed-tools`). Lookup key is the **installed** skill name (after
 explicit rename), matching `[skills.<name>]` in mars.toml — not the source
 directory basename alone. Flat/root `SKILL.md` skills use the discovered item
 name (dependency source name or configured fallback).

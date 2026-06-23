@@ -160,7 +160,8 @@ fn is_consumer_project(base: &Path, config: Option<&crate::config::Config>) -> b
     if config.package.is_some() {
         return false;
     }
-    base.join(LOCAL_SOURCE_DIR).is_dir() || base.join(".mars").is_dir()
+    // `.mars/` is sync cache; sync discovers local `_self` items only from `.mars-src/`.
+    base.join(LOCAL_SOURCE_DIR).is_dir()
 }
 
 fn load_skill_overrides(base: &Path) -> Result<IndexMap<String, SkillOverlay>, MarsError> {
@@ -357,6 +358,36 @@ mod tests {
         assert!(
             diags.iter().all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
             ".agents does not project native skills — expected no skill lossiness: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn collect_source_lossiness_stable_when_mars_cache_exists() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/demo");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
+        )
+        .unwrap();
+
+        let settings = crate::config::load(dir.path()).unwrap().settings;
+        let before = collect_source_lossiness_diagnostics(dir.path(), &settings).unwrap();
+
+        std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
+
+        let after = collect_source_lossiness_diagnostics(dir.path(), &settings).unwrap();
+        let before_msgs: Vec<_> = before.iter().map(|d| d.message.clone()).collect();
+        let after_msgs: Vec<_> = after.iter().map(|d| d.message.clone()).collect();
+        assert_eq!(
+            before_msgs, after_msgs,
+            "preview must not treat .mars cache as consumer authoring: before={before:?} after={after:?}"
         );
     }
 }

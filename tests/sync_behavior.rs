@@ -248,6 +248,80 @@ fn sync_repairs_diverged_native_skill_projection_when_canonical_is_skipped() {
 }
 
 #[test]
+fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Base")]);
+    let variant_dir = source.join("skills/planning/variants/claude");
+    fs::create_dir_all(&variant_dir).unwrap();
+    fs::write(variant_dir.join("SKILL.md"), "# Claude").unwrap();
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_skill = project
+        .child(".claude")
+        .child("skills")
+        .child("planning")
+        .child("SKILL.md");
+    let mars_skill = project
+        .child(".mars")
+        .child("skills")
+        .child("planning")
+        .child("SKILL.md");
+
+    let native_before = fs::metadata(native_skill.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mars_before = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    let native_after = fs::metadata(native_skill.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mars_after = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
+    assert_eq!(
+        native_before, native_after,
+        "no-op sync must not rewrite linked native skill output"
+    );
+    assert_eq!(
+        mars_before, mars_after,
+        ".mars canonical output must stay untouched"
+    );
+    assert_eq!(fs::read_to_string(native_skill.path()).unwrap(), "# Claude");
+}
+
+#[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();
     let source = create_source(

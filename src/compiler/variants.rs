@@ -216,13 +216,17 @@ pub fn harness_skill_variant_path(skill_dir: &Path, harness_key: &str) -> Option
 /// `variants/` subtree, then optionally replace only `SKILL.md` with the
 /// harness-level variant. Passing `None` keeps the full tree and is intended
 /// for full-fidelity targets such as `.agents`.
+/// Project a canonical skill tree to a target directory.
+///
+/// Returns `true` when bytes were written to `dest`, `false` when an existing
+/// tree was already byte-identical and left untouched.
 pub fn project_skill_for_target(
     source: &Path,
     dest: &Path,
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
 
@@ -246,7 +250,12 @@ pub fn project_skill_for_target(
     }
 
     let tmp_path = tmp_dir.keep();
-    crate::platform::fs::replace_generated_dir(&tmp_path, dest)
+    if dest.exists() && crate::reconcile::fs_ops::directory_trees_content_equal(&tmp_path, dest)? {
+        let _ = crate::platform::fs::safe_remove(&tmp_path);
+        return Ok(false);
+    }
+    crate::platform::fs::replace_generated_dir(&tmp_path, dest)?;
+    Ok(true)
 }
 
 fn compile_projected_skill_frontmatter(
@@ -473,6 +482,37 @@ mod tests {
                 .iter()
                 .any(|w| w.code == "skill-variant-missing-skill")
         );
+    }
+
+    #[test]
+    fn project_skill_for_target_skips_byte_identical_dest() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(source.join("variants/claude")).unwrap();
+        std::fs::write(source.join("SKILL.md"), "base").unwrap();
+        std::fs::write(source.join("variants/claude/SKILL.md"), "claude").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        assert!(
+            project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
+                .unwrap()
+        );
+
+        let before = std::fs::metadata(dest.join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(
+            !project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
+                .unwrap()
+        );
+        let after = std::fs::metadata(dest.join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]

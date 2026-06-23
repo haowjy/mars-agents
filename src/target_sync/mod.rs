@@ -213,7 +213,7 @@ fn sync_one_target(
                                 native_skill_variant_key.as_deref(),
                                 diag,
                             ) {
-                                Ok(()) => {
+                                Ok(true) => {
                                     items_synced += 1;
                                     record_synced_output(
                                         &mut synced_outputs,
@@ -234,6 +234,7 @@ fn sync_one_target(
                                         );
                                     }
                                 }
+                                Ok(false) => {}
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
                         }
@@ -293,7 +294,7 @@ fn sync_one_target(
                         native_skill_variant_key.as_deref(),
                         diag,
                     ) {
-                        Ok(()) => {
+                        Ok(true) => {
                             items_synced += 1;
                             record_synced_output(
                                 &mut synced_outputs,
@@ -302,6 +303,7 @@ fn sync_one_target(
                                 outcome.item_id.kind,
                             );
                         }
+                        Ok(false) => {}
                         Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                     }
                 }
@@ -408,6 +410,9 @@ fn record_synced_output(
 ///
 /// Follows symlinks on the source side (D26 — targets get file copies, not symlinks).
 /// Uses atomic operations via the reconcile layer.
+///
+/// Returns `true` when bytes were written to `dest`, `false` when existing content
+/// was already byte-identical and left untouched.
 fn copy_item_to_target(
     source: &Path,
     dest: &Path,
@@ -415,7 +420,7 @@ fn copy_item_to_target(
     item_name: &str,
     native_skill_variant_key: Option<&str>,
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     if kind == crate::lock::ItemKind::Skill && native_skill_variant_key.is_some() {
         crate::compiler::variants::validate_skill_variants(source, item_name, diag);
         return crate::compiler::variants::project_skill_for_target(
@@ -436,12 +441,18 @@ fn copy_item_to_target(
     let metadata = std::fs::metadata(source)?;
 
     if metadata.is_dir() {
+        if dest.exists() && fs_ops::directory_trees_content_equal(source, dest)? {
+            return Ok(false);
+        }
         fs_ops::atomic_copy_dir(source, dest)?;
     } else if metadata.is_file() {
+        if fs_ops::file_content_equal(source, dest)? {
+            return Ok(false);
+        }
         fs_ops::atomic_copy_file(source, dest)?;
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Clean up orphaned items in a target directory.
@@ -1279,5 +1290,142 @@ mod tests {
                 .iter()
                 .any(|d| d.code == "target-unmanaged-adopted")
         );
+    }
+
+    fn make_skipped_skill_outcome(dest: &str, name: &str) -> ActionOutcome {
+        ActionOutcome {
+            item_id: crate::lock::ItemId {
+                kind: ItemKind::Skill,
+                name: ItemName::from(name),
+            },
+            action: ActionTaken::Skipped,
+            dest_path: DestPath::from(dest),
+            source_name: "test-source".into(),
+            source_checksum: None,
+            installed_checksum: None,
+        }
+    }
+
+    fn make_installed_skill_outcome(dest: &str, name: &str) -> ActionOutcome {
+        ActionOutcome {
+            item_id: crate::lock::ItemId {
+                kind: ItemKind::Skill,
+                name: ItemName::from(name),
+            },
+            action: ActionTaken::Installed,
+            dest_path: DestPath::from(dest),
+            source_name: "test-source".into(),
+            source_checksum: None,
+            installed_checksum: None,
+        }
+    }
+
+    #[test]
+    fn sync_skipped_native_skill_projection_skips_byte_identical_rewrite() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+        let skill_source = mars_dir.join("skills/planning");
+        std::fs::create_dir_all(skill_source.join("variants/claude")).unwrap();
+        std::fs::write(
+            skill_source.join("SKILL.md"),
+            "---\nname: planning\ndescription: Base\n---\n# Base\n",
+        )
+        .unwrap();
+        std::fs::write(skill_source.join("variants/claude/SKILL.md"), "# Claude").unwrap();
+
+        let outcomes = vec![make_installed_skill_outcome("skills/planning", "planning")];
+        let mut diag = DiagnosticCollector::new();
+        sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes,
+            &target_sync_ctx(&LockFile::empty(), false),
+            &mut diag,
+        );
+
+        let native_skill = target.join("skills/planning/SKILL.md");
+        assert!(native_skill.exists());
+        let expected = std::fs::read_to_string(&native_skill).unwrap();
+        let before = std::fs::metadata(&native_skill)
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let skill_dir = target.join("skills/planning");
+        let checksum = hash::compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        let lock =
+            lock_with_skill_target_outputs(".claude", &[("skills/planning", checksum.as_str())]);
+        let outcomes2 = vec![make_skipped_skill_outcome("skills/planning", "planning")];
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes2,
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 0);
+        let after = std::fs::metadata(&native_skill)
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "no-op sync must not rewrite native skill output"
+        );
+        assert_eq!(std::fs::read_to_string(&native_skill).unwrap(), expected);
+    }
+
+    #[test]
+    fn sync_changed_native_skill_projection_rewrites_target_output() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+        let skill_source = mars_dir.join("skills/planning");
+        std::fs::create_dir_all(skill_source.join("variants/claude")).unwrap();
+        std::fs::write(
+            skill_source.join("SKILL.md"),
+            "---\nname: planning\ndescription: Base\n---\n# Base\n",
+        )
+        .unwrap();
+        std::fs::write(skill_source.join("variants/claude/SKILL.md"), "# Claude v1").unwrap();
+
+        let outcomes = vec![make_installed_skill_outcome("skills/planning", "planning")];
+        let mut diag = DiagnosticCollector::new();
+        sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes,
+            &target_sync_ctx(&LockFile::empty(), false),
+            &mut diag,
+        );
+
+        let expected =
+            std::fs::read_to_string(target.join("skills/planning/SKILL.md")).unwrap();
+
+        std::fs::write(skill_source.join("variants/claude/SKILL.md"), "# Claude v2").unwrap();
+        let outcomes2 = vec![make_installed_skill_outcome("skills/planning", "planning")];
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes2,
+            &target_sync_ctx(
+                &lock_with_skill_target_outputs(".claude", &[("skills/planning", "sha256:old")]),
+                false,
+            ),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 1);
+        let updated = std::fs::read_to_string(target.join("skills/planning/SKILL.md")).unwrap();
+        assert!(updated.contains("# Claude v2"));
+        assert_ne!(updated, expected);
     }
 }

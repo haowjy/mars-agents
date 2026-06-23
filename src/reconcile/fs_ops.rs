@@ -47,6 +47,53 @@ pub fn content_hash(path: &Path, kind: ItemKind) -> Result<ContentHash, MarsErro
     crate::hash::compute_hash(path, kind).map(ContentHash::from)
 }
 
+/// Whether two regular files have identical byte content.
+pub fn file_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
+    if !left.is_file() || !right.is_file() {
+        return Ok(false);
+    }
+    Ok(fs::read(left)? == fs::read(right)?)
+}
+
+/// Whether two directory trees have identical relative paths and file bytes.
+pub fn directory_trees_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
+    if !left.is_dir() || !right.is_dir() {
+        return Ok(false);
+    }
+    let left_files = collect_relative_file_paths(left, left)?;
+    let right_files = collect_relative_file_paths(right, right)?;
+    if left_files != right_files {
+        return Ok(false);
+    }
+    for rel in left_files {
+        if fs::read(left.join(&rel))? != fs::read(right.join(&rel))? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn collect_relative_file_paths(root: &Path, current: &Path) -> Result<Vec<String>, MarsError> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root).expect("path is always under root");
+        let rel_path: String = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if entry.file_type()?.is_dir() {
+            paths.extend(collect_relative_file_paths(root, &path)?);
+        } else if entry.file_type()?.is_file() {
+            paths.push(rel_path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
 /// Recursively copy a directory, following symlinks on the source side.
 ///
 /// Uses `fs::metadata` (not `symlink_metadata`) to follow symlinks.
@@ -103,6 +150,40 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn directory_trees_content_equal_detects_identical_and_different_trees() {
+        let dir = TempDir::new().expect("temp dir");
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        let other = dir.path().join("other");
+        fs::create_dir_all(left.join("nested")).expect("create left");
+        fs::create_dir_all(right.join("nested")).expect("create right");
+        fs::create_dir_all(other.join("nested")).expect("create other");
+        fs::write(left.join("root.txt"), "root").expect("write left root");
+        fs::write(left.join("nested/child.txt"), "child").expect("write left child");
+        fs::write(right.join("root.txt"), "root").expect("write right root");
+        fs::write(right.join("nested/child.txt"), "child").expect("write right child");
+        fs::write(other.join("root.txt"), "different").expect("write other root");
+        fs::write(other.join("nested/child.txt"), "child").expect("write other child");
+
+        assert!(directory_trees_content_equal(&left, &right).expect("compare equal"));
+        assert!(!directory_trees_content_equal(&left, &other).expect("compare different"));
+    }
+
+    #[test]
+    fn file_content_equal_compares_regular_files() {
+        let dir = TempDir::new().expect("temp dir");
+        let left = dir.path().join("left.txt");
+        let right = dir.path().join("right.txt");
+        let other = dir.path().join("other.txt");
+        fs::write(&left, "same").expect("write left");
+        fs::write(&right, "same").expect("write right");
+        fs::write(&other, "different").expect("write other");
+
+        assert!(file_content_equal(&left, &right).expect("compare equal"));
+        assert!(!file_content_equal(&left, &other).expect("compare different"));
+    }
 
     #[test]
     fn atomic_copy_file_copies_regular_file() {

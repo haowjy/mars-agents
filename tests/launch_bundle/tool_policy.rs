@@ -153,11 +153,11 @@ Review code changes."#;
 
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["custom_tool", "Notebook"])
+        serde_json::json!(["CustomTool", "Notebook"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["PlanMode", "custom_deny"])
+        serde_json::json!(["PlanMode", "CustomDeny"])
     );
     assert_eq!(
         bundle["tools"]["mcp"],
@@ -283,7 +283,7 @@ Review code changes."#;
     );
     assert_eq!(
         claude_bundle["tools"]["disallowed"],
-        serde_json::json!(["Skill(init)", "Workflow", "definitely-not-a-tool"])
+        serde_json::json!(["Skill(init)", "Workflow", "Definitely-not-a-tool"])
     );
     let claude_warnings = claude_bundle["warnings"]
         .as_array()
@@ -350,33 +350,55 @@ Review code changes."#;
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
-    for harness in ["cursor", "pi"] {
-        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-        cmd.args([
-            "build",
-            "launch-bundle",
-            "--agent",
-            "reviewer",
-            "--harness",
-            harness,
-        ]);
-        cmd.env("PATH", replace_path_with(&bin_dir));
+    let mut cursor_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cursor_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "cursor",
+    ]);
+    cursor_cmd.env("PATH", replace_path_with(&bin_dir));
+    let cursor_output = cursor_cmd.assert().success().get_output().clone();
+    let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
+    assert_eq!(
+        cursor_bundle["tools"]["allowed"],
+        serde_json::json!(["CustomTool"])
+    );
+    let cursor_warnings = cursor_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(cursor_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("tool 'custom_tool' is not a known")
+    }));
 
-        let output = cmd.assert().success().get_output().clone();
-        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(
-            bundle["tools"]["allowed"],
-            serde_json::json!(["custom_tool"])
-        );
-
-        let warnings = bundle["warnings"]
-            .as_array()
-            .expect("warnings should be an array");
-        assert!(warnings.iter().any(|warning| {
-            warning
-                .as_str()
-                .unwrap_or_default()
-                .contains("tool 'custom_tool' is not a known")
-        }));
-    }
+    let mut pi_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    pi_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "pi",
+    ]);
+    pi_cmd.env("PATH", replace_path_with(&bin_dir));
+    let pi_output = pi_cmd.assert().success().get_output().clone();
+    let pi_bundle: Value = serde_json::from_slice(&pi_output.stdout).unwrap();
+    assert_eq!(
+        pi_bundle["tools"]["allowed"],
+        serde_json::json!(["custom_tool"])
+    );
+    let pi_warnings = pi_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(pi_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("tool 'custom_tool' is not a known")
+    }));
 }

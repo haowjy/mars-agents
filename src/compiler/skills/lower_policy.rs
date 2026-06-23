@@ -388,13 +388,13 @@ impl<'a> LoweringCtx<'a> {
                 for tool in &tool_policy.allowed {
                     let projected = project_tool_for_harness(tool, policy.harness_key);
                     if track_unknown_tool_lossiness
-                        && projected.status == ToolProjectionStatus::Unknown
+                        && projected.status == ToolProjectionStatus::UnknownProjected
                     {
                         self.lossy_fields.push(LossyField {
                             field: "tools".into(),
                             target: policy.target_name.into(),
                             classification: Lossiness::Approximate {
-                                note: "unknown tool name passed through verbatim",
+                                note: "unknown tool projected via harness naming convention",
                             },
                         });
                     }
@@ -424,12 +424,12 @@ impl<'a> LoweringCtx<'a> {
                 let mut tools = Vec::new();
                 for tool in &disallowed {
                     let projected = project_tool_for_harness(tool, policy.harness_key);
-                    if projected.status == ToolProjectionStatus::Unknown {
+                    if projected.status == ToolProjectionStatus::UnknownProjected {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
                             target: policy.target_name.into(),
                             classification: Lossiness::Approximate {
-                                note: "unknown tool name passed through verbatim",
+                                note: "unknown tool projected via harness naming convention",
                             },
                         });
                     }

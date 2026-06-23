@@ -83,12 +83,12 @@ fn normalize_tools_for_harness(
         .iter()
         .map(|tool| {
             let projected = project_tool_for_harness(tool, harness);
-            if projected.status == ToolProjectionStatus::Unknown {
+            if projected.status == ToolProjectionStatus::UnknownProjected {
                 lossy.push(LossyField {
                     field: field.into(),
                     target: harness.into(),
                     classification: Lossiness::Approximate {
-                        note: "unknown tool name passed through verbatim",
+                        note: "unknown tool projected via harness naming convention",
                     },
                 });
             }

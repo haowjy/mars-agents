@@ -36,7 +36,8 @@ pub(crate) struct ProjectedToolName {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToolProjectionStatus {
     Known,
-    Unknown,
+    UnknownProjected,
+    McpVerbatim,
 }
 
 struct CanonicalTool {
@@ -274,7 +275,7 @@ pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> Proje
     if trimmed.is_empty() {
         return ProjectedToolName {
             name: String::new(),
-            status: ToolProjectionStatus::Unknown,
+            status: ToolProjectionStatus::UnknownProjected,
         };
     }
 
@@ -283,15 +284,28 @@ pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> Proje
     if head.is_empty() {
         return ProjectedToolName {
             name: trimmed.to_string(),
-            status: ToolProjectionStatus::Unknown,
+            status: ToolProjectionStatus::UnknownProjected,
+        };
+    }
+
+    if is_mcp_shaped(head) {
+        return ProjectedToolName {
+            name: trimmed.to_string(),
+            status: ToolProjectionStatus::McpVerbatim,
         };
     }
 
     let canonical = canonicalize_head(head);
     if !canonical.known {
+        let harness = target_harness.trim().to_ascii_lowercase();
+        let native = match convention_for_harness(&harness) {
+            NamingConvention::PascalCase => snake_to_pascal(&canonical.name),
+            NamingConvention::SnakeCase => canonical.name.clone(),
+            NamingConvention::Lowercase => canonical.name.clone(),
+        };
         return ProjectedToolName {
-            name: trimmed.to_string(),
-            status: ToolProjectionStatus::Unknown,
+            name: format!("{native}{payload}"),
+            status: ToolProjectionStatus::UnknownProjected,
         };
     }
 
@@ -333,7 +347,21 @@ fn split_tool_name(value: &str) -> (&str, &str) {
     }
 }
 
+/// MCP wire identifiers (`mcp__server__tool`) are exact in every harness and must never
+/// be re-cased or convention-projected.
+fn is_mcp_shaped(head: &str) -> bool {
+    let head = head.trim();
+    head.len() >= 5 && head[..5].eq_ignore_ascii_case("mcp__")
+}
+
 fn canonicalize_head(head: &str) -> CanonicalizedHead {
+    if is_mcp_shaped(head) {
+        return CanonicalizedHead {
+            name: head.to_string(),
+            known: false,
+        };
+    }
+
     let lowercase = head.to_ascii_lowercase();
 
     if let Some(canonical) = canonical_tool_name(&lowercase) {
@@ -544,7 +572,7 @@ mod tests {
                 "CustomTool",
                 "claude",
                 "CustomTool",
-                ToolProjectionStatus::Unknown,
+                ToolProjectionStatus::UnknownProjected,
             ),
             (
                 "bash(git *)",
@@ -727,5 +755,96 @@ mod tests {
                 "raw: {raw}, harness: {harness}"
             );
         }
+    }
+
+    #[test]
+    fn unknown_plain_tools_project_via_harness_convention() {
+        let cases = [
+            (
+                "my_custom_tool",
+                "claude",
+                "MyCustomTool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "my_custom_tool",
+                "cursor",
+                "MyCustomTool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "my_custom_tool",
+                "codex",
+                "my_custom_tool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "my_custom_tool",
+                "opencode",
+                "my_custom_tool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "my_custom_tool",
+                "pi",
+                "my_custom_tool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "raw: {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "raw: {raw}, harness: {harness}"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_shaped_tools_preserve_verbatim_casing() {
+        let cases = [
+            (
+                "mcp__github__CreateIssue",
+                "claude",
+                "mcp__github__CreateIssue",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp__github__CreateIssue",
+                "codex",
+                "mcp__github__CreateIssue",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "MCP__Server__Tool(scope)",
+                "claude",
+                "MCP__Server__Tool(scope)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "raw: {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "raw: {raw}, harness: {harness}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_preserves_mcp_tool_segment_casing() {
+        let parsed = parse("mcp__github__CreateIssue");
+        assert_eq!(parsed.name, "mcp__github__CreateIssue");
+        assert!(!parsed.known);
     }
 }

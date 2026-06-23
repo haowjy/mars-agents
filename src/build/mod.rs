@@ -241,13 +241,13 @@ fn normalize_and_dedupe_tools(
 
     for tool in tools {
         let normalized = project_tool_for_harness(tool, harness);
-        if normalized.status == ToolProjectionStatus::Unknown {
+        if normalized.status == ToolProjectionStatus::UnknownProjected {
             match kind {
                 ToolPolicyKind::Allowed => warnings.push(format!(
-                    "tool '{tool}' is not a known {harness} tool; passing through verbatim"
+                    "tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
                 )),
                 ToolPolicyKind::Disallowed => warnings.push(format!(
-                    "disallowed tool '{tool}' is not a known {harness} tool; passing through verbatim"
+                    "disallowed tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
                 )),
             }
         }

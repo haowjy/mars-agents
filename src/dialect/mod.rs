@@ -1,7 +1,9 @@
 //! Inbound dialect vocabulary for foreign → canonical lift.
 //!
 //! Mirrors the first-class harness set (minus Pi) plus `MarsNative` for
-//! already-canonical mars-authored sources.
+//! already-canonical mars-authored sources. Harness identity comes from
+//! [`crate::harness::registry::HarnessId`] — not the compiler layer.
+//! `compiler::agents::HarnessKind` bridges via `to_dialect` / `from_dialect`.
 
 use std::fmt;
 use std::path::Path;
@@ -9,7 +11,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::agents::HarnessKind;
+use crate::harness::registry::HarnessId;
 
 /// Recognized inbound source dialects for lift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -46,22 +48,22 @@ impl Dialect {
         }
     }
 
-    pub fn from_harness_kind(kind: HarnessKind) -> Option<Self> {
-        match kind {
-            HarnessKind::Claude => Some(Self::Claude),
-            HarnessKind::Codex => Some(Self::Codex),
-            HarnessKind::OpenCode => Some(Self::OpenCode),
-            HarnessKind::Cursor => Some(Self::Cursor),
-            HarnessKind::Pi => None,
+    pub fn from_harness_id(id: HarnessId) -> Option<Self> {
+        match id {
+            HarnessId::Claude => Some(Self::Claude),
+            HarnessId::Codex => Some(Self::Codex),
+            HarnessId::OpenCode => Some(Self::OpenCode),
+            HarnessId::Cursor => Some(Self::Cursor),
+            HarnessId::Pi => None,
         }
     }
 
-    pub fn to_harness_kind(self) -> Option<HarnessKind> {
+    pub fn to_harness_id(self) -> Option<HarnessId> {
         match self {
-            Self::Claude => Some(HarnessKind::Claude),
-            Self::Codex => Some(HarnessKind::Codex),
-            Self::OpenCode => Some(HarnessKind::OpenCode),
-            Self::Cursor => Some(HarnessKind::Cursor),
+            Self::Claude => Some(HarnessId::Claude),
+            Self::Codex => Some(HarnessId::Codex),
+            Self::OpenCode => Some(HarnessId::OpenCode),
+            Self::Cursor => Some(HarnessId::Cursor),
             Self::MarsNative => None,
         }
     }
@@ -212,5 +214,22 @@ mod tests {
             Dialect::resolve(Some(Dialect::Codex), dir.path()),
             Dialect::Codex
         );
+    }
+
+    #[test]
+    fn harness_id_roundtrip() {
+        use crate::harness::registry::HarnessId;
+
+        for id in [
+            HarnessId::Claude,
+            HarnessId::Codex,
+            HarnessId::OpenCode,
+            HarnessId::Cursor,
+        ] {
+            let dialect = Dialect::from_harness_id(id).unwrap();
+            assert_eq!(dialect.to_harness_id(), Some(id));
+        }
+        assert_eq!(Dialect::from_harness_id(HarnessId::Pi), None);
+        assert_eq!(Dialect::MarsNative.to_harness_id(), None);
     }
 }

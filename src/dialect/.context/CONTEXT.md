@@ -15,7 +15,7 @@ pub enum Dialect {
 }
 ```
 
-Five variants mirroring `compiler::agents::HarnessKind` (Claude, Codex, OpenCode, Cursor, Pi) **minus Pi**, plus `MarsNative` for already-canonical mars-authored sources. The upward dep on `HarnessKind` is tracked in issue #118 (structural inversion — dialect is logically more foundational than compiler harness enumeration).
+Five variants mirroring `harness::registry::HarnessId` (Claude, Codex, OpenCode, Cursor, Pi) **minus Pi**, plus `MarsNative` for already-canonical mars-authored sources. Dialect depends downward on `HarnessId` only; `compiler::agents::HarnessKind` bridges via `to_dialect` / `from_dialect` (issue #118 resolved).
 
 ## Resolution
 
@@ -35,11 +35,13 @@ For **local project items**. Same three-step chain as `resolve`, but default is 
 
 `resolve_with_default(explicit, package_root, default)` implements the shared logic. Both public functions delegate to it with their respective default.
 
-## Conversion to/from HarnessKind
+## Conversion to/from HarnessId
 
-- `from_harness_kind(HarnessKind) -> Option<Dialect>` — returns `None` for `HarnessKind::Pi` (no corresponding inbound dialect).
-- `to_harness_kind(self) -> Option<HarnessKind>` — returns `None` for `Dialect::MarsNative` (no foreign harness equivalent).
+- `from_harness_id(HarnessId) -> Option<Dialect>` — returns `None` for `HarnessId::Pi` (no corresponding inbound dialect).
+- `to_harness_id(self) -> Option<HarnessId>` — returns `None` for `Dialect::MarsNative` (no foreign harness equivalent).
+
+Compiler callers use `HarnessKind::to_dialect` / `HarnessKind::from_dialect`, which delegate through `HarnessId`.
 
 ## Tests
 
-77 lines of tests covering: explicit beats inference, inference from containers, ambiguous containers return default, dialect→harness→dialect roundtrip, MarsNative→to_harness_kind→None.
+77 lines of tests covering: explicit beats inference, inference from containers, ambiguous containers return default, dialect→harness_id→dialect roundtrip, MarsNative→to_harness_id→None.

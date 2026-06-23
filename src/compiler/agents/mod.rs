@@ -101,6 +101,16 @@ impl HarnessKind {
             .find(|harness| harness.target_dir() == target_root)
             .cloned()
     }
+
+    /// Inbound dialect for this harness (`None` for Pi — no foreign import surface).
+    pub fn to_dialect(&self) -> Option<crate::dialect::Dialect> {
+        crate::dialect::Dialect::from_harness_id(self.to_harness_id())
+    }
+
+    /// Compiler harness for an inbound dialect (`None` for `MarsNative`).
+    pub fn from_dialect(dialect: crate::dialect::Dialect) -> Option<Self> {
+        dialect.to_harness_id().map(Self::from_harness_id)
+    }
 }
 
 /// Approval policy field.

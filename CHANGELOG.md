@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - No-op `mars sync` no longer rewrites linked native skill outputs when projected bytes are already on disk (mtime churn on `.claude/skills/.../SKILL.md` etc.).
+- Hook lossiness (`hook-dropped`/`hook-approximate`) now follows the same surface/suppress policy as agent/skill lossiness — hidden on `validate`/`export`/`add` and no longer escalated into a failure by `mars validate --strict`.
 
 ### Added
 - Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.

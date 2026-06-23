@@ -4,7 +4,9 @@ pub mod lower;
 
 use serde_yaml::Value;
 
-use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis, value_label};
+use crate::compiler::invocability::{
+    find_invocability_field, parse_invocability_axis, value_label,
+};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
@@ -95,9 +97,9 @@ impl SkillDiagnostic {
             Self::RemovedField { field } => format!(
                 "skill field `{field}` has been removed; use `model-invocable` / `user-invocable` instead"
             ),
-            Self::NonCanonicalField { field, canonical } => format!(
-                "skill field `{field}` is not canonical; use `{canonical}` instead"
-            ),
+            Self::NonCanonicalField { field, canonical } => {
+                format!("skill field `{field}` is not canonical; use `{canonical}` instead")
+            }
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
@@ -105,10 +107,8 @@ impl SkillDiagnostic {
     }
 }
 
-const NON_CANONICAL_TOOL_FIELDS: &[(&str, &str)] = &[
-    ("allowed-tools", "tools:"),
-    ("allowed_tools", "tools:"),
-];
+const NON_CANONICAL_TOOL_FIELDS: &[(&str, &str)] =
+    &[("allowed-tools", "tools:"), ("allowed_tools", "tools:")];
 
 /// Emit warnings for foreign tool allowlist spellings in raw skill frontmatter.
 pub(crate) fn push_non_canonical_tool_field_diags(
@@ -558,9 +558,8 @@ body",
 
     #[test]
     fn warns_for_filtered_non_string_fields() {
-        let (_, d, _) = parse(
-            "---\nname: a\ndescription: b\ntools: [Bash(git *)]\nlicense: false\n---\nbody",
-        );
+        let (_, d, _) =
+            parse("---\nname: a\ndescription: b\ntools: [Bash(git *)]\nlicense: false\n---\nbody");
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, .. } if field == "license"
@@ -569,9 +568,8 @@ body",
 
     #[test]
     fn separator_tool_aliases_canonicalize() {
-        let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\ntools: [ask_user, bash(git *)]\n---\nbody",
-        );
+        let (p, d, _) =
+            parse("---\nname: a\ndescription: b\ntools: [ask_user, bash(git *)]\n---\nbody");
 
         assert_eq!(p.tools, vec!["ask_user", "bash(git *)"]);
         assert!(d.is_empty());
@@ -587,10 +585,7 @@ body",
         assert_eq!(p.tools_denied, vec!["bash(git *)"]);
         let policy = p.effective_tool_policy();
         assert_eq!(policy.allowed, vec!["ask_user"]);
-        assert_eq!(
-            policy.disallowed,
-            vec!["bash(git *)", "web_search"]
-        );
+        assert_eq!(policy.disallowed, vec!["bash(git *)", "web_search"]);
     }
 
     #[test]
@@ -642,18 +637,15 @@ body",
 
     #[test]
     fn disallowed_tools_parses_and_canonicalizes() {
-        let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\ndisallowed-tools: [Agent, web_search]\n---\nbody",
-        );
+        let (p, d, _) =
+            parse("---\nname: a\ndescription: b\ndisallowed-tools: [Agent, web_search]\n---\nbody");
         assert!(d.is_empty());
         assert_eq!(p.disallowed_tools, vec!["agent", "web_search"]);
     }
 
     #[test]
     fn disallowed_tools_snake_key_parses() {
-        let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody",
-        );
+        let (p, d, _) = parse("---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody");
         assert!(d.is_empty());
         assert_eq!(p.disallowed_tools, vec!["write"]);
     }

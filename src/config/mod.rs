@@ -2264,7 +2264,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2300,7 +2300,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2355,7 +2355,7 @@ future_nested_key = true
                         path: None,
                         subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                         version: Some("v1.0".into()),
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2407,7 +2407,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: None,
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2436,7 +2436,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v2.0".into()),
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2667,7 +2667,7 @@ only_agents = true
                 path: None,
                 subpath: None,
                 version: Some("v1.0".into()),
-            dialect: None,
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -2824,7 +2824,7 @@ exclude = ["deprecated"]
                         path: None,
                         subpath: None,
                         version: None,
-            dialect: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -3482,7 +3482,7 @@ skills = ["prompt-helper"]
                 path: Some(PathBuf::from("C:\\Users\\dev\\src")),
                 subpath: None,
                 version: None,
-            dialect: None,
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );

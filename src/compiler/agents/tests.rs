@@ -19,9 +19,9 @@ fn lower_claude(content: &str) -> (AgentProfile, lower::LoweredOutput, Vec<Agent
 }
 
 fn dropped_invocability(out: &lower::LoweredOutput, field: &str) -> bool {
-    out.lossy_fields.iter().any(|f| {
-        f.field == field && matches!(f.classification, Lossiness::Dropped)
-    })
+    out.lossy_fields
+        .iter()
+        .any(|f| f.field == field && matches!(f.classification, Lossiness::Dropped))
 }
 
 // --- 3.1: Basic field parsing ---
@@ -66,9 +66,8 @@ fn user_invocable_defaults_true_without_lowering_lossiness() {
 
 #[test]
 fn parses_model_invocable_false() {
-    let (p, out, diags) = lower_claude(
-        "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body",
-    );
+    let (p, out, diags) =
+        lower_claude("---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body");
     assert!(diags.is_empty());
     assert!(!p.model_invocable);
     assert!(dropped_invocability(&out, "model-invocable"));
@@ -76,9 +75,8 @@ fn parses_model_invocable_false() {
 
 #[test]
 fn parses_user_invocable_false() {
-    let (p, out, diags) = lower_claude(
-        "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body",
-    );
+    let (p, out, diags) =
+        lower_claude("---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body");
     assert!(diags.is_empty());
     assert!(!p.user_invocable);
     assert!(p.model_invocable);

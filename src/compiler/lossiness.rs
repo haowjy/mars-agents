@@ -186,7 +186,11 @@ mod tests {
         assert_eq!(warnings[0].code, "skill-field-dropped");
         assert_eq!(warnings[0].category, Some(DiagnosticCategory::Lossiness));
         assert!(warnings[0].message.contains("skill `planning`"));
-        assert!(warnings[0].message.contains("2 fields dropped for .opencode"));
+        assert!(
+            warnings[0]
+                .message
+                .contains("2 fields dropped for .opencode")
+        );
         assert!(warnings[0].message.contains("disallowed-tools"));
         assert!(warnings[0].message.contains("user-invocable"));
     }

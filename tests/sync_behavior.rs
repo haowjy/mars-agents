@@ -503,7 +503,8 @@ fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fiel
 #[test]
 fn sync_skill_overlay_stages_canonical_and_lowers_native_target() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---\nname: planning\ndescription: base skill\nuser-invocable: true\n---\n# Base\n";
+    let source_skill =
+        "---\nname: planning\ndescription: base skill\nuser-invocable: true\n---\n# Base\n";
     let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
 
     let project = dir.child("project");
@@ -1804,7 +1805,12 @@ fn sync_mars_native_dependency_skill_strips_allowed_tools_and_warns() {
 
     let project = dir.child("project");
     mars()
-        .args(["init", ".claude", "--root", project.path().to_str().unwrap()])
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -1874,7 +1880,12 @@ fn sync_local_mars_native_skill_strips_allowed_tools_and_warns() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     mars()
-        .args(["init", ".claude", "--root", project.path().to_str().unwrap()])
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -1943,7 +1954,12 @@ fn sync_mars_native_canonical_tools_skill_lowers_without_non_canonical_warning()
 
     let project = dir.child("project");
     mars()
-        .args(["init", ".claude", "--root", project.path().to_str().unwrap()])
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
 

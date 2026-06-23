@@ -257,7 +257,8 @@ fn compile_projected_skill_frontmatter(
     skill_name: &str,
 ) -> Result<(), MarsError> {
     let projected_skill = projected_dir.join("SKILL.md");
-    let lowered = lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
+    let lowered =
+        lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
     if let Some(bytes) = lowered {
         fs::write(projected_skill, bytes)?;
     }
@@ -351,7 +352,11 @@ fn lower_projected_skill_for_harness(
     };
     let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
 
-    crate::compiler::lossiness::emit_skill_lossiness_warnings(skill_name, &lowered.lossy_fields, diag);
+    crate::compiler::lossiness::emit_skill_lossiness_warnings(
+        skill_name,
+        &lowered.lossy_fields,
+        diag,
+    );
 
     Ok(Some(lowered.bytes))
 }

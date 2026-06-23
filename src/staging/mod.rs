@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 
 use crate::config::SkillOverlay;
-use crate::dialect::Dialect;
 use crate::diagnostic::DiagnosticCollector;
+use crate::dialect::Dialect;
 use crate::error::MarsError;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
@@ -101,17 +101,14 @@ pub(crate) fn stage_local_item(
     match kind {
         ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
             fs::create_dir_all(&dest)?;
-            let dest_file = dest.join(
-                source_path
-                    .file_name()
-                    .ok_or_else(|| MarsError::Source {
-                        source_name: "_local".to_string(),
-                        message: format!(
-                            "local agent path has no file name: {}",
-                            source_path.display()
-                        ),
-                    })?,
-            );
+            let dest_file =
+                dest.join(source_path.file_name().ok_or_else(|| MarsError::Source {
+                    source_name: "_local".to_string(),
+                    message: format!(
+                        "local agent path has no file name: {}",
+                        source_path.display()
+                    ),
+                })?);
             process_markdown_file(
                 source_path,
                 &dest_file,
@@ -170,19 +167,20 @@ fn copy_and_lift_tree(
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let mut entries: Vec<_> = fs::read_dir(current)?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
         let src_path = entry.path();
-        let rel = src_path.strip_prefix(source_root).map_err(|_| MarsError::Source {
-            source_name: "staging".to_string(),
-            message: format!(
-                "staging traversal escaped source root at {}",
-                src_path.display()
-            ),
-        })?;
+        let rel = src_path
+            .strip_prefix(source_root)
+            .map_err(|_| MarsError::Source {
+                source_name: "staging".to_string(),
+                message: format!(
+                    "staging traversal escaped source root at {}",
+                    src_path.display()
+                ),
+            })?;
         let dest_path = dest_root.join(rel);
         let file_type = entry.file_type()?;
 
@@ -228,7 +226,9 @@ fn should_lift_markdown(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
         Some("SKILL.md") | Some("BOOTSTRAP.md")
-    ) || path.extension().is_some_and(|ext| ext == "md" || ext == "mdc")
+    ) || path
+        .extension()
+        .is_some_and(|ext| ext == "md" || ext == "mdc")
 }
 
 fn item_kind_for_markdown(path: &Path) -> ItemKind {
@@ -252,16 +252,14 @@ fn process_markdown_file(
 
     let skill_overlay = (kind == ItemKind::Skill)
         .then(|| {
-            ctx.skill_overlay_key
-                .map(str::to_owned)
-                .or_else(|| {
-                    skill_overlay_lookup_name(
-                        src,
-                        ctx.package_root,
-                        ctx.renames,
-                        ctx.fallback_skill_name,
-                    )
-                })
+            ctx.skill_overlay_key.map(str::to_owned).or_else(|| {
+                skill_overlay_lookup_name(
+                    src,
+                    ctx.package_root,
+                    ctx.renames,
+                    ctx.fallback_skill_name,
+                )
+            })
         })
         .flatten()
         .and_then(|name| ctx.skill_overrides.get(&name));
@@ -518,7 +516,10 @@ mod tests {
         .unwrap();
 
         let mut renames = RenameMap::new();
-        renames.insert(ItemName::from("planning"), ItemName::from("research-planning"));
+        renames.insert(
+            ItemName::from("planning"),
+            ItemName::from("research-planning"),
+        );
 
         let mut overrides = IndexMap::new();
         overrides.insert(
@@ -668,7 +669,10 @@ mod tests {
         .unwrap();
 
         let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
-        assert!(!content.contains("allowed-tools"), "staged local skill: {content}");
+        assert!(
+            !content.contains("allowed-tools"),
+            "staged local skill: {content}"
+        );
         assert!(
             diag.drain()
                 .iter()
@@ -689,10 +693,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            Dialect::resolve_local(None, &mars_src),
-            Dialect::MarsNative
-        );
+        assert_eq!(Dialect::resolve_local(None, &mars_src), Dialect::MarsNative);
 
         let mut diag = DiagnosticCollector::new();
         let staged = stage_local_item(

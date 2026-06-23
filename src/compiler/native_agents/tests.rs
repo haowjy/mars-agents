@@ -1014,12 +1014,8 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
         &aliases,
         &IndexMap::new(),
     );
-    let baseline = std::fs::read_to_string(
-        dir_baseline
-            .path()
-            .join(".claude/agents/worker.md"),
-    )
-    .unwrap();
+    let baseline =
+        std::fs::read_to_string(dir_baseline.path().join(".claude/agents/worker.md")).unwrap();
 
     let dir_empty = TempDir::new().unwrap();
     std::fs::create_dir_all(dir_empty.path().join(".claude/agents")).unwrap();
@@ -1028,15 +1024,10 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
         &[HarnessKind::Claude],
         std::slice::from_ref(&agent),
         &aliases,
-        &IndexMap::from([(
-            "worker".to_string(),
-            crate::config::AgentOverlay::default(),
-        )]),
+        &IndexMap::from([("worker".to_string(), crate::config::AgentOverlay::default())]),
     );
-    let empty_overlay_native = std::fs::read_to_string(
-        dir_empty.path().join(".claude/agents/worker.md"),
-    )
-    .unwrap();
+    let empty_overlay_native =
+        std::fs::read_to_string(dir_empty.path().join(".claude/agents/worker.md")).unwrap();
     assert_eq!(
         baseline, empty_overlay_native,
         "default/empty overlay must not change lowered native output"
@@ -1105,10 +1096,7 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         pinned_alias_with_harness("claude-opus-4-6", "claude", None),
     );
 
-    let agent = parse_mars_agent(
-        "---\nname: worker\nmodel: opus\n---\n# Worker\n",
-        "worker",
-    );
+    let agent = parse_mars_agent("---\nname: worker\nmodel: opus\n---\n# Worker\n", "worker");
     let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
     overlays.insert(
         "worker".to_string(),

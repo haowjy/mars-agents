@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 
-use super::{AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings, SkillOverlay};
+use super::{
+    AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings, SkillOverlay,
+};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,

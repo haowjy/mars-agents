@@ -285,7 +285,12 @@ fn validate_json_reports_skill_removed_field_error() {
     let dir = TempDir::new().unwrap();
     let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
     let skill_content = "---\nname: legacy\ndescription: legacy skill\nallow_implicit_invocation: false\n---\n# Legacy";
-    let source = create_source(&dir, "src", &[("reader", agent_content)], &[("legacy", skill_content)]);
+    let source = create_source(
+        &dir,
+        "src",
+        &[("reader", agent_content)],
+        &[("legacy", skill_content)],
+    );
     let project = dir.child("proj");
     project.create_dir_all().unwrap();
     project
@@ -301,7 +306,12 @@ fn validate_json_reports_skill_removed_field_error() {
         .success();
 
     let output = mars()
-        .args(["validate", "--json", "--root", project.path().to_str().unwrap()])
+        .args([
+            "validate",
+            "--json",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .output()
         .unwrap();
 

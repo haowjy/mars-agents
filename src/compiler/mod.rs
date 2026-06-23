@@ -10,11 +10,11 @@ pub mod agent_copy;
 pub mod agents;
 pub mod config_entries;
 pub mod context;
+pub mod hooks;
 /// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
 pub(crate) mod invocability;
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
-pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
 pub(crate) mod native_agent_manifest;

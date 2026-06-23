@@ -467,7 +467,7 @@ mod tests {
         let config = EffectiveConfig {
             dependencies: config_dependencies,
             settings: Settings::default(),
-        skills: indexmap::IndexMap::new(),
+            skills: indexmap::IndexMap::new(),
         };
         (graph, config)
     }

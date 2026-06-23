@@ -1140,8 +1140,8 @@ mod tests {
     #[test]
     fn fallback_flat_root_skill_overlay_applies_under_source_name() {
         use crate::config::SkillOverlay;
-        use crate::dialect::Dialect;
         use crate::diagnostic::DiagnosticCollector;
+        use crate::dialect::Dialect;
         use crate::staging::stage_canonical_source;
         use crate::types::RenameMap;
         use indexmap::IndexMap;
@@ -1190,8 +1190,8 @@ mod tests {
     #[test]
     fn fallback_flat_root_skill_overlay_applies_after_rename() {
         use crate::config::SkillOverlay;
-        use crate::dialect::Dialect;
         use crate::diagnostic::DiagnosticCollector;
+        use crate::dialect::Dialect;
         use crate::staging::stage_canonical_source;
         use crate::types::{ItemName, RenameMap};
         use indexmap::IndexMap;

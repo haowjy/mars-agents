@@ -55,7 +55,7 @@ fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
             subpath: None,
             filter: FilterMode::Exclude(vec!["forbidden".into()]),
             rename: RenameMap::new(),
-                dialect: None,
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },

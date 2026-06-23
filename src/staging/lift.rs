@@ -218,10 +218,10 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::skills::lower::{lower_skill_for_harness, SkillHarness};
-    use crate::compiler::skills::parse_skill_content;
     use crate::compiler::agents::parse_agent_content;
     use crate::compiler::lossiness::Lossiness;
+    use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
+    use crate::compiler::skills::parse_skill_content;
     use crate::frontmatter::Frontmatter;
 
     fn fm(yaml: &str) -> Frontmatter {
@@ -239,10 +239,7 @@ mod tests {
             ItemKind::Skill,
             &fm("name: s\ndescription: d\ndisable-model-invocation: true\n"),
         );
-        assert_eq!(
-            lifted.get("model-invocable"),
-            Some(&Value::Bool(false))
-        );
+        assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(false)));
         assert!(lifted.get("disable-model-invocation").is_none());
     }
 
@@ -250,7 +247,7 @@ mod tests {
     fn claude_skill_idempotent_on_existing_model_invocable() {
         let input = fm("name: s\ndescription: d\nmodel-invocable: false\n");
         let lifted = lift(Dialect::Claude, ItemKind::Skill, &input);
-        assert!(!lifted.get("model-invocable").is_none());
+        assert!(lifted.get("model-invocable").is_some());
         assert!(lifted.get("disable-model-invocation").is_none());
     }
 
@@ -296,10 +293,7 @@ mod tests {
             ItemKind::Agent,
             &fm("name: a\ndescription: d\nmode: primary\n"),
         );
-        assert_eq!(
-            lifted.get("user-invocable"),
-            Some(&Value::Bool(false))
-        );
+        assert_eq!(lifted.get("user-invocable"), Some(&Value::Bool(false)));
     }
 
     #[test]
@@ -309,10 +303,7 @@ mod tests {
             ItemKind::Skill,
             &fm("description: rule\nalwaysApply: true\nglobs: \"**/*\"\n"),
         );
-        assert_eq!(
-            lifted.get("model-invocable"),
-            Some(&Value::Bool(true))
-        );
+        assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(true)));
         assert!(lifted.get("alwaysApply").is_none());
         assert!(lifted.get("globs").is_none());
     }
@@ -369,12 +360,7 @@ when_to_use: Use when git history matters
                 .iter()
                 .any(|f| f.field == "model-invocable" && f.classification == Lossiness::Dropped)
         );
-        assert!(
-            codex
-                .lossy_fields
-                .iter()
-                .any(|f| f.field == "tools")
-        );
+        assert!(codex.lossy_fields.iter().any(|f| f.field == "tools"));
 
         let opencode = lower_skill_for_harness(SkillHarness::OpenCode, &profile, body);
         assert!(
@@ -386,12 +372,7 @@ when_to_use: Use when git history matters
 
         let cursor = lower_skill_for_harness(SkillHarness::Cursor, &profile, body);
         let cursor_out = String::from_utf8(cursor.bytes).unwrap();
-        assert!(
-            cursor
-                .lossy_fields
-                .iter()
-                .any(|f| f.field == "tools")
-        );
+        assert!(cursor.lossy_fields.iter().any(|f| f.field == "tools"));
         assert!(!cursor_out.contains("when_to_use"));
         assert!(!cursor_out.contains("disable-model-invocation"));
         assert!(
@@ -416,8 +397,7 @@ when_to_use: Use when git history matters
         assert!(lifted.get("allowed-tools").is_none());
 
         let mut diags = Vec::new();
-        let (profile, _) =
-            parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(profile.tools, vec!["bash(git *)"]);
     }

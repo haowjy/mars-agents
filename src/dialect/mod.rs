@@ -76,11 +76,7 @@ impl Dialect {
         Self::resolve_with_default(explicit, package_root, Self::MarsNative)
     }
 
-    fn resolve_with_default(
-        explicit: Option<Self>,
-        package_root: &Path,
-        default: Self,
-    ) -> Self {
+    fn resolve_with_default(explicit: Option<Self>, package_root: &Path, default: Self) -> Self {
         if let Some(dialect) = explicit {
             return dialect;
         }
@@ -168,10 +164,7 @@ mod tests {
             infer_from_foreign_containers(dir.path()),
             Some(Dialect::Claude)
         );
-        assert_eq!(
-            Dialect::resolve(None, dir.path()),
-            Dialect::Claude
-        );
+        assert_eq!(Dialect::resolve(None, dir.path()), Dialect::Claude);
     }
 
     #[test]
@@ -192,7 +185,10 @@ mod tests {
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "# demo").unwrap();
 
-        assert_eq!(Dialect::resolve_local(None, dir.path()), Dialect::MarsNative);
+        assert_eq!(
+            Dialect::resolve_local(None, dir.path()),
+            Dialect::MarsNative
+        );
     }
 
     #[test]
@@ -202,10 +198,7 @@ mod tests {
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "# demo").unwrap();
 
-        assert_eq!(
-            Dialect::resolve_local(None, dir.path()),
-            Dialect::Claude
-        );
+        assert_eq!(Dialect::resolve_local(None, dir.path()), Dialect::Claude);
     }
 
     #[test]
@@ -220,5 +213,4 @@ mod tests {
             Dialect::Codex
         );
     }
-
 }

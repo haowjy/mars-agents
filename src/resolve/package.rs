@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
-use crate::dialect::Dialect;
 use crate::diagnostic::DiagnosticCollector;
+use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::{ItemKind, LockFile};
@@ -263,13 +263,8 @@ pub(crate) fn resolve_package_bottom_up(
                 &ref_.tree_path,
                 pending_src.subpath.as_ref(),
             )?;
-            let rooted = stage_rooted_package(
-                &pending_src.name,
-                rooted,
-                effective_config,
-                options,
-                diag,
-            )?;
+            let rooted =
+                stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
             (ref_, latest, rooted)
         };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
@@ -394,9 +389,7 @@ fn stage_rooted_package(
 
     let dep = effective_config.dependencies.get(source_name);
     let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
-    let renames = dep
-        .map(|entry| entry.rename.clone())
-        .unwrap_or_default();
+    let renames = dep.map(|entry| entry.rename.clone()).unwrap_or_default();
     staging::stage_rooted_source(
         source_name,
         rooted,

@@ -84,14 +84,12 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         }
     }
 
-    if clean {
-        Ok(0)
-    } else {
-        Ok(1)
-    }
+    if clean { Ok(0) } else { Ok(1) }
 }
 
-fn lossiness_diagnostics_for_check(base: &std::path::Path) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
+fn lossiness_diagnostics_for_check(
+    base: &std::path::Path,
+) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
     use crate::config::Settings;
     use crate::error::ConfigError;
 

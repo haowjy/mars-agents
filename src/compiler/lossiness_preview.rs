@@ -10,19 +10,19 @@ use indexmap::IndexMap;
 use tempfile::TempDir;
 
 use crate::compiler::agent_copy;
+use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::agents::{HarnessKind, parse_agent_profile};
-use crate::compiler::agent_surface_policy;
 use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
 use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
-use crate::config::{SkillOverlay, Settings};
+use crate::config::{Settings, SkillOverlay};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter;
-use crate::lock::ItemKind;
 use crate::local_source::LOCAL_SOURCE_DIR;
+use crate::lock::ItemKind;
 use crate::models::ModelsCache;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
@@ -95,8 +95,8 @@ pub fn collect_source_lossiness_diagnostics(
         fetched_at: None,
     };
     let routing_settings = ResolvedRoutingSettings::from_settings(settings);
-    let mut model_router =
-        (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll)).then(|| {
+    let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
+        .then(|| {
             NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
         });
 
@@ -181,7 +181,9 @@ fn preview_flat_skill_fallback_name(
     }
     Some(flat_root_skill_source_name(
         base,
-        config.and_then(|c| c.package.as_ref()).map(|p| p.name.as_str()),
+        config
+            .and_then(|c| c.package.as_ref())
+            .map(|p| p.name.as_str()),
     ))
 }
 
@@ -202,8 +204,7 @@ fn is_consumer_project(base: &Path, config: Option<&crate::config::Config>) -> b
 fn load_skill_overrides(base: &Path) -> Result<IndexMap<String, SkillOverlay>, MarsError> {
     match crate::config::load(base) {
         Ok(config) => {
-            let effective =
-                crate::config::merge(config, crate::config::LocalConfig::default())?;
+            let effective = crate::config::merge(config, crate::config::LocalConfig::default())?;
             Ok(effective.skills)
         }
         Err(MarsError::Config(ConfigError::NotFound { .. })) => Ok(IndexMap::new()),
@@ -211,7 +212,9 @@ fn load_skill_overrides(base: &Path) -> Result<IndexMap<String, SkillOverlay>, M
     }
 }
 
-fn load_model_aliases(base: &Path) -> Result<IndexMap<String, crate::models::ModelAlias>, MarsError> {
+fn load_model_aliases(
+    base: &Path,
+) -> Result<IndexMap<String, crate::models::ModelAlias>, MarsError> {
     match crate::config::load_effective_project_config(base) {
         Ok(effective) => Ok(effective.models),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => Ok(IndexMap::new()),
@@ -278,8 +281,10 @@ mod tests {
 
     #[test]
     fn configured_emit_harnesses_uses_managed_targets() {
-        let mut settings = Settings::default();
-        settings.targets = Some(vec![".cursor".into(), ".agents".into()]);
+        let settings = Settings {
+            targets: Some(vec![".cursor".into(), ".agents".into()]),
+            ..Default::default()
+        };
         let harnesses = configured_emit_harnesses(&settings);
         assert_eq!(harnesses, vec![HarnessKind::Cursor]);
     }
@@ -342,7 +347,9 @@ mod tests {
         let settings = crate::config::load(dir.path()).unwrap().settings;
         let diags = collect_source_lossiness_diagnostics(dir.path(), &settings).unwrap();
         assert!(
-            diags.iter().all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
+            diags
+                .iter()
+                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
             "expected no agent lossiness under SuppressAll: {diags:?}"
         );
     }
@@ -358,9 +365,11 @@ mod tests {
         )
         .unwrap();
 
-        let mut settings = Settings::default();
-        settings.targets = Some(vec![".codex".into()]);
-        settings.agent_emission = Some(crate::config::AgentEmission::Always);
+        let settings = Settings {
+            targets: Some(vec![".codex".into()]),
+            agent_emission: Some(crate::config::AgentEmission::Always),
+            ..Default::default()
+        };
         let diags = collect_source_lossiness_diagnostics(dir.path(), &settings).unwrap();
         assert!(
             diags.iter().any(|d| {
@@ -391,7 +400,9 @@ mod tests {
         let settings = crate::config::load(dir.path()).unwrap().settings;
         let diags = collect_source_lossiness_diagnostics(dir.path(), &settings).unwrap();
         assert!(
-            diags.iter().all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
+            diags
+                .iter()
+                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
             ".agents does not project native skills — expected no skill lossiness: {diags:?}"
         );
     }

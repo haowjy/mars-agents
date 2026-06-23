@@ -82,15 +82,21 @@ pub(crate) fn apply_skill_overlay(
     }
 
     if let Some(model_invocable) = overlay.model_invocable {
-        changed |= set_bool_field(&mut merged, "model-invocable", model_invocable, &[
-            "model_invocable",
-        ]);
+        changed |= set_bool_field(
+            &mut merged,
+            "model-invocable",
+            model_invocable,
+            &["model_invocable"],
+        );
     }
 
     if let Some(user_invocable) = overlay.user_invocable {
-        changed |= set_bool_field(&mut merged, "user-invocable", user_invocable, &[
-            "user_invocable",
-        ]);
+        changed |= set_bool_field(
+            &mut merged,
+            "user-invocable",
+            user_invocable,
+            &["user_invocable"],
+        );
     }
 
     if !overlay.tools.allowed.is_empty() {
@@ -110,12 +116,8 @@ pub(crate) fn apply_skill_overlay(
         );
     }
     if !overlay.tools.mcp.is_empty() {
-        changed |= set_string_list_field(
-            &mut merged,
-            "mcp-tools",
-            &overlay.tools.mcp,
-            &["mcp_tools"],
-        );
+        changed |=
+            set_string_list_field(&mut merged, "mcp-tools", &overlay.tools.mcp, &["mcp_tools"]);
     }
 
     (merged, changed)
@@ -213,10 +215,7 @@ mod tests {
             merged.get("description"),
             Some(&Value::String("Overridden".into()))
         );
-        assert_eq!(
-            merged.get("user-invocable"),
-            Some(&Value::Bool(false))
-        );
+        assert_eq!(merged.get("user-invocable"), Some(&Value::Bool(false)));
         assert_eq!(
             merged.get("disallowed-tools"),
             Some(&Value::Sequence(vec![Value::String("Agent".into())]))
@@ -232,10 +231,8 @@ mod tests {
             },
             ..SkillOverlay::default()
         };
-        let (merged, changed) = apply_skill_overlay(
-            &fm("name: demo\ndescription: base\n"),
-            &overlay,
-        );
+        let (merged, changed) =
+            apply_skill_overlay(&fm("name: demo\ndescription: base\n"), &overlay);
         assert!(changed);
         assert_eq!(
             merged.get("tools"),
@@ -263,7 +260,10 @@ mod tests {
         let package = std::path::Path::new("/pkg");
         let skill_md = package.join("skills/planning/SKILL.md");
         let mut renames = RenameMap::new();
-        renames.insert(ItemName::from("planning"), ItemName::from("research-planning"));
+        renames.insert(
+            ItemName::from("planning"),
+            ItemName::from("research-planning"),
+        );
 
         assert_eq!(
             skill_overlay_lookup_name(&skill_md, package, &renames, None).as_deref(),

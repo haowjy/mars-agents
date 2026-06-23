@@ -32,13 +32,7 @@ pub fn effective_tool_policy(
 ) -> EffectiveToolPolicy {
     EffectiveToolPolicy {
         allowed: dedupe_ordered(allowed.to_vec()),
-        disallowed: dedupe_ordered(
-            denied
-                .iter()
-                .chain(disallowed.iter())
-                .cloned()
-                .collect(),
-        ),
+        disallowed: dedupe_ordered(denied.iter().chain(disallowed.iter()).cloned().collect()),
         mcp: dedupe_ordered(mcp.to_vec()),
     }
 }
@@ -136,11 +130,7 @@ pub(crate) fn parse_tools_field(
                         denied.push(normalized_tool);
                     }
                 } else {
-                    on_invalid(
-                        &format!("{field}.{tool_name}"),
-                        policy,
-                        "allow or deny",
-                    );
+                    on_invalid(&format!("{field}.{tool_name}"), policy, "allow or deny");
                 }
             }
             ParsedToolsField {

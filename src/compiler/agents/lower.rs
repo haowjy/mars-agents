@@ -1,4 +1,3 @@
-pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::compiler::agents::{AgentProfile, HarnessKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
@@ -13,6 +12,7 @@ use crate::compiler::agents::{AgentProfile, HarnessKind};
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
+pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -1104,7 +1104,10 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("user-invocable"), "no native agent key: {text}");
+        assert!(
+            !text.contains("user-invocable"),
+            "no native agent key: {text}"
+        );
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "user-invocable"
                 && f.target == "Claude"

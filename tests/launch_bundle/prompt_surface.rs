@@ -59,7 +59,8 @@ model: gpt-5
 skills: [planning]
 ---
 Review code changes."#;
-    let skill_content = "---\nname: planning\ndescription: Plan tasks\ntools: [ask_user]\n---\nUse this skill.";
+    let skill_content =
+        "---\nname: planning\ndescription: Plan tasks\ntools: [ask_user]\n---\nUse this skill.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,

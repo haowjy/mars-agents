@@ -74,7 +74,9 @@ fn validate_suppresses_lossiness_warnings() {
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let diags = json["diagnostics"].as_array().expect("diagnostics array");
     assert!(
-        !diags.iter().any(|d| d["category"].as_str() == Some("lossiness")),
+        !diags
+            .iter()
+            .any(|d| d["category"].as_str() == Some("lossiness")),
         "validate must not surface lossiness warnings: {stdout}"
     );
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -99,7 +101,9 @@ fn export_suppresses_lossiness_warnings() {
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let diags = json["diagnostics"].as_array().expect("diagnostics array");
     assert!(
-        !diags.iter().any(|d| d["category"].as_str() == Some("lossiness")),
+        !diags
+            .iter()
+            .any(|d| d["category"].as_str() == Some("lossiness")),
         "export must not surface lossiness warnings: {stdout}"
     );
 }
@@ -107,12 +111,7 @@ fn export_suppresses_lossiness_warnings() {
 #[test]
 fn add_suppresses_lossiness_warnings() {
     let dir = TempDir::new().unwrap();
-    let lossy_source = create_source(
-        &dir,
-        "lossy",
-        &[("cursor-worker", LOSSY_CURSOR_AGENT)],
-        &[],
-    );
+    let lossy_source = create_source(&dir, "lossy", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
     let project = dir.child("project");
     project.create_dir_all().unwrap();
     project
@@ -164,9 +163,10 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let source = dir.child("claude-skill");
     let skill = source.child("skills/demo");
     skill.create_dir_all().unwrap();
-    skill.child("SKILL.md").write_str(
-        "---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n",
-    ).unwrap();
+    skill
+        .child("SKILL.md")
+        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n")
+        .unwrap();
     source
         .child("mars.toml")
         .write_str("[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n")
@@ -220,9 +220,10 @@ fn check_respects_skill_variant_selection_like_sync() {
     let skill = source.child("skills/demo");
     skill.create_dir_all().unwrap();
     skill.child("variants/codex").create_dir_all().unwrap();
-    skill.child("SKILL.md").write_str(
-        "---\nname: demo\ndescription: d\nwhen_to_use: planning\n---\n# Base body\n",
-    ).unwrap();
+    skill
+        .child("SKILL.md")
+        .write_str("---\nname: demo\ndescription: d\nwhen_to_use: planning\n---\n# Base body\n")
+        .unwrap();
     skill
         .child("variants/codex/SKILL.md")
         .write_str("# Codex-only body\n")

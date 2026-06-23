@@ -303,8 +303,7 @@ pub(crate) fn build_target(
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,
-            (item.discovered.id.kind == ItemKind::Skill)
-                .then(|| item.discovered.id.name.as_str()),
+            (item.discovered.id.kind == ItemKind::Skill).then(|| item.discovered.id.name.as_str()),
             diag,
         )?;
         let source_path = staged_path;
@@ -1051,7 +1050,7 @@ mod tests {
             EffectiveConfig {
                 dependencies: config_dependencies,
                 settings: Settings::default(),
-        skills: indexmap::IndexMap::new(),
+                skills: indexmap::IndexMap::new(),
             },
         )
     }
@@ -1189,7 +1188,7 @@ mod tests {
                 path: None,
                 subpath: None,
                 version: None,
-            dialect: None,
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -1527,8 +1526,7 @@ mod tests {
         };
 
         let mut graph = {
-            let (mut g, _) =
-                make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
+            let (mut g, _) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
             g.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
             g
         };
@@ -1540,15 +1538,11 @@ mod tests {
             let (target, _) = target::build_with_collisions(graph, cfg).unwrap();
             let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
             let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-            let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir)
-                .unwrap();
-            let new_lock = crate::lock::build(
-                graph,
-                &result,
-                lock,
-                std::collections::BTreeMap::new(),
-            )
-            .unwrap();
+            let result =
+                apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+            let new_lock =
+                crate::lock::build(graph, &result, lock, std::collections::BTreeMap::new())
+                    .unwrap();
             (sync_diff, sync_plan, new_lock)
         };
 
@@ -1561,8 +1555,7 @@ mod tests {
                 .all(|entry| matches!(entry, diff::DiffEntry::Add { .. }))
         );
 
-        let (unchanged_diff, unchanged_plan, _) =
-            apply_sync(&graph, &config, &first_lock);
+        let (unchanged_diff, unchanged_plan, _) = apply_sync(&graph, &config, &first_lock);
         assert!(
             unchanged_diff
                 .items

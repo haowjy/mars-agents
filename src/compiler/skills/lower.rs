@@ -304,7 +304,12 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
         "opencode",
         &mut lossy_fields,
     );
-    insert_mcp_tools(&mut yaml, profile, SkillHarness::OpenCode, &mut lossy_fields);
+    insert_mcp_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::OpenCode,
+        &mut lossy_fields,
+    );
     if profile.when_to_use.is_some() {
         lossy_fields.push(dropped("when_to_use", SkillHarness::OpenCode));
     }
@@ -322,7 +327,13 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
     }
     insert_allowed_tools(&mut yaml, profile, "pi", None);
     let mut lossy_fields = Vec::new();
-    insert_disallowed_tools(&mut yaml, profile, SkillHarness::Pi, "pi", &mut lossy_fields);
+    insert_disallowed_tools(
+        &mut yaml,
+        profile,
+        SkillHarness::Pi,
+        "pi",
+        &mut lossy_fields,
+    );
     insert_mcp_tools(&mut yaml, profile, SkillHarness::Pi, &mut lossy_fields);
     insert_when_to_use(&mut yaml, profile);
     insert_license_metadata(&mut yaml, profile);
@@ -448,7 +459,11 @@ mod tests {
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(out.contains("disallowed-tools:"));
         assert!(out.contains("- agent"));
-        assert!(!has_dropped(&lowered.lossy_fields, "disallowed-tools", "Pi"));
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "disallowed-tools",
+            "Pi"
+        ));
     }
 
     #[test]
@@ -521,7 +536,10 @@ mod tests {
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(out.contains("allowed-tools:"));
         assert!(out.contains("- AskUser"));
-        assert!(!out.contains("bash(git *)"), "denied tools must not appear in allowlist: {out}");
+        assert!(
+            !out.contains("bash(git *)"),
+            "denied tools must not appear in allowlist: {out}"
+        );
         assert!(lowered.lossy_fields.is_empty());
     }
 
@@ -630,11 +648,7 @@ mod tests {
             "model-invocable",
             "OpenCode"
         ));
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "tools",
-            "OpenCode"
-        ));
+        assert!(has_dropped(&lowered.lossy_fields, "tools", "OpenCode"));
         assert_eq!(lowered.lossy_fields.len(), 2);
     }
 
@@ -818,7 +832,12 @@ mod tests {
             !out.contains("allowed-tools"),
             "flat allowed-tools must not pass through: {out}"
         );
-        assert!(!profile.passthrough_fields.iter().any(|(k, _)| k == "allowed-tools"));
+        assert!(
+            !profile
+                .passthrough_fields
+                .iter()
+                .any(|(k, _)| k == "allowed-tools")
+        );
     }
 
     #[test]

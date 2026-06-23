@@ -863,10 +863,8 @@ pub(crate) fn qualifying_agent_emissions(
 )> {
     use crate::compiler::agents::HarnessKind;
 
-    let in_scope = |harness: &HarnessKind| {
-        harness_scope
-            .is_none_or(|scope| scope.contains(harness))
-    };
+    let in_scope =
+        |harness: &HarnessKind| harness_scope.is_none_or(|scope| scope.contains(harness));
 
     match policy {
         AgentSurfacePolicy::SuppressAll => Vec::new(),

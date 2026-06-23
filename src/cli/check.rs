@@ -51,9 +51,15 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     let report = check_dir(&base)?;
+    let lossiness = lossiness_diagnostics_for_check(&base)?;
+    let clean = report.errors.is_empty();
 
     if json {
-        output::print_json(&report);
+        let mut json_report = report;
+        for diag in &lossiness {
+            json_report.warnings.push(diag.to_string());
+        }
+        output::print_json(&json_report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
         println!(
@@ -61,7 +67,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         );
         println!();
 
-        if report.errors.is_empty() && report.warnings.is_empty() {
+        if clean && report.warnings.is_empty() && lossiness.is_empty() {
             output::print_success("all checks passed");
         } else {
             for e in &report.errors {
@@ -70,18 +76,31 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
             for w in &report.warnings {
                 output::print_warn(w);
             }
-            if !report.errors.is_empty() {
+            output::print_diagnostics(&lossiness);
+            if !clean {
                 println!();
                 println!("  {} error(s) found", report.errors.len());
             }
         }
     }
 
-    if report.errors.is_empty() {
+    if clean {
         Ok(0)
     } else {
         Ok(1)
     }
+}
+
+fn lossiness_diagnostics_for_check(base: &std::path::Path) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
+    use crate::config::Settings;
+    use crate::error::ConfigError;
+
+    let settings = match crate::config::load(base) {
+        Ok(config) => config.settings,
+        Err(MarsError::Config(ConfigError::NotFound { .. })) => Settings::default(),
+        Err(err) => return Err(err),
+    };
+    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(base, &settings)
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {

@@ -13,6 +13,7 @@ pub mod context;
 /// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
 pub(crate) mod invocability;
 pub(crate) mod lossiness;
+pub(crate) mod lossiness_preview;
 pub mod hooks;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
@@ -77,11 +78,8 @@ pub fn compile(
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
-    let configured_emit_harnesses: Vec<agents::HarnessKind> = effective_settings
-        .managed_targets()
-        .iter()
-        .filter_map(|t| agents::HarnessKind::from_target_dir(t))
-        .collect();
+    let configured_emit_harnesses =
+        lossiness_preview::configured_emit_harnesses(effective_settings);
     let mars_dir = ctx.project_root.join(".mars");
     let models_cache =
         crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {

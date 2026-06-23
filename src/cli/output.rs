@@ -520,6 +520,21 @@ pub fn print_success(msg: &str) {
     let _ = writeln!(stdout, "{msg}");
 }
 
+/// Print pipeline diagnostics to stderr (same format as sync report output).
+pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
+    let mut stderr = StandardStream::stderr(color_choice());
+    for diag in diagnostics {
+        let color = match diag.level {
+            crate::diagnostic::DiagnosticLevel::Error => Color::Red,
+            crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,
+            crate::diagnostic::DiagnosticLevel::Info => Color::Cyan,
+        };
+        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
+        let _ = writeln!(stderr, "  {diag}");
+        let _ = stderr.reset();
+    }
+}
+
 /// Print a warning message (yellow).
 pub fn print_warn(msg: &str) {
     let mut stdout = StandardStream::stdout(color_choice());

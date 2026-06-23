@@ -127,6 +127,21 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         }
     }
 
+    let settings = match crate::config::load(&project_root) {
+        Ok(config) => config.settings,
+        Err(crate::error::MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
+            crate::config::Settings::default()
+        }
+        Err(err) => return Err(err),
+    };
+    let lossiness = crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
+        &project_root,
+        &settings,
+    )?;
+    if !json && !lossiness.is_empty() {
+        output::print_diagnostics(&lossiness);
+    }
+
     if json {
         output::print_json(&serde_json::json!({
             "ok": true,
@@ -174,6 +189,17 @@ fn persist_managed_root(project_root: &Path, target: Option<&str>) -> Result<(),
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn init_on_empty_project_runs_lossiness_pass_without_error() {
+        let dir = TempDir::new().unwrap();
+        let args = super::InitArgs {
+            target: None,
+            link: Vec::new(),
+        };
+        let code = super::run(&args, Some(dir.path()), false).unwrap();
+        assert_eq!(code, 0);
+    }
 
     #[test]
     fn validate_target_accepts_simple_names() {

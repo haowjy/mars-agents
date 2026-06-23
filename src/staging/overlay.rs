@@ -6,6 +6,7 @@ use serde_yaml::Value;
 
 use crate::config::SkillOverlay;
 use crate::frontmatter::Frontmatter;
+use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::RenameMap;
 
 /// Installed skill name for `[skills.<name>]` overlay lookup.
@@ -28,13 +29,10 @@ fn skill_source_name(
     fallback_skill_name: Option<&str>,
 ) -> Option<String> {
     if skill_md_path == package_root.join("SKILL.md") {
-        return fallback_skill_name.map(str::to_owned).or_else(|| {
-            package_root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-        });
+        return Some(flat_root_skill_source_name(
+            package_root,
+            fallback_skill_name,
+        ));
     }
 
     skill_md_path
@@ -270,6 +268,17 @@ mod tests {
         assert_eq!(
             skill_overlay_lookup_name(&skill_md, package, &renames, None).as_deref(),
             Some("research-planning")
+        );
+    }
+
+    #[test]
+    fn overlay_lookup_flat_skill_uses_package_basename_without_fallback() {
+        let package = std::path::Path::new("/pkg/my-skill");
+        let skill_md = package.join("SKILL.md");
+
+        assert_eq!(
+            skill_overlay_lookup_name(&skill_md, package, &RenameMap::new(), None).as_deref(),
+            Some("my-skill")
         );
     }
 

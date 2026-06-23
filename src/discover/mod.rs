@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
+use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::ItemName;
 
 const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
@@ -75,9 +76,7 @@ pub fn discover_source(
         .iter()
         .any(|item| matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill));
     if !has_agent_or_skill && tree_path.join("SKILL.md").is_file() {
-        let name = fallback_name
-            .map(String::from)
-            .unwrap_or_else(|| package_basename(tree_path));
+        let name = flat_root_skill_source_name(tree_path, fallback_name);
         items.push(DiscoveredItem {
             id: ItemId {
                 kind: ItemKind::Skill,
@@ -96,34 +95,34 @@ pub fn discover_fallback(
     package_root: &Path,
     source_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let source_name = source_name.unwrap_or("unknown-source");
-
     if package_root.join("SKILL.md").is_file() {
         // Flat-root foreign skills are keyed by dependency source name during
         // staging overlay lookup; discovery must use the same name (not the
         // staged directory basename, which is the inbound dialect).
+        let flat_name = flat_root_skill_source_name(package_root, source_name);
         let mut items = vec![DiscoveredItem {
             id: ItemId {
                 kind: ItemKind::Skill,
-                name: ItemName::from(source_name),
+                name: ItemName::from(flat_name.as_str()),
             },
             source_path: PathBuf::from("."),
         }];
         items.extend(
-            discover_manifest_declared_items(package_root, source_name)?
+            discover_manifest_declared_items(package_root, &flat_name)?
                 .into_iter()
                 .filter(|item| item.id.kind == ItemKind::BootstrapDoc),
         );
-        return finalize_items(source_name, items);
+        return finalize_items(&flat_name, items);
     }
 
-    let explicit_items = discover_manifest_declared_items(package_root, source_name)?;
+    let label = source_name.unwrap_or("unknown-source");
+    let explicit_items = discover_manifest_declared_items(package_root, label)?;
     if !explicit_items.is_empty() {
-        return finalize_items(source_name, explicit_items);
+        return finalize_items(label, explicit_items);
     }
 
     let heuristic_items = discover_heuristic_layer_items(package_root)?;
-    finalize_items(source_name, heuristic_items)
+    finalize_items(label, heuristic_items)
 }
 
 /// Shared dispatcher for rooted-source discovery.
@@ -733,14 +732,6 @@ fn normalize_manifest_declared_path(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn package_basename(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("unknown-skill")
-        .to_string()
-}
-
 fn read_dir_paths_sorted(dir: &Path) -> Result<Vec<PathBuf>, MarsError> {
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -1117,6 +1108,19 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name.as_str(), "demo");
         assert_eq!(items[0].source_path, PathBuf::from("."));
+    }
+
+    #[test]
+    fn fallback_flat_root_skill_uses_package_basename_when_no_source_name() {
+        let dir = TempDir::new().unwrap();
+        let pkg = dir.path().join("my-pkg");
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(pkg.join("SKILL.md"), "# flat").unwrap();
+
+        let items = discover_fallback(&pkg, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.name.as_str(), "my-pkg");
+        assert_ne!(items[0].id.name.as_str(), "unknown-source");
     }
 
     #[test]

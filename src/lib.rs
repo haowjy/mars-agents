@@ -22,6 +22,7 @@ pub(crate) mod reader;
 pub mod reconcile;
 pub mod resolve;
 pub mod routing;
+pub(crate) mod skill_source_name;
 pub mod source;
 pub(crate) mod staging;
 pub(crate) mod surface_ownership;

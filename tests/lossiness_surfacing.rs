@@ -157,3 +157,132 @@ fn check_surfaces_lossiness_for_configured_targets() {
         .success()
         .stderr(predicate::str::contains(LOSSINESS_SNIPPET));
 }
+
+#[test]
+fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("claude-skill");
+    let skill = source.child("skills/demo");
+    skill.create_dir_all().unwrap();
+    skill.child("SKILL.md").write_str(
+        "---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n",
+    ).unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n")
+        .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.path().display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync_stderr = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(sync_stderr.status.success());
+    let sync_stderr_text = String::from_utf8_lossy(&sync_stderr.stderr);
+    let sync_lossiness: Vec<_> = sync_stderr_text
+        .lines()
+        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .collect();
+    assert!(
+        !sync_lossiness.is_empty(),
+        "sync should warn about lifted skill lossiness: {sync_stderr_text}"
+    );
+
+    let check_stderr = mars()
+        .args(["check", source.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(check_stderr.status.success());
+    let check_stderr_text = String::from_utf8_lossy(&check_stderr.stderr);
+    let check_lossiness: Vec<_> = check_stderr_text
+        .lines()
+        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .collect();
+    assert_eq!(
+        sync_lossiness, check_lossiness,
+        "check must match sync lossiness for foreign claude skill"
+    );
+}
+
+#[test]
+fn check_respects_skill_variant_selection_like_sync() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("variant-skill");
+    let skill = source.child("skills/demo");
+    skill.create_dir_all().unwrap();
+    skill.child("variants/codex").create_dir_all().unwrap();
+    skill.child("SKILL.md").write_str(
+        "---\nname: demo\ndescription: d\nwhen_to_use: planning\n---\n# Base body\n",
+    ).unwrap();
+    skill
+        .child("variants/codex/SKILL.md")
+        .write_str("# Codex-only body\n")
+        .unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n")
+        .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.path().display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync_out = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(sync_out.status.success());
+    let sync_lossiness: Vec<String> = String::from_utf8_lossy(&sync_out.stderr)
+        .lines()
+        .filter(|line| line.contains("lossiness") || line.contains("when_to_use"))
+        .map(str::to_string)
+        .collect();
+
+    let check_out = mars()
+        .args(["check", source.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(check_out.status.success());
+    let check_lossiness: Vec<String> = String::from_utf8_lossy(&check_out.stderr)
+        .lines()
+        .filter(|line| line.contains("lossiness") || line.contains("when_to_use"))
+        .map(str::to_string)
+        .collect();
+
+    assert_eq!(
+        sync_lossiness, check_lossiness,
+        "check must match sync skill variant lossiness"
+    );
+}
+
+#[test]
+fn check_skips_agent_lossiness_when_emission_suppressed() {
+    let dir = TempDir::new().unwrap();
+    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    std::fs::write(
+        pkg.join("mars.toml"),
+        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"never\"\n",
+    )
+    .unwrap();
+
+    mars()
+        .args(["check", pkg.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(LOSSINESS_SNIPPET).not());
+}

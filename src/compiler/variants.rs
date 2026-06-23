@@ -256,17 +256,53 @@ fn compile_projected_skill_frontmatter(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<(), MarsError> {
+    let projected_skill = projected_dir.join("SKILL.md");
+    let lowered = lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
+    if let Some(bytes) = lowered {
+        fs::write(projected_skill, bytes)?;
+    }
+    Ok(())
+}
+
+/// Lower a staged skill for one native harness (variant-aware) and emit lossiness warnings.
+///
+/// Mirrors `project_skill_for_target` + `compile_projected_skill_frontmatter` without
+/// writing projected trees — used by `mars check` / `mars init` preview.
+pub(crate) fn emit_staged_skill_lossiness_for_harness(
+    staged_skill_dir: &Path,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let projected_skill = harness_skill_variant_path(staged_skill_dir, harness_key)
+        .unwrap_or_else(|| staged_skill_dir.join("SKILL.md"));
+    let _ = lower_projected_skill_for_harness(
+        staged_skill_dir,
+        &projected_skill,
+        harness_key,
+        skill_name,
+        diag,
+    )?;
+    Ok(())
+}
+
+fn lower_projected_skill_for_harness(
+    source: &Path,
+    projected_skill: &Path,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<Option<Vec<u8>>, MarsError> {
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
     use crate::compiler::skills::parse_skill_content;
 
     let Some(harness) = SkillHarness::from_variant_key(harness_key) else {
-        return Ok(());
+        return Ok(None);
     };
 
     let base_skill = source.join("SKILL.md");
-    let projected_skill = projected_dir.join("SKILL.md");
     let base_content = fs::read_to_string(&base_skill)?;
-    let selected_content = fs::read_to_string(&projected_skill)?;
+    let selected_content = fs::read_to_string(projected_skill)?;
 
     let mut skill_diags = Vec::new();
     let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
@@ -279,7 +315,7 @@ fn compile_projected_skill_frontmatter(
                     crate::diagnostic::DiagnosticCategory::Validation,
                 );
             }
-            return Ok(());
+            return Ok(None);
         }
     };
 
@@ -299,7 +335,7 @@ fn compile_projected_skill_frontmatter(
     }
 
     if !profile.has_frontmatter {
-        return Ok(());
+        return Ok(None);
     }
 
     let selected_fm = match crate::frontmatter::parse(&selected_content) {
@@ -310,15 +346,14 @@ fn compile_projected_skill_frontmatter(
                 format!("skill `{skill_name}` selected variant frontmatter is malformed; raw fallback used: {e}"),
                 crate::diagnostic::DiagnosticCategory::Validation,
             );
-            return Ok(());
+            return Ok(None);
         }
     };
     let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
 
     crate::compiler::lossiness::emit_skill_lossiness_warnings(skill_name, &lowered.lossy_fields, diag);
 
-    fs::write(projected_skill, lowered.bytes)?;
-    Ok(())
+    Ok(Some(lowered.bytes))
 }
 
 fn copy_dir_following_symlinks_excluding_top_level_variants(

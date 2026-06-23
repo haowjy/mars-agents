@@ -764,12 +764,13 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, model) in qualifying_emissions(
+        for (harness, model) in qualifying_agent_emissions(
             effective_profile,
             &agent.agent_name,
             policy,
             ctx.fanout_agents,
-            ctx,
+            ctx.harness_scope,
+            ctx.configured_emit_harnesses,
             model_router,
         ) {
             emit_lowered_native_agent(
@@ -847,12 +848,14 @@ fn effective_native_profile(
     effective
 }
 
-fn qualifying_emissions(
+/// Harnesses and native model fields that would receive lowered agent artifacts.
+pub(crate) fn qualifying_agent_emissions(
     profile: &crate::compiler::agents::AgentProfile,
     agent_name: &str,
     policy: &AgentSurfacePolicy,
     fanout_agents: &[String],
-    ctx: &NativeAgentCompileCtx<'_>,
+    harness_scope: Option<&[crate::compiler::agents::HarnessKind]>,
+    configured_emit_harnesses: &[crate::compiler::agents::HarnessKind],
     model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> Vec<(
     crate::compiler::agents::HarnessKind,
@@ -861,7 +864,7 @@ fn qualifying_emissions(
     use crate::compiler::agents::HarnessKind;
 
     let in_scope = |harness: &HarnessKind| {
-        ctx.harness_scope
+        harness_scope
             .is_none_or(|scope| scope.contains(harness))
     };
 
@@ -869,7 +872,7 @@ fn qualifying_emissions(
         AgentSurfacePolicy::SuppressAll => Vec::new(),
         AgentSurfacePolicy::EmitAll => {
             let mut emissions = Vec::new();
-            for harness in ctx.configured_emit_harnesses {
+            for harness in configured_emit_harnesses {
                 if !in_scope(harness) {
                     continue;
                 }

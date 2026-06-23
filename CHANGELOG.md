@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and `mcp-tools:`. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
 - Agents honor `user-invocable` (was skills-only).
 - Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.
+- Lossiness warnings surface only on `mars sync`, `mars upgrade`, `mars init`, and `mars check`; suppressed on validate, export, add, and other sync-pipeline commands.
 - `[agents.<name>]` overrides now adjust description, invocation axes, and tool policy (was routing fields only).
 - Codex skills: `model-invocable` warn-dropped (Codex reads invocation from sibling policy file, not SKILL.md) instead of emitting ignored `allow_implicit_invocation` frontmatter.
 

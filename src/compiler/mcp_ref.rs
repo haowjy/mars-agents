@@ -15,6 +15,9 @@
 //! - `mcp(*/tool)` — a tool name across any server
 //! - `mcp(*/*)` — all MCP tools
 
+/// Human-readable grammar for valid `mcp(...)` tool-list entries (used in validation errors).
+pub(crate) const MCP_TOOL_NAME_GRAMMAR: &str = "valid mcp(server), mcp(server/tool), mcp(server/*), mcp(*/tool), or mcp(*/*) reference (* is the only wildcard; segments non-empty)";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum McpSegment {
     Any,

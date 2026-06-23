@@ -1,6 +1,6 @@
 //! Mars tool-name grammar and target-native projection.
 
-use crate::compiler::mcp_ref::try_parse_mcp_tool_name;
+use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, try_parse_mcp_tool_name};
 
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
@@ -18,9 +18,6 @@ pub(crate) struct ParsedToolName {
     pub known: bool,
 }
 
-const INVALID_MCP_REF_ALLOWED: &str =
-    "valid mcp(server) or mcp(server/tool) reference with non-empty segments";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ToolNameParseError {
     Empty,
@@ -31,7 +28,7 @@ impl ToolNameParseError {
     pub fn allowed(&self) -> &'static str {
         match self {
             Self::Empty => TOOL_NAME_ALLOWED,
-            Self::InvalidMcpRef => INVALID_MCP_REF_ALLOWED,
+            Self::InvalidMcpRef => MCP_TOOL_NAME_GRAMMAR,
         }
     }
 }

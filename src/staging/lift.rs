@@ -37,19 +37,22 @@ fn strip_foreign_keys(fm: &mut Frontmatter, keys: &[&str]) -> bool {
     changed
 }
 
+/// Non-canonical tool spellings that must not appear in the canonical store.
+const NON_CANONICAL_TOOL_ALIASES: &[&str] = &["allowed-tools", "allowed_tools", "disallowed_tools"];
+
+fn strip_non_canonical_tool_aliases(fm: &mut Frontmatter) -> bool {
+    strip_foreign_keys(fm, NON_CANONICAL_TOOL_ALIASES)
+}
+
 /// Lift frontmatter, returning whether any field was rewritten.
 pub(crate) fn lift_frontmatter_with_change(
     dialect: Dialect,
     item_kind: ItemKind,
     frontmatter: &Frontmatter,
 ) -> (Frontmatter, bool) {
-    if dialect == Dialect::MarsNative {
-        return (frontmatter.clone(), false);
-    }
-
     let mut lifted = frontmatter.clone();
     let changed = match dialect {
-        Dialect::MarsNative => false,
+        Dialect::MarsNative => strip_non_canonical_tool_aliases(&mut lifted),
         Dialect::Claude => lift_claude(item_kind, &mut lifted),
         Dialect::Codex => lift_codex(item_kind, &mut lifted),
         Dialect::Cursor => lift_cursor(item_kind, &mut lifted),

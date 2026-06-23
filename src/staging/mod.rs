@@ -252,18 +252,9 @@ fn process_markdown_file(
         .flatten()
         .and_then(|name| ctx.skill_overrides.get(&name));
 
-    if ctx.dialect == Dialect::MarsNative && skill_overlay.is_none() {
-        fs::copy(src, dest)?;
-        return Ok(());
-    }
-
     let original = fs::read_to_string(src)?;
     if let Ok(parsed) = Frontmatter::parse(&original) {
-        let (mut fm, mut changed) = if ctx.dialect == Dialect::MarsNative {
-            (parsed, false)
-        } else {
-            lift_frontmatter_with_change(ctx.dialect, kind, &parsed)
-        };
+        let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
 
         if let Some(overlay) = skill_overlay
             && !overlay.is_empty()
@@ -521,6 +512,50 @@ mod tests {
 
         let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert!(staged.contains("description: Flat overlay"));
+    }
+
+    #[test]
+    fn mars_native_staging_strips_non_canonical_tool_aliases() {
+        let source = TempDir::new().unwrap();
+        let skill = source.path().join("skills/bad-allowed");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
+        )
+        .unwrap();
+
+        let dest = TempDir::new().unwrap();
+        stage_canonical_source(
+            source.path(),
+            dest.path(),
+            Dialect::MarsNative,
+            &IndexMap::new(),
+            &RenameMap::new(),
+            None,
+        )
+        .unwrap();
+
+        let staged = fs::read_to_string(dest.path().join("skills/bad-allowed/SKILL.md")).unwrap();
+        assert!(
+            !staged.contains("allowed-tools"),
+            "canonical staging must strip non-canonical tool aliases: {staged}"
+        );
+
+        let mut diags = Vec::new();
+        crate::compiler::skills::parse_skill_content(
+            &fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+            &mut diags,
+        )
+        .unwrap();
+        assert!(
+            diags.iter().any(|d| matches!(
+                d,
+                crate::compiler::skills::SkillDiagnostic::NonCanonicalField { field, .. }
+                    if field == "allowed-tools"
+            )),
+            "source parse should still emit non-canonical diagnostic: {diags:?}"
+        );
     }
 
     #[test]

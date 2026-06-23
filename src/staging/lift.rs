@@ -7,6 +7,36 @@ use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 
+fn lift_foreign_tools_allowlist(fm: &mut Frontmatter) -> bool {
+    let mut changed = false;
+    if fm.get("tools").is_none() {
+        for key in ["allowed-tools", "allowed_tools", "tools"] {
+            if let Some(value) = fm.remove(key) {
+                fm.insert("tools", value);
+                changed = true;
+                break;
+            }
+        }
+    } else {
+        for key in ["allowed-tools", "allowed_tools"] {
+            if fm.remove(key).is_some() {
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn strip_foreign_keys(fm: &mut Frontmatter, keys: &[&str]) -> bool {
+    let mut changed = false;
+    for key in keys {
+        if fm.remove(key).is_some() {
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Lift frontmatter, returning whether any field was rewritten.
 pub(crate) fn lift_frontmatter_with_change(
     dialect: Dialect,
@@ -54,6 +84,7 @@ fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
             changed = true;
         }
     }
+    changed |= lift_foreign_tools_allowlist(fm);
     changed
 }
 
@@ -76,34 +107,36 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
 }
 
 fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
-    let keys = match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => &[
-            "disable-model-invocation",
-            "allow_implicit_invocation",
-            "invocation",
-            "model-invocable",
-            "model_invocable",
-            "user-invocable",
-            "user_invocable",
-            "allowed-tools",
-            "allowed_tools",
-            "disallowed-tools",
-            "disallowed_tools",
-        ][..],
-        ItemKind::Agent => &[
-            "mode",
-            "tools",
-            "disallowedTools",
-            "disallowed-tools",
-            "tools_denied",
-        ][..],
-        ItemKind::Hook | ItemKind::McpServer => return false,
-    };
     let mut changed = false;
-    for key in keys {
-        if fm.remove(key).is_some() {
-            changed = true;
+    match item_kind {
+        ItemKind::Skill | ItemKind::BootstrapDoc => {
+            changed |= strip_foreign_keys(
+                fm,
+                &[
+                    "disable-model-invocation",
+                    "allow_implicit_invocation",
+                    "invocation",
+                    "model-invocable",
+                    "model_invocable",
+                    "user-invocable",
+                    "user_invocable",
+                ],
+            );
+            changed |= lift_foreign_tools_allowlist(fm);
         }
+        ItemKind::Agent => {
+            changed |= strip_foreign_keys(
+                fm,
+                &[
+                    "mode",
+                    "tools",
+                    "disallowedTools",
+                    "disallowed-tools",
+                    "tools_denied",
+                ],
+            );
+        }
+        ItemKind::Hook | ItemKind::McpServer => return false,
     }
     changed
 }
@@ -130,6 +163,7 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     if fm.remove("globs").is_some() {
         changed = true;
     }
+    changed |= lift_foreign_tools_allowlist(fm);
     changed
 }
 
@@ -138,10 +172,21 @@ fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
         ItemKind::Agent => lift_opencode_agent(fm),
         ItemKind::Skill | ItemKind::BootstrapDoc => {
             let mut changed = false;
-            for key in ["mode", "tools", "disallowedTools", "disallowed-tools"] {
-                if fm.remove(key).is_some() {
-                    changed = true;
+            changed |= strip_foreign_keys(fm, &["mode"]);
+            changed |= lift_foreign_tools_allowlist(fm);
+            if let Some(tools) = fm.remove("disallowedTools") {
+                if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
+                    fm.insert("disallowed-tools", tools);
                 }
+                changed = true;
+            }
+            if fm.get("disallowed-tools").is_none()
+                && let Some(tools) = fm.remove("disallowed_tools")
+            {
+                fm.insert("disallowed-tools", tools);
+                changed = true;
+            } else if fm.remove("disallowed_tools").is_some() {
+                changed = true;
             }
             changed
         }
@@ -293,7 +338,7 @@ when_to_use: Use when git history matters
         assert!(diags.is_empty(), "{diags:?}");
         assert!(!profile.model_invocable);
         assert!(!profile.user_invocable);
-        assert_eq!(profile.allowed_tools, vec!["bash(git *)"]);
+        assert_eq!(profile.tools, vec!["bash(git *)"]);
         assert_eq!(profile.disallowed_tools, vec!["agent"]);
         assert_eq!(
             profile.when_to_use.as_deref(),
@@ -325,7 +370,7 @@ when_to_use: Use when git history matters
             codex
                 .lossy_fields
                 .iter()
-                .any(|f| f.field == "allowed-tools")
+                .any(|f| f.field == "tools")
         );
 
         let opencode = lower_skill_for_harness(SkillHarness::OpenCode, &profile, body);
@@ -342,7 +387,7 @@ when_to_use: Use when git history matters
             cursor
                 .lossy_fields
                 .iter()
-                .any(|f| f.field == "allowed-tools")
+                .any(|f| f.field == "tools")
         );
         assert!(!cursor_out.contains("when_to_use"));
         assert!(!cursor_out.contains("disable-model-invocation"));
@@ -352,6 +397,26 @@ when_to_use: Use when git history matters
                 .iter()
                 .any(|f| f.field == "when_to_use" || f.field == "user-invocable")
         );
+    }
+
+    #[test]
+    fn claude_skill_allowed_tools_lifts_to_canonical_tools() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Skill,
+            &fm("name: s\ndescription: d\nallowed-tools: [Bash(git *)]\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![Value::String("Bash(git *)".into())]))
+        );
+        assert!(lifted.get("allowed-tools").is_none());
+
+        let mut diags = Vec::new();
+        let (profile, _) =
+            parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty());
+        assert_eq!(profile.tools, vec!["bash(git *)"]);
     }
 
     #[test]

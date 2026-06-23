@@ -133,6 +133,18 @@ tools:
 
 Dropped by some harnesses — see the lossiness table below.
 
+**Canonical skills do not use `allowed-tools`.** Authoring `allowed-tools` or
+`allowed_tools` directly in a skill's frontmatter produces a `skill-schema-warning`
+diagnostic (Validation category, always surfaced regardless of lossiness
+settings) and the key is **stripped** before the skill reaches `.mars/`. The
+diagnostic is emitted at the staging boundary, before the strip. Use the canonical
+`tools:` field instead.
+
+During staging for foreign dialects (Claude, Codex, etc.), harness-native
+`allowed-tools` / `allowed_tools` are lifted to canonical `tools:` — this is
+the normal import path for foreign-authored skills, distinct from the warning
+path above.
+
 ---
 
 ### `disallowed-tools`
@@ -162,8 +174,6 @@ MCP server allowlist for this skill. Same semantics as agent `mcp-tools`.
 ```yaml
 mcp-tools: [plugin:context7]
 ```
-
-**Foreign lift.** Harness-native `allowed-tools` / `allowed_tools` spellings lift to canonical `tools:` during staging. Canonical skills do not accept `allowed-tools` directly.
 
 ---
 
@@ -321,7 +331,10 @@ Meridian always reads from `.mars/skills/`. Skill compilation is transparent to 
 
 ## Diagnostics
 
-Mars emits diagnostics during `mars sync` and `mars validate` for skill compilation issues:
+Mars emits diagnostics during `mars sync` and `mars validate` for skill compilation issues.
+Field-loss diagnostics also surface via `mars check` and `mars init`, which run a
+lossiness preview (`lossiness_preview::collect_source_lossiness_diagnostics`)
+against the project's configured managed targets.
 
 | Code | Severity | Cause |
 |---|---|---|
@@ -332,5 +345,10 @@ Mars emits diagnostics during `mars sync` and `mars validate` for skill compilat
 | `skill-variant-missing-skill` | warning | Model variant directory has no `SKILL.md` |
 
 `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.
+
+The `skill-schema-warning` for non-canonical `allowed-tools` is a **Validation**
+category diagnostic and is **not** gated by `surface_lossiness_warnings`. It is
+always emitted when the condition is detected at the staging boundary, regardless
+of whether field-loss warnings are configured.
 
 Errors in frontmatter parsing skip frontmatter compilation for that skill; the body is still projected.

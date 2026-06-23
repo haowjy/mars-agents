@@ -89,13 +89,14 @@ fn insert_disallowed_tools(
     harness_str: &str,
     lossy_fields: &mut Vec<LossyField>,
 ) {
-    if profile.disallowed_tools.is_empty() {
+    let disallowed = profile.effective_tool_policy().disallowed;
+    if disallowed.is_empty() {
         return;
     }
     match harness {
         SkillHarness::Claude | SkillHarness::Pi => {
             let mut tools = Vec::new();
-            for tool in &profile.disallowed_tools {
+            for tool in &disallowed {
                 let projected = project_tool_for_harness(tool, harness_str);
                 if projected.status == ToolProjectionStatus::Unknown {
                     lossy_fields.push(LossyField {
@@ -731,5 +732,32 @@ mod tests {
                 String::from_utf8(lower_skill_for_harness(harness, &profile, body).bytes).unwrap();
             assert_eq!(out, "# Body\nbytes");
         }
+    }
+
+    #[test]
+    fn claude_lowers_tools_map_deny_to_disallowed_tools() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\ntools:\n  Agent: deny\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("disallowed-tools:"), "missing denylist: {out}");
+        assert!(out.contains("- Agent"), "Agent not projected: {out}");
+        assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn codex_warns_tools_map_deny_via_disallowed_tools() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\ntools:\n  Agent: deny\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_codex(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(!out.contains("disallowed-tools"));
+        assert!(has_dropped(
+            &lowered.lossy_fields,
+            "disallowed-tools",
+            "Codex"
+        ));
     }
 }

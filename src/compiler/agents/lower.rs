@@ -999,6 +999,62 @@ mod tests {
     }
 
     #[test]
+    fn claude_lowering_projects_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
+        let content = "---\nname: coder\nharness: claude\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+        let (profile, fm, diags) = profile_from(content);
+        assert!(diags.is_empty());
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+
+        assert!(
+            text.contains("- MyCustomTool"),
+            "unknown custom tool should be convention-projected: {text}"
+        );
+        assert!(
+            text.contains("- mcp__server__Tool"),
+            "mcp__ wire identifier should be preserved verbatim: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "tools"
+                && field.target == "claude"
+                && matches!(
+                    field.classification,
+                    Lossiness::Approximate {
+                        note: "unknown tool projected via harness naming convention"
+                    }
+                )
+        }));
+    }
+
+    #[test]
+    fn codex_and_cursor_agent_lowering_drops_tools_without_native_projection() {
+        let content = "---\nname: coder\nharness: codex\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+
+        let codex = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let codex_text = String::from_utf8(codex.bytes).unwrap();
+        assert!(
+            !codex_text.contains("my_custom_tool") && !codex_text.contains("mcp__server__Tool"),
+            "codex native agent artifacts drop tools entirely: {codex_text}"
+        );
+        assert!(codex.lossy_fields.iter().any(|field| {
+            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
+        }));
+
+        let cursor = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
+        let cursor_text = String::from_utf8(cursor.bytes).unwrap();
+        assert!(
+            !cursor_text.contains("MyCustomTool")
+                && !cursor_text.contains("my_custom_tool")
+                && !cursor_text.contains("mcp__server__Tool"),
+            "cursor native agent artifacts drop tools entirely: {cursor_text}"
+        );
+        assert!(cursor.lossy_fields.iter().any(|field| {
+            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
+        }));
+    }
+
+    #[test]
     fn claude_lowering_drops_approval_sandbox_mode_autocompact() {
         let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);

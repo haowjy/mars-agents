@@ -199,6 +199,34 @@ mod tests {
     }
 
     #[test]
+    fn claude_lowers_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\ntools: [my_custom_tool, mcp__server__Tool]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+
+        assert!(
+            out.contains("- MyCustomTool"),
+            "unknown custom tool should be convention-projected: {out}"
+        );
+        assert!(
+            out.contains("- mcp__server__Tool"),
+            "mcp__ wire identifier should be preserved verbatim: {out}"
+        );
+        assert!(lowered.lossy_fields.iter().any(|field| {
+            field.field == "tools"
+                && field.target == "Claude"
+                && matches!(
+                    field.classification,
+                    Lossiness::Approximate {
+                        note: "unknown tool projected via harness naming convention"
+                    }
+                )
+        }));
+    }
+
+    #[test]
     fn claude_lowers_tools_map_allow_and_deny() {
         let profile = parse_profile(
             "---\nname: skill\ndescription: desc\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\n---\nBody\n",

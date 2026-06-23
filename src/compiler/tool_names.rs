@@ -347,11 +347,16 @@ fn split_tool_name(value: &str) -> (&str, &str) {
     }
 }
 
-/// MCP wire identifiers (`mcp__server__tool`) are exact in every harness and must never
-/// be re-cased or convention-projected.
+/// Returns true when `head` starts with the reserved MCP wire prefix `mcp__` (case-insensitive).
+///
+/// Any `mcp__`-prefixed unknown name is passed verbatim to harnesses — the prefix is reserved
+/// on the MCP wire, so preserving exact casing is intentional. We deliberately do not
+/// validate server/tool segment shape here (including whole-server `mcp__server__*` and global
+/// `mcp__*` forms); per-harness MCP projection is a separate planned feature.
 fn is_mcp_shaped(head: &str) -> bool {
-    let head = head.trim();
-    head.len() >= 5 && head[..5].eq_ignore_ascii_case("mcp__")
+    head.trim()
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("mcp__"))
 }
 
 fn canonicalize_head(head: &str) -> CanonicalizedHead {
@@ -846,5 +851,50 @@ mod tests {
         let parsed = parse("mcp__github__CreateIssue");
         assert_eq!(parsed.name, "mcp__github__CreateIssue");
         assert!(!parsed.known);
+    }
+
+    #[test]
+    fn non_ascii_unknown_tools_do_not_panic_and_stay_convention_projected() {
+        let cases = [
+            (
+                "café_tool",
+                "claude",
+                "CaféTool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "🎉🎉tool",
+                "claude",
+                "🎉🎉tool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "🚀tool",
+                "codex",
+                "🚀tool",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let parsed = parse_mars_tool_name(raw).expect("parse should not panic");
+            assert_eq!(parsed.name, raw, "parse name for {raw}");
+            assert!(!parsed.known, "parse known flag for {raw}");
+
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "projected name for {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "projected status for {raw}, harness: {harness}"
+            );
+            assert_ne!(
+                projected.status,
+                ToolProjectionStatus::McpVerbatim,
+                "{raw} must not be treated as MCP verbatim"
+            );
+        }
     }
 }

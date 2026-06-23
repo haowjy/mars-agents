@@ -2162,3 +2162,72 @@ dialect = "mars-native"
         "canonical tools should lower to claude allowed-tools: {claude_native}"
     );
 }
+
+#[test]
+fn sync_claude_native_agent_projects_unknown_custom_tool_in_emitted_tools() {
+    let dir = TempDir::new().unwrap();
+    let agent = r#"---
+name: custom-tools-agent
+description: Agent with unknown custom tools
+harness: claude
+tools: [my_custom_tool, mcp__server__Tool]
+---
+# Custom tools agent
+"#;
+    let source = create_source(&dir, "base", &[("custom-tools-agent", agent)], &[]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("custom-tools-agent.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        claude_native.contains("- MyCustomTool"),
+        "claude native agent should convention-project unknown custom tool: {claude_native}"
+    );
+    assert!(
+        claude_native.contains("- mcp__server__Tool"),
+        "claude native agent should preserve mcp__ wire identifier verbatim: {claude_native}"
+    );
+}

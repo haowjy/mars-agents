@@ -1406,8 +1406,7 @@ mod tests {
             &mut diag,
         );
 
-        let expected =
-            std::fs::read_to_string(target.join("skills/planning/SKILL.md")).unwrap();
+        let expected = std::fs::read_to_string(target.join("skills/planning/SKILL.md")).unwrap();
 
         std::fs::write(skill_source.join("variants/claude/SKILL.md"), "# Claude v2").unwrap();
         let outcomes2 = vec![make_installed_skill_outcome("skills/planning", "planning")];

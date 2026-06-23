@@ -1,10 +1,10 @@
 //! Per-harness lowering for universal skill frontmatter.
 
-use serde_yaml::{Mapping, Value};
+#[path = "lower_policy.rs"]
+mod lower_policy;
 
-use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+use crate::compiler::lossiness::LoweredOutput;
 use crate::compiler::skills::SkillProfile;
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillHarness {
@@ -26,182 +26,6 @@ impl SkillHarness {
             _ => None,
         }
     }
-    fn target_name(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude",
-            Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode",
-            Self::Pi => "Pi",
-            Self::Cursor => "Cursor",
-        }
-    }
-}
-
-fn yk(s: &str) -> Value {
-    Value::String(s.to_string())
-}
-fn ys(s: &str) -> Value {
-    Value::String(s.to_string())
-}
-fn insert_identity(yaml: &mut Mapping, profile: &SkillProfile) {
-    if let Some(name) = &profile.name {
-        yaml.insert(yk("name"), ys(name));
-    }
-    if let Some(description) = &profile.description {
-        yaml.insert(yk("description"), ys(description));
-    }
-}
-fn insert_allowed_tools(
-    yaml: &mut Mapping,
-    profile: &SkillProfile,
-    harness: &str,
-    lossy_fields: Option<&mut Vec<LossyField>>,
-) {
-    let allowed = profile.effective_tool_policy().allowed;
-    if !allowed.is_empty() {
-        let mut lossy_fields = lossy_fields;
-        let mut tools = Vec::new();
-        for tool in &allowed {
-            let projected = project_tool_for_harness(tool, harness);
-            if projected.status == ToolProjectionStatus::Unknown
-                && let Some(lossy_fields) = lossy_fields.as_deref_mut()
-            {
-                lossy_fields.push(LossyField {
-                    field: "tools".into(),
-                    target: harness.into(),
-                    classification: Lossiness::Approximate {
-                        note: "unknown tool name passed through verbatim",
-                    },
-                });
-            }
-            tools.push(projected.name);
-        }
-        yaml.insert(
-            yk("allowed-tools"),
-            Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-        );
-    }
-}
-fn insert_disallowed_tools(
-    yaml: &mut Mapping,
-    profile: &SkillProfile,
-    harness: SkillHarness,
-    harness_str: &str,
-    lossy_fields: &mut Vec<LossyField>,
-) {
-    let disallowed = profile.effective_tool_policy().disallowed;
-    if disallowed.is_empty() {
-        return;
-    }
-    match harness {
-        SkillHarness::Claude | SkillHarness::Pi => {
-            let mut tools = Vec::new();
-            for tool in &disallowed {
-                let projected = project_tool_for_harness(tool, harness_str);
-                if projected.status == ToolProjectionStatus::Unknown {
-                    lossy_fields.push(LossyField {
-                        field: "disallowed-tools".into(),
-                        target: harness.target_name().into(),
-                        classification: Lossiness::Approximate {
-                            note: "unknown tool name passed through verbatim",
-                        },
-                    });
-                }
-                tools.push(projected.name);
-            }
-            yaml.insert(
-                yk("disallowed-tools"),
-                Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-            );
-        }
-        SkillHarness::Codex | SkillHarness::OpenCode | SkillHarness::Cursor => {
-            lossy_fields.push(dropped("disallowed-tools", harness));
-        }
-    }
-}
-fn insert_mcp_tools(
-    yaml: &mut Mapping,
-    profile: &SkillProfile,
-    harness: SkillHarness,
-    lossy_fields: &mut Vec<LossyField>,
-) {
-    let mcp = profile.effective_tool_policy().mcp;
-    if mcp.is_empty() {
-        return;
-    }
-    match harness {
-        SkillHarness::Claude => {
-            yaml.insert(
-                yk("mcp-tools"),
-                Value::Sequence(mcp.iter().map(|s| ys(s)).collect()),
-            );
-        }
-        SkillHarness::Codex => {
-            lossy_fields.push(LossyField {
-                field: "mcp-tools".into(),
-                target: harness.target_name().into(),
-                classification: Lossiness::Approximate {
-                    note: "Codex uses -c mcp.servers.<name>.command",
-                },
-            });
-        }
-        SkillHarness::OpenCode | SkillHarness::Cursor => {
-            lossy_fields.push(LossyField {
-                field: "mcp-tools".into(),
-                target: harness.target_name().into(),
-                classification: Lossiness::Approximate {
-                    note: "mcp-tools on subprocess errors; streaming uses session payload",
-                },
-            });
-        }
-        SkillHarness::Pi => {
-            lossy_fields.push(dropped("mcp-tools", harness));
-        }
-    }
-}
-
-fn insert_when_to_use(yaml: &mut Mapping, profile: &SkillProfile) {
-    if let Some(when_to_use) = &profile.when_to_use {
-        yaml.insert(yk("when_to_use"), ys(when_to_use));
-    }
-}
-
-fn insert_license_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
-    if let Some(license) = &profile.license {
-        yaml.insert(yk("license"), ys(license));
-    }
-    if let Some(metadata) = &profile.metadata {
-        yaml.insert(yk("metadata"), metadata.clone());
-    }
-}
-
-fn insert_passthrough(yaml: &mut Mapping, profile: &SkillProfile) {
-    for (key, value) in &profile.passthrough_fields {
-        yaml.insert(yk(key), value.clone());
-    }
-}
-
-fn user_invocation_disabled(profile: &SkillProfile) -> bool {
-    let _was_explicitly_set = profile.had_user_invocable_field;
-    !profile.user_invocable
-}
-
-fn render(yaml: Mapping, body: &str) -> Vec<u8> {
-    if yaml.is_empty() {
-        return body.as_bytes().to_vec();
-    }
-    let mut yaml_str = serde_yaml::to_string(&yaml).expect("skill frontmatter should serialize");
-    if let Some(stripped) = yaml_str.strip_prefix("---\n") {
-        yaml_str = stripped.to_string();
-    }
-    let mut out = String::from("---\n");
-    out.push_str(&yaml_str);
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("---\n");
-    out.push_str(body);
-    out.into_bytes()
 }
 
 pub fn lower_skill_for_harness(
@@ -219,182 +43,29 @@ pub fn lower_skill_for_harness(
 }
 
 pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    let mut yaml = Mapping::new();
-    insert_identity(&mut yaml, profile);
-    if !profile.model_invocable {
-        yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
-    }
-    if user_invocation_disabled(profile) {
-        yaml.insert(yk("user-invocable"), Value::Bool(false));
-    }
-    let mut lossy_fields = Vec::new();
-    insert_allowed_tools(&mut yaml, profile, "claude", Some(&mut lossy_fields));
-    insert_disallowed_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::Claude,
-        "claude",
-        &mut lossy_fields,
-    );
-    insert_mcp_tools(&mut yaml, profile, SkillHarness::Claude, &mut lossy_fields);
-    insert_when_to_use(&mut yaml, profile);
-    insert_license_metadata(&mut yaml, profile);
-    insert_passthrough(&mut yaml, profile);
-    LoweredOutput {
-        bytes: render(yaml, body),
-        lossy_fields,
-    }
+    lower_policy::lower_skill_with_policy(SkillHarness::Claude, profile, body)
 }
 
 pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    let mut yaml = Mapping::new();
-    insert_identity(&mut yaml, profile);
-    insert_license_metadata(&mut yaml, profile);
-    insert_passthrough(&mut yaml, profile);
-    let mut lossy_fields = Vec::new();
-    if profile.had_model_invocable_field {
-        // TODO(#116): emit Codex sibling `policy` file for faithful
-        // invocation/tool gating — see https://github.com/haowjy/mars-agents/issues/116
-        lossy_fields.push(dropped("model-invocable", SkillHarness::Codex));
-    }
-    let tool_policy = profile.effective_tool_policy();
-    if !tool_policy.allowed.is_empty() {
-        lossy_fields.push(dropped("tools", SkillHarness::Codex));
-    }
-    insert_disallowed_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::Codex,
-        "codex",
-        &mut lossy_fields,
-    );
-    insert_mcp_tools(&mut yaml, profile, SkillHarness::Codex, &mut lossy_fields);
-    if user_invocation_disabled(profile) {
-        lossy_fields.push(dropped("user-invocable", SkillHarness::Codex));
-    }
-    if profile.when_to_use.is_some() {
-        lossy_fields.push(dropped("when_to_use", SkillHarness::Codex));
-    }
-    LoweredOutput {
-        bytes: render(yaml, body),
-        lossy_fields,
-    }
+    lower_policy::lower_skill_with_policy(SkillHarness::Codex, profile, body)
 }
 
 pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    let mut yaml = Mapping::new();
-    insert_identity(&mut yaml, profile);
-    insert_license_metadata(&mut yaml, profile);
-    insert_passthrough(&mut yaml, profile);
-    let mut lossy_fields = Vec::new();
-    if !profile.model_invocable {
-        lossy_fields.push(dropped("model-invocable", SkillHarness::OpenCode));
-    }
-    if user_invocation_disabled(profile) {
-        lossy_fields.push(dropped("user-invocable", SkillHarness::OpenCode));
-    }
-    let tool_policy = profile.effective_tool_policy();
-    if !tool_policy.allowed.is_empty() {
-        lossy_fields.push(dropped("tools", SkillHarness::OpenCode));
-    }
-    insert_disallowed_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::OpenCode,
-        "opencode",
-        &mut lossy_fields,
-    );
-    insert_mcp_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::OpenCode,
-        &mut lossy_fields,
-    );
-    if profile.when_to_use.is_some() {
-        lossy_fields.push(dropped("when_to_use", SkillHarness::OpenCode));
-    }
-    LoweredOutput {
-        bytes: render(yaml, body),
-        lossy_fields,
-    }
+    lower_policy::lower_skill_with_policy(SkillHarness::OpenCode, profile, body)
 }
 
 pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    let mut yaml = Mapping::new();
-    insert_identity(&mut yaml, profile);
-    if !profile.model_invocable {
-        yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
-    }
-    insert_allowed_tools(&mut yaml, profile, "pi", None);
-    let mut lossy_fields = Vec::new();
-    insert_disallowed_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::Pi,
-        "pi",
-        &mut lossy_fields,
-    );
-    insert_mcp_tools(&mut yaml, profile, SkillHarness::Pi, &mut lossy_fields);
-    insert_when_to_use(&mut yaml, profile);
-    insert_license_metadata(&mut yaml, profile);
-    insert_passthrough(&mut yaml, profile);
-    if user_invocation_disabled(profile) {
-        lossy_fields.push(dropped("user-invocable", SkillHarness::Pi));
-    }
-    LoweredOutput {
-        bytes: render(yaml, body),
-        lossy_fields,
-    }
+    lower_policy::lower_skill_with_policy(SkillHarness::Pi, profile, body)
 }
 
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    let mut yaml = Mapping::new();
-    insert_identity(&mut yaml, profile);
-    insert_license_metadata(&mut yaml, profile);
-    insert_passthrough(&mut yaml, profile);
-    let mut lossy_fields = Vec::new();
-    if profile.had_model_invocable_field {
-        if profile.model_invocable {
-            yaml.insert(yk("alwaysApply"), Value::Bool(true));
-        } else {
-            lossy_fields.push(dropped("model-invocable", SkillHarness::Cursor));
-        }
-    }
-    let tool_policy = profile.effective_tool_policy();
-    if !tool_policy.allowed.is_empty() {
-        lossy_fields.push(dropped("tools", SkillHarness::Cursor));
-    }
-    insert_disallowed_tools(
-        &mut yaml,
-        profile,
-        SkillHarness::Cursor,
-        "cursor",
-        &mut lossy_fields,
-    );
-    insert_mcp_tools(&mut yaml, profile, SkillHarness::Cursor, &mut lossy_fields);
-    if user_invocation_disabled(profile) {
-        lossy_fields.push(dropped("user-invocable", SkillHarness::Cursor));
-    }
-    if profile.when_to_use.is_some() {
-        lossy_fields.push(dropped("when_to_use", SkillHarness::Cursor));
-    }
-    LoweredOutput {
-        bytes: render(yaml, body),
-        lossy_fields,
-    }
-}
-
-fn dropped(field: &str, harness: SkillHarness) -> LossyField {
-    LossyField {
-        field: field.to_string(),
-        target: harness.target_name().to_string(),
-        classification: Lossiness::Dropped,
-    }
+    lower_policy::lower_skill_with_policy(SkillHarness::Cursor, profile, body)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::lossiness::{Lossiness, LossyField};
     use crate::compiler::skills::parse_skill_content;
 
     fn parse_profile(content: &str) -> SkillProfile {

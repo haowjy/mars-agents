@@ -224,9 +224,8 @@ user-invocable = true
 model-policies = [{ match = "gpt-5*", no_fallback = true }]
 
 [agents.reviewer.tools]
-allowed = ["bash(git *)", "read", "write"]
+allowed = ["bash(git *)", "read", "write", "mcp(plugin:demo)"]
 disallowed = ["agent"]
-mcp = ["plugin:demo"]
 ```
 
 | Field | Type | Description |
@@ -241,8 +240,12 @@ mcp = ["plugin:demo"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool policy: `allowed`, `disallowed`, `mcp` string arrays |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays (MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`) |
 | `model-policies` | table[] | Model routing policy rules |
+
+The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
+`tools.allowed` (e.g. `"mcp(plugin:demo)"`). See
+[agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
 `model-policies` rules: each entry has `match` (glob pattern against model ID/alias), `no_fallback` (bool, optional). See `config/mod.rs` for the full `ModelPolicyRule` definition.
 
@@ -265,7 +268,7 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool policy: `allowed`, `disallowed`, `mcp` string arrays |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays (MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`) |
 
 ## Model Visibility
 

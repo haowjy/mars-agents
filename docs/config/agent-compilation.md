@@ -85,9 +85,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` | projected from Mars snake_case canonical names to Claude PascalCase native names |
-| `disallowed-tools` | `disallowed-tools:` | projected from Mars snake_case canonical names to Claude PascalCase native names |
-| `mcp-tools` | `mcp-tools:` | exact |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
+| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
@@ -121,7 +120,7 @@ TOML format. Codex reads this for native agent invocation.
 | `skills` | dropped | dropped |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
-| `mcp-tools` | `-c mcp.servers.<name>.command` | approximate |
+| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); enable servers via `mcp/<name>/mcp.toml` | approximate |
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
@@ -170,7 +169,7 @@ YAML frontmatter + markdown body.
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
-| `mcp-tools` | session payload or error | approximate |
+| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
@@ -197,7 +196,7 @@ YAML frontmatter + markdown body.
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
-| `mcp-tools` | session payload or error | approximate |
+| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); launch bundle projects `Mcp(server:tool)` tokens | approximate |
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
@@ -239,8 +238,59 @@ YAML frontmatter + markdown body.
 | `mode` | `mode:` | approximate |
 | body | body | exact |
 | `effort` | dropped | approximate |
+| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness) | approximate |
 | All other policy fields | dropped | dropped |
 | `autocompact`, `autocompact_pct`, `model-policies`, `fanout` | dropped | meridian-only |
+
+## MCP tool-policy references
+
+MCP access is gated with inline `mcp(...)` entries in `tools:` (grant) and
+`disallowed-tools:` (deny). This replaces the removed `mcp-tools:` frontmatter field.
+Grammar and authoring examples: [agent-profiles.md](agent-profiles.md#tools).
+
+Server and tool segments are preserved **verbatim** — no case normalization during parse
+or projection. `*` is the only wildcard. Five canonical forms:
+
+| Canonical | Meaning |
+|---|---|
+| `mcp(server)` | Whole server (equivalent to `mcp(server/*)`) |
+| `mcp(server/tool)` | One specific tool |
+| `mcp(server/*)` | All tools on one server |
+| `mcp(*/tool)` | A tool name across any server |
+| `mcp(*/*)` | All MCP tools |
+
+### Per-harness projection
+
+Mars projects canonical `mcp(...)` refs to harness-native permission tokens during native
+lowering (Claude agents/skills) and in the **launch bundle** (`ToolsSpec.mcp` carries the
+projected tokens for every harness). Unsupported refs are **omitted** from native output
+(never broaden permissions) and recorded as approximate lossiness.
+
+| Canonical example | Claude | Cursor | OpenCode | Codex | Pi |
+|---|---|---|---|---|---|
+| `mcp(server/tool)` | `mcp__server__tool` | `Mcp(server:tool)` | `server_tool` | — | — |
+| `mcp(server)` / `mcp(server/*)` | `mcp__server__*` | `Mcp(server:*)` | `server_*` | — | — |
+| `mcp(*/tool)` | — (lossy) | `Mcp(*:tool)` | `*_tool` | — | — |
+| `mcp(*/*)` | `mcp__*` | `Mcp(*:*)` | `*_*` | — | — |
+
+**Codex** — per-tool MCP gating lives in server config (`mcp_servers.enabled_tools`), not
+the agent tool list. Tool-list `mcp(...)` refs record lossiness; whole-server enable is
+governed by the `mcp/<name>/mcp.toml` server lane (see
+[mcp-and-hooks.md](mcp-and-hooks.md#tool-policy-mcp-references-vs-server-definitions)).
+
+**Pi** — no MCP tool surface; all `mcp(...)` refs are dropped with lossiness.
+
+**Emission surfaces:**
+
+| Surface | MCP behavior |
+|---|---|
+| Claude agent native | Projected `mcp__…` tokens merged into `tools:` / `disallowed-tools:` (no `mcp-tools:` field) |
+| Claude skill native | Allowed MCP projected into `allowed-tools:` (grant semantics; approximate lossiness) |
+| Codex / OpenCode / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
+| Launch bundle | `ToolsSpec.mcp` = per-harness projected tokens for all harnesses |
+
+Implementation: [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`parse_mcp_ref`,
+`project_mcp_ref`). Inbound lift: [`src/staging/.context/CONTEXT.md`](../../src/staging/.context/CONTEXT.md).
 
 ## Lossiness Model
 
@@ -277,9 +327,9 @@ Compact per-field, per-target classification:
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
-| `tools` | preserved | exact | dropped | dropped | dropped | dropped |
-| `disallowed-tools` | preserved | exact | dropped | dropped | dropped | dropped |
-| `mcp-tools` | preserved | exact | approximate | approximate | approximate | n/a |
+| `tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
+| `disallowed-tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
+| `mcp(...)` in `tools` / `disallowed-tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |
 | `effort` | preserved | exact | exact | approximate | approximate | approximate |
 | `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |

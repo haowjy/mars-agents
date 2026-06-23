@@ -105,6 +105,8 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 `agents/mod.rs::AgentProfile::effective_tool_policy()` and `skills/mod.rs::SkillProfile::effective_tool_policy()` both delegate to `tool_policy::effective_tool_policy()` with field-level dedup and canonical name normalization.
 
+MCP grammar and per-harness projection: `.context/CONTEXT.md`.
+
 ## Tool Name Projection
 
 Mars canonical tool names are snake_case. `tool_names.rs` recognizes canonical names plus aliases/native spellings, then projects by target convention: Claude/Cursor/Pi PascalCase, Codex snake_case, OpenCode lowercase-without-underscores. Only true semantic exceptions live in the override table (for example Codex `bash` → `shell`, OpenCode `read` → `view`). Harness support for a specific known tool is separate from name recognition.

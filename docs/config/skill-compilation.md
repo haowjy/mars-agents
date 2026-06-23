@@ -11,9 +11,8 @@ All skill fields below are optional. A skill with no frontmatter is valid and is
 name: my-skill
 description: What this skill does
 model-invocable: false
-tools: [bash(git *), read, write]
+tools: [bash(git *), read, write, mcp(plugin:demo)]
 disallowed-tools: [agent]
-mcp-tools: [plugin:demo]
 license: MIT
 metadata:
   owner: platform-team
@@ -160,19 +159,17 @@ Flat tool denylist merged with map-form `tools:` denials. Lowered to harness-nat
 disallowed-tools: [agent, web_search]
 ```
 
----
+**MCP grants** — same `mcp(...)` grammar as agent profiles (see
+[agent-profiles.md](agent-profiles.md#tools)). Author grants in `tools:` and denials in
+`disallowed-tools:`. The legacy `mcp-tools:` field is **removed**.
 
-### `mcp-tools`
-
-| | |
-|---|---|
-| Type | string[] |
-| Default | empty |
-
-MCP server allowlist for this skill. Same semantics as agent `mcp-tools`.
+On Claude, allowed MCP refs project into `allowed-tools:` as harness-native tokens (a
+**grant**, not a restriction — Mars records approximate lossiness). Other harnesses drop
+or approximate MCP from native skill artifacts; the launch bundle carries the real
+per-harness projection. See [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
 ```yaml
-mcp-tools: [plugin:context7]
+tools: [bash(git *), mcp(plugin:context7)]
 ```
 
 ---
@@ -241,8 +238,9 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `model-invocable: true` | preserved | (omit) | (omit or `allow_implicit_invocation: true`)¹ | (omit) | (omit) | (omit) |
 | `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
-| `tools` | preserved | `allowed-tools` | dropped | dropped | `allowed-tools` | dropped |
-| `disallowed-tools` | preserved | `disallowed-tools` | dropped | dropped | `disallowed-tools` | dropped |
+| `tools` | preserved | `allowed-tools` (+ projected MCP grants) | dropped | dropped | `allowed-tools` | dropped |
+| `disallowed-tools` | preserved | `disallowed-tools` (+ projected MCP denials) | dropped | dropped | `disallowed-tools` | dropped |
+| `mcp(...)` in `tools` / `disallowed-tools` | preserved | projected into `allowed-tools` / `disallowed-tools` | approximate | approximate | dropped | approximate |
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
 

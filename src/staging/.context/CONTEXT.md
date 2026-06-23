@@ -53,10 +53,27 @@ For `Dialect::MarsNative`, lift is limited to stripping non-canonical tool alias
 
 C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
 (`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
-`disallowed-tools:` / `mcp-tools:` (not legacy `allowed-tools`). Lookup key is the **installed** skill name (after
-explicit rename), matching `[skills.<name>]` in mars.toml — not the source
-directory basename alone. Flat/root `SKILL.md` skills use the discovered item
+`disallowed-tools:` (including inline `mcp(...)` grants). Lookup key is the **installed**
+skill name (after explicit rename), matching `[skills.<name>]` in mars.toml — not the
+source directory basename alone. Flat/root `SKILL.md` skills use the discovered item
 name (dependency source name or configured fallback).
+
+## Inbound MCP lift
+
+Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
+`allowed-tools` / `disallowedTools`) lift to canonical `mcp(...)` during dialect staging
+(`staging/lift.rs`):
+
+| Foreign form | Dialect | Lifts to |
+|---|---|---|
+| `mcp__server__tool`, `mcp__server__*`, `mcp__server`, `mcp__*` | Claude | `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/*)` (segments verbatim) |
+| `Mcp(server:tool)` | Cursor | `mcp(server/tool)` (last `:` separates tool; namespaced server ids preserved) |
+| `mcpServers` | Claude | Appends `mcp(server)` entries to `tools:` (whole-server grant) |
+
+The removed `mcp-tools:` / `mcp_tools` field is rejected at parse time (`RemovedField`).
+Use `tools: [mcp(server)]` instead. Projection to harness-native tokens:
+[`src/compiler/mcp_ref.rs`](../compiler/mcp_ref.rs) — documented in
+[agent-compilation.md](../../docs/config/agent-compilation.md#mcp-tool-policy-references).
 
 ## Poor Man's module — `skill_source_name`
 

@@ -107,15 +107,12 @@ impl SkillDiagnostic {
     }
 }
 
-const NON_CANONICAL_TOOL_FIELDS: &[(&str, &str)] =
-    &[("allowed-tools", "tools:"), ("allowed_tools", "tools:")];
-
-/// Emit warnings for foreign tool allowlist spellings in raw skill frontmatter.
+/// Emit warnings for foreign tool-field spellings in raw skill frontmatter.
 pub(crate) fn push_non_canonical_tool_field_diags(
     fm: &Frontmatter,
     diags: &mut Vec<SkillDiagnostic>,
 ) {
-    for &(field, canonical) in NON_CANONICAL_TOOL_FIELDS {
+    for &(field, canonical) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
         if fm.get(field).is_some() {
             diags.push(SkillDiagnostic::NonCanonicalField {
                 field: field.to_string(),
@@ -302,8 +299,8 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         consumed_keys.push(field.consumed_key);
     }
 
-    for field in NON_CANONICAL_TOOL_FIELDS {
-        consumed_keys.push(field.0.to_string());
+    for &(field, _) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
+        consumed_keys.push(field.to_string());
     }
     push_non_canonical_tool_field_diags(fm, diags);
 
@@ -644,10 +641,23 @@ body",
     }
 
     #[test]
-    fn disallowed_tools_snake_key_parses() {
+    fn disallowed_tools_snake_key_parses_and_warns() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody");
-        assert!(d.is_empty());
         assert_eq!(p.disallowed_tools, vec!["write"]);
+        assert!(
+            d.iter().any(|diag| matches!(
+                diag,
+                SkillDiagnostic::NonCanonicalField { field, canonical }
+                    if field == "disallowed_tools" && *canonical == "disallowed-tools:"
+            )),
+            "expected non-canonical diagnostic: {d:?}"
+        );
+        assert!(
+            !p.passthrough_fields
+                .iter()
+                .any(|(k, _)| k == "disallowed_tools"),
+            "snake alias must be consumed, not passthrough"
+        );
     }
 
     #[test]

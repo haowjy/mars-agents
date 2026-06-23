@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
+use crate::compiler::tool_policy;
 use crate::config::SkillOverlay;
 use crate::frontmatter::Frontmatter;
 use crate::skill_source_name::flat_root_skill_source_name;
@@ -104,7 +105,7 @@ pub(crate) fn apply_skill_overlay(
             &mut merged,
             "tools",
             &overlay.tools.allowed,
-            &["allowed-tools", "allowed_tools"],
+            &tool_policy::non_canonical_aliases_for("tools"),
         );
     }
     if !overlay.tools.disallowed.is_empty() {
@@ -112,7 +113,7 @@ pub(crate) fn apply_skill_overlay(
             &mut merged,
             "disallowed-tools",
             &overlay.tools.disallowed,
-            &["disallowed_tools"],
+            &tool_policy::non_canonical_aliases_for("disallowed-tools"),
         );
     }
     if !overlay.tools.mcp.is_empty() {

@@ -3,6 +3,7 @@
 use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
+use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
@@ -37,11 +38,14 @@ fn strip_foreign_keys(fm: &mut Frontmatter, keys: &[&str]) -> bool {
     changed
 }
 
-/// Non-canonical tool spellings that must not appear in the canonical store.
-const NON_CANONICAL_TOOL_ALIASES: &[&str] = &["allowed-tools", "allowed_tools", "disallowed_tools"];
-
 fn strip_non_canonical_tool_aliases(fm: &mut Frontmatter) -> bool {
-    strip_foreign_keys(fm, NON_CANONICAL_TOOL_ALIASES)
+    let mut changed = false;
+    for &(key, _) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
+        if fm.remove(key).is_some() {
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Lift frontmatter, returning whether any field was rewritten.

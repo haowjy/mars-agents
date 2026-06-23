@@ -612,6 +612,41 @@ mod tests {
     }
 
     #[test]
+    fn mars_native_staging_strips_disallowed_tools_alias_and_warns() {
+        let source = TempDir::new().unwrap();
+        let skill = source.path().join("skills/bad-denied");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: bad-denied\ndescription: d\ndisallowed_tools: [Agent]\n---\n# Body\n",
+        )
+        .unwrap();
+
+        let dest = TempDir::new().unwrap();
+        let mut diag = stage_source(
+            source.path(),
+            dest.path(),
+            Dialect::MarsNative,
+            &IndexMap::new(),
+            &RenameMap::new(),
+            None,
+        );
+
+        let staged = fs::read_to_string(dest.path().join("skills/bad-denied/SKILL.md")).unwrap();
+        assert!(
+            !staged.contains("disallowed_tools"),
+            "canonical staging must strip disallowed_tools alias: {staged}"
+        );
+
+        assert!(
+            diag.drain().iter().any(|d| {
+                d.message.contains("disallowed_tools") && d.message.contains("disallowed-tools:")
+            }),
+            "staging must warn about non-canonical disallowed_tools"
+        );
+    }
+
+    #[test]
     fn mars_native_canonical_tools_stages_without_non_canonical_diagnostic() {
         let source = TempDir::new().unwrap();
         let skill = source.path().join("skills/good-tools");

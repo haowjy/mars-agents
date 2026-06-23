@@ -1947,6 +1947,85 @@ fn sync_local_mars_native_skill_strips_allowed_tools_and_warns() {
 }
 
 #[test]
+fn sync_mars_native_dependency_skill_strips_disallowed_tools_and_warns() {
+    let dir = TempDir::new().unwrap();
+    let source_skill =
+        "---\nname: bad-denied\ndescription: d\ndisallowed_tools: [Agent]\n---\n# Body\n";
+    let source = create_source(&dir, "base", &[], &[("bad-denied", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        stderr.contains("disallowed_tools") && stderr.contains("disallowed-tools:"),
+        "sync must warn about non-canonical disallowed_tools: {stderr}"
+    );
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("bad-denied")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !canonical.contains("disallowed_tools"),
+        "canonical store must not retain disallowed_tools: {canonical}"
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("bad-denied")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !claude_native.contains("disallowed_tools"),
+        "claude projection must not leak disallowed_tools: {claude_native}"
+    );
+}
+
+#[test]
 fn sync_mars_native_canonical_tools_skill_lowers_without_non_canonical_warning() {
     let dir = TempDir::new().unwrap();
     let source_skill = "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n";

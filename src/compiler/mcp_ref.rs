@@ -223,6 +223,78 @@ fn segment_display(segment: &McpSegment) -> String {
     }
 }
 
+/// Per-harness native MCP token projection from a canonical [`McpRef`].
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum McpProjection {
+    /// Emit this native token in the harness tool/permission list (or launch bundle).
+    Token(String),
+    /// Target cannot represent this ref; caller records lossiness and omits it.
+    Unsupported(McpUnsupportedReason),
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpUnsupportedReason {
+    /// Harness cannot scope one tool across all servers (e.g. Claude `mcp(*/tool)`).
+    CrossServerTool,
+    /// Per-tool MCP gating lives in server config, not the tool list (Codex).
+    PerToolNeedsServerConfig,
+    /// Harness has no MCP tool surface (Pi).
+    HarnessDropsMcp,
+}
+
+/// Project a canonical MCP ref to a harness-native permission token.
+///
+/// `harness` is a lowercase id (`claude`, `codex`, `cursor`, `opencode`, `pi`).
+/// Server and tool segments are preserved verbatim — never re-cased.
+///
+/// Unknown harness ids passthrough canonical `mcp(server/tool)` rather than inventing
+/// a native wire form that might be wrong for that target.
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b: wire into tool-policy emission
+pub(crate) fn project_mcp_ref(r: &McpRef, harness: &str) -> McpProjection {
+    match harness.trim().to_ascii_lowercase().as_str() {
+        "claude" => project_claude(r),
+        "cursor" => project_cursor(r),
+        "opencode" => project_opencode(r),
+        "codex" => McpProjection::Unsupported(McpUnsupportedReason::PerToolNeedsServerConfig),
+        "pi" => McpProjection::Unsupported(McpUnsupportedReason::HarnessDropsMcp),
+        _ => McpProjection::Token(r.to_canonical()),
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
+fn project_claude(r: &McpRef) -> McpProjection {
+    match (&r.server, &r.tool) {
+        (McpSegment::Any, McpSegment::Named(_)) => {
+            McpProjection::Unsupported(McpUnsupportedReason::CrossServerTool)
+        }
+        (McpSegment::Any, McpSegment::Any) => McpProjection::Token("mcp__*".to_string()),
+        (McpSegment::Named(server), tool) => {
+            let tool_seg = segment_display(tool);
+            McpProjection::Token(format!("mcp__{server}__{tool_seg}"))
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
+fn project_cursor(r: &McpRef) -> McpProjection {
+    McpProjection::Token(format!(
+        "Mcp({}:{})",
+        segment_display(&r.server),
+        segment_display(&r.tool)
+    ))
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // Phase 4b
+fn project_opencode(r: &McpRef) -> McpProjection {
+    McpProjection::Token(format!(
+        "{}_{}",
+        segment_display(&r.server),
+        segment_display(&r.tool)
+    ))
+}
+
 fn parse_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
     let trimmed = segment.trim();
     if trimmed.is_empty() {
@@ -477,5 +549,129 @@ mod tests {
         let lifted = try_parse_mcp_tool_name(&canonical).unwrap();
         assert!(!lifted.is_whole_server());
         assert_eq!(lifted, parsed);
+    }
+
+    fn assert_token(r: &McpRef, harness: &str, expected: &str) {
+        assert_eq!(
+            project_mcp_ref(r, harness),
+            McpProjection::Token(expected.to_string()),
+            "harness={harness}, ref={}",
+            r.to_canonical()
+        );
+    }
+
+    fn assert_unsupported(r: &McpRef, harness: &str, reason: McpUnsupportedReason) {
+        assert_eq!(
+            project_mcp_ref(r, harness),
+            McpProjection::Unsupported(reason),
+            "harness={harness}, ref={}",
+            r.to_canonical()
+        );
+    }
+
+    #[test]
+    fn project_mcp_ref_claude_matrix() {
+        let per_tool = parse("GitHub/CreateIssue");
+        assert_token(&per_tool, "claude", "mcp__GitHub__CreateIssue");
+
+        let whole_server = parse("GitHub/*");
+        assert_token(&whole_server, "claude", "mcp__GitHub__*");
+
+        let server_shorthand = parse("GitHub");
+        assert_token(&server_shorthand, "claude", "mcp__GitHub__*");
+
+        let cross_server = parse("*/CreateIssue");
+        assert_unsupported(
+            &cross_server,
+            "claude",
+            McpUnsupportedReason::CrossServerTool,
+        );
+
+        let global = parse("*/*");
+        assert_token(&global, "claude", "mcp__*");
+
+        let namespaced = parse("plugin:context7:context7/echo");
+        assert_token(&namespaced, "claude", "mcp__plugin:context7:context7__echo");
+    }
+
+    #[test]
+    fn project_mcp_ref_cursor_matrix() {
+        let per_tool = parse("GitHub/CreateIssue");
+        assert_token(&per_tool, "cursor", "Mcp(GitHub:CreateIssue)");
+
+        let whole_server = parse("GitHub/*");
+        assert_token(&whole_server, "cursor", "Mcp(GitHub:*)");
+
+        let server_shorthand = parse("GitHub");
+        assert_token(&server_shorthand, "cursor", "Mcp(GitHub:*)");
+
+        let cross_server = parse("*/CreateIssue");
+        assert_token(&cross_server, "cursor", "Mcp(*:CreateIssue)");
+
+        let global = parse("*/*");
+        assert_token(&global, "cursor", "Mcp(*:*)");
+
+        let namespaced = parse("plugin:context7:context7/echo");
+        assert_token(&namespaced, "cursor", "Mcp(plugin:context7:context7:echo)");
+    }
+
+    #[test]
+    fn project_mcp_ref_opencode_matrix() {
+        let per_tool = parse("GitHub/CreateIssue");
+        assert_token(&per_tool, "opencode", "GitHub_CreateIssue");
+
+        let whole_server = parse("GitHub/*");
+        assert_token(&whole_server, "opencode", "GitHub_*");
+
+        let server_shorthand = parse("GitHub");
+        assert_token(&server_shorthand, "opencode", "GitHub_*");
+
+        let cross_server = parse("*/CreateIssue");
+        assert_token(&cross_server, "opencode", "*_CreateIssue");
+
+        let global = parse("*/*");
+        assert_token(&global, "opencode", "*_*");
+
+        let namespaced = parse("plugin:context7:context7/echo");
+        assert_token(&namespaced, "opencode", "plugin:context7:context7_echo");
+    }
+
+    #[test]
+    fn project_mcp_ref_codex_all_unsupported() {
+        let forms = [
+            parse("GitHub/CreateIssue"),
+            parse("GitHub/*"),
+            parse("GitHub"),
+            parse("*/CreateIssue"),
+            parse("*/*"),
+            parse("plugin:context7:context7/echo"),
+        ];
+
+        for r in forms {
+            assert_unsupported(&r, "codex", McpUnsupportedReason::PerToolNeedsServerConfig);
+        }
+    }
+
+    #[test]
+    fn project_mcp_ref_pi_all_unsupported() {
+        let forms = [
+            parse("GitHub/CreateIssue"),
+            parse("GitHub/*"),
+            parse("GitHub"),
+            parse("*/CreateIssue"),
+            parse("*/*"),
+            parse("plugin:context7:context7/echo"),
+        ];
+
+        for r in forms {
+            assert_unsupported(&r, "pi", McpUnsupportedReason::HarnessDropsMcp);
+        }
+    }
+
+    #[test]
+    fn project_mcp_ref_unknown_harness_passthrough_canonical() {
+        let r = parse("GitHub/CreateIssue");
+        assert_token(&r, "future", "mcp(GitHub/CreateIssue)");
+        assert_token(&r, "MARS", "mcp(GitHub/CreateIssue)");
     }
 }

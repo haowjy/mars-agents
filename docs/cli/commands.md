@@ -40,6 +40,9 @@ mars init [TARGET] [--link DIR...]
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Persists non-default `managed_root` in `[settings]`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
+- Runs a **field-loss preview** against configured managed targets, reporting
+  what each target cannot express (lossiness diagnostics via
+  `collect_source_lossiness_diagnostics`)
 
 ```bash
 mars init                    # Default: .agents/
@@ -449,6 +452,11 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Skill dependency references (warns about external deps)
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
+
+If a `mars.toml` is present in the target directory, also runs a **field-loss
+preview** (`collect_source_lossiness_diagnostics`) against the configured managed
+targets — reports what each native target cannot express from the source tree's
+agents and skills.
 
 ```bash
 mars check                   # Check current directory

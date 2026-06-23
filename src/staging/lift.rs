@@ -3,12 +3,47 @@
 use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
+use crate::compiler::mcp_ref::parse_foreign_mcp_token;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 
-fn lift_foreign_tools_allowlist(fm: &mut Frontmatter) -> bool {
+fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, bool) {
+    match value {
+        Value::Sequence(seq) => {
+            let mut changed = false;
+            let lifted: Vec<Value> = seq
+                .iter()
+                .map(|entry| {
+                    let Some(raw) = entry.as_str() else {
+                        return entry.clone();
+                    };
+                    let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
+                        return entry.clone();
+                    };
+                    changed = true;
+                    Value::String(mcp_ref.to_canonical())
+                })
+                .collect();
+            (Value::Sequence(lifted), changed)
+        }
+        other => (other.clone(), false),
+    }
+}
+
+fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
+    let Some(value) = fm.get(key).cloned() else {
+        return false;
+    };
+    let (lifted, changed) = lift_foreign_mcp_tokens_in_value(&value, dialect);
+    if changed {
+        fm.insert(key, lifted);
+    }
+    changed
+}
+
+fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool {
     let mut changed = false;
     if fm.get("tools").is_none() {
         for key in ["allowed-tools", "allowed_tools", "tools"] {
@@ -25,6 +60,7 @@ fn lift_foreign_tools_allowlist(fm: &mut Frontmatter) -> bool {
             }
         }
     }
+    changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
     changed
 }
 
@@ -91,7 +127,7 @@ fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
             changed = true;
         }
     }
-    changed |= lift_foreign_tools_allowlist(fm);
+    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
     changed
 }
 
@@ -110,6 +146,9 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
         }
         changed = true;
     }
+
+    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+    changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
     changed
 }
 
@@ -129,7 +168,7 @@ fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
                     "user_invocable",
                 ],
             );
-            changed |= lift_foreign_tools_allowlist(fm);
+            changed |= lift_foreign_tools_allowlist(fm, Dialect::Codex);
         }
         ItemKind::Agent => {
             changed |= strip_foreign_keys(
@@ -170,7 +209,8 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     if fm.remove("globs").is_some() {
         changed = true;
     }
-    changed |= lift_foreign_tools_allowlist(fm);
+    changed |= lift_foreign_tools_allowlist(fm, Dialect::Cursor);
+    changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Cursor);
     changed
 }
 
@@ -180,7 +220,7 @@ fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
         ItemKind::Skill | ItemKind::BootstrapDoc => {
             let mut changed = false;
             changed |= strip_foreign_keys(fm, &["mode"]);
-            changed |= lift_foreign_tools_allowlist(fm);
+            changed |= lift_foreign_tools_allowlist(fm, Dialect::OpenCode);
             if let Some(tools) = fm.remove("disallowedTools") {
                 if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
                     fm.insert("disallowed-tools", tools);
@@ -419,5 +459,110 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_agent_content(&staged, &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(profile.disallowed_tools, vec!["web_search"]);
+    }
+
+    #[test]
+    fn claude_agent_lifts_foreign_mcp_refs_in_tool_lists() {
+        use crate::compiler::mcp_ref::{parse_mcp_ref, try_parse_mcp_tool_name};
+
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\nallowed-tools: [Read, mcp__github__create_issue, mcp__context7__*]\ndisallowedTools: [mcp__github__delete_repo]\n",
+            ),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("mcp(github/create_issue)".into()),
+                Value::String("mcp(context7/*)".into()),
+            ]))
+        );
+        assert_eq!(
+            lifted.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![Value::String(
+                "mcp(github/delete_repo)".into()
+            )]))
+        );
+
+        for canonical in [
+            "mcp(github/create_issue)",
+            "mcp(context7/*)",
+            "mcp(github/delete_repo)",
+        ] {
+            let parsed = try_parse_mcp_tool_name(canonical).unwrap();
+            let inner = canonical.trim_start_matches("mcp(").trim_end_matches(')');
+            assert_eq!(parse_mcp_ref(inner).unwrap(), parsed);
+        }
+
+        let mut diags = Vec::new();
+        let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty());
+        assert_eq!(
+            profile.tools,
+            vec!["read", "mcp(github/create_issue)", "mcp(context7/*)"]
+        );
+        assert_eq!(profile.disallowed_tools, vec!["mcp(github/delete_repo)"]);
+    }
+
+    #[test]
+    fn claude_agent_lifts_whole_server_and_global_mcp_wire_tokens() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\nallowed-tools: [mcp__*, mcp__github]\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("mcp(*/*)".into()),
+                Value::String("mcp(github/*)".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn claude_skill_lifts_foreign_mcp_refs_in_allowed_tools() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Skill,
+            &fm(
+                "name: s\ndescription: d\nallowed-tools: [mcp__GitHub__CreateIssue, mcp__context7__*]\n",
+            ),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("mcp(GitHub/CreateIssue)".into()),
+                Value::String("mcp(context7/*)".into()),
+            ]))
+        );
+        assert!(lifted.get("allowed-tools").is_none());
+
+        let mut diags = Vec::new();
+        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty());
+        assert_eq!(
+            profile.tools,
+            vec!["mcp(GitHub/CreateIssue)", "mcp(context7/*)"]
+        );
+    }
+
+    #[test]
+    fn cursor_rule_lifts_mcp_parenthesis_tokens() {
+        let lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &fm("description: rule\nallowed-tools: [Mcp(github:create_issue), Read]\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("mcp(github/create_issue)".into()),
+                Value::String("Read".into()),
+            ]))
+        );
     }
 }

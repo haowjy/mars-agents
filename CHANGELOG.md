@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Unknown tools now project via the target harness naming convention instead of passing through verbatim (snake_case custom tools reach Claude/Cursor as PascalCase); MCP wire names (`mcp__…`) are recognized and preserved verbatim without re-casing.
 
 ### Added
+- Inbound lift of foreign MCP permission tokens to canonical `mcp(server/tool)` on import — Claude `mcp__server__tool` wire refs and Cursor `Mcp(server:tool)` refs in `allowed-tools` / `disallowed-tools` lift without case change; `mcpServers` whole-server lift unchanged.
 - Canonical `mcp(server/tool)` grammar in `tools:` / `disallowed-tools:` — scoped MCP references are parsed and recognized (preserved verbatim, no convention projection or unknown-tool warning); real per-harness emission is a later phase.
 - Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.
 - Per-dialect frontmatter lift tables (Claude/Codex/Cursor/OpenCode) in `staging/lift.rs`; default/inferred Claude lift is idempotent on mars-native packages.

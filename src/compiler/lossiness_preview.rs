@@ -24,6 +24,7 @@ use crate::frontmatter;
 use crate::lock::ItemKind;
 use crate::local_source::LOCAL_SOURCE_DIR;
 use crate::models::ModelsCache;
+use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
 use crate::types::RenameMap;
 
@@ -63,7 +64,7 @@ pub fn collect_source_lossiness_diagnostics(
         return Ok(Vec::new());
     }
 
-    let (source_root, dialect) = preview_staging_root_and_dialect(base)?;
+    let (source_root, dialect, fallback_skill_name) = preview_staging_root_and_dialect(base)?;
     let skill_overrides = load_skill_overrides(base)?;
     let staging = TempDir::new()?;
     crate::staging::stage_canonical_source(
@@ -72,7 +73,7 @@ pub fn collect_source_lossiness_diagnostics(
         dialect,
         &skill_overrides,
         &RenameMap::new(),
-        None,
+        fallback_skill_name.as_deref(),
     )?;
 
     let mut diag = DiagnosticCollector::new();
@@ -98,7 +99,8 @@ pub fn collect_source_lossiness_diagnostics(
             NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
         });
 
-    let discovered = crate::discover::discover_resolved_source(staging.path(), None)?;
+    let discovered =
+        crate::discover::discover_resolved_source(staging.path(), fallback_skill_name.as_deref())?;
     for item in discovered {
         match item.id.kind {
             ItemKind::Agent => {
@@ -133,12 +135,15 @@ pub fn collect_source_lossiness_diagnostics(
     Ok(diag.drain())
 }
 
-fn preview_staging_root_and_dialect(base: &Path) -> Result<(PathBuf, Dialect), MarsError> {
+fn preview_staging_root_and_dialect(
+    base: &Path,
+) -> Result<(PathBuf, Dialect, Option<String>), MarsError> {
     let config = match crate::config::load(base) {
         Ok(config) => Some(config),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
         Err(err) => return Err(err),
     };
+    let fallback_skill_name = preview_flat_skill_fallback_name(base, config.as_ref());
     let is_consumer = is_consumer_project(base, config.as_ref());
     if is_consumer {
         let local_root = base.join(LOCAL_SOURCE_DIR);
@@ -146,13 +151,43 @@ fn preview_staging_root_and_dialect(base: &Path) -> Result<(PathBuf, Dialect), M
             return Ok((
                 local_root.clone(),
                 Dialect::resolve_local(None, &local_root),
+                fallback_skill_name,
             ));
         }
-        return Ok((base.to_path_buf(), Dialect::resolve_local(None, base)));
+        return Ok((
+            base.to_path_buf(),
+            Dialect::resolve_local(None, base),
+            fallback_skill_name,
+        ));
     }
-    Ok((base.to_path_buf(), Dialect::resolve(None, base)))
+    Ok((
+        base.to_path_buf(),
+        Dialect::resolve(None, base),
+        fallback_skill_name,
+    ))
 }
 
+/// Stable flat-root skill name for preview staging/discovery.
+///
+/// Matches dependency staging: package name when declared, otherwise the source
+/// directory basename — never the ephemeral temp staging directory name.
+fn preview_flat_skill_fallback_name(
+    base: &Path,
+    config: Option<&crate::config::Config>,
+) -> Option<String> {
+    if !base.join("SKILL.md").is_file() {
+        return None;
+    }
+    Some(flat_root_skill_source_name(
+        base,
+        config.and_then(|c| c.package.as_ref()).map(|p| p.name.as_str()),
+    ))
+}
+
+/// True when the project has local consumer authoring content in `.mars-src/`.
+///
+/// `.mars/` is a sync cache and must not flip preview into local-consumer mode;
+/// sync discovers `_self` items only from `.mars-src/` (`local_source.rs`).
 fn is_consumer_project(base: &Path, config: Option<&crate::config::Config>) -> bool {
     let Some(config) = config else {
         return false;
@@ -160,7 +195,6 @@ fn is_consumer_project(base: &Path, config: Option<&crate::config::Config>) -> b
     if config.package.is_some() {
         return false;
     }
-    // `.mars/` is sync cache; sync discovers local `_self` items only from `.mars-src/`.
     base.join(LOCAL_SOURCE_DIR).is_dir()
 }
 
@@ -388,6 +422,38 @@ mod tests {
         assert_eq!(
             before_msgs, after_msgs,
             "preview must not treat .mars cache as consumer authoring: before={before:?} after={after:?}"
+        );
+    }
+
+    #[test]
+    fn collect_source_lossiness_flat_skill_uses_source_name_not_temp_dir() {
+        let root = TempDir::new().unwrap();
+        let flat_pkg = root.path().join("flat-skill");
+        std::fs::create_dir_all(&flat_pkg).unwrap();
+        std::fs::write(
+            flat_pkg.join("SKILL.md"),
+            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\n---\n# Flat\n",
+        )
+        .unwrap();
+        std::fs::write(
+            flat_pkg.join("mars.toml"),
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
+        )
+        .unwrap();
+
+        let settings = crate::config::load(&flat_pkg).unwrap().settings;
+        let diags = collect_source_lossiness_diagnostics(&flat_pkg, &settings).unwrap();
+        assert!(
+            diags.iter().any(|d| {
+                d.category == Some(DiagnosticCategory::Lossiness)
+                    && d.message.contains("flat-skill")
+                    && d.message.contains("model-invocable")
+            }),
+            "expected flat-skill lossiness diagnostic, not temp dir name: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains(".tmp")),
+            "must not use temp staging dir basename in diagnostics: {diags:?}"
         );
     }
 }

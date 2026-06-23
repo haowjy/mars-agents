@@ -33,6 +33,12 @@ the source. With explicit non-`mars-native` dialect, foreign frontmatter is lift
 canonical mars fields per `staging/lift.rs`. Default/inferred `Claude` lift is
 idempotent on already-canonical packages.
 
+## Non-canonical allowed-tools handling (MarsNative skills only)
+
+In `process_markdown_file` (mod.rs:271–312), MarsNative skills parse **RAW** frontmatter (before any lift) and call `push_non_canonical_tool_field_diags` → `"skill-schema-warning"` diagnostic. This runs BEFORE `lift_frontmatter_with_change` (lift.rs:41–55) strips the non-canonical aliases via `strip_non_canonical_tool_aliases`. The diagnostic inspects the original pre-mutation frontmatter; the strip operates on a separate clone. Both `.mars/` and `.claude/` end up clean (aliases removed from canonical store).
+
+Non-canonical aliases detected: `allowed-tools`, `allowed_tools` (→ `tools:`), plus `disallowed_tools` (→ `disallowed-tools:`).
+
 ## `lift_frontmatter` (B3)
 
 ```rust
@@ -43,6 +49,8 @@ pub fn lift_frontmatter(
 ) -> Frontmatter
 ```
 
+For `Dialect::MarsNative`, lift is limited to stripping non-canonical tool aliases. All other dialects apply their own key mapping (Claude, Codex, Cursor, OpenCode).
+
 C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
 (`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
 `disallowed-tools:` / `mcp-tools:` (not legacy `allowed-tools`). Lookup key is the **installed** skill name (after
@@ -50,12 +58,17 @@ explicit rename), matching `[skills.<name>]` in mars.toml — not the source
 directory basename alone. Flat/root `SKILL.md` skills use the discovered item
 name (dependency source name or configured fallback).
 
+## Poor Man's module — `skill_source_name`
+
+Flat-root skill naming (`skill_source_name` in `src/skill_source_name.rs`) is the single canonical rule shared by discovery and staging overlay lookup. `staging/overlay.rs::skill_source_name` delegates to `flat_root_skill_source_name` for `SKILL.md` at package root, using the explicit `fallback_skill_name` when provided (dependency source name) or falling back to the package directory basename.
+
 ## Threading
 
 - `EffectiveDependency.dialect` — explicit `[dependencies.<dep>].dialect`
 - `EffectiveDependency.rename` — overlay lookup uses installed names after rename
 - `EffectiveConfig.skills` — `[skills.<name>]` overlays applied in `process_markdown_file`
 - `ResolveOptions.staging_root` — set by sync to `.mars/staging`
+- `fallback_skill_name` — threaded into `process_markdown_file` via `StageOverlayContext`; used for flat-root skill overlay lookup and diagnostic messages
 
 Dialect resolution (`crate::dialect::Dialect::resolve`):
 

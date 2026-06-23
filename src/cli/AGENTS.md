@@ -33,6 +33,18 @@ Three bypass conditions:
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |
 
+## Lossiness Gating
+
+| Route | Mechanism | `surface_lossiness_warnings` | Calls lossiness preview directly |
+|---|---|---|---|
+| `mars sync` | Sync pipeline | `true` | No |
+| `mars upgrade` | Sync pipeline | `true` | No |
+| `mars validate` / `export` / `add` / `repair` | Sync pipeline | `false` | No |
+| `mars check` | Direct | N/A | Yes — `lossiness_preview::collect_source_lossiness_diagnostics` (check.rs:94–103) |
+| `mars init` | Direct | N/A | Yes — `lossiness_preview::collect_source_lossiness_diagnostics` (init.rs:137–143) |
+
+`mars check` and `mars init` call `lossiness_preview::collect_source_lossiness_diagnostics` directly (bypassing the sync pipeline). All other commands route through `SyncRequest.surface_lossiness_warnings`; only `sync`/`upgrade` set it `true` so lossiness warnings appear in the report.
+
 ## Catalog / probe refresh flags
 
 `--refresh-models` and `--no-refresh-models` are mutually exclusive. They map to

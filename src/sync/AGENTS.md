@@ -35,11 +35,15 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover items, detect collisions, rewrite frontmatter refs |
+| `build_target()` | Discover items, detect collisions, rewrite frontmatter refs; stages local items via `crate::staging::stage_local_item` (mod.rs:299–309) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
-| `finalize()` | Write lock, persist model aliases, build report |
+| `finalize()` | Write lock, persist model aliases, build report; strips `DiagnosticCategory::Lossiness` when `surface_lossiness_warnings` is false (mod.rs:720–722) |
+
+## Lossiness Gating
+
+`SyncRequest.surface_lossiness_warnings` (mod.rs:75–77) controls whether lossiness diagnostics reach the report. Only `mars sync` and `mars upgrade` set it `true`; all other pipeline callers (validate, export, add, repair, etc.) set it `false`, causing `finalize()` to filter out all `Lossiness`-category diagnostics.
 
 ### Frozen Gate
 

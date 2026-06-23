@@ -19,7 +19,9 @@ pipeline operates on EffectiveConfig only
 | `Config` | Full mars.toml: package, dependencies, local-dependencies, settings, models, agents |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
-| `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`) |
+| `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
+| `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
+| `AgentOverlay` | `[agents.<name>]` overlay — `description`, `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`), `model_policies` |
 
 ## Layering (`layering.rs`)
 

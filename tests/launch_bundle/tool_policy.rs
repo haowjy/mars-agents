@@ -247,6 +247,95 @@ Review code changes."#;
     }));
 }
 
+pub(crate) fn build_launch_bundle_skill_deny_projects_without_unknown_warning() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  Bash: allow
+  'skill(init)': deny
+  workflow: deny
+  web: allow
+  definitely-not-a-tool: deny
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut claude_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    claude_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    claude_cmd.env("PATH", replace_path_with(&bin_dir));
+    let claude_output = claude_cmd.assert().success().get_output().clone();
+    let claude_bundle: Value = serde_json::from_slice(&claude_output.stdout).unwrap();
+    assert_eq!(
+        claude_bundle["tools"]["allowed"],
+        serde_json::json!(["Bash", "WebSearch"])
+    );
+    assert_eq!(
+        claude_bundle["tools"]["disallowed"],
+        serde_json::json!(["Skill(init)", "Workflow", "definitely-not-a-tool"])
+    );
+    let claude_warnings = claude_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(!claude_warnings.iter().any(|warning| {
+        let text = warning.as_str().unwrap_or_default();
+        text.contains("skill(init)") || text.contains("workflow") || text.contains("'web'")
+    }));
+    assert!(claude_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("disallowed tool 'definitely-not-a-tool' is not a known claude tool")
+    }));
+
+    let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    codex_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-5",
+    ]);
+    codex_cmd.env("PATH", replace_path_with(&bin_dir));
+    let codex_output = codex_cmd.assert().success().get_output().clone();
+    let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
+    assert_eq!(
+        codex_bundle["tools"]["allowed"],
+        serde_json::json!(["exec_command", "web_search"])
+    );
+    assert_eq!(
+        codex_bundle["tools"]["disallowed"],
+        serde_json::json!(["skill(init)", "workflow", "definitely-not-a-tool"])
+    );
+    let codex_warnings = codex_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(!codex_warnings.iter().any(|warning| {
+        let text = warning.as_str().unwrap_or_default();
+        text.contains("skill(init)") || text.contains("workflow") || text.contains("'web'")
+    }));
+    assert!(codex_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("disallowed tool 'definitely-not-a-tool' is not a known codex tool")
+    }));
+}
+
 pub(crate) fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);

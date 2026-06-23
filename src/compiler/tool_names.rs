@@ -65,6 +65,17 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
         name: "agent",
         aliases: &["subagent", "spawn_agent", "task"],
     },
+    // Scoped payloads like skill(init) gate a specific skill via the harness skill tool.
+    // Recognition here only affects name normalization/projection — not whether a harness
+    // enforces disallowed_tools at runtime (Meridian-side).
+    CanonicalTool {
+        name: "skill",
+        aliases: &[],
+    },
+    CanonicalTool {
+        name: "workflow",
+        aliases: &[],
+    },
     CanonicalTool {
         name: "glob",
         aliases: &["find"],
@@ -79,7 +90,8 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "web_search",
-        aliases: &["websearch"],
+        // `web` is package shorthand for web search (Codex native: web_search, not `web`).
+        aliases: &["websearch", "web"],
     },
     CanonicalTool {
         name: "web_fetch",
@@ -472,6 +484,10 @@ mod tests {
             ("CustomTool", "custom_tool", false),
             ("my_custom", "my_custom", false),
             ("bash(git *)", "bash(git *)", true),
+            ("skill(init)", "skill(init)", true),
+            ("Skill(deep-research)", "skill(deep-research)", true),
+            ("workflow", "workflow", true),
+            ("web", "web_search", true),
         ];
 
         for (raw, expected_name, expected_known) in cases {
@@ -542,6 +558,46 @@ mod tests {
                 "exec_command(git *)",
                 ToolProjectionStatus::Known,
             ),
+            (
+                "skill(init)",
+                "claude",
+                "Skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "skill(deep-research)",
+                "codex",
+                "skill(deep-research)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "skill(init)",
+                "cursor",
+                "Skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "skill(init)",
+                "opencode",
+                "skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "skill(init)",
+                "pi",
+                "skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "workflow",
+                "claude",
+                "Workflow",
+                ToolProjectionStatus::Known,
+            ),
+            ("workflow", "codex", "workflow", ToolProjectionStatus::Known),
+            ("web", "claude", "WebSearch", ToolProjectionStatus::Known),
+            ("web", "codex", "web_search", ToolProjectionStatus::Known),
+            ("web", "opencode", "browser", ToolProjectionStatus::Known),
         ];
 
         for (raw, harness, expected_name, expected_status) in cases {
@@ -612,6 +668,19 @@ mod tests {
                 "TodoWrite",
                 ToolProjectionStatus::Known,
             ),
+            (
+                "skill(init)",
+                "cursor",
+                "Skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            (
+                "workflow",
+                "cursor",
+                "Workflow",
+                ToolProjectionStatus::Known,
+            ),
+            ("web", "cursor", "WebSearch", ToolProjectionStatus::Known),
         ];
 
         for (raw, harness, expected_name, expected_status) in cases {
@@ -637,6 +706,14 @@ mod tests {
             ("grep", "pi", "grep", ToolProjectionStatus::Known),
             ("glob", "pi", "find", ToolProjectionStatus::Known), // semantic override
             ("ask_user", "pi", "askuser", ToolProjectionStatus::Known), // convention strips _
+            (
+                "skill(init)",
+                "pi",
+                "skill(init)",
+                ToolProjectionStatus::Known,
+            ),
+            ("workflow", "pi", "workflow", ToolProjectionStatus::Known),
+            ("web", "pi", "websearch", ToolProjectionStatus::Known),
         ];
 
         for (raw, harness, expected_name, expected_status) in cases {

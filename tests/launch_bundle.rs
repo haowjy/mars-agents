@@ -543,6 +543,11 @@ fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_un
 }
 
 #[test]
+fn build_launch_bundle_skill_deny_projects_without_unknown_warning() {
+    tool_policy::build_launch_bundle_skill_deny_projects_without_unknown_warning();
+}
+
+#[test]
 fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
     tool_policy::build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through();
 }

@@ -424,5 +424,7 @@ fn sync_surfaces_approximate_hook_lossiness() {
         .args(["sync", "--root", project.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("approximately mapped for target `.claude`"));
+        .stderr(predicate::str::contains(
+            "approximately mapped for target `.claude`",
+        ));
 }

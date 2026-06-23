@@ -1,5 +1,7 @@
 //! Mars tool-name grammar and target-native projection.
 
+use crate::compiler::mcp_ref::parse_mcp_ref;
+
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
 
@@ -263,6 +265,13 @@ pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolName
         return Err(ToolNameParseError::Empty);
     }
 
+    if is_mcp_scoped_ref(head, payload) {
+        return Ok(ParsedToolName {
+            name: trimmed.to_string(),
+            known: true,
+        });
+    }
+
     let canonical = canonicalize_head(head);
     Ok(ParsedToolName {
         name: format!("{}{payload}", canonical.name),
@@ -289,6 +298,14 @@ pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> Proje
     }
 
     if is_mcp_shaped(head) {
+        return ProjectedToolName {
+            name: trimmed.to_string(),
+            status: ToolProjectionStatus::McpVerbatim,
+        };
+    }
+
+    if is_mcp_scoped_ref(head, payload) {
+        // Phase 3: real per-harness MCP projection (mcp__…, Mcp(server:tool), etc.)
         return ProjectedToolName {
             name: trimmed.to_string(),
             status: ToolProjectionStatus::McpVerbatim,
@@ -345,6 +362,23 @@ fn split_tool_name(value: &str) -> (&str, &str) {
         Some(index) => (&value[..index], &value[index..]),
         None => (value, ""),
     }
+}
+
+/// Returns true when `head` is exactly `mcp` (case-insensitive) and `payload` is a valid
+/// canonical `mcp(server/tool)` reference.
+fn is_mcp_scoped_ref(head: &str, payload: &str) -> bool {
+    if !head.trim().eq_ignore_ascii_case("mcp") {
+        return false;
+    }
+    extract_scoped_payload(payload).is_some_and(|inner| parse_mcp_ref(inner).is_ok())
+}
+
+fn extract_scoped_payload(payload: &str) -> Option<&str> {
+    let trimmed = payload.trim();
+    if trimmed.len() < 2 || !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+        return None;
+    }
+    Some(&trimmed[1..trimmed.len() - 1])
 }
 
 /// Returns true when `head` starts with the reserved MCP wire prefix `mcp__` (case-insensitive).
@@ -851,6 +885,153 @@ mod tests {
         let parsed = parse("mcp__github__CreateIssue");
         assert_eq!(parsed.name, "mcp__github__CreateIssue");
         assert!(!parsed.known);
+    }
+
+    #[test]
+    fn mcp_scoped_refs_preserve_verbatim_on_all_harnesses() {
+        let cases = [
+            (
+                "mcp(github/create_issue)",
+                "claude",
+                "mcp(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(github/create_issue)",
+                "codex",
+                "mcp(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(github/create_issue)",
+                "cursor",
+                "mcp(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(github/create_issue)",
+                "opencode",
+                "mcp(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(github/create_issue)",
+                "pi",
+                "mcp(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(GitHub/CreateIssue)",
+                "claude",
+                "mcp(GitHub/CreateIssue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(github)",
+                "claude",
+                "mcp(github)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "mcp(*/*)",
+                "codex",
+                "mcp(*/*)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+            (
+                "MCP(github/create_issue)",
+                "claude",
+                "MCP(github/create_issue)",
+                ToolProjectionStatus::McpVerbatim,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "raw: {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "raw: {raw}, harness: {harness}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_recognizes_valid_mcp_scoped_refs() {
+        let parsed = parse("mcp(GitHub/CreateIssue)");
+        assert_eq!(parsed.name, "mcp(GitHub/CreateIssue)");
+        assert!(parsed.known);
+
+        let parsed = parse("mcp(github)");
+        assert_eq!(parsed.name, "mcp(github)");
+        assert!(parsed.known);
+    }
+
+    #[test]
+    fn invalid_mcp_scoped_refs_fall_through_to_unknown_projection() {
+        let cases = [
+            (
+                "mcp()",
+                "claude",
+                "Mcp()",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "mcp(/x)",
+                "claude",
+                "Mcp(/x)",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "mcp(x/)",
+                "claude",
+                "Mcp(x/)",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+            (
+                "mcp(a/b/c)",
+                "claude",
+                "Mcp(a/b/c)",
+                ToolProjectionStatus::UnknownProjected,
+            ),
+        ];
+
+        for (raw, harness, expected_name, expected_status) in cases {
+            let parsed = parse(raw);
+            assert_eq!(parsed.name, raw, "parse name for {raw}");
+            assert!(!parsed.known, "parse known flag for {raw}");
+
+            let projected = project(raw, harness);
+            assert_eq!(
+                projected.name, expected_name,
+                "projected name for {raw}, harness: {harness}"
+            );
+            assert_eq!(
+                projected.status, expected_status,
+                "projected status for {raw}, harness: {harness}"
+            );
+            assert_ne!(
+                projected.status,
+                ToolProjectionStatus::McpVerbatim,
+                "{raw} must not be treated as MCP verbatim"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_scoped_and_wire_forms_are_both_recognized_distinctly() {
+        let scoped = project("mcp(github/create_issue)", "claude");
+        assert_eq!(scoped.name, "mcp(github/create_issue)");
+        assert_eq!(scoped.status, ToolProjectionStatus::McpVerbatim);
+
+        let wire = project("mcp__github__create_issue", "claude");
+        assert_eq!(wire.name, "mcp__github__create_issue");
+        assert_eq!(wire.status, ToolProjectionStatus::McpVerbatim);
+
+        assert_ne!(scoped.name, wire.name);
     }
 
     #[test]

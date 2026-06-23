@@ -6,6 +6,7 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis, value_label};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
+use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
 #[derive(Debug, Clone)]
@@ -100,6 +101,46 @@ impl SkillDiagnostic {
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
+        }
+    }
+}
+
+const NON_CANONICAL_TOOL_FIELDS: &[(&str, &str)] = &[
+    ("allowed-tools", "tools:"),
+    ("allowed_tools", "tools:"),
+];
+
+/// Emit warnings for foreign tool allowlist spellings in raw skill frontmatter.
+pub(crate) fn push_non_canonical_tool_field_diags(
+    fm: &Frontmatter,
+    diags: &mut Vec<SkillDiagnostic>,
+) {
+    for &(field, canonical) in NON_CANONICAL_TOOL_FIELDS {
+        if fm.get(field).is_some() {
+            diags.push(SkillDiagnostic::NonCanonicalField {
+                field: field.to_string(),
+                canonical,
+            });
+        }
+    }
+}
+
+/// Forward parsed skill schema diagnostics into the pipeline collector.
+pub(crate) fn emit_skill_schema_diags(
+    diag: &mut DiagnosticCollector,
+    skill_name: &str,
+    skill_diags: &[SkillDiagnostic],
+) {
+    for d in skill_diags {
+        let message = format!("skill `{skill_name}`: {}", d.message());
+        if d.is_error() {
+            diag.error_with_category(
+                "skill-schema-error",
+                message,
+                DiagnosticCategory::Validation,
+            );
+        } else {
+            diag.warn("skill-schema-warning", message);
         }
     }
 }
@@ -261,18 +302,10 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         consumed_keys.push(field.consumed_key);
     }
 
-    for (field, canonical) in [
-        ("allowed-tools", "tools:"),
-        ("allowed_tools", "tools:"),
-    ] {
-        consumed_keys.push(field.to_string());
-        if fm.get(field).is_some() {
-            diags.push(SkillDiagnostic::NonCanonicalField {
-                field: field.to_string(),
-                canonical,
-            });
-        }
+    for field in NON_CANONICAL_TOOL_FIELDS {
+        consumed_keys.push(field.0.to_string());
     }
+    push_non_canonical_tool_field_diags(fm, diags);
 
     for field in [
         "invocation",

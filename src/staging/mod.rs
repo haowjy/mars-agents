@@ -14,6 +14,7 @@ use indexmap::IndexMap;
 
 use crate::config::SkillOverlay;
 use crate::dialect::Dialect;
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
@@ -32,6 +33,7 @@ pub(crate) fn stage_rooted_source(
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     staging_root: &Path,
+    diag: &mut DiagnosticCollector,
 ) -> Result<RootedSourceRef, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, dialect);
     stage_canonical_source(
@@ -41,6 +43,7 @@ pub(crate) fn stage_rooted_source(
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
+        diag,
     )?;
     Ok(RootedSourceRef {
         checkout_root: rooted.checkout_root,
@@ -56,6 +59,7 @@ pub(crate) fn stage_canonical_source(
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
@@ -69,10 +73,12 @@ pub(crate) fn stage_canonical_source(
         skill_overrides,
         renames,
         fallback_skill_name,
+        diag,
     )
 }
 
 /// Stage a single local item path (agent file or skill directory).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_local_item(
     source_path: &Path,
     kind: ItemKind,
@@ -81,6 +87,7 @@ pub(crate) fn stage_local_item(
     staging_root: &Path,
     item_key: &str,
     skill_overlay_key: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<PathBuf, MarsError> {
     let dest = staging_root
         .join("_local")
@@ -109,13 +116,14 @@ pub(crate) fn stage_local_item(
                 source_path,
                 &dest_file,
                 kind,
-                &StageOverlayContext {
+                &mut StageOverlayContext {
                     dialect,
                     skill_overrides,
                     renames: &RenameMap::new(),
                     package_root: source_path.parent().unwrap_or(source_path),
                     fallback_skill_name: None,
                     skill_overlay_key,
+                    diag,
                 },
             )?;
             Ok(dest_file)
@@ -128,6 +136,7 @@ pub(crate) fn stage_local_item(
                 skill_overrides,
                 &RenameMap::new(),
                 skill_overlay_key,
+                diag,
             )?;
             Ok(dest)
         }
@@ -147,8 +156,10 @@ struct StageOverlayContext<'a> {
     package_root: &'a Path,
     fallback_skill_name: Option<&'a str>,
     skill_overlay_key: Option<&'a str>,
+    diag: &'a mut DiagnosticCollector,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn copy_and_lift_tree(
     source_root: &Path,
     dest_root: &Path,
@@ -157,6 +168,7 @@ fn copy_and_lift_tree(
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut entries: Vec<_> = fs::read_dir(current)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -184,6 +196,7 @@ fn copy_and_lift_tree(
                 skill_overrides,
                 renames,
                 fallback_skill_name,
+                diag,
             )?;
         } else if should_lift_markdown(&src_path) {
             let kind = item_kind_for_markdown(&src_path);
@@ -191,13 +204,14 @@ fn copy_and_lift_tree(
                 &src_path,
                 &dest_path,
                 kind,
-                &StageOverlayContext {
+                &mut StageOverlayContext {
                     dialect,
                     skill_overrides,
                     renames,
                     package_root: source_root,
                     fallback_skill_name,
                     skill_overlay_key: None,
+                    diag,
                 },
             )?;
         } else {
@@ -230,7 +244,7 @@ fn process_markdown_file(
     src: &Path,
     dest: &Path,
     kind: ItemKind,
-    ctx: &StageOverlayContext<'_>,
+    ctx: &mut StageOverlayContext<'_>,
 ) -> Result<(), MarsError> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -254,6 +268,37 @@ fn process_markdown_file(
 
     let original = fs::read_to_string(src)?;
     if let Ok(parsed) = Frontmatter::parse(&original) {
+        if ctx.dialect == Dialect::MarsNative && kind == ItemKind::Skill {
+            let mut skill_diags = Vec::new();
+            crate::compiler::skills::push_non_canonical_tool_field_diags(&parsed, &mut skill_diags);
+            if !skill_diags.is_empty() {
+                let skill_name = parsed
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        skill_overlay_lookup_name(
+                            src,
+                            ctx.package_root,
+                            ctx.renames,
+                            ctx.fallback_skill_name,
+                        )
+                    })
+                    .or_else(|| {
+                        src.parent()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+                crate::compiler::skills::emit_skill_schema_diags(
+                    ctx.diag,
+                    &skill_name,
+                    &skill_diags,
+                );
+            }
+        }
+
         let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
 
         if let Some(overlay) = skill_overlay
@@ -279,9 +324,32 @@ fn process_markdown_file(
 mod tests {
     use super::*;
     use crate::config::{AgentOverlayTools, SkillOverlay};
+    use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
     use crate::types::{ItemName, RenameMap};
     use tempfile::TempDir;
+
+    fn stage_source(
+        source_root: &Path,
+        dest_root: &Path,
+        dialect: Dialect,
+        skill_overrides: &IndexMap<String, SkillOverlay>,
+        renames: &RenameMap,
+        fallback_skill_name: Option<&str>,
+    ) -> DiagnosticCollector {
+        let mut diag = DiagnosticCollector::new();
+        stage_canonical_source(
+            source_root,
+            dest_root,
+            dialect,
+            skill_overrides,
+            renames,
+            fallback_skill_name,
+            &mut diag,
+        )
+        .unwrap();
+        diag
+    }
 
     #[test]
     fn stage_skill_overlay_changes_frontmatter_and_preserves_unaffected_bytes() {
@@ -316,15 +384,14 @@ mod tests {
         );
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             dest.path(),
             Dialect::Claude,
             &overrides,
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         let demo_staged = fs::read_to_string(dest.path().join("skills/demo/SKILL.md")).unwrap();
         assert!(demo_staged.contains("description: Overridden"));
@@ -350,15 +417,14 @@ mod tests {
         overrides.insert("demo".to_string(), SkillOverlay::default());
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             dest.path(),
             Dialect::Claude,
             &overrides,
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         assert_eq!(
             fs::read_to_string(dest.path().join("skills/demo/SKILL.md")).unwrap(),
@@ -375,15 +441,14 @@ mod tests {
         fs::write(skill.join("helper.sh"), "#!/bin/sh\n").unwrap();
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             dest.path(),
             Dialect::Claude,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         let staged_skill = dest.path().join("skills/demo");
         assert!(staged_skill.join("helper.sh").exists());
@@ -409,26 +474,24 @@ mod tests {
         .unwrap();
 
         let native = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             native.path(),
             Dialect::MarsNative,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         let claude = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             claude.path(),
             Dialect::Claude,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         let native_staged = fs::read_to_string(native.path().join("skills/demo/SKILL.md")).unwrap();
         let claude_staged = fs::read_to_string(claude.path().join("skills/demo/SKILL.md")).unwrap();
@@ -467,15 +530,14 @@ mod tests {
         );
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             dest.path(),
             Dialect::Claude,
             &overrides,
             &renames,
             None,
-        )
-        .unwrap();
+        );
 
         let staged = fs::read_to_string(dest.path().join("skills/planning/SKILL.md")).unwrap();
         assert!(staged.contains("description: Renamed overlay"));
@@ -500,15 +562,14 @@ mod tests {
         );
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        stage_source(
             source.path(),
             dest.path(),
             Dialect::Claude,
             &overrides,
             &RenameMap::new(),
             Some("my-flat-skill"),
-        )
-        .unwrap();
+        );
 
         let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert!(staged.contains("description: Flat overlay"));
@@ -526,15 +587,14 @@ mod tests {
         .unwrap();
 
         let dest = TempDir::new().unwrap();
-        stage_canonical_source(
+        let mut diag = stage_source(
             source.path(),
             dest.path(),
             Dialect::MarsNative,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
         let staged = fs::read_to_string(dest.path().join("skills/bad-allowed/SKILL.md")).unwrap();
         assert!(
@@ -542,19 +602,78 @@ mod tests {
             "canonical staging must strip non-canonical tool aliases: {staged}"
         );
 
-        let mut diags = Vec::new();
-        crate::compiler::skills::parse_skill_content(
-            &fs::read_to_string(skill.join("SKILL.md")).unwrap(),
-            &mut diags,
+        assert!(
+            diag.drain()
+                .iter()
+                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
+            "staging must emit non-canonical diagnostic from raw frontmatter"
+        );
+    }
+
+    #[test]
+    fn mars_native_canonical_tools_stages_without_non_canonical_diagnostic() {
+        let source = TempDir::new().unwrap();
+        let skill = source.path().join("skills/good-tools");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n",
         )
         .unwrap();
+
+        let dest = TempDir::new().unwrap();
+        let mut diag = stage_source(
+            source.path(),
+            dest.path(),
+            Dialect::MarsNative,
+            &IndexMap::new(),
+            &RenameMap::new(),
+            None,
+        );
+
+        let staged = fs::read_to_string(dest.path().join("skills/good-tools/SKILL.md")).unwrap();
+        assert!(staged.contains("tools:"));
         assert!(
-            diags.iter().any(|d| matches!(
-                d,
-                crate::compiler::skills::SkillDiagnostic::NonCanonicalField { field, .. }
-                    if field == "allowed-tools"
-            )),
-            "source parse should still emit non-canonical diagnostic: {diags:?}"
+            !diag
+                .drain()
+                .iter()
+                .any(|d| d.code == "skill-schema-warning"),
+            "canonical tools must not emit non-canonical warning"
+        );
+    }
+
+    #[test]
+    fn local_mars_native_staging_emits_non_canonical_tool_diagnostic() {
+        let root = TempDir::new().unwrap();
+        let mars_src = root.path().join(".mars-src");
+        let skill = mars_src.join("skills/bad-allowed");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        let staged = stage_local_item(
+            &skill,
+            ItemKind::Skill,
+            Dialect::MarsNative,
+            &IndexMap::new(),
+            &root.path().join("staging"),
+            "skill:bad-allowed",
+            Some("bad-allowed"),
+            &mut diag,
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
+        assert!(!content.contains("allowed-tools"), "staged local skill: {content}");
+        assert!(
+            diag.drain()
+                .iter()
+                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
+            "local staging must emit non-canonical diagnostic from raw frontmatter"
         );
     }
 
@@ -575,6 +694,7 @@ mod tests {
             Dialect::MarsNative
         );
 
+        let mut diag = DiagnosticCollector::new();
         let staged = stage_local_item(
             &skill,
             ItemKind::Skill,
@@ -583,6 +703,7 @@ mod tests {
             &root.path().join("staging"),
             "skill:demo",
             Some("demo"),
+            &mut diag,
         )
         .unwrap();
 
@@ -608,6 +729,7 @@ mod tests {
 
         assert_eq!(Dialect::resolve_local(None, &mars_src), Dialect::Claude);
 
+        let mut diag = DiagnosticCollector::new();
         let staged = stage_local_item(
             &skill,
             ItemKind::Skill,
@@ -616,6 +738,7 @@ mod tests {
             &root.path().join("staging"),
             "skill:demo",
             Some("demo"),
+            &mut diag,
         )
         .unwrap();
 

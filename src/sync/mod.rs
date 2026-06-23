@@ -305,6 +305,7 @@ pub(crate) fn build_target(
             &item_key,
             (item.discovered.id.kind == ItemKind::Skill)
                 .then(|| item.discovered.id.name.as_str()),
+            diag,
         )?;
         let source_path = staged_path;
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
@@ -916,20 +917,7 @@ fn validate_skill_frontmatter_at_source(
     };
     let mut skill_diags = Vec::new();
     let _ = crate::compiler::skills::parse_skill_content(&content, &mut skill_diags);
-    for d in skill_diags {
-        if d.is_error() {
-            diag.error_with_category(
-                "skill-schema-error",
-                format!("skill `{skill_name}`: {}", d.message()),
-                crate::diagnostic::DiagnosticCategory::Validation,
-            );
-        } else {
-            diag.warn(
-                "skill-schema-warning",
-                format!("skill `{skill_name}`: {}", d.message()),
-            );
-        }
-    }
+    crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
 }
 
 #[cfg(test)]
@@ -1522,6 +1510,7 @@ mod tests {
         };
 
         let stage = |cfg: &EffectiveConfig| {
+            let mut diag = DiagnosticCollector::new();
             crate::staging::stage_rooted_source(
                 &"base".into(),
                 crate::resolve::RootedSourceRef {
@@ -1532,6 +1521,7 @@ mod tests {
                 &cfg.skills,
                 &cfg.dependencies["base"].rename,
                 &staging_root,
+                &mut diag,
             )
             .unwrap()
         };

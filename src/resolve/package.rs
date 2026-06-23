@@ -183,6 +183,7 @@ pub(crate) fn resolve_package_bottom_up(
                         new_rooted,
                         effective_config,
                         options,
+                        diag,
                     )?;
                     ctx.set_pending_restart(
                         pending_src.name.clone(),
@@ -267,6 +268,7 @@ pub(crate) fn resolve_package_bottom_up(
                 rooted,
                 effective_config,
                 options,
+                diag,
             )?;
             (ref_, latest, rooted)
         };
@@ -384,6 +386,7 @@ fn stage_rooted_package(
     rooted: super::types::RootedSourceRef,
     effective_config: &EffectiveConfig,
     options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
 ) -> Result<super::types::RootedSourceRef, MarsError> {
     let Some(staging_root) = options.staging_root.as_deref() else {
         return Ok(rooted);
@@ -401,6 +404,7 @@ fn stage_rooted_package(
         &effective_config.skills,
         &renames,
         staging_root,
+        diag,
     )
 }
 

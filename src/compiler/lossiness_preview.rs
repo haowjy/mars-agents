@@ -67,6 +67,7 @@ pub fn collect_source_lossiness_diagnostics(
     let (source_root, dialect, fallback_skill_name) = preview_staging_root_and_dialect(base)?;
     let skill_overrides = load_skill_overrides(base)?;
     let staging = TempDir::new()?;
+    let mut diag = DiagnosticCollector::new();
     crate::staging::stage_canonical_source(
         &source_root,
         staging.path(),
@@ -74,9 +75,9 @@ pub fn collect_source_lossiness_diagnostics(
         &skill_overrides,
         &RenameMap::new(),
         fallback_skill_name.as_deref(),
+        &mut diag,
     )?;
 
-    let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         settings.meridian_agent_copy(),
         &settings.managed_targets(),

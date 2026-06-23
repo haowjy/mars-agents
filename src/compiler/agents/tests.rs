@@ -616,3 +616,32 @@ fn subagents_absent_gives_empty_vec() {
     assert!(diags.is_empty());
     assert!(p.subagents.is_empty());
 }
+
+#[test]
+fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
+    let (p, diags) = parse("---\nname: a\ndescription: d\nmcp-tools: [plugin:demo]\n---\n# body");
+    assert!(p.tools.is_empty());
+    assert!(
+        diags.iter().any(|d| matches!(
+            d,
+            AgentDiagnostic::RemovedField { field } if field == "mcp-tools"
+        )),
+        "expected RemovedField for mcp-tools, got {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.is_error()));
+}
+
+#[test]
+fn malformed_disallowed_mcp_ref_is_hard_validation_error() {
+    let (p, diags) = parse("---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n# body");
+    assert!(p.disallowed_tools.is_empty());
+    assert!(
+        diags.iter().any(|d| matches!(
+            d,
+            AgentDiagnostic::InvalidFieldValue { field, value, .. }
+                if field == "disallowed-tools[0]" && value == "mcp()"
+        )),
+        "expected invalid tool diagnostic, got {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.is_error()));
+}

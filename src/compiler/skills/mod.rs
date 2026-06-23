@@ -88,9 +88,18 @@ impl SkillDiagnostic {
             } => format!(
                 "skill field `{field}` has unsupported value `{value}`; expected: {allowed}"
             ),
-            Self::RemovedField { field } => format!(
-                "skill field `{field}` has been removed; use `model-invocable` / `user-invocable` instead"
-            ),
+            Self::RemovedField { field } => {
+                if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
+                    format!(
+                        "skill field `{field}` has been removed; {}",
+                        tool_policy::removed_mcp_tools_replacement()
+                    )
+                } else {
+                    format!(
+                        "skill field `{field}` has been removed; use `model-invocable` / `user-invocable` instead"
+                    )
+                }
+            }
             Self::NonCanonicalField { field, canonical } => {
                 format!("skill field `{field}` is not canonical; use `{canonical}` instead")
             }
@@ -295,9 +304,15 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         "invocation",
         "disable-model-invocation",
         "allow_implicit_invocation",
-        "mcp-tools",
-        "mcp_tools",
     ] {
+        consumed_keys.push(field.to_string());
+        if fm.get(field).is_some() {
+            diags.push(SkillDiagnostic::RemovedField {
+                field: field.to_string(),
+            });
+        }
+    }
+    for &field in tool_policy::REMOVED_MCP_TOOLS_FIELDS {
         consumed_keys.push(field.to_string());
         if fm.get(field).is_some() {
             diags.push(SkillDiagnostic::RemovedField {

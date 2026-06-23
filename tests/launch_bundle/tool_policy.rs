@@ -477,3 +477,76 @@ Review code changes."#;
         );
     }
 }
+
+pub(crate) fn build_launch_bundle_projects_disallowed_mcp_refs_per_harness() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "codex", "pi"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+disallowed-tools: [mcp(github/delete_repo)]
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cursor_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cursor_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "cursor",
+    ]);
+    cursor_cmd.env("PATH", replace_path_with(&bin_dir));
+    let cursor_output = cursor_cmd.assert().success().get_output().clone();
+    let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
+    assert_eq!(cursor_bundle["tools"]["mcp"], serde_json::json!([]));
+    assert_eq!(
+        cursor_bundle["tools"]["disallowed"],
+        serde_json::json!(["Mcp(github:delete_repo)"])
+    );
+    let cursor_warnings = cursor_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(!cursor_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("disallowed MCP ref")
+    }));
+
+    for (harness, model_args) in [("codex", vec!["--model", "gpt-5"]), ("pi", vec![])] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args([
+            "build",
+            "launch-bundle",
+            "--agent",
+            "reviewer",
+            "--harness",
+            harness,
+        ]);
+        cmd.args(model_args);
+        cmd.env("PATH", replace_path_with(&bin_dir));
+        let output = cmd.assert().success().get_output().clone();
+        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
+        assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
+        let warnings = bundle["warnings"]
+            .as_array()
+            .expect("warnings should be an array");
+        assert!(
+            warnings.iter().any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(&format!(
+                        "disallowed MCP ref `mcp(github/delete_repo)` cannot be represented for {harness}"
+                    ))
+            }),
+            "harness={harness}, warnings={warnings:?}"
+        );
+    }
+}

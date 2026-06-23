@@ -18,14 +18,21 @@ pub(crate) struct ParsedToolName {
     pub known: bool,
 }
 
+const INVALID_MCP_REF_ALLOWED: &str =
+    "valid mcp(server) or mcp(server/tool) reference with non-empty segments";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ToolNameParseError {
     Empty,
+    InvalidMcpRef,
 }
 
 impl ToolNameParseError {
     pub fn allowed(&self) -> &'static str {
-        TOOL_NAME_ALLOWED
+        match self {
+            Self::Empty => TOOL_NAME_ALLOWED,
+            Self::InvalidMcpRef => INVALID_MCP_REF_ALLOWED,
+        }
     }
 }
 
@@ -265,11 +272,16 @@ pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolName
         return Err(ToolNameParseError::Empty);
     }
 
-    if is_mcp_scoped_ref(head, payload) {
-        return Ok(ParsedToolName {
-            name: trimmed.to_string(),
-            known: true,
-        });
+    if head.trim().eq_ignore_ascii_case("mcp")
+        && let Some(inner) = extract_scoped_payload(payload)
+    {
+        if parse_mcp_ref(inner).is_ok() {
+            return Ok(ParsedToolName {
+                name: trimmed.to_string(),
+                known: true,
+            });
+        }
+        return Err(ToolNameParseError::InvalidMcpRef);
     }
 
     let canonical = canonicalize_head(head);
@@ -971,46 +983,53 @@ mod tests {
     }
 
     #[test]
-    fn invalid_mcp_scoped_refs_fall_through_to_unknown_projection() {
+    fn rejects_malformed_mcp_scoped_refs() {
+        for raw in ["mcp()", "mcp(/x)", "mcp(x/)", "mcp(a/b/c)"] {
+            assert_eq!(
+                parse_mars_tool_name(raw),
+                Err(ToolNameParseError::InvalidMcpRef),
+                "expected rejection for {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_mcp_in_disallowed_tools_is_validation_error() {
+        let mut diags = Vec::new();
+        let yaml = "---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n";
+        let fm = crate::frontmatter::Frontmatter::parse(yaml).unwrap();
+        let mut push = |field: &str, value: &str, allowed: &'static str| {
+            diags.push((field.to_string(), value.to_string(), allowed));
+        };
+        let tools = crate::compiler::tool_policy::yaml_tool_list(
+            "disallowed-tools",
+            fm.get("disallowed-tools").unwrap(),
+            &mut push,
+        );
+        assert!(tools.is_empty());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].0, "disallowed-tools[0]");
+        assert_eq!(diags[0].1, "mcp()");
+    }
+
+    #[test]
+    fn invalid_mcp_scoped_refs_do_not_project_as_mcp_verbatim() {
         let cases = [
-            (
-                "mcp()",
-                "claude",
-                "Mcp()",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "mcp(/x)",
-                "claude",
-                "Mcp(/x)",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "mcp(x/)",
-                "claude",
-                "Mcp(x/)",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "mcp(a/b/c)",
-                "claude",
-                "Mcp(a/b/c)",
-                ToolProjectionStatus::UnknownProjected,
-            ),
+            ("mcp()", "claude", "Mcp()"),
+            ("mcp(/x)", "claude", "Mcp(/x)"),
+            ("mcp(x/)", "claude", "Mcp(x/)"),
+            ("mcp(a/b/c)", "claude", "Mcp(a/b/c)"),
         ];
 
-        for (raw, harness, expected_name, expected_status) in cases {
-            let parsed = parse(raw);
-            assert_eq!(parsed.name, raw, "parse name for {raw}");
-            assert!(!parsed.known, "parse known flag for {raw}");
-
+        for (raw, harness, expected_name) in cases {
             let projected = project(raw, harness);
             assert_eq!(
                 projected.name, expected_name,
                 "projected name for {raw}, harness: {harness}"
             );
             assert_eq!(
-                projected.status, expected_status,
+                projected.status,
+                ToolProjectionStatus::UnknownProjected,
                 "projected status for {raw}, harness: {harness}"
             );
             assert_ne!(

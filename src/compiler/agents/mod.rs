@@ -341,6 +341,8 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
+    /// Retired frontmatter field (e.g. legacy `mcp-tools:`).
+    RemovedField { field: String },
 }
 
 impl AgentDiagnostic {
@@ -350,6 +352,7 @@ impl AgentDiagnostic {
                 !field.starts_with("harness-overrides")
             }
             AgentDiagnostic::UnknownHarness { .. } => true,
+            AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
             | AgentDiagnostic::DeprecatedApprovalYolo
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
@@ -376,6 +379,16 @@ impl AgentDiagnostic {
             }
             AgentDiagnostic::UnknownHarnessOverride { value } => {
                 format!("unknown harness override `{value}`; preserving passthrough block")
+            }
+            AgentDiagnostic::RemovedField { field } => {
+                if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
+                    format!(
+                        "agent field `{field}` has been removed; {}",
+                        tool_policy::removed_mcp_tools_replacement()
+                    )
+                } else {
+                    format!("agent field `{field}` has been removed")
+                }
             }
         }
     }
@@ -884,6 +897,14 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     // Legacy models: field
     if fm.get("models").is_some() {
         diags.push(AgentDiagnostic::LegacyModelsField);
+    }
+
+    for &field in tool_policy::REMOVED_MCP_TOOLS_FIELDS {
+        if fm.get(field).is_some() {
+            diags.push(AgentDiagnostic::RemovedField {
+                field: field.to_string(),
+            });
+        }
     }
 
     AgentProfile {

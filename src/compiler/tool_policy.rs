@@ -99,7 +99,7 @@ fn dedupe_mcp_refs(refs: Vec<McpRef>) -> Vec<McpRef> {
     out
 }
 
-/// Append whole-server `mcp(server)` entries to the frontmatter `tools:` list.
+/// Append whole-server `mcp(server)` entries to the frontmatter `tools:` list or map.
 pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: &[String]) -> bool {
     let entries: Vec<String> = servers
         .iter()
@@ -111,21 +111,47 @@ pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: 
         return false;
     }
 
-    let mut tools = fm.get("tools").map(yaml_str_list).unwrap_or_default();
-    let mut changed = false;
-    for entry in entries {
-        if !tools.iter().any(|existing| existing == &entry) {
-            tools.push(entry);
-            changed = true;
-        }
-    }
-    if changed {
+    let Some(existing) = fm.get("tools").cloned() else {
         fm.insert(
             "tools",
-            Value::Sequence(tools.into_iter().map(Value::String).collect()),
+            Value::Sequence(entries.into_iter().map(Value::String).collect()),
         );
+        return true;
+    };
+
+    match existing {
+        Value::Mapping(mut mapping) => {
+            let mut changed = false;
+            for entry in entries {
+                let key = Value::String(entry);
+                if !mapping.contains_key(&key) {
+                    mapping.insert(key, Value::String("allow".into()));
+                    changed = true;
+                }
+            }
+            if changed {
+                fm.insert("tools", Value::Mapping(mapping));
+            }
+            changed
+        }
+        other => {
+            let mut tools = yaml_str_list(&other);
+            let mut changed = false;
+            for entry in entries {
+                if !tools.iter().any(|existing| existing == &entry) {
+                    tools.push(entry);
+                    changed = true;
+                }
+            }
+            if changed {
+                fm.insert(
+                    "tools",
+                    Value::Sequence(tools.into_iter().map(Value::String).collect()),
+                );
+            }
+            changed
+        }
     }
-    changed
 }
 
 pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
@@ -218,6 +244,25 @@ pub(crate) fn parse_tools_field(
             denied: vec![],
         },
     }
+}
+
+/// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
+pub const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
+
+/// Replacement guidance for [`REMOVED_MCP_TOOLS_FIELDS`] diagnostics.
+pub fn removed_mcp_tools_replacement() -> &'static str {
+    "use `mcp(server)` or `mcp(server/tool)` entries in `tools:` / `disallowed-tools:` instead"
+}
+
+/// Strip retired `mcp-tools` keys from canonical frontmatter during staging lift.
+pub(crate) fn strip_removed_mcp_tools_fields(fm: &mut Frontmatter) -> bool {
+    let mut changed = false;
+    for key in REMOVED_MCP_TOOLS_FIELDS {
+        if fm.remove(key).is_some() {
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Foreign tool-field keys in canonical/MarsNative profiles → canonical replacement label.
@@ -318,6 +363,35 @@ mod tests {
             &mut fm,
             &["context7".to_string()]
         ));
+    }
+
+    #[test]
+    fn append_mcp_server_entries_to_tools_preserves_map_form() {
+        let mut fm = Frontmatter::parse("---\ntools:\n  Bash: allow\n  Read: deny\n---\n").unwrap();
+        assert!(append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string(), "github".to_string()]
+        ));
+        let tools = fm.get("tools").unwrap();
+        let Value::Mapping(mapping) = tools else {
+            panic!("expected map-form tools, got {tools:?}");
+        };
+        assert_eq!(
+            mapping.get(Value::String("Bash".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("Read".into())),
+            Some(&Value::String("deny".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("mcp(context7)".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("mcp(github)".into())),
+            Some(&Value::String("allow".into()))
+        );
     }
 
     #[test]

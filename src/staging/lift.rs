@@ -97,7 +97,11 @@ pub(crate) fn lift_frontmatter_with_change(
     frontmatter: &Frontmatter,
 ) -> (Frontmatter, bool) {
     let mut lifted = frontmatter.clone();
-    let changed = match dialect {
+    let mut changed = matches!(
+        item_kind,
+        ItemKind::Agent | ItemKind::Skill | ItemKind::BootstrapDoc
+    ) && tool_policy::strip_removed_mcp_tools_fields(&mut lifted);
+    changed |= match dialect {
         Dialect::MarsNative => strip_non_canonical_tool_aliases(&mut lifted),
         Dialect::Claude => lift_claude(item_kind, &mut lifted),
         Dialect::Codex => lift_codex(item_kind, &mut lifted),
@@ -146,12 +150,13 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
         changed = true;
     }
 
+    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+
     if let Some(mcp) = fm.remove("mcpServers") {
         changed |=
             tool_policy::append_mcp_server_entries_to_tools(fm, &tool_policy::yaml_str_list(&mcp));
     }
 
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
     changed
 }
@@ -266,6 +271,7 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::agents::AgentDiagnostic;
     use crate::compiler::agents::parse_agent_content;
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
@@ -612,5 +618,90 @@ when_to_use: Use when git history matters
             lifted.get("disallowed-tools"),
             Some(&Value::String("mcp(github/delete_repo)".into()))
         );
+    }
+
+    #[test]
+    fn claude_agent_merges_allowed_tools_before_mcp_servers() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\nallowed-tools: [Read, Bash(git *)]\nmcpServers: [context7, github]\n",
+            ),
+        );
+        assert!(lifted.get("allowed-tools").is_none());
+        assert!(lifted.get("mcpServers").is_none());
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("Bash(git *)".into()),
+                Value::String("mcp(context7)".into()),
+                Value::String("mcp(github)".into()),
+            ]))
+        );
+
+        let mut diags = Vec::new();
+        let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty());
+        assert_eq!(
+            profile.tools,
+            vec!["read", "bash(git *)", "mcp(context7)", "mcp(github)"]
+        );
+    }
+
+    #[test]
+    fn claude_agent_appends_mcp_servers_to_map_form_tools() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools:\n  Bash: allow\n  Read: deny\nmcpServers: [context7]\n",
+            ),
+        );
+        let tools = lifted.get("tools").unwrap();
+        let Value::Mapping(mapping) = tools else {
+            panic!("expected map-form tools, got {tools:?}");
+        };
+        assert_eq!(
+            mapping.get(Value::String("Bash".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("Read".into())),
+            Some(&Value::String("deny".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("mcp(context7)".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert!(lifted.get("mcpServers").is_none());
+    }
+
+    #[test]
+    fn staging_strips_retired_agent_mcp_tools_field() {
+        let input = fm("name: a\ndescription: d\nmcp-tools: [plugin:demo]\n");
+
+        let mut diags = Vec::new();
+        let (_, _) = parse_agent_content(&input.render(), &mut diags).unwrap();
+        assert!(
+            diags.iter().any(
+                |d| matches!(d, AgentDiagnostic::RemovedField { field } if field == "mcp-tools")
+            ),
+            "expected RemovedField diagnostic, got {diags:?}"
+        );
+
+        let lifted = lift(Dialect::Claude, ItemKind::Agent, &input);
+        assert!(lifted.get("mcp-tools").is_none());
+        assert!(lifted.get("mcp_tools").is_none());
+
+        let mut staged_diags = Vec::new();
+        let (profile, fm) = parse_agent_content(&lifted.render(), &mut staged_diags).unwrap();
+        assert!(
+            staged_diags.is_empty(),
+            "stripped field must not re-trigger diagnostic: {staged_diags:?}"
+        );
+        assert!(fm.get("mcp-tools").is_none());
+        assert!(profile.tools.is_empty());
     }
 }

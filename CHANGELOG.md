@@ -5,6 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- MCP inbound lift: merge `allowed-tools` with `mcpServers` without dropping the allowlist; preserve map-form `tools:` when appending whole-server `mcp(server)` entries.
+- Malformed `mcp(...)` tool tokens (e.g. `mcp()`, `mcp(/x)`) are validation errors instead of convention-projected unknown tools — disallowed malformed MCP refs no longer fail open.
+- Agent parser: retired top-level `mcp-tools:` / `mcp_tools` emits `RemovedField` diagnostic and staging strips the field from canonical frontmatter (mirrors skills).
 - MCP inbound lift: boundary-safe Claude `mcp__` wire parse (no UTF-8 panic on near-prefix tokens); Cursor `Mcp(server:tool)` uses the last `:` as the tool separator so namespaced server ids lift to per-tool `mcp(server/tool)` instead of whole-server; scalar `allowed-tools` / `disallowedTools` strings lift like list entries.
 - No-op `mars sync` no longer rewrites linked native skill outputs when projected bytes are already on disk (mtime churn on `.claude/skills/.../SKILL.md` etc.).
 - Hook lossiness (`hook-dropped`/`hook-approximate`) now follows the same surface/suppress policy as agent/skill lossiness — hidden on `validate`/`export`/`add` and no longer escalated into a failure by `mars validate --strict`.

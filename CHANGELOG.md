@@ -11,8 +11,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
 - `[skills.<name>]` overlay carriage in config; applied at staging after lift (description, invocability, tool policy).
 - Skills `disallowed-tools` canonical denylist.
+- Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:`, `disallowed-tools:`, `mcp-tools:`).
 
 ### Changed
+- Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and `mcp-tools:`. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
 - Agents honor `user-invocable` (was skills-only).
 - Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.
 - `[agents.<name>]` overrides now adjust description, invocation axes, and tool policy (was routing fields only).

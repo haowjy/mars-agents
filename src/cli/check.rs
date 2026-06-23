@@ -677,7 +677,7 @@ mod tests {
             "---
 name: planning
 description: plan
-allowed-tools: [ask_user]
+tools: [ask_user]
 ---
 # Skill",
         )
@@ -707,7 +707,7 @@ allowed-tools: [ask_user]
             "---
 name: planning
 description: plan
-allowed-tools: [askuser]
+tools: [askuser]
 ---
 # Skill",
         )

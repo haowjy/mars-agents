@@ -245,8 +245,8 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
         "'user-invocable' key required (kebab):\n{stdout}"
     );
     assert!(
-        json.get("allowed-tools").is_some(),
-        "'allowed-tools' key required (kebab):\n{stdout}"
+        json.get("tools").is_some(),
+        "'tools' key required:\n{stdout}"
     );
     assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
     assert!(

@@ -467,7 +467,7 @@ fn sync_frozen_returns_exit_code_two() {
 #[test]
 fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fields() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Base\n";
+    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\ntools: [Bash(git *)]\n---\n# Base\n";
     let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
 
     let project = dir.child("project");

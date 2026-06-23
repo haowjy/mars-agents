@@ -11,7 +11,9 @@ All skill fields below are optional. A skill with no frontmatter is valid and is
 name: my-skill
 description: What this skill does
 model-invocable: false
-allowed-tools: [bash(git *), read, write]
+tools: [bash(git *), read, write]
+disallowed-tools: [agent]
+mcp-tools: [plugin:demo]
 license: MIT
 metadata:
   owner: platform-team
@@ -106,18 +108,62 @@ user-invocable: false   # user cannot trigger via /name
 
 ---
 
-### `allowed-tools`
+### `tools`
+
+| | |
+|---|---|
+| Type | string[] **or** map of `tool-pattern: allow\|deny` |
+| Default | empty |
+
+Tool allowlist and inline denials for this skill — identical schema to agent profiles. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized.
+
+List form is allowlist-only:
+
+```yaml
+tools: [bash(git *), read]
+```
+
+Map form mixes allow and deny entries; denials merge with `disallowed-tools`:
+
+```yaml
+tools:
+  ask_user: allow
+  "bash(git *)": deny
+```
+
+Dropped by some harnesses — see the lossiness table below.
+
+---
+
+### `disallowed-tools`
 
 | | |
 |---|---|
 | Type | string[] |
 | Default | empty |
 
-Tool allowlist for this skill. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case. Dropped by some harnesses — see the lossiness table below.
+Flat tool denylist merged with map-form `tools:` denials. Lowered to harness-native denylist fields where supported (Claude, Pi); warn-dropped elsewhere.
 
 ```yaml
-allowed-tools: [bash(git *), read]
+disallowed-tools: [agent, web_search]
 ```
+
+---
+
+### `mcp-tools`
+
+| | |
+|---|---|
+| Type | string[] |
+| Default | empty |
+
+MCP server allowlist for this skill. Same semantics as agent `mcp-tools`.
+
+```yaml
+mcp-tools: [plugin:context7]
+```
+
+**Foreign lift.** Harness-native `allowed-tools` / `allowed_tools` spellings lift to canonical `tools:` during staging. Canonical skills do not accept `allowed-tools` directly.
 
 ---
 
@@ -185,7 +231,8 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `model-invocable: true` | preserved | (omit) | (omit or `allow_implicit_invocation: true`)¹ | (omit) | (omit) | (omit) |
 | `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
-| `allowed-tools` | preserved | `allowed-tools` | dropped | dropped | `allowed-tools` | dropped |
+| `tools` | preserved | `allowed-tools` | dropped | dropped | `allowed-tools` | dropped |
+| `disallowed-tools` | preserved | `disallowed-tools` | dropped | dropped | `disallowed-tools` | dropped |
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
 
@@ -246,7 +293,7 @@ Source tree:
 
 ```
 skills/my-skill/
-  SKILL.md          # base: model-invocable: false, allowed-tools: [bash(git *)]
+  SKILL.md          # base: model-invocable: false, tools: [bash(git *)]
   variants/
     claude/
       SKILL.md      # Claude-specific instructions

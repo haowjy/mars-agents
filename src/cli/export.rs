@@ -124,7 +124,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             dry_run: true,
             ..SyncOptions::default()
         },
-        surface_lossiness_warnings: false,
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     // Load config for dependency metadata (non-fatal: if missing, no dep metadata).

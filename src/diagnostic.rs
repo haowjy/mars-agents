@@ -24,6 +24,25 @@ pub enum DiagnosticLevel {
     Info,
 }
 
+/// Whether lossiness diagnostics are collected and surfaced to the user.
+///
+/// Shared by the sync pipeline (`SyncRequest`) and the check/init preview path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LossinessMode {
+    /// Suppress lossiness warnings (validate, export, add, repair, …).
+    #[default]
+    Hidden,
+    /// Surface lossiness warnings (sync, upgrade, check, init).
+    Surface,
+}
+
+impl LossinessMode {
+    pub fn surfaces_lossiness(self) -> bool {
+        matches!(self, LossinessMode::Surface)
+    }
+}
+
 /// Broad category for a diagnostic — used in structured output and validation gates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -41,13 +60,31 @@ pub enum DiagnosticCategory {
 /// Collects diagnostics during pipeline execution.
 pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
+    lossiness_mode: LossinessMode,
 }
 
 impl DiagnosticCollector {
     pub fn new() -> Self {
+        Self::with_lossiness_mode(LossinessMode::default())
+    }
+
+    pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
+            lossiness_mode,
         }
+    }
+
+    pub fn lossiness_mode(&self) -> LossinessMode {
+        self.lossiness_mode
+    }
+
+    pub fn set_lossiness_mode(&mut self, lossiness_mode: LossinessMode) {
+        self.lossiness_mode = lossiness_mode;
+    }
+
+    fn should_emit_lossiness(&self) -> bool {
+        self.lossiness_mode.surfaces_lossiness()
     }
 
     pub fn error(&mut self, code: &'static str, message: impl Into<String>) {
@@ -66,6 +103,9 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
+        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
+            return;
+        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
             code,
@@ -91,6 +131,9 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
+        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
+            return;
+        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
             code,
@@ -147,7 +190,7 @@ impl DiagnosticCollector {
 
 impl Default for DiagnosticCollector {
     fn default() -> Self {
-        Self::new()
+        Self::with_lossiness_mode(LossinessMode::default())
     }
 }
 
@@ -296,6 +339,25 @@ mod tests {
         assert!(!coll.has_errors());
         coll.error("e", "an error");
         assert!(coll.has_errors());
+    }
+
+    #[test]
+    fn collector_suppresses_lossiness_when_hidden() {
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
+        coll.warn_with_category(
+            "agent-field-dropped",
+            "agent `x`: dropped",
+            DiagnosticCategory::Lossiness,
+        );
+        assert!(coll.drain().is_empty());
+
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        coll.warn_with_category(
+            "agent-field-dropped",
+            "agent `x`: dropped",
+            DiagnosticCategory::Lossiness,
+        );
+        assert_eq!(coll.drain().len(), 1);
     }
 
     #[test]

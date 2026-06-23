@@ -90,15 +90,12 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 fn lossiness_diagnostics_for_check(
     base: &std::path::Path,
 ) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
-    use crate::config::Settings;
-    use crate::error::ConfigError;
+    use crate::diagnostic::LossinessMode;
 
-    let settings = match crate::config::load(base) {
-        Ok(config) => config.settings,
-        Err(MarsError::Config(ConfigError::NotFound { .. })) => Settings::default(),
-        Err(err) => return Err(err),
-    };
-    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(base, &settings)
+    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
+        base,
+        LossinessMode::Surface,
+    )
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {

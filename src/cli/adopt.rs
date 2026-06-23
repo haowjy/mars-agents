@@ -88,7 +88,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
-        surface_lossiness_warnings: false,
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     let report = crate::sync::execute(ctx, &request)?;
 

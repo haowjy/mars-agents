@@ -518,7 +518,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag =
+            DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
         project_skill_for_target(&source, &dest, Some("codex"), &mut diag, "planning").unwrap();
 
         let out = std::fs::read_to_string(dest.join("SKILL.md")).unwrap();

@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
-use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
@@ -72,9 +72,9 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
-    /// When true, lossiness warnings are included in the returned report.
-    /// Only `mars sync` and `mars upgrade` set this; other pipeline callers suppress them.
-    pub surface_lossiness_warnings: bool,
+    /// Whether lossiness warnings are included in the returned report.
+    /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
+    pub lossiness_mode: LossinessMode,
 }
 
 /// Resolution behavior for the resolver stage.
@@ -147,7 +147,7 @@ pub(crate) struct SyncedState {
 /// Orchestrates phase functions, each consuming the prior phase's output struct.
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
-    let mut diag = DiagnosticCollector::new();
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
     crate::compiler::compile(ctx, ir, request, &mut diag)
 }
@@ -715,10 +715,7 @@ pub(crate) fn finalize(
         .dependency_changes;
     let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
 
-    let mut diagnostics = diag.drain();
-    if !request.surface_lossiness_warnings {
-        diagnostics.retain(|d| d.category != Some(DiagnosticCategory::Lossiness));
-    }
+    let diagnostics = diag.drain();
 
     Ok(SyncReport {
         applied: state.applied.applied,
@@ -1135,7 +1132,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
-            surface_lossiness_warnings: false,
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1154,7 +1151,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
-            surface_lossiness_warnings: false,
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1321,7 +1318,7 @@ mod tests {
                 entry: path_dependency_entry(source.path()),
             }),
             options: SyncOptions::default(),
-            surface_lossiness_warnings: false,
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
@@ -1362,7 +1359,7 @@ mod tests {
                 dry_run: true,
                 ..SyncOptions::default()
             },
-            surface_lossiness_warnings: false,
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());

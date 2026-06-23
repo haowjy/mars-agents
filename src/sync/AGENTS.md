@@ -39,11 +39,17 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
-| `finalize()` | Write lock, persist model aliases, build report; strips `DiagnosticCategory::Lossiness` when `surface_lossiness_warnings` is false (mod.rs:720–722) |
+| `finalize()` | Write lock, persist model aliases, build report |
 
 ## Lossiness Gating
 
-`SyncRequest.surface_lossiness_warnings` (mod.rs:75–77) controls whether lossiness diagnostics reach the report. Only `mars sync` and `mars upgrade` set it `true`; all other pipeline callers (validate, export, add, repair, etc.) set it `false`, causing `finalize()` to filter out all `Lossiness`-category diagnostics.
+`SyncRequest.lossiness_mode` (mod.rs) selects `LossinessMode::Surface` or `Hidden` when
+`execute()` creates the pipeline `DiagnosticCollector`. Lossiness-category diagnostics are
+suppressed at emission (`warn_with_category` / `error_with_category`) when mode is `Hidden`.
+
+Only `mars sync` and `mars upgrade` set `Surface`; validate, export, add, repair, etc. set
+`Hidden`. `mars check` / `mars init` surface lossiness via the preview path with the same
+`LossinessMode::Surface`.
 
 ### Frozen Gate
 

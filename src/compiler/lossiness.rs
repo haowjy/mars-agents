@@ -159,7 +159,7 @@ fn emit_grouped_warnings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::DiagnosticLevel;
+    use crate::diagnostic::{DiagnosticLevel, LossinessMode};
 
     #[test]
     fn multi_field_drop_produces_one_summarized_warning_per_target() {
@@ -175,7 +175,7 @@ mod tests {
                 classification: Lossiness::Dropped,
             },
         ];
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         emit_skill_lossiness_warnings("planning", &lossy, &mut diag);
         let warnings: Vec<_> = diag
             .drain()
@@ -209,7 +209,7 @@ mod tests {
                 classification: Lossiness::Dropped,
             },
         ];
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         for _ in 0..2 {
             emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
         }
@@ -235,7 +235,7 @@ mod tests {
                 note: "unknown tool name passed through verbatim",
             },
         }];
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);

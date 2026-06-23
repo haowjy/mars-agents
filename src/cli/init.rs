@@ -127,16 +127,9 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         }
     }
 
-    let settings = match crate::config::load(&project_root) {
-        Ok(config) => config.settings,
-        Err(crate::error::MarsError::Config(crate::error::ConfigError::NotFound { .. })) => {
-            crate::config::Settings::default()
-        }
-        Err(err) => return Err(err),
-    };
     let lossiness = crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
         &project_root,
-        &settings,
+        crate::diagnostic::LossinessMode::Surface,
     )?;
     if !json && !lossiness.is_empty() {
         output::print_diagnostics(&lossiness);

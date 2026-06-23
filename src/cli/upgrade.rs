@@ -30,7 +30,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         },
         mutation: None,
         options: SyncOptions::default(),
-        surface_lossiness_warnings: true,
+        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
     };
 
     let report = crate::sync::execute(ctx, &request)?;

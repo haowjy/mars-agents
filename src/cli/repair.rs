@@ -38,7 +38,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             force: true,
             ..SyncOptions::default()
         },
-        surface_lossiness_warnings: false,
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     // Force sync: overwrites everything, rebuilds from dependencies.

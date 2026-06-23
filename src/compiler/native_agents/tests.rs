@@ -1106,7 +1106,8 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         },
     );
 
-    let mut diag = DiagnosticCollector::new();
+    let mut diag =
+        DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
     let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
         project_root: dir.path(),

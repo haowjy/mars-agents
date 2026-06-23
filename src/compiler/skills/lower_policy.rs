@@ -4,7 +4,7 @@ use serde_yaml::{Mapping, Value};
 
 use super::SkillHarness;
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-use crate::compiler::mcp_ref::project_mcp_ref_tokens;
+use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 
@@ -436,17 +436,19 @@ impl<'a> LoweringCtx<'a> {
                     }
                     tools.push(projected.name);
                 }
-                let (mcp_tokens, unsupported) =
-                    project_mcp_ref_tokens(&tool_policy.mcp_disallowed, policy.harness_key);
-                for (_, reason) in &unsupported {
-                    self.lossy_fields.push(LossyField {
-                        field: "disallowed-tools".into(),
-                        target: policy.target_name.into(),
-                        classification: Lossiness::Approximate {
-                            note: reason.message(),
-                        },
-                    });
-                }
+                let mcp_tokens = project_mcp_refs_for_emission(
+                    &tool_policy.mcp_disallowed,
+                    policy.harness_key,
+                    |_, reason| {
+                        self.lossy_fields.push(LossyField {
+                            field: "disallowed-tools".into(),
+                            target: policy.target_name.into(),
+                            classification: Lossiness::Approximate {
+                                note: reason.message(),
+                            },
+                        });
+                    },
+                );
                 tools.extend(mcp_tokens);
                 self.yaml.insert(
                     yk("disallowed-tools"),
@@ -468,17 +470,19 @@ impl<'a> LoweringCtx<'a> {
         let policy = self.policy;
         match policy.mcp {
             McpToolsPolicy::Emit => {
-                let (mcp_tokens, unsupported) =
-                    project_mcp_ref_tokens(&tool_policy.mcp_allowed, policy.harness_key);
-                for (_, reason) in &unsupported {
-                    self.lossy_fields.push(LossyField {
-                        field: "mcp".into(),
-                        target: policy.target_name.into(),
-                        classification: Lossiness::Approximate {
-                            note: reason.message(),
-                        },
-                    });
-                }
+                let mcp_tokens = project_mcp_refs_for_emission(
+                    &tool_policy.mcp_allowed,
+                    policy.harness_key,
+                    |_, reason| {
+                        self.lossy_fields.push(LossyField {
+                            field: "mcp".into(),
+                            target: policy.target_name.into(),
+                            classification: Lossiness::Approximate {
+                                note: reason.message(),
+                            },
+                        });
+                    },
+                );
                 if mcp_tokens.is_empty() {
                     return;
                 }

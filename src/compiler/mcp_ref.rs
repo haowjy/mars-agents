@@ -69,12 +69,6 @@ impl McpRef {
             segment_display(&self.tool)
         )
     }
-
-    /// Whole-server ref: named server segment and wildcard (or implicit) tool.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn is_whole_server(&self) -> bool {
-        matches!(&self.tool, McpSegment::Any) && matches!(&self.server, McpSegment::Named(_))
-    }
 }
 
 /// Parse a foreign harness MCP permission token into an [`McpRef`].
@@ -139,15 +133,15 @@ fn parse_claude_mcp_wire_token(raw: &str) -> Option<McpRef> {
 
     match remainder.split_once("__") {
         None => {
-            let server = parse_wildcard_segment(remainder).ok()?;
+            let server = parse_segment(remainder).ok()?;
             Some(McpRef {
                 server,
                 tool: McpSegment::Any,
             })
         }
         Some((server_part, tool_part)) => {
-            let server = parse_wildcard_segment(server_part).ok()?;
-            let tool = parse_wildcard_segment(tool_part).ok()?;
+            let server = parse_segment(server_part).ok()?;
+            let tool = parse_segment(tool_part).ok()?;
             Some(McpRef { server, tool })
         }
     }
@@ -162,12 +156,12 @@ fn parse_cursor_mcp_token(raw: &str) -> Option<McpRef> {
     let inner = extract_scoped_payload(&raw[open..])?;
     // Tool names are simple (no `:`); server ids may contain `:` (e.g. `plugin:context7:context7`).
     let (server_part, tool_part) = inner.rsplit_once(':')?;
-    let server = parse_wildcard_segment(server_part).ok()?;
-    let tool = parse_wildcard_segment(tool_part).ok()?;
+    let server = parse_segment(server_part).ok()?;
+    let tool = parse_segment(tool_part).ok()?;
     Some(McpRef { server, tool })
 }
 
-fn parse_wildcard_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
+fn parse_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
     let trimmed = segment.trim();
     if trimmed.is_empty() {
         return Err(McpRefParseError::Empty);
@@ -313,16 +307,19 @@ pub(crate) fn project_mcp_ref_tokens(
     (tokens, unsupported)
 }
 
-fn parse_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
-    let trimmed = segment.trim();
-    if trimmed.is_empty() {
-        return Err(McpRefParseError::Empty);
+/// Project MCP refs for harness emission and report each unsupported ref.
+///
+/// Unsupported refs are omitted from the returned tokens (never broaden permissions).
+pub(crate) fn project_mcp_refs_for_emission(
+    refs: &[McpRef],
+    harness: &str,
+    mut on_unsupported: impl FnMut(&str, McpUnsupportedReason),
+) -> Vec<String> {
+    let (tokens, unsupported) = project_mcp_ref_tokens(refs, harness);
+    for (canonical, reason) in unsupported {
+        on_unsupported(&canonical, reason);
     }
-    if trimmed == "*" {
-        Ok(McpSegment::Any)
-    } else {
-        Ok(McpSegment::Named(trimmed.to_string()))
-    }
+    tokens
 }
 
 /// Parse the inner payload of `mcp(...)`, without the surrounding parentheses.
@@ -360,6 +357,10 @@ pub(crate) fn parse_mcp_ref(payload: &str) -> Result<McpRef, McpRefParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn is_whole_server(r: &McpRef) -> bool {
+        matches!(&r.tool, McpSegment::Any) && matches!(&r.server, McpSegment::Named(_))
+    }
 
     fn parse(payload: &str) -> McpRef {
         parse_mcp_ref(payload).unwrap()
@@ -419,11 +420,11 @@ mod tests {
     #[test]
     fn try_parse_mcp_tool_name_accepts_scoped_entries() {
         let parsed = try_parse_mcp_tool_name("mcp(context7)").unwrap();
-        assert!(parsed.is_whole_server());
+        assert!(is_whole_server(&parsed));
         assert_eq!(parsed.to_canonical(), "mcp(context7/*)");
 
         let per_tool = try_parse_mcp_tool_name("mcp(github/delete_repo)").unwrap();
-        assert!(!per_tool.is_whole_server());
+        assert!(!is_whole_server(&per_tool));
         assert_eq!(per_tool.to_canonical(), "mcp(github/delete_repo)");
     }
 
@@ -562,7 +563,7 @@ mod tests {
         let canonical = parsed.to_canonical();
         assert_eq!(canonical, "mcp(plugin:context7:context7/create_issue)");
         let lifted = try_parse_mcp_tool_name(&canonical).unwrap();
-        assert!(!lifted.is_whole_server());
+        assert!(!is_whole_server(&lifted));
         assert_eq!(lifted, parsed);
     }
 

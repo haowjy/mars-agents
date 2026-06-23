@@ -11,7 +11,7 @@ use crate::compiler::agents::{AgentProfile, HarnessKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-use crate::compiler::mcp_ref::{McpRef, McpUnsupportedReason, project_mcp_ref_tokens};
+use crate::compiler::mcp_ref::{McpRef, McpUnsupportedReason, project_mcp_refs_for_emission};
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::frontmatter::Frontmatter;
@@ -103,20 +103,18 @@ fn normalize_tools_for_harness(
 }
 
 fn record_mcp_projection_lossiness(
-    unsupported: &[(String, McpUnsupportedReason)],
     field: &str,
     target: &str,
+    reason: McpUnsupportedReason,
     lossy: &mut Vec<LossyField>,
 ) {
-    for (_canonical, reason) in unsupported {
-        lossy.push(LossyField {
-            field: field.into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: reason.message(),
-            },
-        });
-    }
+    lossy.push(LossyField {
+        field: field.into(),
+        target: target.into(),
+        classification: Lossiness::Approximate {
+            note: reason.message(),
+        },
+    });
 }
 
 fn has_mcp_policy(eff: &Effective<'_>) -> bool {
@@ -237,9 +235,9 @@ pub fn lower_to_claude(
     }
     // tools — native spelling plus projected MCP grants
     let mut tools = normalize_tools_for_harness(eff.tools(), "claude", "tools", &mut lossy);
-    let (mcp_allowed, mcp_allowed_unsupported) =
-        project_mcp_ref_tokens(eff.mcp_allowed(), "claude");
-    record_mcp_projection_lossiness(&mcp_allowed_unsupported, "tools", target, &mut lossy);
+    let mcp_allowed = project_mcp_refs_for_emission(eff.mcp_allowed(), "claude", |_, reason| {
+        record_mcp_projection_lossiness("tools", target, reason, &mut lossy);
+    });
     tools.extend(mcp_allowed);
     if !tools.is_empty() {
         let seq: serde_yaml::Value =
@@ -253,14 +251,10 @@ pub fn lower_to_claude(
         "disallowed-tools",
         &mut lossy,
     );
-    let (mcp_disallowed, mcp_disallowed_unsupported) =
-        project_mcp_ref_tokens(eff.mcp_disallowed(), "claude");
-    record_mcp_projection_lossiness(
-        &mcp_disallowed_unsupported,
-        "disallowed-tools",
-        target,
-        &mut lossy,
-    );
+    let mcp_disallowed =
+        project_mcp_refs_for_emission(eff.mcp_disallowed(), "claude", |_, reason| {
+            record_mcp_projection_lossiness("disallowed-tools", target, reason, &mut lossy);
+        });
     dt.extend(mcp_disallowed);
     if !dt.is_empty() {
         let seq: serde_yaml::Value =

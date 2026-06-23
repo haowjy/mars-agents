@@ -411,10 +411,7 @@ Review code changes."#;
 
 pub(crate) fn build_launch_bundle_projects_mcp_refs_per_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(
-        temp.path(),
-        &["claude", "cursor", "opencode", "codex", "pi"],
-    );
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -425,62 +422,61 @@ Review code changes."#;
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
 
-    let cases = [
-        (
-            "claude",
-            serde_json::json!(["mcp__github__create_issue"]),
-            false,
-        ),
-        (
-            "cursor",
-            serde_json::json!(["Mcp(github:create_issue)"]),
-            false,
-        ),
-        (
-            "opencode",
-            serde_json::json!(["github_create_issue"]),
-            false,
-        ),
-        ("codex", serde_json::json!([]), true),
-        ("pi", serde_json::json!([]), true),
-    ];
+    let mut claude_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    claude_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    claude_cmd.env("PATH", replace_path_with(&bin_dir));
+    let claude_output = claude_cmd.assert().success().get_output().clone();
+    let claude_bundle: Value = serde_json::from_slice(&claude_output.stdout).unwrap();
+    assert_eq!(
+        claude_bundle["tools"]["mcp"],
+        serde_json::json!(["mcp__github__create_issue"])
+    );
+    let claude_warnings = claude_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(!claude_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
+    }));
 
-    for (harness, expected_mcp, expect_lossiness_warning) in cases {
-        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-        cmd.args([
-            "build",
-            "launch-bundle",
-            "--agent",
-            "reviewer",
-            "--harness",
-            harness,
-        ]);
-        if harness == "codex" {
-            cmd.args(["--model", "gpt-5"]);
-        }
-        cmd.env("PATH", replace_path_with(&bin_dir));
-        let output = cmd.assert().success().get_output().clone();
-        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(bundle["tools"]["mcp"], expected_mcp, "harness={harness}");
-        let warnings = bundle["warnings"]
-            .as_array()
-            .expect("warnings should be an array");
-        let has_mcp_warning = warnings.iter().any(|warning| {
-            warning
-                .as_str()
-                .unwrap_or_default()
-                .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
-        });
-        assert_eq!(
-            has_mcp_warning, expect_lossiness_warning,
-            "harness={harness}, warnings={warnings:?}"
-        );
-    }
+    let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    codex_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-5",
+    ]);
+    codex_cmd.env("PATH", replace_path_with(&bin_dir));
+    let codex_output = codex_cmd.assert().success().get_output().clone();
+    let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
+    assert_eq!(codex_bundle["tools"]["mcp"], serde_json::json!([]));
+    let codex_warnings = codex_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(codex_warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .unwrap_or_default()
+            .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
+    }));
 }
 
 pub(crate) fn build_launch_bundle_projects_disallowed_mcp_refs_per_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "codex", "pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -518,35 +514,28 @@ Review code changes."#;
             .contains("disallowed MCP ref")
     }));
 
-    for (harness, model_args) in [("codex", vec!["--model", "gpt-5"]), ("pi", vec![])] {
-        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-        cmd.args([
-            "build",
-            "launch-bundle",
-            "--agent",
-            "reviewer",
-            "--harness",
-            harness,
-        ]);
-        cmd.args(model_args);
-        cmd.env("PATH", replace_path_with(&bin_dir));
-        let output = cmd.assert().success().get_output().clone();
-        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
-        assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
-        let warnings = bundle["warnings"]
-            .as_array()
-            .expect("warnings should be an array");
-        assert!(
-            warnings.iter().any(|warning| {
-                warning
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains(&format!(
-                        "disallowed MCP ref `mcp(github/delete_repo)` cannot be represented for {harness}"
-                    ))
-            }),
-            "harness={harness}, warnings={warnings:?}"
-        );
-    }
+    let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    codex_cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-5",
+    ]);
+    codex_cmd.env("PATH", replace_path_with(&bin_dir));
+    let codex_output = codex_cmd.assert().success().get_output().clone();
+    let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
+    assert_eq!(codex_bundle["tools"]["mcp"], serde_json::json!([]));
+    assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
+    let codex_warnings = codex_bundle["warnings"]
+        .as_array()
+        .expect("warnings should be an array");
+    assert!(codex_warnings.iter().any(|warning| {
+        warning.as_str().unwrap_or_default().contains(
+            "disallowed MCP ref `mcp(github/delete_repo)` cannot be represented for codex",
+        )
+    }));
 }

@@ -119,6 +119,47 @@ fn insert_disallowed_tools(
         }
     }
 }
+fn insert_mcp_tools(
+    yaml: &mut Mapping,
+    profile: &SkillProfile,
+    harness: SkillHarness,
+    lossy_fields: &mut Vec<LossyField>,
+) {
+    let mcp = profile.effective_tool_policy().mcp;
+    if mcp.is_empty() {
+        return;
+    }
+    match harness {
+        SkillHarness::Claude => {
+            yaml.insert(
+                yk("mcp-tools"),
+                Value::Sequence(mcp.iter().map(|s| ys(s)).collect()),
+            );
+        }
+        SkillHarness::Codex => {
+            lossy_fields.push(LossyField {
+                field: "mcp-tools".into(),
+                target: harness.target_name().into(),
+                classification: Lossiness::Approximate {
+                    note: "Codex uses -c mcp.servers.<name>.command",
+                },
+            });
+        }
+        SkillHarness::OpenCode | SkillHarness::Cursor => {
+            lossy_fields.push(LossyField {
+                field: "mcp-tools".into(),
+                target: harness.target_name().into(),
+                classification: Lossiness::Approximate {
+                    note: "mcp-tools on subprocess errors; streaming uses session payload",
+                },
+            });
+        }
+        SkillHarness::Pi => {
+            lossy_fields.push(dropped("mcp-tools", harness));
+        }
+    }
+}
+
 fn insert_when_to_use(yaml: &mut Mapping, profile: &SkillProfile) {
     if let Some(when_to_use) = &profile.when_to_use {
         yaml.insert(yk("when_to_use"), ys(when_to_use));
@@ -195,6 +236,7 @@ pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutpu
         "claude",
         &mut lossy_fields,
     );
+    insert_mcp_tools(&mut yaml, profile, SkillHarness::Claude, &mut lossy_fields);
     insert_when_to_use(&mut yaml, profile);
     insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
@@ -226,6 +268,7 @@ pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput
         "codex",
         &mut lossy_fields,
     );
+    insert_mcp_tools(&mut yaml, profile, SkillHarness::Codex, &mut lossy_fields);
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Codex));
     }
@@ -261,6 +304,7 @@ pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOut
         "opencode",
         &mut lossy_fields,
     );
+    insert_mcp_tools(&mut yaml, profile, SkillHarness::OpenCode, &mut lossy_fields);
     if profile.when_to_use.is_some() {
         lossy_fields.push(dropped("when_to_use", SkillHarness::OpenCode));
     }
@@ -279,6 +323,7 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
     insert_allowed_tools(&mut yaml, profile, "pi", None);
     let mut lossy_fields = Vec::new();
     insert_disallowed_tools(&mut yaml, profile, SkillHarness::Pi, "pi", &mut lossy_fields);
+    insert_mcp_tools(&mut yaml, profile, SkillHarness::Pi, &mut lossy_fields);
     insert_when_to_use(&mut yaml, profile);
     insert_license_metadata(&mut yaml, profile);
     insert_passthrough(&mut yaml, profile);
@@ -315,6 +360,7 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
         "cursor",
         &mut lossy_fields,
     );
+    insert_mcp_tools(&mut yaml, profile, SkillHarness::Cursor, &mut lossy_fields);
     if user_invocation_disabled(profile) {
         lossy_fields.push(dropped("user-invocable", SkillHarness::Cursor));
     }
@@ -773,5 +819,35 @@ mod tests {
             "flat allowed-tools must not pass through: {out}"
         );
         assert!(!profile.passthrough_fields.iter().any(|(k, _)| k == "allowed-tools"));
+    }
+
+    #[test]
+    fn claude_emits_mcp_tools() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("mcp-tools:"), "missing mcp-tools: {out}");
+        assert!(out.contains("plugin:demo"), "missing mcp entry: {out}");
+        assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn codex_warns_mcp_tools() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nmcp-tools: [plugin:demo]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_codex(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(!out.contains("mcp-tools"), "mcp-tools must not emit: {out}");
+        assert!(
+            lowered
+                .lossy_fields
+                .iter()
+                .any(|field| field.field == "mcp-tools"),
+            "expected mcp-tools lossiness: {:?}",
+            lowered.lossy_fields
+        );
     }
 }

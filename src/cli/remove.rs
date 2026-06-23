@@ -21,6 +21,7 @@ pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             name: SourceName::from(args.source.as_str()),
         }),
         options: SyncOptions::default(),
+        surface_lossiness_warnings: false,
     };
     let report = crate::sync::execute(ctx, &request)?;
 

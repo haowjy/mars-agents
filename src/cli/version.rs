@@ -187,6 +187,7 @@ fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsErr
             dry_run: true,
             ..SyncOptions::default()
         },
+        surface_lossiness_warnings: false,
     };
 
     match crate::sync::execute(&ctx, &request) {

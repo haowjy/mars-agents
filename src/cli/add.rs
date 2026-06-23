@@ -103,6 +103,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 entry,
             }),
             options: SyncOptions::default(),
+            surface_lossiness_warnings: false,
         };
 
         let report = crate::sync::execute(ctx, &request)?;
@@ -120,6 +121,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
         options: SyncOptions::default(),
+        surface_lossiness_warnings: false,
     };
 
     let report = crate::sync::execute(ctx, &request)?;

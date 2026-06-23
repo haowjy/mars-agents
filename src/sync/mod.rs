@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
-use crate::diagnostic::{Diagnostic, DiagnosticCollector};
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
@@ -72,6 +72,9 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
+    /// When true, lossiness warnings are included in the returned report.
+    /// Only `mars sync` and `mars upgrade` set this; other pipeline callers suppress them.
+    pub surface_lossiness_warnings: bool,
 }
 
 /// Resolution behavior for the resolver stage.
@@ -712,10 +715,15 @@ pub(crate) fn finalize(
         .dependency_changes;
     let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
 
+    let mut diagnostics = diag.drain();
+    if !request.surface_lossiness_warnings {
+        diagnostics.retain(|d| d.category != Some(DiagnosticCategory::Lossiness));
+    }
+
     Ok(SyncReport {
         applied: state.applied.applied,
         pruned: Vec::new(),
-        diagnostics: diag.drain(),
+        diagnostics,
         dependency_changes,
         upgrades_available,
         target_outcomes: state.target_outcomes,
@@ -1140,6 +1148,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
+            surface_lossiness_warnings: false,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1158,6 +1167,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
+            surface_lossiness_warnings: false,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1324,6 +1334,7 @@ mod tests {
                 entry: path_dependency_entry(source.path()),
             }),
             options: SyncOptions::default(),
+            surface_lossiness_warnings: false,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
@@ -1364,6 +1375,7 @@ mod tests {
                 dry_run: true,
                 ..SyncOptions::default()
             },
+            surface_lossiness_warnings: false,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());

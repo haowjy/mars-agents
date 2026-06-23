@@ -760,4 +760,18 @@ mod tests {
             "Codex"
         ));
     }
+
+    #[test]
+    fn canonical_allowed_tools_not_emitted_in_claude_lower() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nallowed-tools: [Bash]\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_claude(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(
+            !out.contains("allowed-tools"),
+            "flat allowed-tools must not pass through: {out}"
+        );
+        assert!(!profile.passthrough_fields.iter().any(|(k, _)| k == "allowed-tools"));
+    }
 }

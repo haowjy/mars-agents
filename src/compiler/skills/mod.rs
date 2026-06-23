@@ -58,6 +58,10 @@ pub enum SkillDiagnostic {
     RemovedField {
         field: String,
     },
+    NonCanonicalField {
+        field: String,
+        canonical: &'static str,
+    },
     MalformedFrontmatter {
         message: String,
     },
@@ -89,6 +93,9 @@ impl SkillDiagnostic {
             ),
             Self::RemovedField { field } => format!(
                 "skill field `{field}` has been removed; use `model-invocable` / `user-invocable` instead"
+            ),
+            Self::NonCanonicalField { field, canonical } => format!(
+                "skill field `{field}` is not canonical; use `{canonical}` instead"
             ),
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
@@ -252,6 +259,19 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     );
     if let Some(field) = user_invocability {
         consumed_keys.push(field.consumed_key);
+    }
+
+    for (field, canonical) in [
+        ("allowed-tools", "tools:"),
+        ("allowed_tools", "tools:"),
+    ] {
+        consumed_keys.push(field.to_string());
+        if fm.get(field).is_some() {
+            diags.push(SkillDiagnostic::NonCanonicalField {
+                field: field.to_string(),
+                canonical,
+            });
+        }
     }
 
     for field in [
@@ -614,5 +634,25 @@ body",
             diags[0],
             SkillDiagnostic::MalformedFrontmatter { .. }
         ));
+    }
+
+    #[test]
+    fn canonical_allowed_tools_emits_diagnostic_and_not_passthrough() {
+        let (p, d, _) = parse("---\nname: a\ndescription: b\nallowed-tools: [Bash]\n---\nbody");
+        assert!(
+            d.iter().any(|diag| matches!(
+                diag,
+                SkillDiagnostic::NonCanonicalField { field, canonical }
+                    if field == "allowed-tools" && *canonical == "tools:"
+            )),
+            "expected non-canonical diagnostic: {d:?}"
+        );
+        assert!(!d.iter().any(SkillDiagnostic::is_error));
+        assert!(p.tools.is_empty());
+        assert!(
+            !p.passthrough_fields
+                .iter()
+                .any(|(k, _)| k == "allowed-tools" || k == "allowed_tools")
+        );
     }
 }

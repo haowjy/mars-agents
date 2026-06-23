@@ -20,6 +20,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Lossiness warnings surface only on `mars sync`, `mars upgrade`, `mars init`, and `mars check`; suppressed on validate, export, add, and other sync-pipeline commands.
 - `[agents.<name>]` overrides now adjust description, invocation axes, and tool policy (was routing fields only).
 - Codex skills: `model-invocable` warn-dropped (Codex reads invocation from sibling policy file, not SKILL.md) instead of emitting ignored `allow_implicit_invocation` frontmatter.
+- Authoring foreign flat `allowed-tools`/`disallowed_tools` in a canonical skill now warns (use `tools:`) and the key is stripped from the `.mars/` store instead of leaking into canonical and native output.
 
 ## [0.9.0] - 2026-06-22
 

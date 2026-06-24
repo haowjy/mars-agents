@@ -55,10 +55,9 @@ pub fn discover_source(
     tree_path: &Path,
     fallback_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    finalize_items(
-        fallback_name.unwrap_or("unknown-source"),
-        dedupe_items_by_name_precedence(discover_convention_items(tree_path, fallback_name)?),
-    )
+    let items =
+        dedupe_items_by_name_precedence(discover_convention_items(tree_path, fallback_name)?);
+    finalize_items(fallback_name.unwrap_or("unknown-source"), items)
 }
 
 /// Discover items from a source without a mars.toml manifest.
@@ -67,11 +66,11 @@ pub fn discover_manifestless_source(
     source_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     let label = source_name.unwrap_or("unknown-source");
-    let convention_items = discover_convention_items(package_root, source_name)?;
-    let mut explicit_items = discover_manifest_declared_items(package_root, label)?;
+    let mut convention_items = discover_convention_items(package_root, source_name)?;
+    convention_items = dedupe_items_by_name_precedence(convention_items);
 
     let mut items = convention_items;
-    items.append(&mut explicit_items);
+    items.append(&mut discover_manifest_declared_items(package_root, label)?);
     finalize_items(label, items)
 }
 
@@ -478,7 +477,6 @@ fn finalize_items(
     mut items: Vec<DiscoveredItem>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     items = dedupe_items_by_path(items);
-    items = dedupe_items_by_name_precedence(items);
     ensure_unique_names(source_name, &items)?;
     sort_items(&mut items);
     Ok(items)
@@ -1210,6 +1208,69 @@ mod tests {
             item.id.kind == ItemKind::BootstrapDoc
                 && item.source_path == Path::new("docs/global-auth")
         }));
+    }
+
+    #[test]
+    fn manifestless_source_keeps_convention_and_different_named_manifest_item() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("skills/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("declared/bar")).unwrap();
+        fs::write(dir.path().join("skills/foo/SKILL.md"), "# foo").unwrap();
+        fs::write(dir.path().join("declared/bar/SKILL.md"), "# bar").unwrap();
+        fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.path().join(".claude-plugin/plugin.json"),
+            r#"{"skills":[{"path":"./declared/bar"}]}"#,
+        )
+        .unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("skills/foo")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("declared/bar")
+        }));
+    }
+
+    #[test]
+    fn manifest_name_collision_with_convention_item_is_reported() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("skills/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("declared/foo")).unwrap();
+        fs::write(dir.path().join("skills/foo/SKILL.md"), "# convention").unwrap();
+        fs::write(dir.path().join("declared/foo/SKILL.md"), "# manifest").unwrap();
+        fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.path().join(".claude-plugin/plugin.json"),
+            r#"{"skills":[{"path":"./declared/foo"}]}"#,
+        )
+        .unwrap();
+
+        let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+
+        assert!(matches!(err, MarsError::DiscoveryCollision { .. }));
+    }
+
+    #[test]
+    fn manifest_name_collision_between_declared_paths_is_reported() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("declared/a/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("declared/b/foo")).unwrap();
+        fs::write(dir.path().join("declared/a/foo/SKILL.md"), "# a").unwrap();
+        fs::write(dir.path().join("declared/b/foo/SKILL.md"), "# b").unwrap();
+        fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.path().join(".claude-plugin/plugin.json"),
+            r#"{"skills":[{"path":"./declared/a/foo"},{"path":"./declared/b/foo"}]}"#,
+        )
+        .unwrap();
+
+        let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+
+        assert!(matches!(err, MarsError::DiscoveryCollision { .. }));
     }
 
     #[test]

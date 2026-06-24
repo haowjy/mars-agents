@@ -4,6 +4,7 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
 use crate::compiler::mcp_ref::parse_foreign_mcp_token;
+use crate::compiler::skills::IMPORTED_WITHOUT_DESCRIPTION;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
@@ -210,16 +211,6 @@ fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
         && fm.get("globs").is_none()
 }
 
-/// Canonical skills require `description` when frontmatter exists; Cursor Manual rules
-/// cannot store one. Use the skill name as a minimal placeholder for staging only —
-/// Cursor lowering strips it again for explicit `model-invocable: false`.
-fn derive_canonical_description_for_cursor_manual(fm: &Frontmatter) -> String {
-    fm.get("name")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| "Cursor manual rule".to_string())
-}
-
 fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
     if find_invocability_field(fm, "model-invocable").is_none() {
@@ -230,14 +221,8 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
             }
             Some(false) if cursor_manual_rule_shape(fm) => {
                 fm.insert("model-invocable", Value::Bool(false));
+                fm.insert(IMPORTED_WITHOUT_DESCRIPTION, Value::Bool(true));
                 changed = true;
-                if fm.get("description").is_none() {
-                    fm.insert(
-                        "description",
-                        Value::String(derive_canonical_description_for_cursor_manual(fm)),
-                    );
-                    changed = true;
-                }
             }
             _ => {}
         }
@@ -402,26 +387,29 @@ mod tests {
     }
 
     #[test]
-    fn cursor_manual_rule_restores_model_invocable_false_and_description() {
+    fn cursor_manual_rule_restores_model_invocable_false_without_description() {
         let lifted = lift(
             Dialect::Cursor,
             ItemKind::Skill,
             &fm("name: demo\nalwaysApply: false\n"),
         );
         assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(false)));
+        assert!(lifted.get("description").is_none());
         assert_eq!(
-            lifted.get("description"),
-            Some(&Value::String("demo".into()))
+            lifted.get(IMPORTED_WITHOUT_DESCRIPTION),
+            Some(&Value::Bool(true))
         );
         assert!(lifted.get("alwaysApply").is_none());
 
         let mut diags = Vec::new();
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
+        assert!(profile.description.is_none());
         assert!(!profile.model_invocable);
         assert!(profile.had_model_invocable_field);
 
-        let codex = lower_skill_for_harness(SkillHarness::Codex, &profile, "# Demo\n");
+        let body = "# Demo\n";
+        let codex = lower_skill_for_harness(SkillHarness::Codex, &profile, body);
         assert_eq!(codex.siblings.len(), 1);
         assert!(
             !codex
@@ -429,6 +417,40 @@ mod tests {
                 .iter()
                 .any(|f| f.field == "model-invocable" && f.classification == Lossiness::Dropped)
         );
+
+        let claude = lower_skill_for_harness(SkillHarness::Claude, &profile, body);
+        let claude_out = String::from_utf8(claude.bytes).unwrap();
+        assert!(
+            !claude_out.contains("description:"),
+            "fabricated description must not leak to Claude: {claude_out}"
+        );
+
+        let opencode = lower_skill_for_harness(SkillHarness::OpenCode, &profile, body);
+        let opencode_out = String::from_utf8(opencode.bytes).unwrap();
+        assert!(
+            !opencode_out.contains("description:"),
+            "fabricated description must not leak to OpenCode: {opencode_out}"
+        );
+
+        let cursor = lower_skill_for_harness(SkillHarness::Cursor, &profile, body);
+        let cursor_out = String::from_utf8(cursor.bytes).unwrap();
+        assert!(!cursor_out.contains("description:"));
+        assert!(cursor_out.contains("alwaysApply: false"));
+        assert!(
+            !cursor_out.contains(IMPORTED_WITHOUT_DESCRIPTION),
+            "internal sentinel must not leak to Cursor: {cursor_out}"
+        );
+
+        let round_trip_lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &Frontmatter::parse(&cursor_out).unwrap(),
+        );
+        assert_eq!(
+            round_trip_lifted.get("model-invocable"),
+            Some(&Value::Bool(false))
+        );
+        assert!(round_trip_lifted.get("description").is_none());
     }
 
     #[test]

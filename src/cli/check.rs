@@ -272,6 +272,10 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
 
                                 if fm.get("description").and_then(|v| v.as_str()).is_none()
                                     && !schema_missing_description
+                                    && fm
+                                        .get(crate::compiler::skills::IMPORTED_WITHOUT_DESCRIPTION)
+                                        .and_then(|v| v.as_bool())
+                                        != Some(true)
                                 {
                                     warnings.push(format!("skill `{name}` has no `description`"));
                                 }

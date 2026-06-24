@@ -9,7 +9,7 @@ entries, hooks, MCP, variants, visibility).
 ```
 ReaderIr (source-level facts)
     ↓
-build_target()     ← assign dest paths, handle collisions, rewrite frontmatter refs
+build_target()     ← assign dest paths, reject cross-source collisions, rewrite frontmatter refs
     ↓
 create_plan()      ← diff + plan
     ↓

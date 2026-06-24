@@ -215,10 +215,10 @@ mars rename <from> <to>
 
 | Argument | Description |
 |---|---|
-| `from` | Current item path (e.g., `agents/coder__meridian-flow_meridian-base.md`) |
+| `from` | Current managed item path (e.g., `agents/old-coder.md`) |
 | `to` | Desired item path (e.g., `agents/coder.md`) |
 
-Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs. Useful for resolving auto-rename collisions with preferred names.
+Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs. For an initial cross-source collision that prevents sync, edit the dependency `rename` mapping directly in `mars.toml`.
 
 ---
 
@@ -446,9 +446,9 @@ mars check [path]
 | `path` | Directory to validate (default: current directory) |
 
 Does not require a mars project (no `mars.toml` needed). Validates:
-- Package structure: `agents/*.md`, `skills/*/SKILL.md`, or flat `SKILL.md`
+- Package structure: convention folders named `agents/`, `skills/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
 - Frontmatter: name, description presence and consistency
-- Duplicate names across agents and skills
+- Duplicate `(kind, name)` discoveries within the package
 - Skill dependency references (warns about external deps)
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories

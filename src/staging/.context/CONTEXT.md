@@ -17,7 +17,7 @@ fetch → ResolvedRef.tree_path (global cache, read-only)
   → discover / hash / validate / apply
 ```
 
-Discovery runs from the staged/rooted package directory. Its convention walk skips dot-prefixed child directories during default discovery; explicit dependency `subpath` can still make a hidden foreign container (for example `.claude`) the effective root, where its inner `agents/` and `skills/` directories are discovered normally.
+Discovery runs from the staged/rooted package directory. Its convention walk skips dot-prefixed child directories during default discovery; explicit dependency `subpath` can still make a hidden foreign container (for example `.claude`) the effective root, where its inner `agents/` and `skills/` directories are discovered normally. Foreign-container dialect inference chooses lift behavior only; it does not make hidden containers discovery roots.
 
 ## Staging location
 
@@ -74,8 +74,8 @@ Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
 
 The removed `mcp-tools:` / `mcp_tools` field is rejected at parse time (`RemovedField`).
 Use `tools: [mcp(server)]` instead. Projection to harness-native tokens:
-[`src/compiler/mcp_ref.rs`](../compiler/mcp_ref.rs) — documented in
-[agent-compilation.md](../../docs/config/agent-compilation.md#mcp-tool-policy-references).
+[`src/compiler/mcp_ref.rs`](../../compiler/mcp_ref.rs) — documented in
+[agent-compilation.md](../../../docs/config/agent-compilation.md#mcp-tool-policy-references).
 
 ## Poor Man's module — `skill_source_name`
 

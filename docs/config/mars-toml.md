@@ -55,7 +55,7 @@ description = "Core agents and skills for meridian"  # optional
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
 
-Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at any non-hidden depth.
+Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
 
 ### `[dependencies]`
 
@@ -329,10 +329,10 @@ The `dialect` key on `[dependencies.<dep>]` controls how mars lifts foreign fron
 Resolution order (first-wins):
 
 1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
-2. **Container inference** — if the source tree contains a non-empty `.claude/agents/`, `.claude/skills/`, `.codex/`, `.opencode/`, or `.cursor/` directory, the corresponding dialect is inferred. Ambiguous (multiple containers) yields no inference.
+2. **Container inference for lift only** — if the rooted source tree contains exactly one non-empty foreign container such as `.claude/agents/` or `.claude/skills/`, the corresponding dialect is inferred. Hidden containers are still skipped by item discovery; inference does not import their contents.
 3. **Default** — `claude` for dependencies, `mars-native` for local (`_self`) items.
 
-Without this field, a source authored in Claude-native `allowed-tools` will be interpreted through the Claude lift table. Set `dialect = "mars-native"` for sources that already use canonical frontmatter.
+Without this field, a source authored in Claude-native `allowed-tools` will be interpreted through the Claude lift table. Set `dialect = "mars-native"` for sources that already use canonical frontmatter. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
 
 ## Renaming
 
@@ -343,7 +343,7 @@ Renames are set via `mars rename` (which updates the dependency's `rename` field
 ```toml
 [dependencies.base]
 url = "https://github.com/meridian-flow/meridian-base"
-rename = { "agents/coder__meridian-flow_meridian-base.md" = "agents/coder.md" }
+rename = { "agents/coder.md" = "agents/base-coder.md" }
 ```
 
 ## `[models]`

@@ -122,7 +122,7 @@ All standard primary launch flags (`--model`, `--harness`, `--approval`, `--work
 
 ## Discovery and sync
 
-Mars discovers bootstrap docs at the same time as agents and skills during `mars sync`. Any `bootstrap/` directory in a source package is automatically included; manifest declarations add docs outside that conventional location.
+Mars discovers bootstrap docs at the same time as agents and skills during `mars sync`. `bootstrap/` directories are included by the same bounded convention walk and shallowest-layer grounding as agent and skill discovery; manifest declarations add docs outside that conventional location.
 
 Skill-level bootstrap docs are part of the skill tree and require no extra configuration.
 

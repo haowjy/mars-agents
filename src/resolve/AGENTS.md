@@ -60,7 +60,7 @@ All downstream consumers (manifest reading, item discovery) transparently read f
 
 ## Item Resolution
 
-Items (agents/skills) are discovered via DFS from seeded requests. Skill frontmatter deps are parsed and resolved transitively. Version conflicts between packages produce errors (local items skip conflicts).
+Resolved item traversal is DFS from seeded agent/skill requests. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
 
 ## Patterns
 

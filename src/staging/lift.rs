@@ -432,11 +432,18 @@ when_to_use: Use when git history matters
         assert!(cursor.lossy_fields.iter().any(|f| f.field == "tools"));
         assert!(!cursor_out.contains("when_to_use"));
         assert!(!cursor_out.contains("disable-model-invocation"));
+        assert!(!cursor_out.contains("description:"));
         assert!(
             cursor
                 .lossy_fields
                 .iter()
-                .any(|f| f.field == "when_to_use" || f.field == "user-invocable")
+                .any(|f| f.field == "user-invocable")
+        );
+        assert!(
+            !cursor
+                .lossy_fields
+                .iter()
+                .any(|f| f.field == "when_to_use" || f.field == "model-invocable")
         );
     }
 

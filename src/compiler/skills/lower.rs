@@ -388,29 +388,70 @@ mod tests {
         assert!(!has_dropped(&lowered.lossy_fields, "user-invocable", "Pi"));
     }
 
+    fn assert_folds_when_to_use(out: &str, identity_desc: &str, when_to_use: &str) {
+        assert!(!out.contains("when_to_use:"));
+        assert!(
+            out.contains(identity_desc) && out.contains(when_to_use),
+            "expected folded description containing both parts: {out}"
+        );
+        let desc_pos = out.find("description:").expect("missing description key");
+        let after_desc = &out[desc_pos..];
+        assert!(
+            after_desc.contains(identity_desc) && after_desc.contains(when_to_use),
+            "expected both strings under description: {out}"
+        );
+    }
+
     #[test]
-    fn codex_warn_drops_when_to_use_without_emitting() {
+    fn codex_folds_when_to_use_into_description() {
         let profile = parse_profile(
             "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
         );
         let lowered = lower_skill_to_codex(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("when_to_use"));
-        assert!(has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
+        assert_folds_when_to_use(&out, "desc", "Use for git");
+        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
     }
 
     #[test]
-    fn cursor_drops_tools() {
+    fn codex_folds_when_to_use_only_into_description() {
+        let profile = parse_profile("---\nname: skill\nwhen_to_use: Use for git\n---\nBody\n");
+        let lowered = lower_skill_to_codex(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("description: Use for git"));
+        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
+    }
+
+    #[test]
+    fn opencode_folds_when_to_use_into_description() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_opencode(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert_folds_when_to_use(&out, "desc", "Use for git");
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "when_to_use",
+            "OpenCode"
+        ));
+    }
+
+    #[test]
+    fn cursor_drops_tools_not_model_invocable() {
         let lowered = lower_skill_to_cursor(&profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("allowed-tools"));
-        assert!(has_dropped(
+        assert!(out.contains("alwaysApply: false"));
+        assert!(!out.contains("description:"));
+        assert!(!has_dropped(
             &lowered.lossy_fields,
             "model-invocable",
             "Cursor"
         ));
-        assert_eq!(lowered.lossy_fields.len(), 2);
+        assert!(has_dropped(&lowered.lossy_fields, "tools", "Cursor"));
+        assert_eq!(lowered.lossy_fields.len(), 1);
     }
 
     #[test]
@@ -426,17 +467,80 @@ mod tests {
     }
 
     #[test]
-    fn cursor_model_true_emits_always_apply_not_claude_keys() {
+    fn cursor_intelligent_emits_always_apply_false_with_description() {
         let lowered = lower_skill_to_cursor(&explicit_true_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("alwaysApply: true"));
+        assert!(out.contains("alwaysApply: false"));
+        assert!(out.contains("description: desc"));
+        assert!(!out.contains("alwaysApply: true"));
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("user-invocable"));
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Cursor"
+        ));
         assert!(!has_dropped(
             &lowered.lossy_fields,
             "user-invocable",
             "Cursor"
         ));
+    }
+
+    #[test]
+    fn cursor_intelligent_default_emits_always_apply_false_with_description() {
+        let lowered = lower_skill_to_cursor(&identity_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("alwaysApply: false"));
+        assert!(out.contains("description: desc"));
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Cursor"
+        ));
+    }
+
+    #[test]
+    fn cursor_manual_strips_description() {
+        let lowered = lower_skill_to_cursor(&profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("alwaysApply: false"));
+        assert!(!out.contains("description:"));
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Cursor"
+        ));
+    }
+
+    #[test]
+    fn cursor_manual_with_when_to_use_omits_description() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\nmodel-invocable: false\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_cursor(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("alwaysApply: false"));
+        assert!(!out.contains("description:"));
+        assert!(!out.contains("when_to_use"));
+        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Cursor"));
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Cursor"
+        ));
+    }
+
+    #[test]
+    fn cursor_intelligent_folds_when_to_use_into_description() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_cursor(&profile, "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("alwaysApply: false"));
+        assert_folds_when_to_use(&out, "desc", "Use for git");
+        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Cursor"));
     }
 
     #[test]

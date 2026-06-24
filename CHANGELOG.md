@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Source discovery finds convention `agents/` / `skills/` / `bootstrap/` directories nested below the package root, not only at the top level.
+- Duplicate `(kind, name)` discoveries — across convention directories, or a convention item vs a `.claude-plugin` manifest declaration — now raise `DiscoveryCollision` instead of silently keeping one by path order.
 - MCP inbound lift: merge `allowed-tools` with `mcpServers` without dropping the allowlist; preserve map-form `tools:` when appending whole-server `mcp(server)` entries.
 - Malformed `mcp(...)` tool tokens (e.g. `mcp()`, `mcp(/x)`) are validation errors instead of convention-projected unknown tools — disallowed malformed MCP refs no longer fail open.
 - Agent parser: retired top-level `mcp-tools:` / `mcp_tools` emits `RemovedField` diagnostic and staging strips the field from canonical frontmatter (mirrors skills).
@@ -26,6 +28,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants).
 
 ### Changed
+- **Breaking:** Source discovery is a single bounded convention walk that finds `agents/` / `skills/` / `bootstrap/` directories (and a root `SKILL.md` fallback) at any depth, grounded to the shallowest package layer (deeper nested containers are ignored). Hidden dot-directories are skipped, so harness output surfaces (`.claude/`, `.codex/`, `.cursor/`, `.opencode/`) are no longer auto-scanned as discovery *sources* — import a foreign hidden layout explicitly via `subpath` + `dialect`. Replaces the previous fixed-top-level scan + container-root heuristic.
 - **Breaking:** Removed legacy `mcp-tools:` / `mcp_tools` frontmatter field and `[agents|skills].tools.mcp` overlay key. Author whole-server MCP grants as `mcp(server)` entries in `tools:` (or `tools.allowed` overlays); per-tool grants use `mcp(server/tool)`.
 - MCP emission (Phase 4b): `EffectiveToolPolicy` carries structured `mcp_allowed` / `mcp_disallowed` [`McpRef`] values; harness lowering and launch bundles project them via `project_mcp_ref` instead of verbatim `mcp-tools:` strings. Claude agents emit `mcp__…` tokens in `tools:` / `disallowed-tools:` (no `mcp-tools:` field); Claude skills grant MCP into `allowed-tools:` with a lossiness note. Unsupported projections (e.g. Claude `mcp(*/tool)`, Codex/Pi MCP) record lossiness and omit the token.
 - Inbound lift: Claude `mcpServers` now appends `mcp(server)` entries to `tools:` instead of lifting to `mcp-tools:`.

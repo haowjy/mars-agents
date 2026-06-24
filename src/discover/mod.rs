@@ -140,10 +140,13 @@ fn discover_convention_items(
         }
     }
 
-    let has_agent_or_skill = items
+    let found_agent_or_skill_before_grounding = items
         .iter()
         .any(|item| matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill));
-    if !has_agent_or_skill && package_root.join("SKILL.md").is_file() {
+
+    items = ground_items_to_shallowest_layer(items);
+
+    if !found_agent_or_skill_before_grounding && package_root.join("SKILL.md").is_file() {
         let name = flat_root_skill_source_name(package_root, source_name);
         items.push(DiscoveredItem {
             id: ItemId {
@@ -421,6 +424,21 @@ fn discover_manifest_declared_items(
         scan_manifest_declared_path(package_root, &declared_path, &mut items)?;
     }
     Ok(dedupe_items_by_path(items))
+}
+
+fn ground_items_to_shallowest_layer(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
+    let Some(min_layer) = items.iter().map(logical_layer).min() else {
+        return items;
+    };
+
+    // Grounding: agents/skills/bootstrap docs live at one logical layer; find
+    // the shallowest layer that has them and ignore deeper containers. This
+    // prevents importing nested fixture, example, or vendored package layouts
+    // when a package also exposes its own top-level convention directories.
+    items
+        .into_iter()
+        .filter(|item| logical_layer(item) == min_layer)
+        .collect()
 }
 
 fn finalize_items(
@@ -787,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn conventional_discovery_finds_nested_convention_dirs() {
+    fn conventional_discovery_grounds_to_shallowest_convention_layer() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("agents")).unwrap();
         fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
@@ -798,21 +816,52 @@ mod tests {
 
         let items = discover_source(dir.path(), None).unwrap();
 
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_path, PathBuf::from("agents/top.md"));
         assert!(
-            items
-                .iter()
-                .any(|item| item.source_path == Path::new("agents/top.md"))
-        );
-        assert!(
-            items
+            !items
                 .iter()
                 .any(|item| item.source_path == Path::new("sub/agents/foo.md"))
         );
         assert!(
-            items
+            !items
                 .iter()
                 .any(|item| item.source_path == Path::new("a/b/skills/bar"))
+        );
+    }
+
+    #[test]
+    fn conventional_discovery_keeps_nested_only_min_layer() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
+        fs::write(dir.path().join("sub/agents/x.md"), "# x").unwrap();
+
+        let items = discover_source(dir.path(), None).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Agent);
+        assert_eq!(items[0].id.name.as_str(), "x");
+        assert_eq!(items[0].source_path, PathBuf::from("sub/agents/x.md"));
+    }
+
+    #[test]
+    fn top_level_skills_suppress_nested_example_skills() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("skills/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("examples/skills/bar")).unwrap();
+        fs::write(dir.path().join("skills/foo/SKILL.md"), "# foo").unwrap();
+        fs::write(dir.path().join("examples/skills/bar/SKILL.md"), "# bar").unwrap();
+
+        let items = discover_source(dir.path(), None).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].id.name.as_str(), "foo");
+        assert_eq!(items[0].source_path, PathBuf::from("skills/foo"));
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.source_path == Path::new("examples/skills/bar"))
         );
     }
 
@@ -1072,19 +1121,19 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_names_keep_shallowest_convention_item() {
+    fn duplicate_names_at_same_grounded_layer_keep_first_source_path() {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("skills/foo")).unwrap();
-        fs::create_dir_all(dir.path().join("nested/skills/foo")).unwrap();
-        fs::write(dir.path().join("skills/foo/SKILL.md"), "# shallow").unwrap();
-        fs::write(dir.path().join("nested/skills/foo/SKILL.md"), "# nested").unwrap();
+        fs::create_dir_all(dir.path().join("a/skills/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("b/skills/foo")).unwrap();
+        fs::write(dir.path().join("a/skills/foo/SKILL.md"), "# a").unwrap();
+        fs::write(dir.path().join("b/skills/foo/SKILL.md"), "# b").unwrap();
 
         let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.kind, ItemKind::Skill);
         assert_eq!(items[0].id.name.as_str(), "foo");
-        assert_eq!(items[0].source_path, PathBuf::from("skills/foo"));
+        assert_eq!(items[0].source_path, PathBuf::from("a/skills/foo"));
     }
 
     #[test]
@@ -1182,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_walk_finds_nested_convention_dirs_and_skips_dot_dirs() {
+    fn fallback_walk_finds_nested_min_layer_and_skips_dot_dirs() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
         fs::create_dir_all(dir.path().join("a/b/skills/bar")).unwrap();
@@ -1192,13 +1241,15 @@ mod tests {
         fs::write(dir.path().join(".claude/agents/hidden.md"), "# hidden").unwrap();
 
         let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 1);
         assert!(items.iter().any(|item| {
             item.id.kind == ItemKind::Agent && item.source_path == Path::new("sub/agents/foo.md")
         }));
-        assert!(items.iter().any(|item| {
-            item.id.kind == ItemKind::Skill && item.source_path == Path::new("a/b/skills/bar")
-        }));
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.source_path == Path::new("a/b/skills/bar"))
+        );
         assert!(
             !items
                 .iter()

@@ -12,6 +12,8 @@ Discovery is convention-based. A single bounded recursive walk starts at the roo
 
 The same walk is used for packages with `mars.toml`, packages without `mars.toml`, and local `.mars-src/` roots.
 
+After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
+
 ## Hidden directories
 
 The walk skips dot-prefixed directories at every descent step. This keeps generated harness outputs and control/cache directories (`.claude/`, `.codex/`, `.cursor/`, `.opencode/`, `.git/`, `.mars/`) out of default package discovery without maintaining a harness blocklist.

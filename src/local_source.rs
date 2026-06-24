@@ -1,8 +1,8 @@
 //! Project-local source discovery rooted under `.mars-src/`.
 //!
 //! Local items intentionally use the same convention walk as dependency packages
-//! so nested `.mars-src/**/agents` and `.mars-src/**/skills` layouts behave the
-//! same as published source trees.
+//! so nested `.mars-src/**/agents` and `.mars-src/**/skills` layouts follow the
+//! same layer-grounding rules as published source trees.
 
 use std::path::{Path, PathBuf};
 
@@ -61,8 +61,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let project_root = dir.path();
         let agent_dir = preferred_local_source_root(project_root).join("nested/agents");
-        let skill_dir =
-            preferred_local_source_root(project_root).join("nested/deeper/skills/review");
+        let skill_dir = preferred_local_source_root(project_root).join("nested/skills/review");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(agent_dir.join("local.md"), "# local").unwrap();
@@ -77,7 +76,7 @@ mod tests {
         }));
         assert!(items.iter().any(|item| {
             item.discovered.id.kind == ItemKind::Skill
-                && item.discovered.source_path == Path::new("nested/deeper/skills/review")
+                && item.discovered.source_path == Path::new("nested/skills/review")
         }));
     }
 

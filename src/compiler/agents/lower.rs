@@ -428,6 +428,49 @@ mod tests {
         assert!(text.contains("description: Reviewer"), "desc missing");
         assert!(text.contains("model: gpt55"), "model missing");
         assert!(text.contains("mode: primary"), "mode missing");
+        assert!(
+            !out.lossy_fields.iter().any(|f| f.field == "mode"),
+            "mode should be exact, not lossy: {:?}",
+            out.lossy_fields
+        );
+    }
+
+    #[test]
+    fn opencode_subagent_mode_emits_without_lossiness() {
+        let content = "---\nname: sub\ndescription: Sub\nmode: subagent\nharness: opencode\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(text.contains("mode: subagent"));
+        assert!(
+            !out.lossy_fields.iter().any(|f| f.field == "mode"),
+            "mode should not be dropped or approximate: {:?}",
+            out.lossy_fields
+        );
+    }
+
+    #[test]
+    fn claude_still_drops_mode() {
+        let content = "---\nname: coder\nmode: subagent\nharness: claude\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_for_harness_with_model(
+            &HarnessKind::Claude,
+            &profile,
+            &fm,
+            fm.body(),
+            &NativeModel::Inherit,
+        );
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(!text.contains("mode:"));
+        assert!(
+            out.lossy_fields.iter().any(|f| {
+                f.field == "mode"
+                    && f.target == "Claude"
+                    && f.classification == Lossiness::Dropped
+            }),
+            "Claude should warn-drop mode: {:?}",
+            out.lossy_fields
+        );
     }
 
     #[test]

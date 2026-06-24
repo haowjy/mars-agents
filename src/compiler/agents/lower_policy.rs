@@ -265,7 +265,7 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "OpenCode",
     description: DescriptionPolicy::Preserve,
-    mode_note: Some("OpenCode uses the same mode concept"),
+    mode_note: None,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,

@@ -16,11 +16,18 @@ use crate::lock::{ItemId, ItemKind};
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::ItemName;
 
+// These high-volume generated directories are skipped in addition to the dot-dir
+// rule to avoid slow walks and false-positive imports from dependency/build
+// outputs that sometimes contain docs shaped like agents or skills.
 const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
 const PLUGIN_MANIFESTS: &[&str] = &[
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
 ];
+// Covers real package layouts like `vendor/pkg/.claude/skills/foo` and
+// `packages/group/tooling/agents/foo.md` while intentionally skipping
+// over-depth convention dirs silently so arbitrary repo trees do not become
+// unbounded discovery surfaces.
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
 const AGENTS_DIR_NAME: &str = "agents";
 const SKILLS_DIR_NAME: &str = "skills";
@@ -49,26 +56,17 @@ pub fn discover_source(
 }
 
 /// Discover items from a source without a mars.toml manifest.
-pub fn discover_fallback(
+pub fn discover_manifestless_source(
     package_root: &Path,
     source_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     let label = source_name.unwrap_or("unknown-source");
     let convention_items = discover_convention_items(package_root, source_name)?;
-    let explicit_items = discover_manifest_declared_items(package_root, label)?;
+    let mut explicit_items = discover_manifest_declared_items(package_root, label)?;
 
-    if explicit_items.is_empty() {
-        return finalize_items(label, convention_items);
-    }
-
-    let mut items = explicit_items;
-    if let Some(root_skill) = convention_items
-        .iter()
-        .find(|item| item.id.kind == ItemKind::Skill && item.source_path == Path::new("."))
-    {
-        items.push(root_skill.clone());
-    }
-    finalize_items(label, dedupe_items_by_path(items))
+    let mut items = convention_items;
+    items.append(&mut explicit_items);
+    finalize_items(label, items)
 }
 
 /// Shared dispatcher for rooted-source discovery.
@@ -79,7 +77,7 @@ pub fn discover_resolved_source(
     if package_root.join("mars.toml").is_file() {
         discover_source(package_root, source_name)
     } else {
-        discover_fallback(package_root, source_name)
+        discover_manifestless_source(package_root, source_name)
     }
 }
 
@@ -429,6 +427,8 @@ fn finalize_items(
     source_name: &str,
     mut items: Vec<DiscoveredItem>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
+    items = dedupe_items_by_path(items);
+    items = dedupe_items_by_name_precedence(items);
     ensure_unique_names(source_name, &items)?;
     sort_items(&mut items);
     Ok(items)
@@ -439,6 +439,28 @@ fn dedupe_items_by_path(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
     let mut deduped = Vec::with_capacity(items.len());
     for item in items {
         if seen.insert(item.source_path.clone()) {
+            deduped.push(item);
+        }
+    }
+    deduped
+}
+
+fn dedupe_items_by_name_precedence(mut items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
+    // `logical_layer` is name-precedence, not just display order: for duplicate
+    // `(kind, name)` discoveries, the shallowest convention container wins.
+    // Source-path order makes equal-layer ties deterministic and preserves the
+    // old first-seen behavior because directory reads are sorted.
+    items.sort_by(|a, b| {
+        logical_layer(a)
+            .cmp(&logical_layer(b))
+            .then_with(|| a.source_path.cmp(&b.source_path))
+    });
+
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::with_capacity(items.len());
+    for item in items {
+        let key = (item.id.kind, item.id.name.clone());
+        if seen.insert(key) {
             deduped.push(item);
         }
     }
@@ -852,7 +874,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
         fs::write(dir.path().join("skills/planning/SKILL.md"), "# planning").unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name.as_str(), "planning");
         assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
@@ -865,7 +887,7 @@ mod tests {
         fs::create_dir_all(&pkg).unwrap();
         fs::write(pkg.join("SKILL.md"), "# flat").unwrap();
 
-        let items = discover_fallback(&pkg, None).unwrap();
+        let items = discover_manifestless_source(&pkg, None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name.as_str(), "my-pkg");
         assert_ne!(items[0].id.name.as_str(), "unknown-source");
@@ -879,7 +901,7 @@ mod tests {
         fs::create_dir_all(&staged).unwrap();
         fs::write(staged.join("SKILL.md"), "# flat foreign skill").unwrap();
 
-        let items = discover_fallback(&staged, Some("base")).unwrap();
+        let items = discover_manifestless_source(&staged, Some("base")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name.as_str(), "base");
         assert_eq!(items[0].source_path, PathBuf::from("."));
@@ -924,7 +946,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(&staged_root, Some("base")).unwrap();
+        let items = discover_manifestless_source(&staged_root, Some("base")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.name.as_str(), "base");
 
@@ -976,7 +998,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(&staged_root, Some("base")).unwrap();
+        let items = discover_manifestless_source(&staged_root, Some("base")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].id.name.as_str(),
@@ -1004,7 +1026,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
 
         assert_eq!(items.len(), 2);
         assert!(
@@ -1019,6 +1041,147 @@ mod tests {
     }
 
     #[test]
+    fn manifestless_source_unions_conventions_with_manifest_declarations() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
+        fs::create_dir_all(dir.path().join("docs/global-auth")).unwrap();
+        fs::write(dir.path().join("agents/coder.md"), "# coder").unwrap();
+        fs::write(dir.path().join("skills/planning/SKILL.md"), "# planning").unwrap();
+        fs::write(dir.path().join("docs/global-auth/BOOTSTRAP.md"), "# auth").unwrap();
+        fs::create_dir_all(dir.path().join(".claude-plugin")).unwrap();
+        fs::write(
+            dir.path().join(".claude-plugin/plugin.json"),
+            r#"{"bootstrapDocs":[{"path":"./docs/global-auth"}]}"#,
+        )
+        .unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Agent && item.source_path == Path::new("agents/coder.md")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("skills/planning")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::BootstrapDoc
+                && item.source_path == Path::new("docs/global-auth")
+        }));
+    }
+
+    #[test]
+    fn duplicate_names_keep_shallowest_convention_item() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("skills/foo")).unwrap();
+        fs::create_dir_all(dir.path().join("nested/skills/foo")).unwrap();
+        fs::write(dir.path().join("skills/foo/SKILL.md"), "# shallow").unwrap();
+        fs::write(dir.path().join("nested/skills/foo/SKILL.md"), "# nested").unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].id.name.as_str(), "foo");
+        assert_eq!(items[0].source_path, PathBuf::from("skills/foo"));
+    }
+
+    #[test]
+    fn manifestless_source_discovers_top_level_canonical_agents_and_skills() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::create_dir_all(dir.path().join("skills/review")).unwrap();
+        fs::write(dir.path().join("agents/reviewer.md"), "# reviewer").unwrap();
+        fs::write(dir.path().join("skills/review/SKILL.md"), "# review").unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Agent && item.source_path == Path::new("agents/reviewer.md")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("skills/review")
+        }));
+    }
+
+    #[test]
+    fn convention_walk_finds_items_at_max_depth_and_skips_deeper_items() {
+        let dir = TempDir::new().unwrap();
+        let at_limit = ["a", "b", "c", "d", AGENTS_DIR_NAME].join("/");
+        let beyond_limit = ["a", "b", "c", "d", "e", AGENTS_DIR_NAME].join("/");
+        fs::create_dir_all(dir.path().join(&at_limit)).unwrap();
+        fs::create_dir_all(dir.path().join(&beyond_limit)).unwrap();
+        fs::write(dir.path().join(&at_limit).join("found.md"), "# found").unwrap();
+        fs::write(
+            dir.path().join(&beyond_limit).join("skipped.md"),
+            "# skipped",
+        )
+        .unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].source_path,
+            PathBuf::from("a/b/c/d/agents/found.md")
+        );
+    }
+
+    #[test]
+    fn explicit_claude_subpath_with_claude_dialect_imports_real_claude_layout() {
+        use crate::config::SkillOverlay;
+        use crate::diagnostic::DiagnosticCollector;
+        use crate::dialect::Dialect;
+        use crate::resolve::apply_subpath;
+        use crate::staging::stage_rooted_source;
+        use crate::types::{RenameMap, SourceName, SourceSubpath};
+        use indexmap::IndexMap;
+
+        let checkout = TempDir::new().unwrap();
+        let claude_root = checkout.path().join(".claude");
+        fs::create_dir_all(claude_root.join("agents")).unwrap();
+        fs::create_dir_all(claude_root.join("skills/research")).unwrap();
+        fs::write(
+            claude_root.join("agents/reviewer.md"),
+            "---\ndescription: reviewer\n---\n# reviewer",
+        )
+        .unwrap();
+        fs::write(
+            claude_root.join("skills/research/SKILL.md"),
+            "---\ndescription: research\n---\n# research",
+        )
+        .unwrap();
+
+        let source_name = SourceName::new("foreign");
+        let subpath = SourceSubpath::new(".claude").unwrap();
+        let rooted = apply_subpath(&source_name, checkout.path(), Some(&subpath)).unwrap();
+        let staging = TempDir::new().unwrap();
+        let mut diag = DiagnosticCollector::new();
+        let staged = stage_rooted_source(
+            &source_name,
+            rooted,
+            Dialect::Claude,
+            &IndexMap::<String, SkillOverlay>::new(),
+            &RenameMap::new(),
+            staging.path(),
+            &mut diag,
+        )
+        .unwrap();
+
+        let items = discover_resolved_source(&staged.package_root, Some("foreign")).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Agent && item.source_path == Path::new("agents/reviewer.md")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("skills/research")
+        }));
+    }
+
+    #[test]
     fn fallback_walk_finds_nested_convention_dirs_and_skips_dot_dirs() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
@@ -1028,7 +1191,7 @@ mod tests {
         fs::write(dir.path().join("a/b/skills/bar/SKILL.md"), "# skill").unwrap();
         fs::write(dir.path().join(".claude/agents/hidden.md"), "# hidden").unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| {
             item.id.kind == ItemKind::Agent && item.source_path == Path::new("sub/agents/foo.md")
@@ -1052,7 +1215,7 @@ mod tests {
         fs::write(claude_root.join("agents/reviewer.md"), "# reviewer").unwrap();
         fs::write(claude_root.join("skills/research/SKILL.md"), "# research").unwrap();
 
-        let items = discover_fallback(&claude_root, Some("foreign")).unwrap();
+        let items = discover_manifestless_source(&claude_root, Some("foreign")).unwrap();
         assert_eq!(items.len(), 2);
         assert!(
             items
@@ -1115,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_manifest_paths_precede_heuristic_layers() {
+    fn manifest_declared_skill_path_is_honored() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("top-level")).unwrap();
         fs::create_dir_all(dir.path().join("plugins/deep-skill")).unwrap();
@@ -1128,7 +1291,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].source_path, PathBuf::from("plugins/deep-skill"));
     }
@@ -1145,13 +1308,13 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
     }
 
     #[test]
-    fn fallback_manifest_declares_agent_paths_without_heuristic_json_walk() {
+    fn manifest_ignores_nested_metadata_agent_keys() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("agents")).unwrap();
         fs::write(dir.path().join("agents/reviewer.md"), "# reviewer").unwrap();
@@ -1162,7 +1325,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].source_path, PathBuf::from("agents/reviewer.md"));
     }
@@ -1179,7 +1342,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
         assert_eq!(items[0].id.name.as_str(), "global-auth");
@@ -1198,7 +1361,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
         assert_eq!(items[0].id.name.as_str(), "setup");
@@ -1206,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_heuristic_finds_bootstrap_container_docs() {
+    fn nested_bootstrap_dir_is_discovered() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("nested/bootstrap/setup")).unwrap();
         fs::create_dir_all(dir.path().join("nested/bootstrap/.hidden")).unwrap();
@@ -1221,7 +1384,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
         assert_eq!(items[0].id.name.as_str(), "setup");
@@ -1241,7 +1404,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = discover_fallback(dir.path(), Some("demo")).unwrap_err();
+        let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
         assert!(matches!(err, MarsError::ManifestDeclaredPathEscape { .. }));
     }
 

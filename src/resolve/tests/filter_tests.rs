@@ -30,6 +30,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
                     name: item_name,
                 },
                 source_path,
+                layer: 0,
             },
         );
     }

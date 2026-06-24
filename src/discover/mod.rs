@@ -35,6 +35,7 @@ const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
+const MANIFEST_LAYER: usize = usize::MAX;
 
 /// An item discovered in a source tree by filesystem convention.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,11 @@ pub struct DiscoveredItem {
     pub id: ItemId,
     /// Path within source tree (relative), e.g. "agents/coder.md" or "skills/planning".
     pub source_path: PathBuf,
+    // Convention grounding depends on the container directory that registered an
+    // item, not on the item's leaf path. Nested package layouts can contain
+    // repeated `skills`/`agents`/`bootstrap` segments, so deriving this later
+    // from `source_path` can anchor to the wrong container.
+    pub(crate) layer: usize,
 }
 
 /// Discover items by conventional mars package layout.
@@ -51,7 +57,7 @@ pub fn discover_source(
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     finalize_items(
         fallback_name.unwrap_or("unknown-source"),
-        discover_convention_items(tree_path, fallback_name)?,
+        dedupe_items_by_name_precedence(discover_convention_items(tree_path, fallback_name)?),
     )
 }
 
@@ -108,13 +114,31 @@ fn discover_convention_items(
 
         match base_dir.file_name().and_then(|name| name.to_str()) {
             Some(AGENTS_DIR_NAME) => {
-                scan_agent_dir(package_root, &base_rel, &mut items, &mut visited_agents)?;
+                scan_agent_dir(
+                    package_root,
+                    &base_rel,
+                    convention_layer(&base_rel),
+                    &mut items,
+                    &mut visited_agents,
+                )?;
             }
             Some(SKILLS_DIR_NAME) => {
-                scan_skill_dir(package_root, &base_rel, &mut items, &mut visited_skills)?;
+                scan_skill_dir(
+                    package_root,
+                    &base_rel,
+                    convention_layer(&base_rel),
+                    &mut items,
+                    &mut visited_skills,
+                )?;
             }
             Some(BOOTSTRAP_DIR_NAME) => {
-                scan_bootstrap_dir(package_root, &base_rel, &mut items, &mut visited_bootstrap)?;
+                scan_bootstrap_dir(
+                    package_root,
+                    &base_rel,
+                    convention_layer(&base_rel),
+                    &mut items,
+                    &mut visited_bootstrap,
+                )?;
             }
             _ => {}
         }
@@ -154,6 +178,7 @@ fn discover_convention_items(
                 name: ItemName::from(name),
             },
             source_path: PathBuf::from("."),
+            layer: 0,
         });
     }
 
@@ -166,28 +191,17 @@ fn discover_convention_items(
 }
 
 fn logical_layer(item: &DiscoveredItem) -> usize {
-    if item.source_path == Path::new(".") {
-        return 0;
-    }
+    item.layer
+}
 
-    item.source_path
-        .components()
-        .enumerate()
-        .find_map(|(index, component)| {
-            let segment = component.as_os_str().to_str()?;
-            match (item.id.kind, segment) {
-                (ItemKind::Agent, AGENTS_DIR_NAME)
-                | (ItemKind::Skill, SKILLS_DIR_NAME)
-                | (ItemKind::BootstrapDoc, BOOTSTRAP_DIR_NAME) => Some(index + 1),
-                _ => None,
-            }
-        })
-        .unwrap_or(usize::MAX)
+fn convention_layer(relative_root: &Path) -> usize {
+    relative_root.components().count()
 }
 
 fn scan_skill_dir(
     package_root: &Path,
     relative_root: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
@@ -206,7 +220,7 @@ fn scan_skill_dir(
             continue;
         }
         let rel = relative_to(package_root, &path)?;
-        register_skill_dir(package_root, &rel, items, visited)?;
+        register_skill_dir(package_root, &rel, layer, items, visited)?;
     }
 
     Ok(())
@@ -215,6 +229,7 @@ fn scan_skill_dir(
 fn scan_agent_dir(
     package_root: &Path,
     relative_root: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
@@ -231,7 +246,7 @@ fn scan_agent_dir(
             continue;
         }
         let rel = relative_to(package_root, &path)?;
-        register_agent_file(&rel, items, visited);
+        register_agent_file(&rel, layer, items, visited);
     }
 
     Ok(())
@@ -240,6 +255,7 @@ fn scan_agent_dir(
 fn scan_bootstrap_dir(
     package_root: &Path,
     relative_root: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
@@ -258,7 +274,7 @@ fn scan_bootstrap_dir(
             continue;
         }
         let rel = relative_to(package_root, &path)?;
-        register_bootstrap_doc(package_root, &rel, items, visited)?;
+        register_bootstrap_doc(package_root, &rel, layer, items, visited)?;
     }
 
     Ok(())
@@ -277,6 +293,7 @@ fn scan_manifest_declared_path(
                 register_skill_dir(
                     package_root,
                     &declared_path.relative_path,
+                    MANIFEST_LAYER,
                     items,
                     &mut visited,
                 )?;
@@ -284,6 +301,7 @@ fn scan_manifest_declared_path(
                 scan_skill_dir(
                     package_root,
                     &declared_path.relative_path,
+                    MANIFEST_LAYER,
                     items,
                     &mut visited,
                 )?;
@@ -293,11 +311,17 @@ fn scan_manifest_declared_path(
             if candidate.is_file()
                 && candidate.extension().and_then(|ext| ext.to_str()) == Some("md")
             {
-                register_agent_file(&declared_path.relative_path, items, &mut visited);
+                register_agent_file(
+                    &declared_path.relative_path,
+                    MANIFEST_LAYER,
+                    items,
+                    &mut visited,
+                );
             } else if candidate.is_dir() {
                 scan_agent_dir(
                     package_root,
                     &declared_path.relative_path,
+                    MANIFEST_LAYER,
                     items,
                     &mut visited,
                 )?;
@@ -308,6 +332,7 @@ fn scan_manifest_declared_path(
                 register_bootstrap_doc(
                     package_root,
                     &declared_path.relative_path,
+                    MANIFEST_LAYER,
                     items,
                     &mut visited,
                 )?;
@@ -318,11 +343,12 @@ fn scan_manifest_declared_path(
                 && candidate.is_file()
                 && let Some(parent) = declared_path.relative_path.parent()
             {
-                register_bootstrap_doc(package_root, parent, items, &mut visited)?;
+                register_bootstrap_doc(package_root, parent, MANIFEST_LAYER, items, &mut visited)?;
             } else if candidate.is_dir() {
                 scan_bootstrap_dir(
                     package_root,
                     &declared_path.relative_path,
+                    MANIFEST_LAYER,
                     items,
                     &mut visited,
                 )?;
@@ -338,6 +364,7 @@ fn scan_manifest_declared_path(
 fn register_skill_dir(
     package_root: &Path,
     relative_path: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
@@ -358,12 +385,14 @@ fn register_skill_dir(
             name: ItemName::from(name.to_string()),
         },
         source_path: normalized,
+        layer,
     });
     Ok(())
 }
 
 fn register_agent_file(
     relative_path: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) {
@@ -381,12 +410,14 @@ fn register_agent_file(
             name: ItemName::from(name.to_string()),
         },
         source_path: normalized,
+        layer,
     });
 }
 
 fn register_bootstrap_doc(
     package_root: &Path,
     relative_path: &Path,
+    layer: usize,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
@@ -411,6 +442,7 @@ fn register_bootstrap_doc(
             name: ItemName::from(name.to_string()),
         },
         source_path: normalized,
+        layer,
     });
     Ok(())
 }
@@ -718,7 +750,7 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
 
     let mut scratch = Vec::new();
     let mut visited = HashSet::new();
-    scan_agent_dir(root, Path::new("agents"), &mut scratch, &mut visited)?;
+    scan_agent_dir(root, Path::new("agents"), 1, &mut scratch, &mut visited)?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
         let (frontmatter_name, description, skill_refs) = parse_installed_frontmatter(&path);
@@ -731,7 +763,13 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
         });
     }
 
-    scan_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
+    scan_skill_dir(
+        root,
+        Path::new("skills"),
+        1,
+        &mut scratch,
+        &mut HashSet::new(),
+    )?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
         let skill_md = if item.source_path == Path::new(".") {
@@ -828,6 +866,60 @@ mod tests {
                 .iter()
                 .any(|item| item.source_path == Path::new("a/b/skills/bar"))
         );
+    }
+
+    #[test]
+    fn grounding_uses_registering_skill_container_layer_not_first_skill_segment() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("outer/skills/foo/skills/bar")).unwrap();
+        fs::write(dir.path().join("outer/skills/foo/SKILL.md"), "# foo").unwrap();
+        fs::write(
+            dir.path().join("outer/skills/foo/skills/bar/SKILL.md"),
+            "# bar",
+        )
+        .unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Skill);
+        assert_eq!(items[0].id.name.as_str(), "foo");
+        assert_eq!(items[0].source_path, PathBuf::from("outer/skills/foo"));
+    }
+
+    #[test]
+    fn grounding_uses_registering_agent_container_layer_not_first_agent_segment() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("outer/agents/foo/agents")).unwrap();
+        fs::write(dir.path().join("outer/agents/foo.md"), "# foo").unwrap();
+        fs::write(dir.path().join("outer/agents/foo/agents/bar.md"), "# bar").unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::Agent);
+        assert_eq!(items[0].id.name.as_str(), "foo");
+        assert_eq!(items[0].source_path, PathBuf::from("outer/agents/foo.md"));
+    }
+
+    #[test]
+    fn grounding_uses_registering_bootstrap_container_layer_not_first_bootstrap_segment() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("outer/bootstrap/foo/bootstrap/bar")).unwrap();
+        fs::write(dir.path().join("outer/bootstrap/foo/BOOTSTRAP.md"), "# foo").unwrap();
+        fs::write(
+            dir.path()
+                .join("outer/bootstrap/foo/bootstrap/bar/BOOTSTRAP.md"),
+            "# bar",
+        )
+        .unwrap();
+
+        let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
+        assert_eq!(items[0].id.name.as_str(), "foo");
+        assert_eq!(items[0].source_path, PathBuf::from("outer/bootstrap/foo"));
     }
 
     #[test]

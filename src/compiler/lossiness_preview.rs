@@ -337,10 +337,44 @@ mod tests {
             collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags.iter().any(|d| {
+                d.code == "launch-time-field-summary"
+                    && d.message.contains("launch-time field mapping")
+            }),
+            "expected meridian-only summary diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "agent-field-meridian-only"),
+            "surface must not emit per-item meridian-only warnings: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn collect_source_lossiness_verbose_shows_meridian_only_detail() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+        std::fs::write(
+            dir.path().join("agents/worker.md"),
+            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+        )
+        .unwrap();
+
+        let diags =
+            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Verbose).unwrap();
+        assert!(
+            diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
                     && d.message.contains("native-config")
             }),
-            "expected lossiness diagnostic: {diags:?}"
+            "expected verbose meridian-only diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "launch-time-field-summary"),
+            "verbose must not emit summary: {diags:?}"
         );
     }
 

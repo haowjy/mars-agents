@@ -134,23 +134,32 @@ mod tests {
         assert!(!text.contains("approval:"), "approval leaked: {text}");
         assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
         assert!(!text.contains("autocompact:"), "autocompact leaked: {text}");
-        // Lossiness should report dropped fields
-        let dropped: Vec<_> = out.lossy_fields.iter().map(|f| f.field.as_str()).collect();
+        // Launch-time fields are meridian-only, not target-enforced drops.
+        let meridian_only: Vec<_> = out
+            .lossy_fields
+            .iter()
+            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
+            .map(|f| f.field.as_str())
+            .collect();
         assert!(
-            dropped.contains(&"approval"),
-            "approval not in lossy: {dropped:?}"
+            meridian_only.contains(&"approval"),
+            "approval not in lossy: {meridian_only:?}"
         );
         assert!(
-            dropped.contains(&"sandbox"),
-            "sandbox not in lossy: {dropped:?}"
+            meridian_only.contains(&"sandbox"),
+            "sandbox not in lossy: {meridian_only:?}"
         );
         assert!(
-            dropped.contains(&"autocompact"),
-            "autocompact not in lossy: {dropped:?}"
+            meridian_only.contains(&"mode"),
+            "mode not in lossy: {meridian_only:?}"
         );
         assert!(
-            dropped.contains(&"autocompact_pct"),
-            "autocompact_pct not in lossy: {dropped:?}"
+            meridian_only.contains(&"autocompact"),
+            "autocompact not in lossy: {meridian_only:?}"
+        );
+        assert!(
+            meridian_only.contains(&"autocompact_pct"),
+            "autocompact_pct not in lossy: {meridian_only:?}"
         );
     }
 
@@ -437,7 +446,8 @@ mod tests {
 
     #[test]
     fn opencode_subagent_mode_emits_without_lossiness() {
-        let content = "---\nname: sub\ndescription: Sub\nmode: subagent\nharness: opencode\n---\n# body";
+        let content =
+            "---\nname: sub\ndescription: Sub\nmode: subagent\nharness: opencode\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
@@ -450,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_still_drops_mode() {
+    fn claude_still_omits_mode_as_meridian_only() {
         let content = "---\nname: coder\nmode: subagent\nharness: claude\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_for_harness_with_model(
@@ -466,9 +476,9 @@ mod tests {
             out.lossy_fields.iter().any(|f| {
                 f.field == "mode"
                     && f.target == "Claude"
-                    && f.classification == Lossiness::Dropped
+                    && f.classification == Lossiness::MeridianOnly
             }),
-            "Claude should warn-drop mode: {:?}",
+            "Claude mode is launch-time meridian-only: {:?}",
             out.lossy_fields
         );
     }

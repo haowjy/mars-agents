@@ -970,7 +970,7 @@ path = "{}"
         .assert()
         .success()
         .stderr(predicate::str::contains(
-            "agent `cursor-worker`: 1 field not lowered (meridian-only) for .cursor (native-config)",
+            "launch-time field mapping handled by meridian at spawn",
         ));
 
     assert!(project.child(".mars/agents/cursor-worker.md").exists());

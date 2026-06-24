@@ -235,7 +235,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 .filter(|model| crate::models::glob_match(value, &model.id))
                 .map(|model| NativeModelCandidate {
                     token: model.id.clone(),
-                    harness_constraint: harness_constraint.clone(),
+                    harness_constraint,
                 })
                 .collect(),
         }
@@ -878,7 +878,7 @@ pub(crate) fn qualifying_agent_emissions(
                         crate::compiler::agents::lower::NativeModel::Clear
                     }
                 };
-                emissions.push((harness.clone(), model));
+                emissions.push((*harness, model));
             }
             emissions
         }
@@ -896,7 +896,7 @@ pub(crate) fn qualifying_agent_emissions(
                     model_router.decision_for_profile(profile, harness, effective_fanout, false)
                 {
                     emissions.push((
-                        harness.clone(),
+                        *harness,
                         crate::compiler::agents::lower::NativeModel::Set(model_id),
                     ));
                 }

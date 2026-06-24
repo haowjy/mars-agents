@@ -225,7 +225,7 @@ fn resolve_bundle_tools(
     // `tools.disallowed` with the same per-harness projection (never broaden on unsupported).
     let mcp_allowed = project_mcp_refs_for_emission(
         &effective_tools.mcp_allowed,
-        harness,
+        harness_kind,
         |canonical, reason| {
             warnings.push(format!(
                 "MCP ref `{canonical}` cannot be represented for {harness}: {}",
@@ -236,7 +236,7 @@ fn resolve_bundle_tools(
 
     let mcp_disallowed = project_mcp_refs_for_emission(
         &effective_tools.mcp_disallowed,
-        harness,
+        harness_kind,
         |canonical, reason| {
             warnings.push(format!(
                 "disallowed MCP ref `{canonical}` cannot be represented for {harness}: {}",
@@ -262,11 +262,17 @@ fn normalize_and_dedupe_tools(
     kind: ToolPolicyKind,
     warnings: &mut Vec<String>,
 ) -> Vec<String> {
+    let Some(harness_kind) =
+        crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
+            .map(|descriptor| descriptor.kind)
+    else {
+        return tools.to_vec();
+    };
     let mut seen = std::collections::HashSet::new();
     let mut projected = Vec::new();
 
     for tool in tools {
-        let normalized = project_tool_for_harness(tool, harness);
+        let normalized = project_tool_for_harness(tool, harness_kind);
         if normalized.status == ToolProjectionStatus::UnknownProjected {
             match kind {
                 ToolPolicyKind::Allowed => warnings.push(format!(

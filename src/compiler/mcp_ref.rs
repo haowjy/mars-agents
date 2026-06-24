@@ -242,14 +242,27 @@ impl McpUnsupportedReason {
 ///
 /// Unknown harness ids passthrough canonical `mcp(server/tool)` rather than inventing
 /// a native wire form that might be wrong for that target.
-pub(crate) fn project_mcp_ref(r: &McpRef, harness: &str) -> McpProjection {
-    match harness.trim().to_ascii_lowercase().as_str() {
-        "claude" => project_claude(r),
-        "cursor" => project_cursor(r),
-        "opencode" => project_opencode(r),
-        "codex" => McpProjection::Unsupported(McpUnsupportedReason::PerToolNeedsServerConfig),
-        "pi" => McpProjection::Unsupported(McpUnsupportedReason::HarnessDropsMcp),
-        _ => McpProjection::Token(r.to_canonical()),
+pub(crate) fn project_mcp_ref(
+    r: &McpRef,
+    harness: crate::compiler::agents::HarnessKind,
+) -> McpProjection {
+    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
+    match descriptor.mcp_projection {
+        crate::compiler::harness_descriptor::McpProjectionPolicy::ClaudeToolList => {
+            project_claude(r)
+        }
+        crate::compiler::harness_descriptor::McpProjectionPolicy::CursorToolList => {
+            project_cursor(r)
+        }
+        crate::compiler::harness_descriptor::McpProjectionPolicy::OpenCodeToolList => {
+            project_opencode(r)
+        }
+        crate::compiler::harness_descriptor::McpProjectionPolicy::CodexServerConfig => {
+            McpProjection::Unsupported(McpUnsupportedReason::PerToolNeedsServerConfig)
+        }
+        crate::compiler::harness_descriptor::McpProjectionPolicy::Unsupported => {
+            McpProjection::Unsupported(McpUnsupportedReason::HarnessDropsMcp)
+        }
     }
 }
 
@@ -288,7 +301,7 @@ fn project_opencode(r: &McpRef) -> McpProjection {
 /// in `unsupported` for lossiness reporting.
 pub(crate) fn project_mcp_ref_tokens(
     refs: &[McpRef],
-    harness: &str,
+    harness: crate::compiler::agents::HarnessKind,
 ) -> (Vec<String>, Vec<(String, McpUnsupportedReason)>) {
     let mut seen = std::collections::HashSet::new();
     let mut tokens = Vec::new();
@@ -315,7 +328,7 @@ pub(crate) fn project_mcp_ref_tokens(
 /// Unsupported refs are omitted from the returned tokens (never broaden permissions).
 pub(crate) fn project_mcp_refs_for_emission(
     refs: &[McpRef],
-    harness: &str,
+    harness: crate::compiler::agents::HarnessKind,
     mut on_unsupported: impl FnMut(&str, McpUnsupportedReason),
 ) -> Vec<String> {
     let (tokens, unsupported) = project_mcp_ref_tokens(refs, harness);
@@ -571,8 +584,12 @@ mod tests {
     }
 
     fn assert_token(r: &McpRef, harness: &str, expected: &str) {
+        let harness_kind =
+            crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
+                .expect("test harness exists")
+                .kind;
         assert_eq!(
-            project_mcp_ref(r, harness),
+            project_mcp_ref(r, harness_kind),
             McpProjection::Token(expected.to_string()),
             "harness={harness}, ref={}",
             r.to_canonical()
@@ -580,8 +597,12 @@ mod tests {
     }
 
     fn assert_unsupported(r: &McpRef, harness: &str, reason: McpUnsupportedReason) {
+        let harness_kind =
+            crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
+                .expect("test harness exists")
+                .kind;
         assert_eq!(
-            project_mcp_ref(r, harness),
+            project_mcp_ref(r, harness_kind),
             McpProjection::Unsupported(reason),
             "harness={harness}, ref={}",
             r.to_canonical()
@@ -685,12 +706,5 @@ mod tests {
         for r in forms {
             assert_unsupported(&r, "pi", McpUnsupportedReason::HarnessDropsMcp);
         }
-    }
-
-    #[test]
-    fn project_mcp_ref_unknown_harness_passthrough_canonical() {
-        let r = parse("GitHub/CreateIssue");
-        assert_token(&r, "future", "mcp(GitHub/CreateIssue)");
-        assert_token(&r, "MARS", "mcp(GitHub/CreateIssue)");
     }
 }

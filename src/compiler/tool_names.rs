@@ -5,13 +5,6 @@ use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, try_parse_mcp_tool_name};
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NamingConvention {
-    PascalCase,
-    SnakeCase,
-    Lowercase,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedToolName {
     pub name: String,
@@ -162,7 +155,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
 
 struct SemanticOverride {
     canonical: &'static str,
-    harness: &'static str,
+    harness: crate::compiler::agents::HarnessKind,
     native: &'static str,
 }
 
@@ -172,89 +165,89 @@ const SEMANTIC_OVERRIDES: &[SemanticOverride] = &[
     // spawn_agent = sub-agents. No separate file_read/file_write tools exist.
     SemanticOverride {
         canonical: "bash",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "exec_command",
     },
     SemanticOverride {
         canonical: "read",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "exec_command",
     },
     SemanticOverride {
         canonical: "write",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "apply_patch",
     },
     SemanticOverride {
         canonical: "edit",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "apply_patch",
     },
     SemanticOverride {
         canonical: "agent",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "spawn_agent",
     },
     SemanticOverride {
         canonical: "ask_user",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "request_user_input",
     },
     SemanticOverride {
         canonical: "plan_mode",
-        harness: "codex",
+        harness: crate::compiler::agents::HarnessKind::Codex,
         native: "update_plan",
     },
     SemanticOverride {
         canonical: "read",
-        harness: "opencode",
+        harness: crate::compiler::agents::HarnessKind::OpenCode,
         native: "view",
     },
     SemanticOverride {
         canonical: "web_search",
-        harness: "opencode",
+        harness: crate::compiler::agents::HarnessKind::OpenCode,
         native: "browser",
     },
     SemanticOverride {
         canonical: "web_fetch",
-        harness: "opencode",
+        harness: crate::compiler::agents::HarnessKind::OpenCode,
         native: "fetch",
     },
     // Cursor — PascalCase convention covers most, but these names diverge
     SemanticOverride {
         canonical: "bash",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "Shell",
     },
     SemanticOverride {
         canonical: "edit",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "StrReplace",
     },
     SemanticOverride {
         canonical: "agent",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "Task",
     },
     SemanticOverride {
         canonical: "ask_user",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "AskQuestion",
     },
     SemanticOverride {
         canonical: "plan_mode",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "SwitchMode",
     },
     SemanticOverride {
         canonical: "notebook",
-        harness: "cursor",
+        harness: crate::compiler::agents::HarnessKind::Cursor,
         native: "EditNotebook",
     },
     // Pi — lowercase convention covers most, but glob is called find
     SemanticOverride {
         canonical: "glob",
-        harness: "pi",
+        harness: crate::compiler::agents::HarnessKind::Pi,
         native: "find",
     },
 ];
@@ -292,7 +285,10 @@ pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolName
     })
 }
 
-pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> ProjectedToolName {
+pub(crate) fn project_tool_for_harness(
+    raw: &str,
+    target_harness: crate::compiler::agents::HarnessKind,
+) -> ProjectedToolName {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return ProjectedToolName {
@@ -319,11 +315,17 @@ pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> Proje
 
     let canonical = canonicalize_head(head);
     if !canonical.known {
-        let harness = target_harness.trim().to_ascii_lowercase();
-        let native = match convention_for_harness(&harness) {
-            NamingConvention::PascalCase => snake_to_pascal(&canonical.name),
-            NamingConvention::SnakeCase => canonical.name.clone(),
-            NamingConvention::Lowercase => canonical.name.clone(),
+        let descriptor = crate::compiler::harness_descriptor::descriptor(target_harness);
+        let native = match descriptor.tool_naming {
+            crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
+                snake_to_pascal(&canonical.name)
+            }
+            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase => {
+                canonical.name.clone()
+            }
+            crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
+                canonical.name.clone()
+            }
         };
         return ProjectedToolName {
             name: format!("{native}{payload}"),
@@ -331,29 +333,24 @@ pub(crate) fn project_tool_for_harness(raw: &str, target_harness: &str) -> Proje
         };
     }
 
-    let harness = target_harness.trim().to_ascii_lowercase();
-    let native = semantic_override(canonical.name.as_str(), &harness)
+    let descriptor = crate::compiler::harness_descriptor::descriptor(target_harness);
+    let native = semantic_override(canonical.name.as_str(), descriptor.kind)
         .map(str::to_string)
-        .unwrap_or_else(|| match convention_for_harness(&harness) {
-            NamingConvention::PascalCase => snake_to_pascal(&canonical.name),
-            NamingConvention::SnakeCase => canonical.name.clone(),
-            NamingConvention::Lowercase => strip_underscores(&canonical.name),
+        .unwrap_or_else(|| match descriptor.tool_naming {
+            crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
+                snake_to_pascal(&canonical.name)
+            }
+            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase => {
+                canonical.name.clone()
+            }
+            crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
+                strip_underscores(&canonical.name)
+            }
         });
 
     ProjectedToolName {
         name: format!("{native}{payload}"),
         status: ToolProjectionStatus::Known,
-    }
-}
-
-fn convention_for_harness(harness: &str) -> NamingConvention {
-    match harness.trim().to_ascii_lowercase().as_str() {
-        "claude" => NamingConvention::PascalCase,
-        "codex" => NamingConvention::SnakeCase,
-        "opencode" => NamingConvention::Lowercase,
-        "cursor" => NamingConvention::PascalCase,
-        "pi" => NamingConvention::Lowercase,
-        _ => NamingConvention::PascalCase,
     }
 }
 
@@ -451,7 +448,10 @@ fn canonical_alias(alias: &str) -> Option<&'static str> {
         .map(|tool| tool.name)
 }
 
-fn semantic_override(canonical: &str, harness: &str) -> Option<&'static str> {
+fn semantic_override(
+    canonical: &str,
+    harness: crate::compiler::agents::HarnessKind,
+) -> Option<&'static str> {
     SEMANTIC_OVERRIDES
         .iter()
         .find(|override_entry| {
@@ -519,6 +519,9 @@ mod tests {
     }
 
     fn project(raw: &str, harness: &str) -> ProjectedToolName {
+        let harness = crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
+            .expect("test harness exists")
+            .kind;
         project_tool_for_harness(raw, harness)
     }
 

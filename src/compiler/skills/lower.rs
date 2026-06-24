@@ -3,63 +3,48 @@
 #[path = "lower_policy.rs"]
 mod lower_policy;
 
+use crate::compiler::agents::HarnessKind;
+use crate::compiler::harness_descriptor::descriptor_for_variant_key;
 use crate::compiler::lossiness::LoweredOutput;
 use crate::compiler::skills::SkillProfile;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SkillHarness {
-    Claude,
-    Codex,
-    OpenCode,
-    Pi,
-    Cursor,
-}
+pub type SkillHarness = HarnessKind;
 
-impl SkillHarness {
-    pub fn from_variant_key(key: &str) -> Option<Self> {
-        match key {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            "opencode" => Some(Self::OpenCode),
-            "pi" => Some(Self::Pi),
-            "cursor" => Some(Self::Cursor),
-            _ => None,
-        }
-    }
+pub fn skill_harness_from_variant_key(key: &str) -> Option<SkillHarness> {
+    descriptor_for_variant_key(key).map(|descriptor| descriptor.kind)
 }
-
 pub fn lower_skill_for_harness(
     harness: SkillHarness,
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {
     match harness {
-        SkillHarness::Claude => lower_skill_to_claude(profile, body),
-        SkillHarness::Codex => lower_skill_to_codex(profile, body),
-        SkillHarness::OpenCode => lower_skill_to_opencode(profile, body),
-        SkillHarness::Pi => lower_skill_to_pi(profile, body),
-        SkillHarness::Cursor => lower_skill_to_cursor(profile, body),
+        HarnessKind::Claude => lower_skill_to_claude(profile, body),
+        HarnessKind::Codex => lower_skill_to_codex(profile, body),
+        HarnessKind::OpenCode => lower_skill_to_opencode(profile, body),
+        HarnessKind::Pi => lower_skill_to_pi(profile, body),
+        HarnessKind::Cursor => lower_skill_to_cursor(profile, body),
     }
 }
 
 pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(SkillHarness::Claude, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessKind::Claude, profile, body)
 }
 
 pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(SkillHarness::Codex, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessKind::Codex, profile, body)
 }
 
 pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(SkillHarness::OpenCode, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessKind::OpenCode, profile, body)
 }
 
 pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(SkillHarness::Pi, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessKind::Pi, profile, body)
 }
 
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(SkillHarness::Cursor, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessKind::Cursor, profile, body)
 }
 
 #[cfg(test)]
@@ -458,11 +443,11 @@ mod tests {
             "---\nname: skill\ndescription: desc\nmodel_invocable: false\n---\nBody\n",
         );
         for harness in [
-            SkillHarness::Claude,
-            SkillHarness::Codex,
-            SkillHarness::OpenCode,
-            SkillHarness::Pi,
-            SkillHarness::Cursor,
+            HarnessKind::Claude,
+            HarnessKind::Codex,
+            HarnessKind::OpenCode,
+            HarnessKind::Pi,
+            HarnessKind::Cursor,
         ] {
             let lowered = lower_skill_for_harness(harness, &profile, "Body\n");
             let out = String::from_utf8(lowered.bytes).unwrap();
@@ -481,11 +466,11 @@ mod tests {
         let (profile, fm) = parse_skill_content("# Body\nbytes", &mut diags).unwrap();
         let body = fm.body();
         for harness in [
-            SkillHarness::Claude,
-            SkillHarness::Codex,
-            SkillHarness::OpenCode,
-            SkillHarness::Pi,
-            SkillHarness::Cursor,
+            HarnessKind::Claude,
+            HarnessKind::Codex,
+            HarnessKind::OpenCode,
+            HarnessKind::Pi,
+            HarnessKind::Cursor,
         ] {
             let out =
                 String::from_utf8(lower_skill_for_harness(harness, &profile, body).bytes).unwrap();

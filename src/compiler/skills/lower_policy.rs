@@ -2,7 +2,8 @@
 
 use serde_yaml::{Mapping, Value};
 
-use super::SkillHarness;
+use crate::compiler::agents::HarnessKind;
+use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 use crate::compiler::skills::SkillProfile;
@@ -81,7 +82,7 @@ enum LoweringStep {
 
 #[derive(Debug, Clone, Copy)]
 struct SkillLoweringPolicy {
-    harness_key: &'static str,
+    harness_kind: HarnessKind,
     target_name: &'static str,
     steps: &'static [LoweringStep],
     model_invocable: ModelInvocablePolicy,
@@ -93,7 +94,7 @@ struct SkillLoweringPolicy {
 }
 
 const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_key: "claude",
+    harness_kind: HarnessKind::Claude,
     target_name: "Claude",
     steps: &[
         LoweringStep::Identity,
@@ -117,7 +118,7 @@ const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_key: "codex",
+    harness_kind: HarnessKind::Codex,
     target_name: "Codex",
     steps: &[
         LoweringStep::Identity,
@@ -139,7 +140,7 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_key: "opencode",
+    harness_kind: HarnessKind::OpenCode,
     target_name: "OpenCode",
     steps: &[
         LoweringStep::Identity,
@@ -163,7 +164,7 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_key: "pi",
+    harness_kind: HarnessKind::Pi,
     target_name: "Pi",
     steps: &[
         LoweringStep::Identity,
@@ -187,7 +188,7 @@ const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_key: "cursor",
+    harness_kind: HarnessKind::Cursor,
     target_name: "Cursor",
     steps: &[
         LoweringStep::Identity,
@@ -210,13 +211,13 @@ const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     when_to_use: WhenToUsePolicy::Drop,
 };
 
-fn policy_for(harness: SkillHarness) -> &'static SkillLoweringPolicy {
-    match harness {
-        SkillHarness::Claude => &CLAUDE_POLICY,
-        SkillHarness::Codex => &CODEX_POLICY,
-        SkillHarness::OpenCode => &OPENCODE_POLICY,
-        SkillHarness::Pi => &PI_POLICY,
-        SkillHarness::Cursor => &CURSOR_POLICY,
+fn policy_for(harness: HarnessKind) -> &'static SkillLoweringPolicy {
+    match harness_descriptor::descriptor(harness).skill_policy {
+        SkillLoweringPolicyKind::Claude => &CLAUDE_POLICY,
+        SkillLoweringPolicyKind::Codex => &CODEX_POLICY,
+        SkillLoweringPolicyKind::OpenCode => &OPENCODE_POLICY,
+        SkillLoweringPolicyKind::Pi => &PI_POLICY,
+        SkillLoweringPolicyKind::Cursor => &CURSOR_POLICY,
     }
 }
 
@@ -232,13 +233,8 @@ fn ys(s: &str) -> Value {
 }
 
 // Skill user-invocable lowering keys off the resolved value only — unlike agent
-// lowering, it does not consult whether the field was explicitly authored.
-// `had_user_invocable_field` is still parsed onto SkillProfile (for parity with
-// the agent profile) but is intentionally unread here; the explicit read keeps it
-// from tripping dead-code analysis. Removing the vestigial field is a tracked
-// follow-up (#118).
+// lowering, it does not need to remember whether the source field was explicit.
 fn user_invocation_disabled(profile: &SkillProfile) -> bool {
-    let _retained_for_agent_parity = profile.had_user_invocable_field;
     !profile.user_invocable
 }
 
@@ -387,7 +383,7 @@ impl<'a> LoweringCtx<'a> {
                 }
                 let mut tools = Vec::new();
                 for tool in &tool_policy.allowed {
-                    let projected = project_tool_for_harness(tool, policy.harness_key);
+                    let projected = project_tool_for_harness(tool, policy.harness_kind);
                     if track_unknown_tool_lossiness
                         && projected.status == ToolProjectionStatus::UnknownProjected
                     {
@@ -424,7 +420,7 @@ impl<'a> LoweringCtx<'a> {
             DisallowedToolsPolicy::Emit => {
                 let mut tools = Vec::new();
                 for tool in &tool_policy.disallowed {
-                    let projected = project_tool_for_harness(tool, policy.harness_key);
+                    let projected = project_tool_for_harness(tool, policy.harness_kind);
                     if projected.status == ToolProjectionStatus::UnknownProjected {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
@@ -438,7 +434,7 @@ impl<'a> LoweringCtx<'a> {
                 }
                 let mcp_tokens = project_mcp_refs_for_emission(
                     &tool_policy.mcp_disallowed,
-                    policy.harness_key,
+                    policy.harness_kind,
                     |_, reason| {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
@@ -472,7 +468,7 @@ impl<'a> LoweringCtx<'a> {
             McpToolsPolicy::Emit => {
                 let mcp_tokens = project_mcp_refs_for_emission(
                     &tool_policy.mcp_allowed,
-                    policy.harness_key,
+                    policy.harness_kind,
                     |_, reason| {
                         self.lossy_fields.push(LossyField {
                             field: "mcp".into(),
@@ -557,7 +553,7 @@ impl<'a> LoweringCtx<'a> {
 }
 
 pub(super) fn lower_skill_with_policy(
-    harness: SkillHarness,
+    harness: HarnessKind,
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {

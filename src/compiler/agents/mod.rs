@@ -43,7 +43,7 @@ impl std::fmt::Display for AgentMode {
 }
 
 /// Known harness execution targets.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HarnessKind {
     Claude,
     Codex,
@@ -74,7 +74,7 @@ impl HarnessKind {
         self.to_harness_id().default_target()
     }
 
-    pub fn to_harness_id(&self) -> crate::harness::registry::HarnessId {
+    pub fn to_harness_id(self) -> crate::harness::registry::HarnessId {
         match self {
             Self::Claude => crate::harness::registry::HarnessId::Claude,
             Self::Codex => crate::harness::registry::HarnessId::Codex,
@@ -103,7 +103,7 @@ impl HarnessKind {
     }
 
     /// Inbound dialect for this harness (`None` for Pi — no foreign import surface).
-    pub fn to_dialect(&self) -> Option<crate::dialect::Dialect> {
+    pub fn to_dialect(self) -> Option<crate::dialect::Dialect> {
         crate::dialect::Dialect::from_harness_id(self.to_harness_id())
     }
 

@@ -27,8 +27,6 @@ pub struct SkillProfile {
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
     pub had_model_invocable_field: bool,
-    /// true when the source frontmatter explicitly set `user-invocable`
-    pub had_user_invocable_field: bool,
     pub has_frontmatter: bool,
     /// Frontmatter fields not recognized by mars — passed through to all targets.
     pub passthrough_fields: Vec<(String, Value)>,
@@ -286,7 +284,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         consumed_keys.push(field.consumed_key);
     }
     let user_invocability = find_invocability_field(fm, "user-invocable");
-    let (user_invocable, had_user_invocable_field) = parse_invocability_bool(
+    let (user_invocable, _) = parse_invocability_bool(
         "user-invocable",
         user_invocability.as_ref().map(|f| &f.value),
         diags,
@@ -342,7 +340,6 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         license,
         metadata,
         had_model_invocable_field,
-        had_user_invocable_field,
         has_frontmatter: fm.has_frontmatter(),
         passthrough_fields,
     }
@@ -418,7 +415,6 @@ mod tests {
         assert!(!p.model_invocable);
         assert!(p.had_model_invocable_field);
         assert!(p.user_invocable);
-        assert!(!p.had_user_invocable_field);
     }
 
     #[test]
@@ -435,7 +431,6 @@ body",
         assert!(p.model_invocable);
         assert!(!p.had_model_invocable_field);
         assert!(!p.user_invocable);
-        assert!(p.had_user_invocable_field);
     }
 
     #[test]
@@ -447,7 +442,6 @@ body",
         assert!(!p.model_invocable);
         assert!(!p.user_invocable);
         assert!(p.had_model_invocable_field);
-        assert!(p.had_user_invocable_field);
     }
 
     #[test]
@@ -459,7 +453,6 @@ body",
         assert!(p.model_invocable);
         assert!(p.user_invocable);
         assert!(p.had_model_invocable_field);
-        assert!(p.had_user_invocable_field);
     }
 
     #[test]
@@ -485,7 +478,6 @@ user-invocable: 7
 body",
         );
         assert!(p.user_invocable);
-        assert!(!p.had_user_invocable_field);
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, allowed, .. }

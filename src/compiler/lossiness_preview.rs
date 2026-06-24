@@ -18,6 +18,7 @@ use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::agents::{HarnessKind, parse_agent_profile};
+use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
 use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
@@ -76,15 +77,6 @@ fn load_publish_preview_config(base: &Path) -> Result<PublishPreviewConfig, Mars
         ),
         config: Some(config),
     })
-}
-
-/// Harnesses that would receive native agent artifacts during sync for these settings.
-pub fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessKind> {
-    settings
-        .managed_targets()
-        .iter()
-        .filter_map(|t| HarnessKind::from_target_dir(t))
-        .collect()
 }
 
 /// Native harness variant keys for skill projection on configured managed targets.

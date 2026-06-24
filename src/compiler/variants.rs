@@ -303,10 +303,10 @@ fn lower_projected_skill_for_harness(
     skill_name: &str,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<Option<Vec<u8>>, MarsError> {
-    use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
+    use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
     use crate::compiler::skills::parse_skill_content;
 
-    let Some(harness) = SkillHarness::from_variant_key(harness_key) else {
+    let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);
     };
 

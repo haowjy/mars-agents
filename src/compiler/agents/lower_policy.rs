@@ -593,6 +593,7 @@ impl<'a> AgentLoweringCtx<'a> {
         LoweredOutput {
             bytes: render_markdown(self.yaml, body),
             lossy_fields: self.lossy,
+            siblings: Vec::new(),
         }
     }
 }
@@ -797,6 +798,7 @@ pub fn lower_to_codex(
     LoweredOutput {
         bytes: out.into_bytes(),
         lossy_fields: lossy,
+        siblings: Vec::new(),
     }
 }
 

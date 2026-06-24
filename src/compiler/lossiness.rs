@@ -23,12 +23,22 @@ pub enum Lossiness {
     MeridianOnly,
 }
 
+/// A secondary artifact emitted alongside the primary lowered file (e.g. Codex `openai.yaml`).
+#[derive(Debug, Clone)]
+pub struct LoweredSibling {
+    /// Path relative to the skill directory root (e.g. `openai.yaml`).
+    pub rel_path: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Output from a single lowering pass.
 pub struct LoweredOutput {
     /// Serialized bytes for the native artifact.
     pub bytes: Vec<u8>,
     /// Lossiness findings for fields that were dropped or approximated.
     pub lossy_fields: Vec<LossyField>,
+    /// Extra files written next to the primary artifact (skills only today).
+    pub siblings: Vec<LoweredSibling>,
 }
 
 fn target_label(target: &str) -> String {

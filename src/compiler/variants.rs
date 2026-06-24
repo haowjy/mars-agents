@@ -265,8 +265,11 @@ fn compile_projected_skill_frontmatter(
     let projected_skill = projected_dir.join("SKILL.md");
     let lowered =
         lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
-    if let Some(bytes) = lowered {
-        fs::write(projected_skill, bytes)?;
+    if let Some(lowered) = lowered {
+        fs::write(projected_skill, lowered.bytes)?;
+        for sibling in lowered.siblings {
+            fs::write(projected_dir.join(&sibling.rel_path), sibling.bytes)?;
+        }
     }
     Ok(())
 }
@@ -299,7 +302,7 @@ fn lower_projected_skill_for_harness(
     harness_key: &str,
     skill_name: &str,
     diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<Option<Vec<u8>>, MarsError> {
+) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
     use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
     use crate::compiler::skills::parse_skill_content;
 
@@ -364,7 +367,7 @@ fn lower_projected_skill_for_harness(
         diag,
     );
 
-    Ok(Some(lowered.bytes))
+    Ok(Some(lowered))
 }
 
 fn copy_dir_following_symlinks_excluding_top_level_variants(
@@ -573,8 +576,11 @@ mod tests {
             .collect();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.contains("tools"));
-        assert!(warnings[0].message.contains("model-invocable"));
+        assert!(!warnings[0].message.contains("model-invocable"));
         assert!(warnings[0].message.contains(".codex"));
+
+        let openai_yaml = std::fs::read_to_string(dest.join("openai.yaml")).unwrap();
+        assert!(openai_yaml.contains("allow_implicit_invocation: false"));
     }
 
     #[test]

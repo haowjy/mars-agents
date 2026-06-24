@@ -265,18 +265,50 @@ mod tests {
     }
 
     #[test]
-    fn codex_warn_drops_model_invocable_and_tools() {
+    fn codex_emits_openai_yaml_sibling_and_warn_drops_tools() {
         let lowered = lower_skill_to_codex(&profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("allowed-tools"));
-        assert!(has_dropped(
+        assert!(!has_dropped(
             &lowered.lossy_fields,
             "model-invocable",
             "Codex"
         ));
         assert!(has_dropped(&lowered.lossy_fields, "tools", "Codex"));
+        assert_eq!(lowered.siblings.len(), 1);
+        assert_eq!(lowered.siblings[0].rel_path, "openai.yaml");
+        let sibling = String::from_utf8(lowered.siblings[0].bytes.clone()).unwrap();
+        assert!(sibling.contains("allow_implicit_invocation: false"));
+    }
+
+    #[test]
+    fn codex_explicit_false_emits_openai_yaml_no_lossiness() {
+        let profile = parse_profile(
+            "---\nname: skill\ndescription: desc\nmodel-invocable: false\n---\nBody\n",
+        );
+        let lowered = lower_skill_to_codex(&profile, "Body\n");
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Codex"
+        ));
+        assert_eq!(lowered.siblings.len(), 1);
+        let sibling = String::from_utf8(lowered.siblings[0].bytes.clone()).unwrap();
+        assert!(sibling.contains("policy:"));
+        assert!(sibling.contains("allow_implicit_invocation: false"));
+    }
+
+    #[test]
+    fn codex_default_or_absent_model_invocable_emits_no_sibling() {
+        let lowered = lower_skill_to_codex(&identity_profile(), "Body\n");
+        assert!(lowered.siblings.is_empty());
+        assert!(!has_dropped(
+            &lowered.lossy_fields,
+            "model-invocable",
+            "Codex"
+        ));
     }
 
     #[test]

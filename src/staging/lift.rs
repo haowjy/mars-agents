@@ -412,12 +412,13 @@ when_to_use: Use when git history matters
 
         let codex = lower_skill_for_harness(SkillHarness::Codex, &profile, body);
         assert!(
-            codex
+            !codex
                 .lossy_fields
                 .iter()
                 .any(|f| f.field == "model-invocable" && f.classification == Lossiness::Dropped)
         );
         assert!(codex.lossy_fields.iter().any(|f| f.field == "tools"));
+        assert_eq!(codex.siblings.len(), 1);
 
         let opencode = lower_skill_for_harness(SkillHarness::OpenCode, &profile, body);
         assert!(

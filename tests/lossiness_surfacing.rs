@@ -165,7 +165,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     skill.create_dir_all().unwrap();
     skill
         .child("SKILL.md")
-        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n")
+        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n")
         .unwrap();
     source
         .child("mars.toml")
@@ -190,7 +190,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let sync_stderr_text = String::from_utf8_lossy(&sync_stderr.stderr);
     let sync_lossiness: Vec<_> = sync_stderr_text
         .lines()
-        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .filter(|line| line.contains("field dropped") && line.contains(".codex"))
         .collect();
     assert!(
         !sync_lossiness.is_empty(),
@@ -205,7 +205,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let check_stderr_text = String::from_utf8_lossy(&check_stderr.stderr);
     let check_lossiness: Vec<_> = check_stderr_text
         .lines()
-        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .filter(|line| line.contains("field dropped") && line.contains(".codex"))
         .collect();
     assert_eq!(
         sync_lossiness, check_lossiness,

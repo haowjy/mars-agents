@@ -376,7 +376,7 @@ mod tests {
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n",
+            "---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n",
         )
         .unwrap();
         std::fs::write(
@@ -390,10 +390,14 @@ mod tests {
         assert!(
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("model-invocable")
+                    && d.message.contains("tools")
                     && d.message.contains(".codex")
             }),
-            "expected codex lossiness for staged skill: {diags:?}"
+            "expected codex tools lossiness for staged skill: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains("model-invocable")),
+            "model-invocable is exact on Codex via openai.yaml sibling: {diags:?}"
         );
     }
 
@@ -461,7 +465,7 @@ mod tests {
         std::fs::create_dir_all(&flat_pkg).unwrap();
         std::fs::write(
             flat_pkg.join("SKILL.md"),
-            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\n---\n# Flat\n",
+            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Flat\n",
         )
         .unwrap();
         std::fs::write(
@@ -476,9 +480,9 @@ mod tests {
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
                     && d.message.contains("flat-skill")
-                    && d.message.contains("model-invocable")
+                    && d.message.contains("tools")
             }),
-            "expected flat-skill lossiness diagnostic, not temp dir name: {diags:?}"
+            "expected flat-skill tools lossiness diagnostic, not temp dir name: {diags:?}"
         );
         assert!(
             !diags.iter().any(|d| d.message.contains(".tmp")),

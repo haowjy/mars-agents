@@ -710,6 +710,56 @@ description = "Local overlay"
 }
 
 #[test]
+fn sync_codex_skill_emits_openai_yaml_sibling_for_explicit_model_invocable_false() {
+    let dir = TempDir::new().unwrap();
+    let source_skill =
+        "---\nname: planning\ndescription: base skill\nmodel-invocable: false\n---\n# Base\n";
+    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let openai_yaml = project.child(".codex/skills/planning/openai.yaml");
+    assert!(openai_yaml.exists(), "expected Codex openai.yaml sibling");
+    let yaml_bytes = fs::read_to_string(openai_yaml.path()).unwrap();
+    assert!(yaml_bytes.contains("allow_implicit_invocation: false"));
+
+    let native_skill = project.child(".codex/skills/planning/SKILL.md");
+    let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
+    assert!(!native_bytes.contains("allow_implicit_invocation"));
+
+    // Flip to model-invocable: true — sibling must be removed on re-sync.
+    fs::write(
+        source.join("skills").join("planning").join("SKILL.md"),
+        "---\nname: planning\ndescription: base skill\nmodel-invocable: true\n---\n# Base\n",
+    )
+    .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(
+        !openai_yaml.exists(),
+        "openai.yaml should be removed when model-invocable becomes true"
+    );
+}
+
+#[test]
 fn sync_codex_projection_omits_allow_implicit_invocation_when_model_invocable_is_absent() {
     let dir = TempDir::new().unwrap();
     let source_skill = "---

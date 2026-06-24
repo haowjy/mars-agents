@@ -4,7 +4,7 @@ use serde_yaml::{Mapping, Value};
 
 use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
-use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
@@ -19,8 +19,8 @@ enum ModelInvocablePolicy {
     EmitDisableWhenFalse,
     /// Warn-drop when `model_invocable` is false (implicit or explicit).
     DropWhenFalse,
-    /// Warn-drop only when the source explicitly set `model-invocable` (any value).
-    DropWhenExplicit,
+    /// Emit sibling `openai.yaml` when source explicitly set `model-invocable: false`.
+    EmitCodexOpenaiYamlWhenExplicitFalse,
     /// Cursor: handled by [`LoweringStep::CursorRuleMode`], not this step.
     CursorRuleMode,
 }
@@ -130,7 +130,7 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::UserInvocable,
         LoweringStep::WhenToUse,
     ],
-    model_invocable: ModelInvocablePolicy::DropWhenExplicit,
+    model_invocable: ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
@@ -281,6 +281,7 @@ struct LoweringCtx<'a> {
     profile: &'a SkillProfile,
     yaml: Mapping,
     lossy_fields: Vec<LossyField>,
+    siblings: Vec<LoweredSibling>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -295,6 +296,7 @@ impl<'a> LoweringCtx<'a> {
             profile,
             yaml: Mapping::new(),
             lossy_fields: Vec::new(),
+            siblings: Vec::new(),
         }
     }
 
@@ -356,10 +358,10 @@ impl<'a> LoweringCtx<'a> {
                         .push(dropped("model-invocable", policy.target_name));
                 }
             }
-            ModelInvocablePolicy::DropWhenExplicit => {
-                if profile.had_model_invocable_field {
-                    // TODO(#116): emit Codex sibling `policy` file for faithful
-                    // invocation/tool gating — see https://github.com/haowjy/mars-agents/issues/116
+            ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse => {
+                if profile.had_model_invocable_field && !profile.model_invocable {
+                    self.siblings.push(codex_openai_yaml_sibling());
+                } else if profile.had_model_invocable_field {
                     self.lossy_fields
                         .push(dropped("model-invocable", policy.target_name));
                 }
@@ -572,7 +574,30 @@ impl<'a> LoweringCtx<'a> {
         LoweredOutput {
             bytes: render(self.yaml, body),
             lossy_fields: self.lossy_fields,
+            siblings: self.siblings,
         }
+    }
+}
+
+fn codex_openai_yaml_sibling() -> LoweredSibling {
+    #[derive(serde::Serialize)]
+    struct Policy {
+        allow_implicit_invocation: bool,
+    }
+    #[derive(serde::Serialize)]
+    struct OpenaiYaml {
+        policy: Policy,
+    }
+    let doc = OpenaiYaml {
+        policy: Policy {
+            allow_implicit_invocation: false,
+        },
+    };
+    LoweredSibling {
+        rel_path: "openai.yaml".into(),
+        bytes: serde_yaml::to_string(&doc)
+            .expect("Codex openai.yaml policy should serialize")
+            .into_bytes(),
     }
 }
 

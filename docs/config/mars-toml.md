@@ -55,7 +55,7 @@ description = "Core agents and skills for meridian"  # optional
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
 
-Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots.
+Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at any non-hidden depth.
 
 ### `[dependencies]`
 
@@ -95,7 +95,7 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `version` | string | Version constraint for git sources (see [Version Constraints](#version-constraints)) |
 | `dialect` | string | Inbound lift dialect: `claude`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
 
-`subpath` is the explicit escape hatch for monorepo packages. When omitted, Mars discovers from the source root itself.
+`subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
 
 Supported source forms in v1:
 - GitHub shorthand, `github:` aliases, repo URLs, and tree URLs

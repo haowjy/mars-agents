@@ -119,7 +119,7 @@ Expected result:
 - `mars add` succeeds
 - `mars doctor` exits cleanly
 
-This is also the regression check for the historical `caveman` fallback-discovery issue.
+For discovery changes, also cover convention-walk imports: nested `agents/` / `skills/` folders should be found, bare hidden foreign layouts such as `.claude/agents` should not be auto-scanned, and foreign layouts should be imported explicitly with dependency `subpath = ".claude"` plus `dialect = "claude"`.
 
 ## Generic `git://` URL
 

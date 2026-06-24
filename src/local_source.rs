@@ -1,3 +1,9 @@
+//! Project-local source discovery rooted under `.mars-src/`.
+//!
+//! Local items intentionally use the same convention walk as dependency packages
+//! so nested `.mars-src/**/agents` and `.mars-src/**/skills` layouts behave the
+//! same as published source trees.
+
 use std::path::{Path, PathBuf};
 
 use crate::discover::{self, DiscoveredItem};
@@ -49,6 +55,31 @@ mod tests {
     use super::*;
     use crate::types::ItemKind;
     use tempfile::TempDir;
+
+    #[test]
+    fn discovers_nested_items_under_mars_src() {
+        let dir = TempDir::new().unwrap();
+        let project_root = dir.path();
+        let agent_dir = preferred_local_source_root(project_root).join("nested/agents");
+        let skill_dir =
+            preferred_local_source_root(project_root).join("nested/deeper/skills/review");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(agent_dir.join("local.md"), "# local").unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# review").unwrap();
+
+        let items = discover_local_items(project_root, Some("_self")).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.discovered.id.kind == ItemKind::Agent
+                && item.discovered.source_path == Path::new("nested/agents/local.md")
+        }));
+        assert!(items.iter().any(|item| {
+            item.discovered.id.kind == ItemKind::Skill
+                && item.discovered.source_path == Path::new("nested/deeper/skills/review")
+        }));
+    }
 
     #[test]
     fn discovers_mars_src_not_repo_root() {

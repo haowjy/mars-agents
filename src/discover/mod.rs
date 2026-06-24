@@ -1,3 +1,11 @@
+//! Filesystem discovery for package-provided agents, skills, and bootstrap docs.
+//!
+//! Discovery is intentionally convention-based: a bounded walk finds directories
+//! named `agents`, `skills`, and `bootstrap` instead of carrying harness-specific
+//! blocklists. Hidden dot-directories are skipped during that walk so generated
+//! harness surfaces like `.claude/` and tool caches like `.git/` are not imported
+//! unless a dependency explicitly roots discovery there with `subpath`.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
@@ -13,27 +21,10 @@ const PLUGIN_MANIFESTS: &[&str] = &[
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
 ];
-const MAX_FALLBACK_DEPTH: usize = 5;
-const MAX_CONTAINER_ROOT_DEPTH: usize = 2;
-const MAX_HEURISTIC_FS_DEPTH: usize = MAX_FALLBACK_DEPTH + MAX_CONTAINER_ROOT_DEPTH;
-const SKILL_CONTAINER_ROOTS: &[&str] = &[
-    "skills",
-    "skills/.curated",
-    "skills/.experimental",
-    "skills/.system",
-    ".claude/skills",
-    ".codex/skills",
-    ".opencode/skills",
-    ".cursor/skills",
-];
-const AGENT_CONTAINER_ROOTS: &[&str] = &[
-    "agents",
-    ".claude/agents",
-    ".codex/agents",
-    ".opencode/agents",
-    ".cursor/agents",
-];
-const BOOTSTRAP_CONTAINER_ROOTS: &[&str] = &["bootstrap"];
+const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
+const AGENTS_DIR_NAME: &str = "agents";
+const SKILLS_DIR_NAME: &str = "skills";
+const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
@@ -51,78 +42,33 @@ pub fn discover_source(
     tree_path: &Path,
     fallback_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let mut items = Vec::new();
-
-    scan_agent_dir(
-        tree_path,
-        Path::new("agents"),
-        &mut items,
-        &mut HashSet::new(),
-    )?;
-    scan_skill_dir(
-        tree_path,
-        Path::new("skills"),
-        &mut items,
-        &mut HashSet::new(),
-    )?;
-    scan_bootstrap_dir(
-        tree_path,
-        Path::new("bootstrap"),
-        &mut items,
-        &mut HashSet::new(),
-    )?;
-
-    let has_agent_or_skill = items
-        .iter()
-        .any(|item| matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill));
-    if !has_agent_or_skill && tree_path.join("SKILL.md").is_file() {
-        let name = flat_root_skill_source_name(tree_path, fallback_name);
-        items.push(DiscoveredItem {
-            id: ItemId {
-                kind: ItemKind::Skill,
-                name: ItemName::from(name),
-            },
-            source_path: PathBuf::from("."),
-        });
-    }
-
-    sort_items(&mut items);
-    Ok(items)
+    finalize_items(
+        fallback_name.unwrap_or("unknown-source"),
+        discover_convention_items(tree_path, fallback_name)?,
+    )
 }
 
-/// Discover items using the Vercel-compatible fallback walk.
+/// Discover items from a source without a mars.toml manifest.
 pub fn discover_fallback(
     package_root: &Path,
     source_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if package_root.join("SKILL.md").is_file() {
-        // Flat-root foreign skills are keyed by dependency source name during
-        // staging overlay lookup; discovery must use the same name (not the
-        // staged directory basename, which is the inbound dialect).
-        let flat_name = flat_root_skill_source_name(package_root, source_name);
-        let mut items = vec![DiscoveredItem {
-            id: ItemId {
-                kind: ItemKind::Skill,
-                name: ItemName::from(flat_name.as_str()),
-            },
-            source_path: PathBuf::from("."),
-        }];
-        items.extend(
-            discover_manifest_declared_items(package_root, &flat_name)?
-                .into_iter()
-                .filter(|item| item.id.kind == ItemKind::BootstrapDoc),
-        );
-        return finalize_items(&flat_name, items);
-    }
-
     let label = source_name.unwrap_or("unknown-source");
+    let convention_items = discover_convention_items(package_root, source_name)?;
     let explicit_items = discover_manifest_declared_items(package_root, label)?;
-    if !explicit_items.is_empty() {
-        return finalize_items(label, explicit_items);
+
+    if explicit_items.is_empty() {
+        return finalize_items(label, convention_items);
     }
 
-    let heuristic_items = discover_heuristic_layer_items(package_root)?;
-    finalize_items(label, heuristic_items)
+    let mut items = explicit_items;
+    if let Some(root_skill) = convention_items
+        .iter()
+        .find(|item| item.id.kind == ItemKind::Skill && item.source_path == Path::new("."))
+    {
+        items.push(root_skill.clone());
+    }
+    finalize_items(label, dedupe_items_by_path(items))
 }
 
 /// Shared dispatcher for rooted-source discovery.
@@ -135,6 +81,107 @@ pub fn discover_resolved_source(
     } else {
         discover_fallback(package_root, source_name)
     }
+}
+
+fn discover_convention_items(
+    package_root: &Path,
+    source_name: Option<&str>,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    if !package_root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut items = Vec::new();
+    let mut visited_agents = HashSet::new();
+    let mut visited_skills = HashSet::new();
+    let mut visited_bootstrap = HashSet::new();
+    let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
+
+    while let Some((base_dir, depth)) = queue.pop_front() {
+        if depth > MAX_DISCOVERY_WALK_DEPTH {
+            continue;
+        }
+
+        let base_rel = if base_dir == package_root {
+            PathBuf::new()
+        } else {
+            relative_to(package_root, &base_dir)?
+        };
+
+        match base_dir.file_name().and_then(|name| name.to_str()) {
+            Some(AGENTS_DIR_NAME) => {
+                scan_agent_dir(package_root, &base_rel, &mut items, &mut visited_agents)?;
+            }
+            Some(SKILLS_DIR_NAME) => {
+                scan_skill_dir(package_root, &base_rel, &mut items, &mut visited_skills)?;
+            }
+            Some(BOOTSTRAP_DIR_NAME) => {
+                scan_bootstrap_dir(package_root, &base_rel, &mut items, &mut visited_bootstrap)?;
+            }
+            _ => {}
+        }
+
+        if depth == MAX_DISCOVERY_WALK_DEPTH {
+            continue;
+        }
+
+        for path in read_dir_paths_sorted(&base_dir)? {
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            // Hidden directories are generated/cache/control surfaces by convention.
+            // Consumers can still import a hidden foreign layout explicitly by rooting
+            // the package at that directory with `subpath = ".claude"`.
+            if name.starts_with('.') || RECURSIVE_SKIP_DIRS.contains(&name) {
+                continue;
+            }
+            queue.push_back((path, depth + 1));
+        }
+    }
+
+    let has_agent_or_skill = items
+        .iter()
+        .any(|item| matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill));
+    if !has_agent_or_skill && package_root.join("SKILL.md").is_file() {
+        let name = flat_root_skill_source_name(package_root, source_name);
+        items.push(DiscoveredItem {
+            id: ItemId {
+                kind: ItemKind::Skill,
+                name: ItemName::from(name),
+            },
+            source_path: PathBuf::from("."),
+        });
+    }
+
+    items.sort_by(|a, b| {
+        logical_layer(a)
+            .cmp(&logical_layer(b))
+            .then_with(|| a.source_path.cmp(&b.source_path))
+    });
+    Ok(dedupe_items_by_path(items))
+}
+
+fn logical_layer(item: &DiscoveredItem) -> usize {
+    if item.source_path == Path::new(".") {
+        return 0;
+    }
+
+    item.source_path
+        .components()
+        .enumerate()
+        .find_map(|(index, component)| {
+            let segment = component.as_os_str().to_str()?;
+            match (item.id.kind, segment) {
+                (ItemKind::Agent, AGENTS_DIR_NAME)
+                | (ItemKind::Skill, SKILLS_DIR_NAME)
+                | (ItemKind::BootstrapDoc, BOOTSTRAP_DIR_NAME) => Some(index + 1),
+                _ => None,
+            }
+        })
+        .unwrap_or(usize::MAX)
 }
 
 fn scan_skill_dir(
@@ -232,7 +279,7 @@ fn scan_manifest_declared_path(
                     items,
                     &mut visited,
                 )?;
-            } else if matches_container_root(&declared_path.relative_path, SKILL_CONTAINER_ROOTS) {
+            } else if candidate.is_dir() {
                 scan_skill_dir(
                     package_root,
                     &declared_path.relative_path,
@@ -246,7 +293,7 @@ fn scan_manifest_declared_path(
                 && candidate.extension().and_then(|ext| ext.to_str()) == Some("md")
             {
                 register_agent_file(&declared_path.relative_path, items, &mut visited);
-            } else if matches_container_root(&declared_path.relative_path, AGENT_CONTAINER_ROOTS) {
+            } else if candidate.is_dir() {
                 scan_agent_dir(
                     package_root,
                     &declared_path.relative_path,
@@ -271,10 +318,7 @@ fn scan_manifest_declared_path(
                 && let Some(parent) = declared_path.relative_path.parent()
             {
                 register_bootstrap_doc(package_root, parent, items, &mut visited)?;
-            } else if matches_container_root(
-                &declared_path.relative_path,
-                BOOTSTRAP_CONTAINER_ROOTS,
-            ) {
+            } else if candidate.is_dir() {
                 scan_bootstrap_dir(
                     package_root,
                     &declared_path.relative_path,
@@ -381,199 +425,6 @@ fn discover_manifest_declared_items(
     Ok(dedupe_items_by_path(items))
 }
 
-fn discover_heuristic_layer_items(package_root: &Path) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let candidates = collect_heuristic_candidates(package_root)?;
-    let Some(min_layer) = candidates.iter().map(|candidate| candidate.layer).min() else {
-        return Ok(Vec::new());
-    };
-
-    let items = candidates
-        .into_iter()
-        .filter(|candidate| candidate.layer == min_layer)
-        .map(|candidate| candidate.item)
-        .collect();
-    let items = dedupe_items_by_path(items);
-    Ok(dedupe_items_by_name_first_seen(items))
-}
-
-fn collect_heuristic_candidates(package_root: &Path) -> Result<Vec<LayeredCandidate>, MarsError> {
-    let mut candidates = Vec::new();
-    let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
-
-    while let Some((base_dir, depth)) = queue.pop_front() {
-        if depth > MAX_HEURISTIC_FS_DEPTH {
-            continue;
-        }
-
-        let base_rel = if base_dir == package_root {
-            PathBuf::new()
-        } else {
-            relative_to(package_root, &base_dir)?
-        };
-        collect_heuristic_candidates_at_base(package_root, &base_rel, &mut candidates)?;
-
-        if depth == MAX_HEURISTIC_FS_DEPTH {
-            continue;
-        }
-
-        for path in read_dir_paths_sorted(&base_dir)? {
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if RECURSIVE_SKIP_DIRS.contains(&name) {
-                continue;
-            }
-            queue.push_back((path, depth + 1));
-        }
-    }
-
-    Ok(candidates)
-}
-
-fn collect_heuristic_candidates_at_base(
-    package_root: &Path,
-    base_rel: &Path,
-    candidates: &mut Vec<LayeredCandidate>,
-) -> Result<(), MarsError> {
-    collect_direct_skill_children(package_root, base_rel, candidates)?;
-    for root in SKILL_CONTAINER_ROOTS {
-        collect_skill_container_candidates(
-            package_root,
-            &join_relative(base_rel, Path::new(root)),
-            candidates,
-        )?;
-    }
-    for root in AGENT_CONTAINER_ROOTS {
-        collect_agent_container_candidates(
-            package_root,
-            &join_relative(base_rel, Path::new(root)),
-            candidates,
-        )?;
-    }
-    for root in BOOTSTRAP_CONTAINER_ROOTS {
-        collect_bootstrap_container_candidates(
-            package_root,
-            &join_relative(base_rel, Path::new(root)),
-            candidates,
-        )?;
-    }
-    Ok(())
-}
-
-fn collect_direct_skill_children(
-    package_root: &Path,
-    base_rel: &Path,
-    candidates: &mut Vec<LayeredCandidate>,
-) -> Result<(), MarsError> {
-    let base_dir = package_root.join(base_rel);
-    if !base_dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&base_dir)? {
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|name| name.to_str())
-            && name.starts_with('.')
-        {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        if !path.join("SKILL.md").is_file() {
-            continue;
-        }
-        candidates.push(LayeredCandidate::new(ItemKind::Skill, rel)?);
-    }
-
-    Ok(())
-}
-
-fn collect_skill_container_candidates(
-    package_root: &Path,
-    container_rel: &Path,
-    candidates: &mut Vec<LayeredCandidate>,
-) -> Result<(), MarsError> {
-    let container_dir = package_root.join(container_rel);
-    if !container_dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&container_dir)? {
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|name| name.to_str())
-            && name.starts_with('.')
-        {
-            continue;
-        }
-        if !path.join("SKILL.md").is_file() {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        candidates.push(LayeredCandidate::new(ItemKind::Skill, rel)?);
-    }
-
-    Ok(())
-}
-
-fn collect_agent_container_candidates(
-    package_root: &Path,
-    container_rel: &Path,
-    candidates: &mut Vec<LayeredCandidate>,
-) -> Result<(), MarsError> {
-    let container_dir = package_root.join(container_rel);
-    if !container_dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&container_dir)? {
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        candidates.push(LayeredCandidate::new(ItemKind::Agent, rel)?);
-    }
-
-    Ok(())
-}
-
-fn collect_bootstrap_container_candidates(
-    package_root: &Path,
-    container_rel: &Path,
-    candidates: &mut Vec<LayeredCandidate>,
-) -> Result<(), MarsError> {
-    let container_dir = package_root.join(container_rel);
-    if !container_dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&container_dir)? {
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|name| name.to_str())
-            && name.starts_with('.')
-        {
-            continue;
-        }
-        if !path.join("BOOTSTRAP.md").is_file() {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        candidates.push(LayeredCandidate::new(ItemKind::BootstrapDoc, rel)?);
-    }
-
-    Ok(())
-}
-
 fn finalize_items(
     source_name: &str,
     mut items: Vec<DiscoveredItem>,
@@ -588,18 +439,6 @@ fn dedupe_items_by_path(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
     let mut deduped = Vec::with_capacity(items.len());
     for item in items {
         if seen.insert(item.source_path.clone()) {
-            deduped.push(item);
-        }
-    }
-    deduped
-}
-
-fn dedupe_items_by_name_first_seen(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
-    let mut seen = HashSet::new();
-    let mut deduped = Vec::with_capacity(items.len());
-    for item in items {
-        let key = (item.id.kind, item.id.name.to_string());
-        if seen.insert(key) {
             deduped.push(item);
         }
     }
@@ -741,18 +580,6 @@ fn read_dir_paths_sorted(dir: &Path) -> Result<Vec<PathBuf>, MarsError> {
     Ok(paths)
 }
 
-fn join_relative(base: &Path, suffix: &Path) -> PathBuf {
-    if base.as_os_str().is_empty() {
-        suffix.to_path_buf()
-    } else {
-        base.join(suffix)
-    }
-}
-
-fn matches_container_root(path: &Path, roots: &[&str]) -> bool {
-    roots.iter().any(|root| path == Path::new(root))
-}
-
 fn parse_declared_paths(json: &Value) -> Vec<RawDeclaredPath> {
     let Some(map) = json.as_object() else {
         return Vec::new();
@@ -804,58 +631,6 @@ fn collect_declared_paths_from_value(
     }
 }
 
-fn split_segments(path: &Path) -> Vec<String> {
-    path.components()
-        .filter_map(|component| match component {
-            Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn logical_layer(kind: ItemKind, relative_path: &Path) -> Result<usize, MarsError> {
-    let segments = split_segments(relative_path);
-    let default_layer = match kind {
-        ItemKind::Skill => segments.len(),
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            usize::MAX
-        }
-    };
-    let container_roots = match kind {
-        ItemKind::Skill => SKILL_CONTAINER_ROOTS,
-        ItemKind::BootstrapDoc => BOOTSTRAP_CONTAINER_ROOTS,
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => AGENT_CONTAINER_ROOTS,
-    };
-
-    let mut layer = default_layer;
-    for root in container_roots {
-        let root_segments: Vec<&str> = root.split('/').collect();
-        if segments.len() < root_segments.len() + 1 {
-            continue;
-        }
-        let start = segments.len() - 1 - root_segments.len();
-        if segments[start..start + root_segments.len()]
-            .iter()
-            .map(String::as_str)
-            .eq(root_segments.iter().copied())
-        {
-            layer = layer.min(start + 1);
-        }
-    }
-
-    if layer == usize::MAX || layer == 0 || layer > MAX_FALLBACK_DEPTH {
-        return Err(MarsError::Source {
-            source_name: "discover".to_string(),
-            message: format!(
-                "invalid logical discovery layer for `{}`",
-                relative_path.display()
-            ),
-        });
-    }
-
-    Ok(layer)
-}
-
 #[derive(Debug, Clone)]
 struct RawDeclaredPath {
     kind: ItemKind,
@@ -866,63 +641,6 @@ struct RawDeclaredPath {
 struct DeclaredPath {
     kind: ItemKind,
     relative_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-struct LayeredCandidate {
-    item: DiscoveredItem,
-    layer: usize,
-}
-
-impl LayeredCandidate {
-    fn new(kind: ItemKind, source_path: PathBuf) -> Result<Self, MarsError> {
-        let item = match kind {
-            ItemKind::Skill => DiscoveredItem {
-                id: ItemId {
-                    kind,
-                    name: ItemName::from(
-                        source_path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
-                },
-                source_path: normalize_relative_path(&source_path),
-            },
-            ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => DiscoveredItem {
-                id: ItemId {
-                    kind,
-                    name: ItemName::from(
-                        source_path
-                            .file_stem()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
-                },
-                source_path: normalize_relative_path(&source_path),
-            },
-            ItemKind::BootstrapDoc => DiscoveredItem {
-                id: ItemId {
-                    kind,
-                    name: ItemName::from(
-                        source_path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
-                },
-                source_path: normalize_relative_path(&source_path),
-            },
-        };
-
-        Ok(Self {
-            layer: logical_layer(kind, &item.source_path)?,
-            item,
-        })
-    }
 }
 
 fn sort_items(items: &mut [DiscoveredItem]) {
@@ -1047,6 +765,36 @@ mod tests {
     }
 
     #[test]
+    fn conventional_discovery_finds_nested_convention_dirs() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("agents")).unwrap();
+        fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
+        fs::create_dir_all(dir.path().join("a/b/skills/bar")).unwrap();
+        fs::write(dir.path().join("agents/top.md"), "# top").unwrap();
+        fs::write(dir.path().join("sub/agents/foo.md"), "# foo").unwrap();
+        fs::write(dir.path().join("a/b/skills/bar/SKILL.md"), "# bar").unwrap();
+
+        let items = discover_source(dir.path(), None).unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert!(
+            items
+                .iter()
+                .any(|item| item.source_path == Path::new("agents/top.md"))
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.source_path == Path::new("sub/agents/foo.md"))
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.source_path == Path::new("a/b/skills/bar"))
+        );
+    }
+
+    #[test]
     fn conventional_discovery_finds_package_bootstrap_docs() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("bootstrap/global-auth")).unwrap();
@@ -1098,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_short_circuits_root_skill() {
+    fn fallback_root_skill_does_not_override_convention_items() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("SKILL.md"), "# root").unwrap();
         fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
@@ -1106,8 +854,8 @@ mod tests {
 
         let items = discover_fallback(dir.path(), Some("demo")).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id.name.as_str(), "demo");
-        assert_eq!(items[0].source_path, PathBuf::from("."));
+        assert_eq!(items[0].id.name.as_str(), "planning");
+        assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
     }
 
     #[test]
@@ -1271,28 +1019,50 @@ mod tests {
     }
 
     #[test]
-    fn fallback_priority_scan_finds_skill_dirs_and_agents() {
+    fn fallback_walk_finds_nested_convention_dirs_and_skips_dot_dirs() {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("skills/.experimental/find-skills")).unwrap();
+        fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
+        fs::create_dir_all(dir.path().join("a/b/skills/bar")).unwrap();
         fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-        fs::write(
-            dir.path().join("skills/.experimental/find-skills/SKILL.md"),
-            "# skill",
-        )
-        .unwrap();
-        fs::write(dir.path().join(".claude/agents/reviewer.md"), "# agent").unwrap();
+        fs::write(dir.path().join("sub/agents/foo.md"), "# agent").unwrap();
+        fs::write(dir.path().join("a/b/skills/bar/SKILL.md"), "# skill").unwrap();
+        fs::write(dir.path().join(".claude/agents/hidden.md"), "# hidden").unwrap();
 
         let items = discover_fallback(dir.path(), Some("demo")).unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Agent && item.source_path == Path::new("sub/agents/foo.md")
+        }));
+        assert!(items.iter().any(|item| {
+            item.id.kind == ItemKind::Skill && item.source_path == Path::new("a/b/skills/bar")
+        }));
+        assert!(
+            !items
+                .iter()
+                .any(|item| item.source_path == Path::new(".claude/agents/hidden.md"))
+        );
+    }
+
+    #[test]
+    fn explicit_claude_subpath_root_imports_inner_convention_dirs() {
+        let dir = TempDir::new().unwrap();
+        let claude_root = dir.path().join(".claude");
+        fs::create_dir_all(claude_root.join("agents")).unwrap();
+        fs::create_dir_all(claude_root.join("skills/research")).unwrap();
+        fs::write(claude_root.join("agents/reviewer.md"), "# reviewer").unwrap();
+        fs::write(claude_root.join("skills/research/SKILL.md"), "# research").unwrap();
+
+        let items = discover_fallback(&claude_root, Some("foreign")).unwrap();
         assert_eq!(items.len(), 2);
         assert!(
             items
                 .iter()
-                .any(|item| item.source_path == Path::new("skills/.experimental/find-skills"))
+                .any(|item| item.source_path == Path::new("agents/reviewer.md"))
         );
         assert!(
             items
                 .iter()
-                .any(|item| item.source_path == Path::new(".claude/agents/reviewer.md"))
+                .any(|item| item.source_path == Path::new("skills/research"))
         );
     }
 
@@ -1436,32 +1206,6 @@ mod tests {
     }
 
     #[test]
-    fn fallback_prefers_first_match_after_visit_dedupe() {
-        let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("skills/plan")).unwrap();
-        fs::create_dir_all(dir.path().join("plan")).unwrap();
-        fs::write(dir.path().join("skills/plan/SKILL.md"), "# skill a").unwrap();
-        fs::write(dir.path().join("plan/SKILL.md"), "# skill b").unwrap();
-
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].source_path, PathBuf::from("plan"));
-    }
-
-    #[test]
-    fn fallback_prefers_first_mirrored_skill_match() {
-        let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("skills/caveman")).unwrap();
-        fs::create_dir_all(dir.path().join("caveman")).unwrap();
-        fs::write(dir.path().join("skills/caveman/SKILL.md"), "# same").unwrap();
-        fs::write(dir.path().join("caveman/SKILL.md"), "# same").unwrap();
-
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].source_path, PathBuf::from("caveman"));
-    }
-
-    #[test]
     fn fallback_heuristic_finds_bootstrap_container_docs() {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("nested/bootstrap/setup")).unwrap();
@@ -1499,32 +1243,6 @@ mod tests {
 
         let err = discover_fallback(dir.path(), Some("demo")).unwrap_err();
         assert!(matches!(err, MarsError::ManifestDeclaredPathEscape { .. }));
-    }
-
-    #[test]
-    fn fallback_selects_first_non_empty_logical_layer() {
-        let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("top")).unwrap();
-        fs::create_dir_all(dir.path().join("nested/deeper/skill")).unwrap();
-        fs::write(dir.path().join("top/SKILL.md"), "# top").unwrap();
-        fs::write(dir.path().join("nested/deeper/skill/SKILL.md"), "# skill").unwrap();
-
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].source_path, PathBuf::from("top"));
-    }
-
-    #[test]
-    fn fallback_groups_layout_variants_into_same_logical_layer() {
-        let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("caveman")).unwrap();
-        fs::create_dir_all(dir.path().join("skills/caveman")).unwrap();
-        fs::write(dir.path().join("caveman/SKILL.md"), "# direct").unwrap();
-        fs::write(dir.path().join("skills/caveman/SKILL.md"), "# container").unwrap();
-
-        let items = discover_fallback(dir.path(), Some("demo")).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].source_path, PathBuf::from("caveman"));
     }
 
     #[test]

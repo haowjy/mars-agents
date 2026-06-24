@@ -17,6 +17,8 @@ fetch → ResolvedRef.tree_path (global cache, read-only)
   → discover / hash / validate / apply
 ```
 
+Discovery runs from the staged/rooted package directory. Its convention walk skips dot-prefixed child directories during default discovery; explicit dependency `subpath` can still make a hidden foreign container (for example `.claude`) the effective root, where its inner `agents/` and `skills/` directories are discovered normally.
+
 ## Staging location
 
 Per-consumer under `<project>/.mars/staging/<source-name>/<dialect>/`.

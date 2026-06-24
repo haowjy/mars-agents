@@ -171,8 +171,9 @@ The diff matrix:
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
 Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
-- Items from `.mars-src/` are always discovered, regardless of whether `[package]` is present.
-- Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages still expose those directories when consumed as dependencies.
+- Items from `.mars-src/` are always discovered by the same convention walk as dependency packages, regardless of whether `[package]` is present. Nested `.mars-src/**/agents/` and `.mars-src/**/skills/` folders are included.
+- Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages expose `agents/`, `skills/`, and `bootstrap/` convention folders at any non-hidden depth when consumed as dependencies.
+- Dot-prefixed directories are skipped during default discovery. Import a foreign hidden layout explicitly with dependency `subpath` (for example `.claude`) and `dialect`.
 
 ### 5. Apply Plan (`apply_plan`)
 

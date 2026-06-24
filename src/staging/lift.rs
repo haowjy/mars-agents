@@ -252,12 +252,6 @@ fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
 
 fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    if find_invocability_field(fm, "user-invocable").is_none()
-        && fm.get("mode").and_then(Value::as_str) == Some("primary")
-    {
-        fm.insert("user-invocable", Value::Bool(false));
-        changed = true;
-    }
 
     if let Some(tools) = fm.remove("disallowedTools") {
         if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
@@ -344,13 +338,25 @@ mod tests {
     }
 
     #[test]
-    fn opencode_primary_mode_sets_user_invocable_false() {
+    fn opencode_primary_mode_preserves_mode_without_inferring_user_invocable() {
         let lifted = lift(
             Dialect::OpenCode,
             ItemKind::Agent,
             &fm("name: a\ndescription: d\nmode: primary\n"),
         );
+        assert_eq!(lifted.get("mode"), Some(&Value::String("primary".into())));
+        assert!(lifted.get("user-invocable").is_none());
+    }
+
+    #[test]
+    fn opencode_agent_lifts_literal_user_invocable_only() {
+        let lifted = lift(
+            Dialect::OpenCode,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\nmode: subagent\nuser-invocable: false\n"),
+        );
         assert_eq!(lifted.get("user-invocable"), Some(&Value::Bool(false)));
+        assert_eq!(lifted.get("mode"), Some(&Value::String("subagent".into())));
     }
 
     #[test]

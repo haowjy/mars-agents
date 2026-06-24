@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
-/// Harness identifiers accepted under `skills/<name>/variants/`.
-pub const KNOWN_HARNESS_VARIANT_KEYS: &[&str] = &["claude", "codex", "opencode", "pi", "cursor"];
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SkillVariantIndex {
     harnesses: BTreeMap<String, HarnessVariantIndex>,
@@ -186,7 +183,7 @@ fn index_harness_variant(
 }
 
 fn is_known_harness_variant_key(key: &str) -> bool {
-    KNOWN_HARNESS_VARIANT_KEYS.contains(&key)
+    crate::compiler::harness_descriptor::descriptor_for_variant_key(key).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

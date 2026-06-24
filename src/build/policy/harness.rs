@@ -549,13 +549,7 @@ fn format_installed_harnesses(installed_harnesses: &HashSet<String>) -> String {
 }
 
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
-    match harness {
-        HarnessKind::Claude => "claude",
-        HarnessKind::Codex => "codex",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Pi => "pi",
-    }
+    crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
 #[cfg(test)]

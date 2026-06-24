@@ -82,7 +82,6 @@ enum LoweringStep {
 
 #[derive(Debug, Clone, Copy)]
 struct SkillLoweringPolicy {
-    harness_kind: HarnessKind,
     target_name: &'static str,
     steps: &'static [LoweringStep],
     model_invocable: ModelInvocablePolicy,
@@ -94,7 +93,6 @@ struct SkillLoweringPolicy {
 }
 
 const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_kind: HarnessKind::Claude,
     target_name: "Claude",
     steps: &[
         LoweringStep::Identity,
@@ -118,7 +116,6 @@ const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_kind: HarnessKind::Codex,
     target_name: "Codex",
     steps: &[
         LoweringStep::Identity,
@@ -140,7 +137,6 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_kind: HarnessKind::OpenCode,
     target_name: "OpenCode",
     steps: &[
         LoweringStep::Identity,
@@ -164,7 +160,6 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_kind: HarnessKind::Pi,
     target_name: "Pi",
     steps: &[
         LoweringStep::Identity,
@@ -188,7 +183,6 @@ const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    harness_kind: HarnessKind::Cursor,
     target_name: "Cursor",
     steps: &[
         LoweringStep::Identity,
@@ -265,6 +259,7 @@ fn render(yaml: Mapping, body: &str) -> Vec<u8> {
 }
 
 struct LoweringCtx<'a> {
+    harness_kind: HarnessKind,
     policy: &'static SkillLoweringPolicy,
     profile: &'a SkillProfile,
     yaml: Mapping,
@@ -272,8 +267,13 @@ struct LoweringCtx<'a> {
 }
 
 impl<'a> LoweringCtx<'a> {
-    fn new(policy: &'static SkillLoweringPolicy, profile: &'a SkillProfile) -> Self {
+    fn new(
+        harness_kind: HarnessKind,
+        policy: &'static SkillLoweringPolicy,
+        profile: &'a SkillProfile,
+    ) -> Self {
         Self {
+            harness_kind,
             policy,
             profile,
             yaml: Mapping::new(),
@@ -383,7 +383,7 @@ impl<'a> LoweringCtx<'a> {
                 }
                 let mut tools = Vec::new();
                 for tool in &tool_policy.allowed {
-                    let projected = project_tool_for_harness(tool, policy.harness_kind);
+                    let projected = project_tool_for_harness(tool, self.harness_kind);
                     if track_unknown_tool_lossiness
                         && projected.status == ToolProjectionStatus::UnknownProjected
                     {
@@ -420,7 +420,7 @@ impl<'a> LoweringCtx<'a> {
             DisallowedToolsPolicy::Emit => {
                 let mut tools = Vec::new();
                 for tool in &tool_policy.disallowed {
-                    let projected = project_tool_for_harness(tool, policy.harness_kind);
+                    let projected = project_tool_for_harness(tool, self.harness_kind);
                     if projected.status == ToolProjectionStatus::UnknownProjected {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
@@ -434,7 +434,7 @@ impl<'a> LoweringCtx<'a> {
                 }
                 let mcp_tokens = project_mcp_refs_for_emission(
                     &tool_policy.mcp_disallowed,
-                    policy.harness_kind,
+                    self.harness_kind,
                     |_, reason| {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
@@ -468,7 +468,7 @@ impl<'a> LoweringCtx<'a> {
             McpToolsPolicy::Emit => {
                 let mcp_tokens = project_mcp_refs_for_emission(
                     &tool_policy.mcp_allowed,
-                    policy.harness_kind,
+                    self.harness_kind,
                     |_, reason| {
                         self.lossy_fields.push(LossyField {
                             field: "mcp".into(),
@@ -558,7 +558,7 @@ pub(super) fn lower_skill_with_policy(
     body: &str,
 ) -> LoweredOutput {
     let policy = policy_for(harness);
-    let mut ctx = LoweringCtx::new(policy, profile);
+    let mut ctx = LoweringCtx::new(harness, policy, profile);
     for &step in policy.steps {
         ctx.run_step(step);
     }

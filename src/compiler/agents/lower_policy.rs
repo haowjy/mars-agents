@@ -24,14 +24,14 @@ use crate::frontmatter::Frontmatter;
 
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
-    harness: &'a HarnessKind,
+    harness: HarnessKind,
     profile: &'a AgentProfile,
     tools: EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: &'a HarnessKind) -> Self {
-        let tools = profile.effective_tool_policy(harness);
+    fn new(profile: &'a AgentProfile, harness: HarnessKind) -> Self {
+        let tools = profile.effective_tool_policy(&harness);
         Self {
             harness,
             profile,
@@ -52,7 +52,7 @@ impl<'a> Effective<'a> {
     }
 
     fn skills(&self) -> Vec<String> {
-        self.profile.effective_skills(self.harness).all()
+        self.profile.effective_skills(&self.harness).all()
     }
 
     fn tools(&self) -> &[String] {
@@ -76,7 +76,7 @@ impl<'a> Effective<'a> {
     }
 
     fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
-        self.profile.effective_native_config(self.harness)
+        self.profile.effective_native_config(&self.harness)
     }
 }
 
@@ -229,7 +229,6 @@ enum AgentLossinessStep {
 
 #[derive(Debug, Clone, Copy)]
 struct AgentLoweringPolicy {
-    harness: HarnessKind,
     target_name: &'static str,
     description: DescriptionPolicy,
     mode_note: Option<&'static str>,
@@ -244,7 +243,6 @@ enum DescriptionPolicy {
 }
 
 const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    harness: HarnessKind::Claude,
     target_name: "Claude",
     description: DescriptionPolicy::Preserve,
     mode_note: None,
@@ -265,7 +263,6 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    harness: HarnessKind::OpenCode,
     target_name: "OpenCode",
     description: DescriptionPolicy::Preserve,
     mode_note: Some("OpenCode uses the same mode concept"),
@@ -289,7 +286,6 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    harness: HarnessKind::Cursor,
     target_name: "Cursor",
     description: DescriptionPolicy::CursorOneLine,
     mode_note: Some("Cursor may use the same mode concept"),
@@ -314,7 +310,6 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    harness: HarnessKind::Pi,
     target_name: "Pi",
     description: DescriptionPolicy::Preserve,
     mode_note: Some("Pi may use the same mode concept"),
@@ -344,6 +339,7 @@ fn yv(s: &str) -> serde_yaml::Value {
 }
 
 struct AgentLoweringCtx<'a> {
+    harness: HarnessKind,
     policy: &'static AgentLoweringPolicy,
     profile: &'a AgentProfile,
     model_field: &'a NativeModel,
@@ -354,15 +350,17 @@ struct AgentLoweringCtx<'a> {
 
 impl<'a> AgentLoweringCtx<'a> {
     fn new(
+        harness: HarnessKind,
         policy: &'static AgentLoweringPolicy,
         profile: &'a AgentProfile,
         model_field: &'a NativeModel,
     ) -> Self {
         Self {
+            harness,
             policy,
             profile,
             model_field,
-            eff: Effective::new(profile, &policy.harness),
+            eff: Effective::new(profile, harness),
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
         }
@@ -407,24 +405,17 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_tools(&mut self) {
-        let mut tools = normalize_tools_for_harness(
-            self.eff.tools(),
-            self.policy.harness,
-            "tools",
-            &mut self.lossy,
-        );
-        let mcp_allowed = project_mcp_refs_for_emission(
-            self.eff.mcp_allowed(),
-            self.policy.harness,
-            |_, reason| {
+        let mut tools =
+            normalize_tools_for_harness(self.eff.tools(), self.harness, "tools", &mut self.lossy);
+        let mcp_allowed =
+            project_mcp_refs_for_emission(self.eff.mcp_allowed(), self.harness, |_, reason| {
                 record_mcp_projection_lossiness(
                     "tools",
                     self.policy.target_name,
                     reason,
                     &mut self.lossy,
                 );
-            },
-        );
+            });
         tools.extend(mcp_allowed);
         if !tools.is_empty() {
             self.yaml.insert(
@@ -435,22 +426,19 @@ impl<'a> AgentLoweringCtx<'a> {
 
         let mut disallowed = normalize_tools_for_harness(
             self.eff.disallowed_tools(),
-            self.policy.harness,
+            self.harness,
             "disallowed-tools",
             &mut self.lossy,
         );
-        let mcp_disallowed = project_mcp_refs_for_emission(
-            self.eff.mcp_disallowed(),
-            self.policy.harness,
-            |_, reason| {
+        let mcp_disallowed =
+            project_mcp_refs_for_emission(self.eff.mcp_disallowed(), self.harness, |_, reason| {
                 record_mcp_projection_lossiness(
                     "disallowed-tools",
                     self.policy.target_name,
                     reason,
                     &mut self.lossy,
                 );
-            },
-        );
+            });
         disallowed.extend(mcp_disallowed);
         if !disallowed.is_empty() {
             self.yaml.insert(
@@ -531,7 +519,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.approval() else {
             return;
         };
-        let classification = if self.policy.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessKind::Cursor {
             Lossiness::Approximate {
                 note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
             }
@@ -549,7 +537,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.sandbox() else {
             return;
         };
-        let classification = if self.policy.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessKind::Cursor {
             Lossiness::Approximate {
                 note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
             }
@@ -631,12 +619,13 @@ fn render_markdown(yaml: serde_yaml::Mapping, body: &str) -> Vec<u8> {
 }
 
 fn lower_markdown_agent(
+    harness: HarnessKind,
     policy: &'static AgentLoweringPolicy,
     profile: &AgentProfile,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    let mut ctx = AgentLoweringCtx::new(policy, profile, model_field);
+    let mut ctx = AgentLoweringCtx::new(harness, policy, profile, model_field);
     for &field in policy.fields {
         ctx.apply_field(field);
     }
@@ -652,7 +641,13 @@ pub fn lower_to_claude(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    lower_markdown_agent(&CLAUDE_AGENT_POLICY, profile, body, model_field)
+    lower_markdown_agent(
+        HarnessKind::Claude,
+        &CLAUDE_AGENT_POLICY,
+        profile,
+        body,
+        model_field,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -673,7 +668,7 @@ pub fn lower_to_codex(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    let eff = Effective::new(profile, &HarnessKind::Codex);
+    let eff = Effective::new(profile, HarnessKind::Codex);
     let mut lossy = Vec::new();
     let target = "Codex";
 
@@ -815,7 +810,13 @@ pub fn lower_to_opencode(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    lower_markdown_agent(&OPENCODE_AGENT_POLICY, profile, body, model_field)
+    lower_markdown_agent(
+        HarnessKind::OpenCode,
+        &OPENCODE_AGENT_POLICY,
+        profile,
+        body,
+        model_field,
+    )
 }
 
 fn normalize_cursor_description(description: &str) -> String {
@@ -827,12 +828,24 @@ pub fn lower_to_cursor_with_model(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    lower_markdown_agent(&CURSOR_AGENT_POLICY, profile, body, model_field)
+    lower_markdown_agent(
+        HarnessKind::Cursor,
+        &CURSOR_AGENT_POLICY,
+        profile,
+        body,
+        model_field,
+    )
 }
 
 /// Lower an agent profile to Pi-native markdown format.
 pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel) -> LoweredOutput {
-    lower_markdown_agent(&PI_AGENT_POLICY, profile, body, model_field)
+    lower_markdown_agent(
+        HarnessKind::Pi,
+        &PI_AGENT_POLICY,
+        profile,
+        body,
+        model_field,
+    )
 }
 
 // ---------------------------------------------------------------------------

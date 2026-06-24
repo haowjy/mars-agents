@@ -225,13 +225,7 @@ pub struct HarnessOverrides {
 }
 
 fn harness_key(harness: &HarnessKind) -> &'static str {
-    match harness {
-        HarnessKind::Claude => "claude",
-        HarnessKind::Codex => "codex",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Pi => "pi",
-    }
+    crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
 impl HarnessOverrides {
@@ -534,10 +528,8 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
             });
             continue;
         };
-        if !matches!(
-            harness_name,
-            "claude" | "codex" | "opencode" | "cursor" | "pi"
-        ) {
+        if crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness_name).is_none()
+        {
             diags.push(AgentDiagnostic::UnknownHarnessOverride {
                 value: harness_name.to_string(),
             });

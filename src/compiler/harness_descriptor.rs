@@ -1,8 +1,8 @@
 //! Typed compiler harness descriptors used by native agent and skill lowering.
 //!
 //! This module is the compiler-side owner for facts that used to be duplicated
-//! across lowerers: canonical ids, display names, skill variant keys, tool-name
-//! conventions, MCP projection policy, and lowering-policy selection hooks. The
+//! across lowerers: canonical ids, skill variant keys, tool-name conventions,
+//! MCP projection policy, and lowering-policy selection hooks. The
 //! descriptor is keyed by [`HarnessKind`] so compiler code does not re-match raw
 //! `"claude"`/`"codex"` strings at each call site.
 
@@ -47,7 +47,6 @@ pub(crate) struct CompilerHarnessDescriptor {
     pub kind: HarnessKind,
     pub id: HarnessId,
     pub canonical_id: &'static str,
-    pub display_name: &'static str,
     pub variant_key: &'static str,
     pub target_dir: &'static str,
     pub tool_naming: ToolNamingConvention,
@@ -61,7 +60,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         kind: HarnessKind::Claude,
         id: HarnessId::Claude,
         canonical_id: "claude",
-        display_name: "Claude",
         variant_key: "claude",
         target_dir: ".claude",
         tool_naming: ToolNamingConvention::PascalCase,
@@ -73,7 +71,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         kind: HarnessKind::Codex,
         id: HarnessId::Codex,
         canonical_id: "codex",
-        display_name: "Codex",
         variant_key: "codex",
         target_dir: ".codex",
         tool_naming: ToolNamingConvention::SnakeCase,
@@ -85,7 +82,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         kind: HarnessKind::Pi,
         id: HarnessId::Pi,
         canonical_id: "pi",
-        display_name: "Pi",
         variant_key: "pi",
         target_dir: ".pi",
         tool_naming: ToolNamingConvention::Lowercase,
@@ -97,7 +93,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         kind: HarnessKind::OpenCode,
         id: HarnessId::OpenCode,
         canonical_id: "opencode",
-        display_name: "OpenCode",
         variant_key: "opencode",
         target_dir: ".opencode",
         tool_naming: ToolNamingConvention::Lowercase,
@@ -109,7 +104,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         kind: HarnessKind::Cursor,
         id: HarnessId::Cursor,
         canonical_id: "cursor",
-        display_name: "Cursor",
         variant_key: "cursor",
         target_dir: ".cursor",
         tool_naming: ToolNamingConvention::PascalCase,
@@ -138,6 +132,10 @@ pub(crate) fn descriptor_for_canonical_id(id: &str) -> Option<&'static CompilerH
     DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.canonical_id == normalized)
+}
+
+pub(crate) fn known_canonical_ids() -> impl Iterator<Item = &'static str> {
+    DESCRIPTORS.iter().map(|descriptor| descriptor.canonical_id)
 }
 
 /// Harnesses that would receive native agent artifacts during sync for these settings.

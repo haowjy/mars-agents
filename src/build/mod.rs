@@ -11,7 +11,8 @@ use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
 use crate::cli::MarsContext;
-use crate::compiler::agents::{AgentProfile, HarnessKind, parse_agent_content};
+use crate::compiler::agents::{AgentProfile, parse_agent_content};
+use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
@@ -203,20 +204,22 @@ fn resolve_bundle_tools(
 ) -> Result<(ToolsSpec, Vec<String>), MarsError> {
     use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 
-    let harness_kind = parse_harness_kind(harness)?;
+    let descriptor = parse_harness_descriptor(harness)?;
+    let harness_kind = descriptor.kind;
+    let harness = descriptor.canonical_id;
 
     let effective_tools = profile.effective_tool_policy(&harness_kind);
     let mut warnings = Vec::new();
 
     let allowed = normalize_and_dedupe_tools(
         &effective_tools.allowed,
-        harness,
+        descriptor,
         ToolPolicyKind::Allowed,
         &mut warnings,
     );
     let mut disallowed = normalize_and_dedupe_tools(
         &effective_tools.disallowed,
-        harness,
+        descriptor,
         ToolPolicyKind::Disallowed,
         &mut warnings,
     );
@@ -258,21 +261,16 @@ fn resolve_bundle_tools(
 
 fn normalize_and_dedupe_tools(
     tools: &[String],
-    harness: &str,
+    descriptor: &CompilerHarnessDescriptor,
     kind: ToolPolicyKind,
     warnings: &mut Vec<String>,
 ) -> Vec<String> {
-    let Some(harness_kind) =
-        crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
-            .map(|descriptor| descriptor.kind)
-    else {
-        return tools.to_vec();
-    };
+    let harness = descriptor.canonical_id;
     let mut seen = std::collections::HashSet::new();
     let mut projected = Vec::new();
 
     for tool in tools {
-        let normalized = project_tool_for_harness(tool, harness_kind);
+        let normalized = project_tool_for_harness(tool, descriptor.kind);
         if normalized.status == ToolProjectionStatus::UnknownProjected {
             match kind {
                 ToolPolicyKind::Allowed => warnings.push(format!(
@@ -306,15 +304,20 @@ fn resolve_effective_skills(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
 ) -> Result<SkillsSpec, MarsError> {
-    let harness_kind = parse_harness_kind(harness)?;
-    Ok(profile.effective_skills(&harness_kind).clone())
+    let descriptor = parse_harness_descriptor(harness)?;
+    Ok(profile.effective_skills(&descriptor.kind).clone())
 }
 
-fn parse_harness_kind(harness: &str) -> Result<HarnessKind, MarsError> {
-    HarnessKind::from_str(harness).ok_or_else(|| {
+fn parse_harness_descriptor(
+    harness: &str,
+) -> Result<&'static CompilerHarnessDescriptor, MarsError> {
+    crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness).ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
-                "invalid harness `{harness}` for launch bundle resolution; expected one of: claude, codex, opencode, cursor, pi"
+                "invalid harness `{harness}` for launch bundle resolution; expected one of: {}",
+                crate::compiler::harness_descriptor::known_canonical_ids()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         })
     })

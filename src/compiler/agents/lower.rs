@@ -6,64 +6,15 @@
 #[path = "lower_policy.rs"]
 mod lower_policy;
 
-pub use lower_policy::NativeModel;
+pub use lower_policy::{NativeModel, lower_for_harness_with_model};
+
+#[cfg(test)]
 pub type LoweredOutput = crate::compiler::lossiness::LoweredOutput;
 
 #[cfg(test)]
-pub fn lower_to_claude(
-    profile: &crate::compiler::agents::AgentProfile,
-    fm: &crate::frontmatter::Frontmatter,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_to_claude(profile, fm, body, model_field)
-}
-
-#[cfg(test)]
-pub fn lower_to_codex(
-    profile: &crate::compiler::agents::AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_to_codex(profile, body, model_field)
-}
-
-#[cfg(test)]
-pub fn lower_to_opencode(
-    profile: &crate::compiler::agents::AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_to_opencode(profile, body, model_field)
-}
-
-#[cfg(test)]
-pub fn lower_to_pi(
-    profile: &crate::compiler::agents::AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_to_pi(profile, body, model_field)
-}
-
-pub fn lower_for_harness_with_model(
-    harness: &crate::compiler::agents::HarnessKind,
-    profile: &crate::compiler::agents::AgentProfile,
-    fm: &crate::frontmatter::Frontmatter,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_for_harness_with_model(harness, profile, fm, body, model_field)
-}
-
-#[cfg(test)]
-fn lower_to_cursor_with_model(
-    profile: &crate::compiler::agents::AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_policy::lower_to_cursor_with_model(profile, body, model_field)
-}
+pub use lower_policy::{
+    lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode, lower_to_pi,
+};
 
 #[cfg(test)]
 use crate::compiler::lossiness::Lossiness;

@@ -4,7 +4,9 @@
 mod lower_policy;
 
 use crate::compiler::agents::HarnessKind;
-use crate::compiler::harness_descriptor::descriptor_for_variant_key;
+use crate::compiler::harness_descriptor::{
+    SkillLoweringPolicyKind, descriptor, descriptor_for_variant_key,
+};
 use crate::compiler::lossiness::LoweredOutput;
 use crate::compiler::skills::SkillProfile;
 
@@ -18,12 +20,12 @@ pub fn lower_skill_for_harness(
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {
-    match harness {
-        HarnessKind::Claude => lower_skill_to_claude(profile, body),
-        HarnessKind::Codex => lower_skill_to_codex(profile, body),
-        HarnessKind::OpenCode => lower_skill_to_opencode(profile, body),
-        HarnessKind::Pi => lower_skill_to_pi(profile, body),
-        HarnessKind::Cursor => lower_skill_to_cursor(profile, body),
+    match descriptor(harness).skill_policy {
+        SkillLoweringPolicyKind::Claude => lower_skill_to_claude(profile, body),
+        SkillLoweringPolicyKind::Codex => lower_skill_to_codex(profile, body),
+        SkillLoweringPolicyKind::OpenCode => lower_skill_to_opencode(profile, body),
+        SkillLoweringPolicyKind::Pi => lower_skill_to_pi(profile, body),
+        SkillLoweringPolicyKind::Cursor => lower_skill_to_cursor(profile, body),
     }
 }
 

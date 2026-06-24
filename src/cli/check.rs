@@ -21,6 +21,10 @@ use super::output;
 pub struct CheckArgs {
     /// Directory to validate as a source package (default: current directory).
     pub path: Option<PathBuf>,
+
+    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,7 +55,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     let report = check_dir(&base)?;
-    let lossiness = lossiness_diagnostics_for_check(&base)?;
+    let lossiness = lossiness_diagnostics_for_check(&base, args.verbose)?;
     let clean = report.errors.is_empty();
 
     if json {
@@ -89,13 +93,16 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
 fn lossiness_diagnostics_for_check(
     base: &std::path::Path,
+    verbose: bool,
 ) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
     use crate::diagnostic::LossinessMode;
 
-    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
-        base,
-        LossinessMode::Surface,
-    )
+    let mode = if verbose {
+        LossinessMode::Verbose
+    } else {
+        LossinessMode::Surface
+    };
+    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(base, mode)
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
@@ -569,6 +576,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
@@ -598,6 +606,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
@@ -614,6 +623,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);

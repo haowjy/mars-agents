@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -112,6 +113,7 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut warnings: Vec<String> = Vec::new();
 
     let discovered = discover::discover_resolved_source(base, None)?;
+    let dialect = Dialect::resolve_local(None, base);
 
     // ── Validate discovered agents/skills ────────────────────────────
     let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
@@ -232,6 +234,13 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
                             &mut skill_diags,
                         ) {
                             Ok((profile, fm)) => {
+                                if dialect == Dialect::MarsNative {
+                                    crate::compiler::skills::push_authored_skill_schema_diags(
+                                        &fm,
+                                        &mut skill_diags,
+                                    );
+                                }
+
                                 let name = profile
                                     .name
                                     .clone()
@@ -272,10 +281,9 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
 
                                 if fm.get("description").and_then(|v| v.as_str()).is_none()
                                     && !schema_missing_description
-                                    && fm
-                                        .get(crate::compiler::skills::IMPORTED_WITHOUT_DESCRIPTION)
-                                        .and_then(|v| v.as_bool())
-                                        != Some(true)
+                                    && dialect != Dialect::MarsNative
+                                    && !(dialect == Dialect::Cursor
+                                        && crate::staging::cursor_manual_rule_shape(&fm))
                                 {
                                     warnings.push(format!("skill `{name}` has no `description`"));
                                 }

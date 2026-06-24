@@ -7,6 +7,8 @@
 mod lift;
 mod overlay;
 
+pub(crate) use lift::cursor_manual_rule_shape;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -268,6 +270,7 @@ fn process_markdown_file(
     if let Ok(parsed) = Frontmatter::parse(&original) {
         if ctx.dialect == Dialect::MarsNative && kind == ItemKind::Skill {
             let mut skill_diags = Vec::new();
+            crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
             crate::compiler::skills::push_non_canonical_tool_field_diags(&parsed, &mut skill_diags);
             if !skill_diags.is_empty() {
                 let skill_name = parsed

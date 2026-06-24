@@ -11,9 +11,8 @@ use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
-/// Staging-only marker: Cursor Manual imports cannot store a description.
-/// Consumed at parse time; never lowered to harness artifacts.
-pub(crate) const IMPORTED_WITHOUT_DESCRIPTION: &str = "mars.imported-without-description";
+/// Reserved lift-internal key; must not appear in user-authored MarsNative packages.
+const RESERVED_IMPORT_MARKER: &str = "mars.imported-without-description";
 
 #[derive(Debug, Clone)]
 pub struct SkillProfile {
@@ -109,6 +108,21 @@ impl SkillDiagnostic {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
         }
+    }
+}
+
+/// Authored MarsNative skill schema: required fields and reserved keys.
+///
+/// Runs on raw source frontmatter before lift. Lifted foreign imports (e.g. Cursor
+/// Manual rules) never hit this path.
+pub(crate) fn push_authored_skill_schema_diags(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) {
+    if fm.has_frontmatter() {
+        validate_required_string("description", fm.get("description"), diags);
+    }
+    if fm.get(RESERVED_IMPORT_MARKER).is_some() {
+        diags.push(SkillDiagnostic::RemovedField {
+            field: RESERVED_IMPORT_MARKER.to_string(),
+        });
     }
 }
 
@@ -233,17 +247,9 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
             allowed: "string",
         });
     }
-    consumed_keys.push(IMPORTED_WITHOUT_DESCRIPTION.to_string());
-    let imported_without_description = fm
-        .get(IMPORTED_WITHOUT_DESCRIPTION)
-        .and_then(Value::as_bool)
-        == Some(true);
-
+    consumed_keys.push(RESERVED_IMPORT_MARKER.to_string());
     if fm.has_frontmatter() {
         validate_required_string("name", name_raw, diags);
-        if !imported_without_description {
-            validate_required_string("description", description_raw, diags);
-        }
     }
     consumed_keys.push("tools".to_string());
     let parsed_tools = fm
@@ -551,40 +557,48 @@ body",
     }
 
     #[test]
-    fn frontmatter_requires_name_and_description() {
+    fn frontmatter_requires_name() {
         let (_, d, _) = parse("---\nname: a\n---\nbody");
+        assert!(d.is_empty());
+        let (_, d, _) = parse("---\ndescription: b\n---\nbody");
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                if field == "description" && value == "missing"
+                if field == "name" && value == "missing"
         )));
     }
 
     #[test]
-    fn authored_skill_without_description_still_requires_description() {
-        let (_, d, _) = parse("---\nname: a\nmodel-invocable: false\n---\nbody");
-        assert!(d.iter().any(|d| matches!(
-            d,
-            SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                if field == "description" && value == "missing"
-        )));
-    }
-
-    #[test]
-    fn imported_without_description_marker_skips_description_validation() {
-        let (profile, d, _) = parse(
-            "---\nname: a\nmodel-invocable: false\nmars.imported-without-description: true\n---\nbody",
-        );
+    fn canonical_parse_allows_missing_description() {
+        let (profile, d, _) = parse("---\nname: a\nmodel-invocable: false\n---\nbody");
         assert!(d.is_empty());
         assert!(profile.description.is_none());
-        assert!(!profile.model_invocable);
-        assert!(profile.had_model_invocable_field);
-        assert!(
-            !profile
-                .passthrough_fields
-                .iter()
-                .any(|(k, _)| k == IMPORTED_WITHOUT_DESCRIPTION)
-        );
+    }
+
+    #[test]
+    fn authored_skill_requires_description() {
+        let fm = Frontmatter::parse("---\nname: a\nmodel-invocable: false\n---\nbody").unwrap();
+        let mut d = Vec::new();
+        push_authored_skill_schema_diags(&fm, &mut d);
+        assert!(d.iter().any(|d| matches!(
+            d,
+            SkillDiagnostic::InvalidFieldValue { field, value, .. }
+                if field == "description" && value == "missing"
+        )));
+    }
+
+    #[test]
+    fn authored_skill_rejects_reserved_import_marker() {
+        let fm = Frontmatter::parse(
+            "---\nname: a\ndescription: b\nmars.imported-without-description: true\n---\nbody",
+        )
+        .unwrap();
+        let mut d = Vec::new();
+        push_authored_skill_schema_diags(&fm, &mut d);
+        assert!(d.iter().any(|d| matches!(
+            d,
+            SkillDiagnostic::RemovedField { field } if field == RESERVED_IMPORT_MARKER
+        )));
     }
 
     #[test]

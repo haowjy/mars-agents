@@ -4,7 +4,6 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
 use crate::compiler::mcp_ref::parse_foreign_mcp_token;
-use crate::compiler::skills::IMPORTED_WITHOUT_DESCRIPTION;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
@@ -205,7 +204,7 @@ fn lift_cursor(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
     }
 }
 
-fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
+pub(crate) fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
     fm.get("alwaysApply").and_then(Value::as_bool) == Some(false)
         && fm.get("description").is_none()
         && fm.get("globs").is_none()
@@ -221,7 +220,6 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
             }
             Some(false) if cursor_manual_rule_shape(fm) => {
                 fm.insert("model-invocable", Value::Bool(false));
-                fm.insert(IMPORTED_WITHOUT_DESCRIPTION, Value::Bool(true));
                 changed = true;
             }
             _ => {}
@@ -395,10 +393,6 @@ mod tests {
         );
         assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(false)));
         assert!(lifted.get("description").is_none());
-        assert_eq!(
-            lifted.get(IMPORTED_WITHOUT_DESCRIPTION),
-            Some(&Value::Bool(true))
-        );
         assert!(lifted.get("alwaysApply").is_none());
 
         let mut diags = Vec::new();
@@ -436,10 +430,6 @@ mod tests {
         let cursor_out = String::from_utf8(cursor.bytes).unwrap();
         assert!(!cursor_out.contains("description:"));
         assert!(cursor_out.contains("alwaysApply: false"));
-        assert!(
-            !cursor_out.contains(IMPORTED_WITHOUT_DESCRIPTION),
-            "internal sentinel must not leak to Cursor: {cursor_out}"
-        );
 
         let round_trip_lifted = lift(
             Dialect::Cursor,

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-24
+
 ### Fixed
 - Source discovery finds convention `agents/` / `skills/` / `bootstrap/` directories nested below the package root, not only at the top level.
 - Duplicate `(kind, name)` discoveries — across convention directories, or a convention item vs a `.claude-plugin` manifest declaration — now raise `DiscoveryCollision` instead of silently keeping one by path order.

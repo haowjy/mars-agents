@@ -31,6 +31,10 @@ pub struct SyncArgs {
     /// Suppress the post-sync upgrade hint line.
     #[arg(long)]
     pub no_upgrade_hint: bool,
+
+    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Run `mars sync`.
@@ -47,7 +51,11 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             no_refresh_models: args.no_refresh_models,
             check_upgrades: !no_upgrade_hint,
         },
-        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
+        lossiness_mode: if args.verbose {
+            crate::diagnostic::LossinessMode::Verbose
+        } else {
+            crate::diagnostic::LossinessMode::Surface
+        },
     };
 
     let report = crate::sync::execute(ctx, &request)?;
@@ -102,5 +110,14 @@ mod tests {
             panic!("expected sync command");
         };
         assert!(args.no_upgrade_hint);
+    }
+
+    #[test]
+    fn parses_verbose() {
+        let cli = Cli::try_parse_from(["mars", "sync", "--verbose"]).unwrap();
+        let Command::Sync(args) = cli.command else {
+            panic!("expected sync command");
+        };
+        assert!(args.verbose);
     }
 }

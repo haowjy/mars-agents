@@ -12,6 +12,11 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// - **meridian-only** — consumed exclusively by Meridian; never lowered
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
+///
+/// Launch-time fields (approval, sandbox, mode where not emitted, autocompact, …) are
+/// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
+/// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
+/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::mcp_ref::{McpRef, McpUnsupportedReason, project_mcp_refs_for_emission};
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
@@ -265,7 +270,7 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "OpenCode",
     description: DescriptionPolicy::Preserve,
-    mode_note: Some("OpenCode uses the same mode concept"),
+    mode_note: None,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,
@@ -472,7 +477,7 @@ impl<'a> AgentLoweringCtx<'a> {
             AgentLossinessStep::Approval => self.record_approval(),
             AgentLossinessStep::Sandbox => self.record_sandbox(),
             AgentLossinessStep::ModeDropped => {
-                self.record_if_present("mode", self.profile.mode.is_some(), Lossiness::Dropped)
+                self.record_if_present("mode", self.profile.mode.is_some(), Lossiness::MeridianOnly)
             }
             AgentLossinessStep::ToolsDropped => {
                 self.record_if_present("tools", !self.eff.tools().is_empty(), Lossiness::Dropped)
@@ -520,11 +525,13 @@ impl<'a> AgentLoweringCtx<'a> {
             return;
         };
         let classification = if self.harness == HarnessKind::Cursor {
+            // Cursor maps approval to CLI flags — approximate, target-enforced gap.
             Lossiness::Approximate {
                 note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
             }
         } else {
-            Lossiness::Dropped
+            // Launch-time: Meridian applies approval at spawn via harness projection.
+            Lossiness::MeridianOnly
         };
         self.lossy.push(LossyField {
             field: "approval".into(),
@@ -538,11 +545,13 @@ impl<'a> AgentLoweringCtx<'a> {
             return;
         };
         let classification = if self.harness == HarnessKind::Cursor {
+            // Cursor sandbox is a coarse enabled/disabled mapping — target-enforced gap.
             Lossiness::Approximate {
                 note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
             }
         } else {
-            Lossiness::Dropped
+            // Launch-time: Meridian applies sandbox at spawn via harness projection.
+            Lossiness::MeridianOnly
         };
         self.lossy.push(LossyField {
             field: "sandbox".into(),
@@ -593,6 +602,7 @@ impl<'a> AgentLoweringCtx<'a> {
         LoweredOutput {
             bytes: render_markdown(self.yaml, body),
             lossy_fields: self.lossy,
+            siblings: Vec::new(),
         }
     }
 }
@@ -724,7 +734,7 @@ pub fn lower_to_codex(
         lossy.push(LossyField {
             field: "mode".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::MeridianOnly,
         });
     }
     if profile.autocompact.is_some() {
@@ -797,6 +807,7 @@ pub fn lower_to_codex(
     LoweredOutput {
         bytes: out.into_bytes(),
         lossy_fields: lossy,
+        siblings: Vec::new(),
     }
 }
 

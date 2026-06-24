@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -21,6 +22,10 @@ use super::output;
 pub struct CheckArgs {
     /// Directory to validate as a source package (default: current directory).
     pub path: Option<PathBuf>,
+
+    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,7 +56,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     let report = check_dir(&base)?;
-    let lossiness = lossiness_diagnostics_for_check(&base)?;
+    let lossiness = lossiness_diagnostics_for_check(&base, args.verbose)?;
     let clean = report.errors.is_empty();
 
     if json {
@@ -89,13 +94,16 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
 fn lossiness_diagnostics_for_check(
     base: &std::path::Path,
+    verbose: bool,
 ) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
     use crate::diagnostic::LossinessMode;
 
-    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
-        base,
-        LossinessMode::Surface,
-    )
+    let mode = if verbose {
+        LossinessMode::Verbose
+    } else {
+        LossinessMode::Surface
+    };
+    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(base, mode)
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
@@ -105,6 +113,7 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut warnings: Vec<String> = Vec::new();
 
     let discovered = discover::discover_resolved_source(base, None)?;
+    let dialect = Dialect::resolve_local(None, base);
 
     // ── Validate discovered agents/skills ────────────────────────────
     let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
@@ -225,6 +234,13 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
                             &mut skill_diags,
                         ) {
                             Ok((profile, fm)) => {
+                                if dialect == Dialect::MarsNative {
+                                    crate::compiler::skills::push_authored_skill_schema_diags(
+                                        &fm,
+                                        &mut skill_diags,
+                                    );
+                                }
+
                                 let name = profile
                                     .name
                                     .clone()
@@ -265,6 +281,9 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
 
                                 if fm.get("description").and_then(|v| v.as_str()).is_none()
                                     && !schema_missing_description
+                                    && dialect != Dialect::MarsNative
+                                    && !(dialect == Dialect::Cursor
+                                        && crate::staging::cursor_manual_rule_shape(&fm))
                                 {
                                     warnings.push(format!("skill `{name}` has no `description`"));
                                 }
@@ -569,6 +588,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
@@ -598,6 +618,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);
@@ -614,6 +635,7 @@ mod tests {
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
+            verbose: false,
         };
         let code = super::run(&args, true).unwrap();
         assert_eq!(code, 0);

@@ -15,6 +15,10 @@ pub struct UpgradeArgs {
     /// Bump direct dependency version constraints to resolved latest tags.
     #[arg(long)]
     pub bump: bool,
+
+    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Run `mars upgrade`.
@@ -30,7 +34,11 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         },
         mutation: None,
         options: SyncOptions::default(),
-        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
+        lossiness_mode: if args.verbose {
+            crate::diagnostic::LossinessMode::Verbose
+        } else {
+            crate::diagnostic::LossinessMode::Surface
+        },
     };
 
     let report = crate::sync::execute(ctx, &request)?;

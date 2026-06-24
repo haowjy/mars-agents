@@ -4,7 +4,7 @@ use serde_yaml::{Mapping, Value};
 
 use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
-use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
@@ -13,16 +13,17 @@ use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness
 // Policy axes
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ModelInvocablePolicy {
     /// Emit `disable-model-invocation: true` when `model_invocable` is false.
     EmitDisableWhenFalse,
     /// Warn-drop when `model_invocable` is false (implicit or explicit).
     DropWhenFalse,
-    /// Warn-drop only when the source explicitly set `model-invocable` (any value).
-    DropWhenExplicit,
-    /// Cursor: emit `alwaysApply: true` when explicit+true; drop when explicit+false.
-    CursorAlwaysApply,
+    /// Emit sibling `openai.yaml` when source explicitly set `model-invocable: false`.
+    /// Explicit `true` and absent are no-ops: Codex defaults `allow_implicit_invocation` to true.
+    EmitCodexOpenaiYamlWhenExplicitFalse,
+    /// Cursor: handled by [`LoweringStep::CursorRuleMode`], not this step.
+    CursorRuleMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,8 +59,10 @@ enum McpToolsPolicy {
 
 #[derive(Debug, Clone, Copy)]
 enum WhenToUsePolicy {
+    /// Emit native `when_to_use` (Claude, Pi).
     Emit,
-    Drop,
+    /// Fold into native `description` (Cursor Apply Intelligently, Codex, OpenCode).
+    FoldIntoDescription,
 }
 
 /// Ordered lowering phases — sequence differs per harness (lossiness order matters).
@@ -76,8 +79,8 @@ enum LoweringStep {
     WhenToUse,
     /// Pi records user-invocable lossiness after passthrough is inserted.
     UserInvocableLossinessLate,
-    /// Cursor-only `alwaysApply` hook.
-    CursorAlwaysApply,
+    /// Cursor-only rule mode: `alwaysApply` + reconcile `description` for Manual vs Intelligent.
+    CursorRuleMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,12 +131,12 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::UserInvocable,
         LoweringStep::WhenToUse,
     ],
-    model_invocable: ModelInvocablePolicy::DropWhenExplicit,
+    model_invocable: ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
     mcp: McpToolsPolicy::Approximate("Codex uses -c mcp.servers.<name>.command"),
-    when_to_use: WhenToUsePolicy::Drop,
+    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -156,7 +159,7 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     mcp: McpToolsPolicy::Approximate(
         "MCP grants on subprocess errors; streaming uses session payload",
     ),
-    when_to_use: WhenToUsePolicy::Drop,
+    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -188,21 +191,21 @@ const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::Identity,
         LoweringStep::LicenseMetadata,
         LoweringStep::Passthrough,
-        LoweringStep::CursorAlwaysApply,
+        LoweringStep::CursorRuleMode,
         LoweringStep::AllowedTools,
         LoweringStep::DisallowedTools,
         LoweringStep::McpTools,
         LoweringStep::UserInvocable,
         LoweringStep::WhenToUse,
     ],
-    model_invocable: ModelInvocablePolicy::CursorAlwaysApply,
+    model_invocable: ModelInvocablePolicy::CursorRuleMode,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
     mcp: McpToolsPolicy::Approximate(
         "MCP grants on subprocess errors; streaming uses session payload",
     ),
-    when_to_use: WhenToUsePolicy::Drop,
+    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 fn policy_for(harness: HarnessKind) -> &'static SkillLoweringPolicy {
@@ -230,6 +233,21 @@ fn ys(s: &str) -> Value {
 // lowering, it does not need to remember whether the source field was explicit.
 fn user_invocation_disabled(profile: &SkillProfile) -> bool {
     !profile.user_invocable
+}
+
+/// Cursor Manual: explicit `model-invocable: false` — @-mention only, no auto-selection hook.
+fn cursor_manual_mode(profile: &SkillProfile) -> bool {
+    profile.had_model_invocable_field && !profile.model_invocable
+}
+
+/// Selection guidance for harnesses that fold `when_to_use` into native `description`.
+fn selection_description(profile: &SkillProfile) -> Option<String> {
+    match (&profile.description, &profile.when_to_use) {
+        (Some(desc), Some(wtu)) => Some(format!("{desc}\n\n{wtu}")),
+        (Some(desc), None) => Some(desc.clone()),
+        (None, Some(wtu)) => Some(wtu.clone()),
+        (None, None) => None,
+    }
 }
 
 fn dropped(field: &str, target: &str) -> LossyField {
@@ -264,6 +282,7 @@ struct LoweringCtx<'a> {
     profile: &'a SkillProfile,
     yaml: Mapping,
     lossy_fields: Vec<LossyField>,
+    siblings: Vec<LoweredSibling>,
 }
 
 impl<'a> LoweringCtx<'a> {
@@ -278,6 +297,7 @@ impl<'a> LoweringCtx<'a> {
             profile,
             yaml: Mapping::new(),
             lossy_fields: Vec::new(),
+            siblings: Vec::new(),
         }
     }
 
@@ -293,7 +313,7 @@ impl<'a> LoweringCtx<'a> {
             LoweringStep::McpTools => self.apply_mcp(),
             LoweringStep::WhenToUse => self.apply_when_to_use(),
             LoweringStep::UserInvocableLossinessLate => self.apply_user_invocable_lossiness(),
-            LoweringStep::CursorAlwaysApply => self.apply_cursor_always_apply(),
+            LoweringStep::CursorRuleMode => self.apply_cursor_rule_mode(),
         }
     }
 
@@ -339,15 +359,14 @@ impl<'a> LoweringCtx<'a> {
                         .push(dropped("model-invocable", policy.target_name));
                 }
             }
-            ModelInvocablePolicy::DropWhenExplicit => {
-                if profile.had_model_invocable_field {
-                    // TODO(#116): emit Codex sibling `policy` file for faithful
-                    // invocation/tool gating — see https://github.com/haowjy/mars-agents/issues/116
-                    self.lossy_fields
-                        .push(dropped("model-invocable", policy.target_name));
+            ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse => {
+                // Codex skills are model-invocable by default; only explicit false needs
+                // the openai.yaml sibling to set allow_implicit_invocation: false.
+                if profile.had_model_invocable_field && !profile.model_invocable {
+                    self.siblings.push(codex_openai_yaml_sibling());
                 }
             }
-            ModelInvocablePolicy::CursorAlwaysApply => {}
+            ModelInvocablePolicy::CursorRuleMode => {}
         }
     }
 
@@ -523,24 +542,31 @@ impl<'a> LoweringCtx<'a> {
                     self.yaml.insert(yk("when_to_use"), ys(when_to_use));
                 }
             }
-            WhenToUsePolicy::Drop => {
-                if profile.when_to_use.is_some() {
-                    self.lossy_fields
-                        .push(dropped("when_to_use", self.policy.target_name));
+            WhenToUsePolicy::FoldIntoDescription => {
+                // Manual Cursor skills must not carry a description selection hook.
+                if self.policy.model_invocable == ModelInvocablePolicy::CursorRuleMode
+                    && cursor_manual_mode(profile)
+                {
+                    return;
+                }
+                if let Some(description) = selection_description(profile) {
+                    self.yaml.insert(yk("description"), ys(&description));
                 }
             }
         }
     }
 
-    fn apply_cursor_always_apply(&mut self) {
-        let profile = self.profile;
-        if profile.had_model_invocable_field {
-            if profile.model_invocable {
-                self.yaml.insert(yk("alwaysApply"), Value::Bool(true));
-            } else {
-                self.lossy_fields
-                    .push(dropped("model-invocable", self.policy.target_name));
-            }
+    fn apply_cursor_rule_mode(&mut self) {
+        if !self.profile.has_frontmatter {
+            return;
+        }
+        // Cursor rule modes (2026): alwaysApply + description/globs control activation.
+        // Never emit alwaysApply: true — that is Always-on, not model-invocable.
+        // Intelligent (default or explicit true): alwaysApply:false + description hook.
+        // Manual (explicit false): alwaysApply:false, strip description so Cursor won't auto-select.
+        self.yaml.insert(yk("alwaysApply"), Value::Bool(false));
+        if cursor_manual_mode(self.profile) {
+            self.yaml.remove(yk("description"));
         }
     }
 
@@ -548,7 +574,30 @@ impl<'a> LoweringCtx<'a> {
         LoweredOutput {
             bytes: render(self.yaml, body),
             lossy_fields: self.lossy_fields,
+            siblings: self.siblings,
         }
+    }
+}
+
+fn codex_openai_yaml_sibling() -> LoweredSibling {
+    #[derive(serde::Serialize)]
+    struct Policy {
+        allow_implicit_invocation: bool,
+    }
+    #[derive(serde::Serialize)]
+    struct OpenaiYaml {
+        policy: Policy,
+    }
+    let doc = OpenaiYaml {
+        policy: Policy {
+            allow_implicit_invocation: false,
+        },
+    };
+    LoweredSibling {
+        rel_path: "openai.yaml".into(),
+        bytes: serde_yaml::to_string(&doc)
+            .expect("Codex openai.yaml policy should serialize")
+            .into_bytes(),
     }
 }
 

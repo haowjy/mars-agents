@@ -18,7 +18,8 @@ harness-overrides:
 # Cursor body
 "#;
 
-const LOSSINESS_SNIPPET: &str = "not lowered (meridian-only) for .cursor (native-config)";
+const LOSSINESS_SUMMARY_SNIPPET: &str = "launch-time field mapping handled by meridian at spawn";
+const LOSSINESS_VERBOSE_SNIPPET: &str = "not lowered (meridian-only) for .cursor (native-config)";
 
 fn setup_lossy_synced_project(dir: &TempDir) -> std::path::PathBuf {
     let source = create_source(dir, "base", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
@@ -42,7 +43,7 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
 
     project.to_path_buf()
 }
@@ -56,7 +57,7 @@ fn sync_surfaces_lossiness_warnings() {
         .args(["sync", "--root", project.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
 }
 
 #[test]
@@ -81,8 +82,12 @@ fn validate_suppresses_lossiness_warnings() {
     );
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        !stderr.contains(LOSSINESS_SNIPPET),
+        !stderr.contains(LOSSINESS_VERBOSE_SNIPPET),
         "validate stderr must not contain lossiness warning: {stderr}"
+    );
+    assert!(
+        !stderr.contains(LOSSINESS_SUMMARY_SNIPPET),
+        "validate stderr must not contain lossiness summary: {stderr}"
     );
 }
 
@@ -137,7 +142,7 @@ agent_emission = "always"
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 }
 
 #[test]
@@ -154,7 +159,7 @@ fn check_surfaces_lossiness_for_configured_targets() {
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
 }
 
 #[test]
@@ -165,7 +170,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     skill.create_dir_all().unwrap();
     skill
         .child("SKILL.md")
-        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n")
+        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n")
         .unwrap();
     source
         .child("mars.toml")
@@ -190,7 +195,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let sync_stderr_text = String::from_utf8_lossy(&sync_stderr.stderr);
     let sync_lossiness: Vec<_> = sync_stderr_text
         .lines()
-        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .filter(|line| line.contains("field dropped") && line.contains(".codex"))
         .collect();
     assert!(
         !sync_lossiness.is_empty(),
@@ -205,7 +210,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let check_stderr_text = String::from_utf8_lossy(&check_stderr.stderr);
     let check_lossiness: Vec<_> = check_stderr_text
         .lines()
-        .filter(|line| line.contains("skill-field-dropped") || line.contains("model-invocable"))
+        .filter(|line| line.contains("field dropped") && line.contains(".codex"))
         .collect();
     assert_eq!(
         sync_lossiness, check_lossiness,
@@ -285,7 +290,36 @@ fn check_skips_agent_lossiness_when_emission_suppressed() {
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+}
+
+#[test]
+fn sync_verbose_surfaces_meridian_only_detail() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_lossy_synced_project(&dir);
+
+    mars()
+        .args(["sync", "--verbose", "--root", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));
+}
+
+#[test]
+fn check_verbose_surfaces_meridian_only_detail() {
+    let dir = TempDir::new().unwrap();
+    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    std::fs::write(
+        pkg.join("mars.toml"),
+        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+    )
+    .unwrap();
+
+    mars()
+        .args(["check", "--verbose", pkg.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));
 }
 
 fn create_hook_source(

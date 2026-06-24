@@ -337,10 +337,44 @@ mod tests {
             collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags.iter().any(|d| {
+                d.code == "launch-time-field-summary"
+                    && d.message.contains("launch-time field mapping")
+            }),
+            "expected meridian-only summary diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "agent-field-meridian-only"),
+            "surface must not emit per-item meridian-only warnings: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn collect_source_lossiness_verbose_shows_meridian_only_detail() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+        std::fs::write(
+            dir.path().join("agents/worker.md"),
+            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+        )
+        .unwrap();
+
+        let diags =
+            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Verbose).unwrap();
+        assert!(
+            diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
                     && d.message.contains("native-config")
             }),
-            "expected lossiness diagnostic: {diags:?}"
+            "expected verbose meridian-only diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "launch-time-field-summary"),
+            "verbose must not emit summary: {diags:?}"
         );
     }
 
@@ -376,7 +410,7 @@ mod tests {
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nmodel-invocable: false\n---\n# Body\n",
+            "---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n",
         )
         .unwrap();
         std::fs::write(
@@ -390,10 +424,14 @@ mod tests {
         assert!(
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("model-invocable")
+                    && d.message.contains("tools")
                     && d.message.contains(".codex")
             }),
-            "expected codex lossiness for staged skill: {diags:?}"
+            "expected codex tools lossiness for staged skill: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains("model-invocable")),
+            "model-invocable is exact on Codex via openai.yaml sibling: {diags:?}"
         );
     }
 
@@ -461,7 +499,7 @@ mod tests {
         std::fs::create_dir_all(&flat_pkg).unwrap();
         std::fs::write(
             flat_pkg.join("SKILL.md"),
-            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\n---\n# Flat\n",
+            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Flat\n",
         )
         .unwrap();
         std::fs::write(
@@ -476,9 +514,9 @@ mod tests {
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
                     && d.message.contains("flat-skill")
-                    && d.message.contains("model-invocable")
+                    && d.message.contains("tools")
             }),
-            "expected flat-skill lossiness diagnostic, not temp dir name: {diags:?}"
+            "expected flat-skill tools lossiness diagnostic, not temp dir name: {diags:?}"
         );
         assert!(
             !diags.iter().any(|d| d.message.contains(".tmp")),

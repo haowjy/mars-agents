@@ -2,6 +2,10 @@
 //!
 //! Lowerers record per-field [`LossyField`] entries; callers aggregate by
 //! `(item, target)` before emitting so re-sync does not spam one line per field.
+//!
+//! **Consequence tiers:** target-enforced losses (`Dropped`, `Approximate`) warn loudly
+//! in default `Surface` mode. Launch-time fields enforced by Meridian at spawn
+//! (`MeridianOnly`) roll into one summary line unless `--verbose` is set.
 
 use std::collections::BTreeMap;
 
@@ -23,12 +27,22 @@ pub enum Lossiness {
     MeridianOnly,
 }
 
+/// A secondary artifact emitted alongside the primary lowered file (e.g. Codex `openai.yaml`).
+#[derive(Debug, Clone)]
+pub struct LoweredSibling {
+    /// Path relative to the skill directory root (e.g. `openai.yaml`).
+    pub rel_path: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Output from a single lowering pass.
 pub struct LoweredOutput {
     /// Serialized bytes for the native artifact.
     pub bytes: Vec<u8>,
     /// Lossiness findings for fields that were dropped or approximated.
     pub lossy_fields: Vec<LossyField>,
+    /// Extra files written next to the primary artifact (skills only today).
+    pub siblings: Vec<LoweredSibling>,
 }
 
 fn target_label(target: &str) -> String {
@@ -77,7 +91,7 @@ fn emit_item_lossiness_warnings(
     item_kind: &str,
     item_name: &str,
     dropped_code: &'static str,
-    meridian_code: &'static str,
+    _meridian_code: &'static str,
     approximate_code: &'static str,
     lossy_fields: &[LossyField],
     diag: &mut DiagnosticCollector,
@@ -120,14 +134,11 @@ fn emit_item_lossiness_warnings(
         dropped_by_target,
         diag,
     );
-    emit_grouped_warnings(
-        item_kind,
-        item_name,
-        meridian_code,
-        "not lowered (meridian-only)",
-        meridian_by_target,
-        diag,
-    );
+    for (target, fields) in meridian_by_target {
+        for field in fields {
+            diag.record_meridian_only_field(item_kind, item_name, &target, &field);
+        }
+    }
 }
 
 fn emit_grouped_warnings(
@@ -240,5 +251,73 @@ mod tests {
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "agent-field-approximate");
+    }
+
+    #[test]
+    fn meridian_only_surface_emits_summary_not_per_item() {
+        let lossy = vec![LossyField {
+            field: "approval".into(),
+            target: "Claude".into(),
+            classification: Lossiness::MeridianOnly,
+        }];
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
+        let warnings = diag.drain();
+        assert!(
+            !warnings
+                .iter()
+                .any(|d| d.code == "agent-field-meridian-only"),
+            "surface must not emit per-item meridian-only warnings"
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "launch-time-field-summary");
+        assert!(
+            warnings[0]
+                .message
+                .contains("launch-time field mapping handled by meridian at spawn")
+        );
+    }
+
+    #[test]
+    fn meridian_only_verbose_emits_per_item_detail() {
+        let lossy = vec![
+            LossyField {
+                field: "approval".into(),
+                target: "Claude".into(),
+                classification: Lossiness::MeridianOnly,
+            },
+            LossyField {
+                field: "sandbox".into(),
+                target: "Claude".into(),
+                classification: Lossiness::MeridianOnly,
+            },
+        ];
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
+        emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
+        let warnings = diag.drain();
+        assert!(
+            !warnings
+                .iter()
+                .any(|d| d.code == "launch-time-field-summary"),
+            "verbose must not emit summary line"
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "agent-field-meridian-only");
+        assert!(warnings[0].message.contains("approval"));
+        assert!(warnings[0].message.contains("sandbox"));
+    }
+
+    #[test]
+    fn dropped_warnings_stay_loud_in_surface_mode() {
+        let lossy = vec![LossyField {
+            field: "user-invocable".into(),
+            target: "Claude".into(),
+            classification: Lossiness::Dropped,
+        }];
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        emit_skill_lossiness_warnings("planning", &lossy, &mut diag);
+        let warnings = diag.drain();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "skill-field-dropped");
     }
 }

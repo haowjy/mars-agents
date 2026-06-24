@@ -204,13 +204,43 @@ fn lift_cursor(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
     }
 }
 
+fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
+    fm.get("alwaysApply").and_then(Value::as_bool) == Some(false)
+        && fm.get("description").is_none()
+        && fm.get("globs").is_none()
+}
+
+/// Canonical skills require `description` when frontmatter exists; Cursor Manual rules
+/// cannot store one. Use the skill name as a minimal placeholder for staging only —
+/// Cursor lowering strips it again for explicit `model-invocable: false`.
+fn derive_canonical_description_for_cursor_manual(fm: &Frontmatter) -> String {
+    fm.get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Cursor manual rule".to_string())
+}
+
 fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    if find_invocability_field(fm, "model-invocable").is_none()
-        && fm.get("alwaysApply").and_then(Value::as_bool) == Some(true)
-    {
-        fm.insert("model-invocable", Value::Bool(true));
-        changed = true;
+    if find_invocability_field(fm, "model-invocable").is_none() {
+        match fm.get("alwaysApply").and_then(Value::as_bool) {
+            Some(true) => {
+                fm.insert("model-invocable", Value::Bool(true));
+                changed = true;
+            }
+            Some(false) if cursor_manual_rule_shape(fm) => {
+                fm.insert("model-invocable", Value::Bool(false));
+                changed = true;
+                if fm.get("description").is_none() {
+                    fm.insert(
+                        "description",
+                        Value::String(derive_canonical_description_for_cursor_manual(fm)),
+                    );
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
     }
     if fm.remove("alwaysApply").is_some() {
         changed = true;
@@ -369,6 +399,51 @@ mod tests {
         assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(true)));
         assert!(lifted.get("alwaysApply").is_none());
         assert!(lifted.get("globs").is_none());
+    }
+
+    #[test]
+    fn cursor_manual_rule_restores_model_invocable_false_and_description() {
+        let lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &fm("name: demo\nalwaysApply: false\n"),
+        );
+        assert_eq!(lifted.get("model-invocable"), Some(&Value::Bool(false)));
+        assert_eq!(
+            lifted.get("description"),
+            Some(&Value::String("demo".into()))
+        );
+        assert!(lifted.get("alwaysApply").is_none());
+
+        let mut diags = Vec::new();
+        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(!profile.model_invocable);
+        assert!(profile.had_model_invocable_field);
+
+        let codex = lower_skill_for_harness(SkillHarness::Codex, &profile, "# Demo\n");
+        assert_eq!(codex.siblings.len(), 1);
+        assert!(
+            !codex
+                .lossy_fields
+                .iter()
+                .any(|f| f.field == "model-invocable" && f.classification == Lossiness::Dropped)
+        );
+    }
+
+    #[test]
+    fn cursor_apply_intelligently_does_not_set_model_invocable_false() {
+        let lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &fm("name: demo\ndescription: Pick me\nalwaysApply: false\n"),
+        );
+        assert!(lifted.get("model-invocable").is_none());
+        assert_eq!(
+            lifted.get("description"),
+            Some(&Value::String("Pick me".into()))
+        );
+        assert!(lifted.get("alwaysApply").is_none());
     }
 
     #[test]

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1-rc.1] - 2026-06-24
+
 ### Fixed
 - Cursor skill `model-invocable` now maps to native rule modes — `true`/default → Apply Intelligently (`alwaysApply: false` + `description`), explicit `false` → Manual (`alwaysApply: false`, no `description`) — instead of the old `alwaysApply: true` (which forced always-on context) and silent drop on `false`.
 - Codex skills with explicit `model-invocable: true` no longer emit a spurious dropped-field warning — Codex is model-invocable by default, so explicit-true loses nothing.

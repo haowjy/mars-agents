@@ -20,6 +20,7 @@ enum ModelInvocablePolicy {
     /// Warn-drop when `model_invocable` is false (implicit or explicit).
     DropWhenFalse,
     /// Emit sibling `openai.yaml` when source explicitly set `model-invocable: false`.
+    /// Explicit `true` and absent are no-ops: Codex defaults `allow_implicit_invocation` to true.
     EmitCodexOpenaiYamlWhenExplicitFalse,
     /// Cursor: handled by [`LoweringStep::CursorRuleMode`], not this step.
     CursorRuleMode,
@@ -359,11 +360,10 @@ impl<'a> LoweringCtx<'a> {
                 }
             }
             ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse => {
+                // Codex skills are model-invocable by default; only explicit false needs
+                // the openai.yaml sibling to set allow_implicit_invocation: false.
                 if profile.had_model_invocable_field && !profile.model_invocable {
                     self.siblings.push(codex_openai_yaml_sibling());
-                } else if profile.had_model_invocable_field {
-                    self.lossy_fields
-                        .push(dropped("model-invocable", policy.target_name));
                 }
             }
             ModelInvocablePolicy::CursorRuleMode => {}

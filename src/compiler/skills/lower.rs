@@ -321,12 +321,13 @@ mod tests {
     }
 
     #[test]
-    fn codex_explicit_true_warn_drops_model_invocable() {
+    fn codex_explicit_true_is_no_op() {
         let lowered = lower_skill_to_codex(&explicit_true_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("disable-model-invocation"));
-        assert!(has_dropped(
+        assert!(lowered.siblings.is_empty());
+        assert!(!has_dropped(
             &lowered.lossy_fields,
             "model-invocable",
             "Codex"

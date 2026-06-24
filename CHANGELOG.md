@@ -4,6 +4,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Cursor skill `model-invocable` now maps to native rule modes — `true`/default → Apply Intelligently (`alwaysApply: false` + `description`), explicit `false` → Manual (`alwaysApply: false`, no `description`) — instead of the old `alwaysApply: true` (which forced always-on context) and silent drop on `false`.
+- Codex skills with explicit `model-invocable: true` no longer emit a spurious dropped-field warning — Codex is model-invocable by default, so explicit-true loses nothing.
+- Lossiness warnings are tiered by behavioral consequence: launch-time/meridian-enforced agent fields (`approval`, `sandbox`, `mode`, `model-policies`, `autocompact`, `fanout`, …) are no longer warned per-agent — they collapse into one summary line, since Meridian applies them at spawn. Genuine target-enforced losses stay loud. `--verbose` restores full per-item detail.
+- Inbound lift no longer infers `user-invocable: false` from an OpenCode agent's `mode` (the axes are independent now that `mode` lowers exactly).
+- Inbound lift round-trips Cursor Manual skills: an `alwaysApply: false` rule with no `description` restores canonical `model-invocable: false` (and re-emits the Codex `openai.yaml` sibling) instead of erroring.
+
+### Added
+- Codex `openai.yaml` sibling (`policy.allow_implicit_invocation: false`) emitted for skills with explicit `model-invocable: false` — closes the Codex skill-invocation gating gap (#116). `LoweredOutput` now carries `siblings` written atomically alongside the primary artifact.
+- OpenCode agents emit native `mode: primary|subagent` instead of approximate lossiness.
+- `when_to_use` folds into native `description` for Cursor / OpenCode / Codex (which use `description` as the selection hook) instead of being dropped.
+- `LossinessMode::Verbose` plus a `--verbose` flag on `sync` / `check` to surface meridian-only/launch-time field detail.
+
+### Changed
+- Skill `description` is required only at authored-source validation (MarsNative staging + `mars check`); canonical re-parse tolerates an absent description so lifted Cursor Manual imports stay valid without a fabricated description.
+- **Breaking (Cursor output):** Cursor skill `.mdc` frontmatter changes (`alwaysApply`/`description` from the rule-mode + `when_to_use` mapping). Existing Cursor projections are reprojected once on next sync.
+
 ## [0.10.0] - 2026-06-24
 
 ### Fixed

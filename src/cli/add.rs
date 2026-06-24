@@ -84,6 +84,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 path: parsed.entry.path,
                 subpath: parsed.entry.subpath,
                 version: parsed.entry.version,
+                dialect: parsed.entry.dialect,
                 filter: filter_config.clone(),
             };
             Ok((parsed.name, entry))
@@ -102,6 +103,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 entry,
             }),
             options: SyncOptions::default(),
+            lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
         };
 
         let report = crate::sync::execute(ctx, &request)?;
@@ -119,6 +121,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
         options: SyncOptions::default(),
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     let report = crate::sync::execute(ctx, &request)?;
@@ -207,6 +210,7 @@ fn parse_dependency_specifier(
             path: parsed.path,
             subpath,
             version: parsed.version,
+            dialect: None,
             filter: FilterConfig::default(),
         },
     })

@@ -7,6 +7,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{
@@ -20,6 +21,7 @@ pub mod targets;
 
 pub use layering::{
     merged_settings, overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
+    overlay_skills_replace_by_key,
 };
 
 /// Top-level mars.toml configuration.
@@ -44,6 +46,8 @@ pub struct Config {
     pub models: IndexMap<String, crate::models::ModelAlias>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
 /// Package metadata.
@@ -118,6 +122,9 @@ pub struct InstallDep {
     pub subpath: Option<SourceSubpath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Inbound lift dialect for this dependency (see `crate::dialect::Dialect`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialect: Option<Dialect>,
     #[serde(flatten)]
     pub filter: FilterConfig,
 }
@@ -187,9 +194,26 @@ impl ModelVisibility {
     }
 }
 
+/// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentOverlayTools {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disallowed: Vec<String>,
+}
+
+impl AgentOverlayTools {
+    pub fn is_empty(&self) -> bool {
+        self.allowed.is_empty() && self.disallowed.is_empty()
+    }
+}
+
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -206,10 +230,54 @@ pub struct AgentOverlay {
     pub autocompact_pct: Option<i64>,
     #[serde(
         default,
+        alias = "model-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_invocable: Option<bool>,
+    #[serde(
+        default,
+        alias = "user-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_invocable: Option<bool>,
+    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
+    pub tools: AgentOverlayTools,
+    #[serde(
+        default,
         rename = "model-policies",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub model_policies: Vec<ModelPolicyRule>,
+}
+
+/// Per-skill overlay policy in mars.toml `[skills.<name>]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SkillOverlay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(
+        default,
+        alias = "model-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_invocable: Option<bool>,
+    #[serde(
+        default,
+        alias = "user-invocable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_invocable: Option<bool>,
+    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
+    pub tools: AgentOverlayTools,
+}
+
+impl SkillOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.description.is_none()
+            && self.model_invocable.is_none()
+            && self.user_invocable.is_none()
+            && self.tools.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -424,6 +492,8 @@ pub struct LocalConfig {
     pub models: IndexMap<String, crate::models::ModelAlias>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub skills: IndexMap<String, SkillOverlay>,
     #[serde(default, skip_serializing_if = "LocalSettings::is_empty")]
     pub settings: LocalSettings,
 }
@@ -685,6 +755,8 @@ pub enum FilterMode {
 pub struct EffectiveConfig {
     pub dependencies: IndexMap<SourceName, EffectiveDependency>,
     pub settings: Settings,
+    /// Skill overlays from mars.toml / mars.local.toml (carried for staging).
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
 /// Layered project-level config used by routing and policy consumers.
@@ -713,6 +785,7 @@ pub struct EffectiveDependency {
     pub subpath: Option<SourceSubpath>,
     pub filter: FilterMode,
     pub rename: RenameMap,
+    pub dialect: Option<Dialect>,
     pub is_overridden: bool,
     pub original_git: Option<GitSpec>,
 }
@@ -976,6 +1049,7 @@ pub fn merge_with_root(
             (base_spec, false, None)
         };
         let subpath = entry.subpath.clone();
+        let dialect = entry.dialect;
         let id = source_id_for_spec(root, &spec, subpath.clone());
 
         dependencies.insert(
@@ -987,11 +1061,14 @@ pub fn merge_with_root(
                 subpath,
                 filter,
                 rename,
+                dialect,
                 is_overridden,
                 original_git,
             },
         );
     }
+
+    let skills = overlay_skills_replace_by_key(&config.skills, &local.skills);
 
     // Warn if override references a dependency not in config
     for override_name in local.overrides.keys() {
@@ -1012,6 +1089,7 @@ pub fn merge_with_root(
         EffectiveConfig {
             dependencies,
             settings: merged_settings,
+            skills,
         },
         diagnostics,
     ))
@@ -1719,6 +1797,7 @@ path = "/home/dev/local-base"
         let config: Config = toml::from_str(
             r#"
 [agents.tech-lead]
+description = "Tech lead overlay"
 model = "gpt55"
 harness = "codex"
 effort = "medium"
@@ -1726,6 +1805,9 @@ approval = "default"
 sandbox = "default"
 autocompact = 1200
 autocompact_pct = 80
+user_invocable = false
+model-invocable = true
+tools.disallowed = ["Bash(rm *)", "Write"]
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "gpt55" }
@@ -1742,10 +1824,17 @@ override = { effort = "high" }
         .unwrap();
 
         let overlay = config.agents.get("tech-lead").expect("tech-lead overlay");
+        assert_eq!(overlay.description.as_deref(), Some("Tech lead overlay"));
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
         assert_eq!(overlay.autocompact, Some(1200));
         assert_eq!(overlay.autocompact_pct, Some(80));
+        assert_eq!(overlay.user_invocable, Some(false));
+        assert_eq!(overlay.model_invocable, Some(true));
+        assert_eq!(
+            overlay.tools.disallowed,
+            vec!["Bash(rm *)".to_string(), "Write".to_string()]
+        );
         assert_eq!(overlay.model_policies.len(), 1);
         assert_eq!(
             overlay.model_policies[0].match_type,
@@ -1760,6 +1849,98 @@ override = { effort = "high" }
             ModelPolicyMatchType::ModelGlob
         );
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+    }
+
+    #[test]
+    fn parse_skill_overlay_tools_and_invocability() {
+        let config: Config = toml::from_str(
+            r#"
+[skills.planning]
+description = "Planning overlay"
+user_invocable = false
+model-invocable = true
+tools.disallowed = ["Agent", "Write"]
+tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
+"#,
+        )
+        .unwrap();
+
+        let overlay = config.skills.get("planning").expect("planning overlay");
+        assert_eq!(overlay.description.as_deref(), Some("Planning overlay"));
+        assert_eq!(overlay.user_invocable, Some(false));
+        assert_eq!(overlay.model_invocable, Some(true));
+        assert_eq!(
+            overlay.tools.disallowed,
+            vec!["Agent".to_string(), "Write".to_string()]
+        );
+        assert_eq!(
+            overlay.tools.allowed,
+            vec!["Bash(git *)".to_string(), "mcp(plugin:demo)".to_string()]
+        );
+    }
+
+    #[test]
+    fn merged_skill_overlays_local_replaces_fields() {
+        let mut base_skills = IndexMap::new();
+        base_skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Base description".to_string()),
+                user_invocable: Some(true),
+                ..SkillOverlay::default()
+            },
+        );
+
+        let mut local_skills = IndexMap::new();
+        local_skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Local description".to_string()),
+                user_invocable: Some(false),
+                ..SkillOverlay::default()
+            },
+        );
+        let local = LocalConfig {
+            skills: local_skills,
+            ..LocalConfig::default()
+        };
+
+        let merged = overlay_skills_replace_by_key(&base_skills, &local.skills);
+        let replaced = merged.get("planning").expect("planning overlay");
+        assert_eq!(replaced.description.as_deref(), Some("Local description"));
+        assert_eq!(replaced.user_invocable, Some(false));
+    }
+
+    #[test]
+    fn merged_agent_overlays_local_replaces_widened_fields() {
+        let mut base_agents = IndexMap::new();
+        base_agents.insert(
+            "worker".to_string(),
+            AgentOverlay {
+                description: Some("Base description".to_string()),
+                user_invocable: Some(true),
+                ..AgentOverlay::default()
+            },
+        );
+
+        let mut local_agents = IndexMap::new();
+        local_agents.insert(
+            "worker".to_string(),
+            AgentOverlay {
+                description: Some("Local description".to_string()),
+                user_invocable: Some(false),
+                ..AgentOverlay::default()
+            },
+        );
+        let local = LocalConfig {
+            agents: local_agents,
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_agent_overlays(&base_agents, &local);
+        let replaced = merged.get("worker").expect("worker overlay");
+        assert_eq!(replaced.description.as_deref(), Some("Local description"));
+        assert_eq!(replaced.user_invocable, Some(false));
     }
 
     #[test]
@@ -2082,6 +2263,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2117,6 +2299,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v1.0".into()),
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2171,6 +2354,7 @@ future_nested_key = true
                         path: None,
                         subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                         version: Some("v1.0".into()),
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2222,6 +2406,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2250,6 +2435,7 @@ future_nested_key = true
                         path: None,
                         subpath: None,
                         version: Some("v2.0".into()),
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -2480,6 +2666,7 @@ only_agents = true
                 path: None,
                 subpath: None,
                 version: Some("v1.0".into()),
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -2636,6 +2823,7 @@ exclude = ["deprecated"]
                         path: None,
                         subpath: None,
                         version: None,
+                        dialect: None,
                         filter: FilterConfig::default(),
                     },
                 );
@@ -3293,6 +3481,7 @@ skills = ["prompt-helper"]
                 path: Some(PathBuf::from("C:\\Users\\dev\\src")),
                 subpath: None,
                 version: None,
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );

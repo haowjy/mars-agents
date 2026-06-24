@@ -123,10 +123,6 @@ fn agents_show_json_subagents_and_kebab_keys() {
         json.get("tools-denied").is_some(),
         "'tools-denied' key required (kebab):\n{stdout}"
     );
-    assert!(
-        json.get("mcp-tools").is_some(),
-        "'mcp-tools' key required (kebab):\n{stdout}"
-    );
 }
 
 #[test]
@@ -245,8 +241,8 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
         "'user-invocable' key required (kebab):\n{stdout}"
     );
     assert!(
-        json.get("allowed-tools").is_some(),
-        "'allowed-tools' key required (kebab):\n{stdout}"
+        json.get("tools").is_some(),
+        "'tools' key required:\n{stdout}"
     );
     assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
     assert!(

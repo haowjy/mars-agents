@@ -59,7 +59,8 @@ model: gpt-5
 skills: [planning]
 ---
 Review code changes."#;
-    let skill_content = "---\nname: planning\ndescription: Plan tasks\nallowed-tools: [ask_user]\n---\nUse this skill.";
+    let skill_content =
+        "---\nname: planning\ndescription: Plan tasks\ntools: [ask_user]\n---\nUse this skill.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -190,7 +191,7 @@ Review code changes."#;
     std::fs::create_dir_all(&codex_variant_path).unwrap();
     std::fs::write(
         codex_variant_path.join("SKILL.md"),
-        "---\nname: planning\ndescription: Variant metadata ignored\ntype: reference\nallowed-tools: [askuser]\n---\nCodex variant content.",
+        "---\nname: planning\ndescription: Variant metadata ignored\ntype: reference\ntools: [askuser]\n---\nCodex variant content.",
     )
     .unwrap();
 

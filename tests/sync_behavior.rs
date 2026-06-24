@@ -248,6 +248,80 @@ fn sync_repairs_diverged_native_skill_projection_when_canonical_is_skipped() {
 }
 
 #[test]
+fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Base")]);
+    let variant_dir = source.join("skills/planning/variants/claude");
+    fs::create_dir_all(&variant_dir).unwrap();
+    fs::write(variant_dir.join("SKILL.md"), "# Claude").unwrap();
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_skill = project
+        .child(".claude")
+        .child("skills")
+        .child("planning")
+        .child("SKILL.md");
+    let mars_skill = project
+        .child(".mars")
+        .child("skills")
+        .child("planning")
+        .child("SKILL.md");
+
+    let native_before = fs::metadata(native_skill.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mars_before = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    let native_after = fs::metadata(native_skill.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    let mars_after = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
+    assert_eq!(
+        native_before, native_after,
+        "no-op sync must not rewrite linked native skill output"
+    );
+    assert_eq!(
+        mars_before, mars_after,
+        ".mars canonical output must stay untouched"
+    );
+    assert_eq!(fs::read_to_string(native_skill.path()).unwrap(), "# Claude");
+}
+
+#[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
@@ -467,7 +541,7 @@ fn sync_frozen_returns_exit_code_two() {
 #[test]
 fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fields() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Base\n";
+    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\ntools: [Bash(git *)]\n---\n# Base\n";
     let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
 
     let project = dir.child("project");
@@ -494,23 +568,17 @@ fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fiel
 
     let native_skill = project.child(".codex/skills/planning/SKILL.md");
     let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(native_bytes.contains("allow_implicit_invocation: false"));
+    assert!(!native_bytes.contains("allow_implicit_invocation"));
     assert!(!native_bytes.contains("user-invocable"));
     assert!(!native_bytes.contains("allowed-tools"));
     assert_ne!(native_bytes, source_skill);
 }
 
 #[test]
-fn sync_codex_projection_preserves_explicit_true_and_emits_allow_implicit_invocation_true() {
+fn sync_skill_overlay_stages_canonical_and_lowers_native_target() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---
-name: planning
-description: explicit true skill
-model-invocable: true
-user-invocable: true
----
-# Explicit
-";
+    let source_skill =
+        "---\nname: planning\ndescription: base skill\nuser-invocable: true\n---\n# Base\n";
     let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
 
     let project = dir.child("project");
@@ -529,17 +597,116 @@ user-invocable: true
         .assert()
         .success();
 
-    let canonical_skill = project.child(".mars/skills/planning/SKILL.md");
-    assert_eq!(
-        fs::read_to_string(canonical_skill.path()).unwrap(),
-        source_skill
-    );
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[dependencies.base]
+path = "{}"
 
-    let native_skill = project.child(".codex/skills/planning/SKILL.md");
-    let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(native_bytes.contains("allow_implicit_invocation: true"));
-    assert!(!native_bytes.contains("user-invocable"));
-    assert_ne!(native_bytes, source_skill);
+[skills.planning]
+description = "Overridden planning"
+user_invocable = false
+tools.disallowed = ["Agent"]
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(canonical.contains("description: Overridden planning"));
+    assert!(canonical.contains("user-invocable: false"));
+    assert!(canonical.contains("disallowed-tools:"));
+
+    let native = fs::read_to_string(
+        project
+            .child(".codex")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(!native.contains("user-invocable"));
+    assert!(!native.contains("disallowed-tools"));
+    assert_ne!(native, canonical);
+}
+
+#[test]
+fn sync_mars_local_skill_overlay_overrides_mars_toml() {
+    let dir = TempDir::new().unwrap();
+    let source_skill = "---\nname: planning\ndescription: base\n---\n# Base\n";
+    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[dependencies.base]
+path = "{}"
+
+[skills.planning]
+description = "Committed overlay"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    project
+        .child("mars.local.toml")
+        .write_str(
+            r#"
+[skills.planning]
+description = "Local overlay"
+"#,
+        )
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("planning")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(canonical.contains("description: Local overlay"));
+    assert!(!canonical.contains("Committed overlay"));
 }
 
 #[test]
@@ -718,6 +885,7 @@ name: cursor-worker
 description: Cursor worker
 harness: cursor
 model: gpt55
+tools: [mcp(plugin:cursor)]
 harness-overrides:
   opencode:
     mcp-tools: []
@@ -751,7 +919,9 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
+        .stderr(predicate::str::contains(
+            "agent `cursor-worker`: 1 field not lowered (meridian-only) for .cursor (native-config)",
+        ));
 
     assert!(project.child(".mars/agents/cursor-worker.md").exists());
     assert!(project.child(".cursor/agents/cursor-worker.md").exists());
@@ -1699,4 +1869,366 @@ fn link_force_adopts_unmanaged_collision_and_records_lock() {
 
     let lock = mars_agents::lock::load(project.path()).unwrap();
     assert!(lock.contains_output(".agents", "skills/planning"));
+}
+
+#[test]
+fn sync_mars_native_dependency_skill_strips_allowed_tools_and_warns() {
+    let dir = TempDir::new().unwrap();
+    let source_skill =
+        "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n";
+    let source = create_source(&dir, "base", &[], &[("bad-allowed", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        stderr.contains("allowed-tools") && stderr.contains("tools:"),
+        "sync must warn about non-canonical allowed-tools: {stderr}"
+    );
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("bad-allowed")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !canonical.contains("allowed-tools"),
+        "canonical store must not retain allowed-tools: {canonical}"
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("bad-allowed")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !claude_native.contains("allowed-tools"),
+        "claude projection must not leak allowed-tools: {claude_native}"
+    );
+}
+
+#[test]
+fn sync_local_mars_native_skill_strips_allowed_tools_and_warns() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let local_skill = project
+        .child(".mars-src")
+        .child("skills")
+        .child("bad-allowed");
+    fs::create_dir_all(local_skill.path()).unwrap();
+    fs::write(
+        local_skill.child("SKILL.md").path(),
+        "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
+    )
+    .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        stderr.contains("allowed-tools") && stderr.contains("tools:"),
+        "sync must warn about non-canonical allowed-tools for local skill: {stderr}"
+    );
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("bad-allowed")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !canonical.contains("allowed-tools"),
+        "canonical store must not retain allowed-tools: {canonical}"
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("bad-allowed")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !claude_native.contains("allowed-tools"),
+        "claude projection must not leak allowed-tools: {claude_native}"
+    );
+}
+
+#[test]
+fn sync_mars_native_dependency_skill_strips_disallowed_tools_and_warns() {
+    let dir = TempDir::new().unwrap();
+    let source_skill =
+        "---\nname: bad-denied\ndescription: d\ndisallowed_tools: [Agent]\n---\n# Body\n";
+    let source = create_source(&dir, "base", &[], &[("bad-denied", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        stderr.contains("disallowed_tools") && stderr.contains("disallowed-tools:"),
+        "sync must warn about non-canonical disallowed_tools: {stderr}"
+    );
+
+    let canonical = fs::read_to_string(
+        project
+            .child(".mars")
+            .child("skills")
+            .child("bad-denied")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !canonical.contains("disallowed_tools"),
+        "canonical store must not retain disallowed_tools: {canonical}"
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("bad-denied")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        !claude_native.contains("disallowed_tools"),
+        "claude projection must not leak disallowed_tools: {claude_native}"
+    );
+}
+
+#[test]
+fn sync_mars_native_canonical_tools_skill_lowers_without_non_canonical_warning() {
+    let dir = TempDir::new().unwrap();
+    let source_skill = "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n";
+    let source = create_source(&dir, "base", &[], &[("good-tools", source_skill)]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&sync.stderr);
+    assert!(
+        !stderr.contains("skill-schema-warning"),
+        "canonical tools must not emit non-canonical warning: {stderr}"
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("skills")
+            .child("good-tools")
+            .child("SKILL.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        claude_native.contains("allowed-tools:"),
+        "canonical tools should lower to claude allowed-tools: {claude_native}"
+    );
+}
+
+#[test]
+fn sync_claude_native_agent_projects_unknown_custom_tool_in_emitted_tools() {
+    let dir = TempDir::new().unwrap();
+    let agent = r#"---
+name: custom-tools-agent
+description: Agent with unknown custom tools
+harness: claude
+tools: [my_custom_tool, mcp__server__Tool]
+---
+# Custom tools agent
+"#;
+    let source = create_source(&dir, "base", &[("custom-tools-agent", agent)], &[]);
+
+    let project = dir.child("project");
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+managed_root = ".claude"
+agent_emission = "always"
+
+[dependencies.base]
+path = "{}"
+dialect = "mars-native"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    let sync = mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        sync.status.success(),
+        "sync failed: {:?}\nstderr: {}",
+        sync.status,
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let claude_native = fs::read_to_string(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("custom-tools-agent.md")
+            .path(),
+    )
+    .unwrap();
+    assert!(
+        claude_native.contains("- MyCustomTool"),
+        "claude native agent should convention-project unknown custom tool: {claude_native}"
+    );
+    assert!(
+        claude_native.contains("- mcp__server__Tool"),
+        "claude native agent should preserve mcp__ wire identifier verbatim: {claude_native}"
+    );
 }

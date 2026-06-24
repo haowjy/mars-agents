@@ -15,7 +15,7 @@ When developing agents and skills, you need fast iteration: edit source, see cha
       SKILL.md
 ```
 
-Items in `.mars-src/` are discovered automatically on every `mars sync` and installed into the managed root under the `_self` source name. Edit a file and run `mars sync` to propagate changes.
+Items in `.mars-src/` are discovered automatically on every `mars sync` and installed into the managed root under the `_self` source name. `.mars-src/` uses the same convention walk as dependency packages, so nested non-hidden `agents/`, `skills/`, and `bootstrap/` folders are valid when they are in the grounded package layer. Edit a file and run `mars sync` to propagate changes.
 
 > **`.mars-src/` vs `.mars/`**: `.mars-src/` is your editable, committed source — put your own agents and skills here. `.mars/` is a gitignored cache directory rebuilt by sync; never edit it directly.
 
@@ -166,7 +166,7 @@ name = "my-project-agents"
 version = "0.1.0"
 ```
 
-Source package contents can live in repo-root `agents/` and `skills/` directories for downstream consumers. For items you want the package project itself to sync as `_self`, put them in `.mars-src/`. See [`mars.toml`](../config/mars-toml.md#package-optional) for the full schema.
+Source package contents can live in repo-root convention folders such as `agents/`, `skills/`, and `bootstrap/` for downstream consumers. For items you want the package project itself to sync as `_self`, put them in `.mars-src/`. See [`mars.toml`](../config/mars-toml.md#package-optional) for the full schema.
 
 ### Validating Before Publishing
 
@@ -176,7 +176,7 @@ Before publishing a source package, validate its structure:
 mars check
 ```
 
-This checks frontmatter (the YAML metadata block at the top of agent/skill Markdown files), naming conventions, duplicate names, and skill dependency references. See [commands.md](commands.md#mars-check) for details.
+This checks frontmatter (the YAML metadata block at the top of agent/skill Markdown files), naming conventions, duplicate names, and skill dependency references. See [commands.md](../cli/commands.md#mars-check) for details.
 
 ## Workflow Summary
 

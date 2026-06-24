@@ -15,11 +15,16 @@ mars.toml + mars.local.toml
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases
+│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases,
+│                 │  STAGE: each dep through stage_rooted_package — lift foreign
+│                 │  frontmatter to canonical, apply skill overlays, repoint package_root
+│                 │  to .mars/staging/<source>/<dialect>/
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  3. Build Target│  Discover items, apply filters, detect collisions
+│  3. Build Target│  Discover items, apply filters, detect collisions.
+│                 │  STAGE: local (_self) items through staging::stage_local_item
+│                 │  before hashing — same lift/overlay path as deps.
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -73,14 +78,23 @@ For `UpsertDependency`, filter replacement is atomic: if any filter field is pre
 Then merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`. For each dependency:
 
 - Validates `url` XOR `path` (exactly one required)
-- Validates filter combinations (see [configuration.md](configuration.md#filter-mode-rules))
+- Validates filter combinations (see [configuration.md](../config/mars-toml.md#filter-mode-rules))
 - Applies local overrides (path replaces URL, preserves original git spec)
 - Computes `SourceId` for each dependency (git URL or canonical path)
 - Rejects `_self` as a dependency name (`_self` is reserved for local package items from the current project)
 
 ### 2. Resolve (`resolve_graph`)
 
-Fetches sources and resolves concrete versions.
+Fetches sources, resolves concrete versions, and stages each package.
+
+**Staging seam (dependency packages).** After selecting a concrete version,
+`stage_rooted_package` (src/resolve/package.rs:384–408) creates a dialect-scoped
+copy of the package under `.mars/staging/<source>/<dialect>/`. The copy lifts
+foreign frontmatter spellings (e.g. `allowed-tools` → `tools:`) to canonical,
+applies `[skills.<name>]` overlays, and renames items per config. The staged
+tree — not the raw source — is what downstream phases hash and discover.
+Staging requires `ResolveOptions.staging_root`; when it is unset (e.g. unit
+tests), the raw source is used directly.
 
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig
@@ -109,23 +123,28 @@ Fetches sources and resolves concrete versions.
 | Git with ref pin | Fetch the specific branch/commit ref |
 | Local path | Resolve to canonical path, no version logic |
 
-Additionally, this phase merges model aliases from the dependency tree. Each resolved dependency's `[models]` config is collected in **declaration order** (the order deps appear in the consumer's `mars.toml`, not alphabetical). `merge_model_config()` applies two layers: dependencies first (declaration-order first-wins on sibling conflicts), consumer config on top (always wins). Within transitive subtrees, each parent's manifest declaration order determines its children's ordering. Diamond deps inherit the position of the earliest direct dep that reaches them. See [configuration.md](configuration.md#merge-precedence) for the full precedence rules, conflict warnings, and examples.
+Additionally, this phase merges model aliases from the dependency tree. Each resolved dependency's `[models]` config is collected in **declaration order** (the order deps appear in the consumer's `mars.toml`, not alphabetical). `merge_model_config()` applies two layers: dependencies first (declaration-order first-wins on sibling conflicts), consumer config on top (always wins). Within transitive subtrees, each parent's manifest declaration order determines its children's ordering. Diamond deps inherit the position of the earliest direct dep that reaches them. See [configuration.md](../config/mars-toml.md#merge-precedence) for the full precedence rules, conflict warnings, and examples.
 
 ### 3. Build Target (`build_target`)
 
 Constructs the desired target state from the resolved graph.
 
 For each source in topological order:
-1. **Discover** items in the source tree (`agents/*.md`, `skills/*/SKILL.md`, flat `SKILL.md`)
+
+For project-local (`_self`) items, staging runs here rather than during
+resolve. `staging::stage_local_item` (src/sync/mod.rs:297–304) applies the
+same lift + overlay pipeline as dependency staging, but works from the local
+`.mars-src/` tree. Local items are staged before hashing so the sync diff
+compares the canonical form, not the raw source.
+1. **Discover** items in the source tree with the bounded convention walk (`agents/`, `skills/`, and `bootstrap/` directories at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback)
 2. **Apply filter** (All, Include, Exclude, OnlySkills, OnlyAgents)
 3. **Apply rename** mappings from config
 4. **Compute source hash** (SHA-256 of source content)
 
 After building all items:
-5. **Detect naming collisions** — items from different sources with the same destination path
-6. **Auto-rename collisions** — suffix with `__{owner}_{repo}` derived from source URL/name
-7. **Rewrite frontmatter** — update skill references in agents to match renamed skill names (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
-8. **Check unmanaged collisions** — items that would overwrite files not tracked in the lock
+5. **Detect cross-source destination collisions** — items from different sources that want the same destination path fail sync with `Collision`; users resolve by adding a dependency rename
+6. **Rewrite frontmatter** — update skill references in agents to match explicit skill renames (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
+7. **Check unmanaged collisions** — items that would overwrite files not tracked in the lock
 
 ### 4. Create Plan (`create_plan`)
 
@@ -151,8 +170,10 @@ The diff matrix:
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
 Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
-- Items from `.mars-src/` are always discovered, regardless of whether `[package]` is present.
-- Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages still expose those directories when consumed as dependencies.
+- Items from `.mars-src/` are always discovered by the same convention walk as dependency packages, regardless of whether `[package]` is present. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` folders are included when they are in the shallowest discovered package layer.
+- Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages expose `agents/`, `skills/`, and `bootstrap/` convention folders at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5` when consumed as dependencies.
+- Dot-prefixed directories are skipped during default discovery. Import a foreign hidden layout explicitly with dependency `subpath` (for example `.claude`) and `dialect`.
+- If one source exposes duplicate `(kind, name)` items through convention scanning, manifest declarations, or both, discovery fails with `DiscoveryCollision`; sync does not choose a winner inside that source.
 
 ### 5. Apply Plan (`apply_plan`)
 
@@ -231,9 +252,9 @@ Project-local agents and skills are discovered, hashed, and installed into the m
 
 | Source | When included |
 |---|---|
-| `.mars-src/agents/` and `.mars-src/skills/` | Always |
+| `.mars-src/` | Always; scanned by the same convention walk as dependency packages |
 
-`.mars-src/` is the only project-local source root. Repo-root `agents/` and `skills/` directories remain valid package contents when the project is consumed as a dependency, but `mars sync` no longer scans them as local `_self` items in that same project.
+`.mars-src/` is the only project-local source root. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` convention folders are included when they are in the grounded package layer. Repo-root `agents/` and `skills/` directories remain valid package contents when the project is consumed as a dependency, but `mars sync` no longer scans them as local `_self` items in that same project.
 
 All `_self` items follow the same behavior:
 - Shadow external dependency items if names collide (with a warning)

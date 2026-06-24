@@ -9,7 +9,7 @@ entries, hooks, MCP, variants, visibility).
 ```
 ReaderIr (source-level facts)
     ↓
-build_target()     ← assign dest paths, handle collisions, rewrite frontmatter refs
+build_target()     ← assign dest paths, reject cross-source collisions, rewrite frontmatter refs
     ↓
 create_plan()      ← diff + plan
     ↓
@@ -29,9 +29,14 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 
 - `mod.rs` (304 lines) — orchestration: `compile()` entry point, stages, lock finalization
 - `native_agents.rs` (814 lines) — native harness surface lifecycle: scan, reconcile, compile,
-  emit, link-materialize. Extracted from `mod.rs` (was 1522 lines).
+  emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
+- `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `native_agents.rs` — native model routing runtime, reconcile, compile, and link materialization
+- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into `EffectiveToolPolicy`. Used by **both** `agents/` and `skills/` modules for unified frontmatter-to-native lowering.
+- `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
+- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
+- `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
+- `tool_names.rs` — canonical snake_case tool name recognition + per-target projection (PascalCase for Claude/Cursor/Pi, snake_case for Codex, lowercase-without-underscores for OpenCode)
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
@@ -87,6 +92,20 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 ### Harness Override Passthrough
 
 `harness-overrides.<harness>` blocks are target-native passthrough. Mars validates only the outer mapping shape and serializability; nested keys do not replace top-level Mars semantic fields. Unknown override harness keys are warnings and are preserved for forward compatibility.
+
+## Shared Tool Policy (`tool_policy.rs`)
+
+`EffectiveToolPolicy` is the unified tool-gating schema used by **both** `agents/` and `skills/`. It merges three canonical fields from frontmatter:
+
+| Field | Form | Merged into |
+|---|---|---|
+| `tools:` | List (all allowed) or map (`tool_name: allow\|deny`) | `allowed` / `disallowed` |
+| `disallowed-tools:` | Flat string list | `disallowed` |
+| `mcp(...)` in `tools:` / `disallowed-tools:` | Inline MCP grant/deny | `mcp_allowed` / `mcp_disallowed` |
+
+`agents/mod.rs::AgentProfile::effective_tool_policy()` and `skills/mod.rs::SkillProfile::effective_tool_policy()` both delegate to `tool_policy::effective_tool_policy()` with field-level dedup and canonical name normalization.
+
+MCP grammar and per-harness projection: `.context/CONTEXT.md`.
 
 ## Tool Name Projection
 

@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
-use crate::diagnostic::{Diagnostic, DiagnosticCollector};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
@@ -72,6 +72,9 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
+    /// Whether lossiness warnings are included in the returned report.
+    /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
+    pub lossiness_mode: LossinessMode,
 }
 
 /// Resolution behavior for the resolver stage.
@@ -144,7 +147,7 @@ pub(crate) struct SyncedState {
 /// Orchestrates phase functions, each consuming the prior phase's output struct.
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
-    let mut diag = DiagnosticCollector::new();
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
     crate::compiler::compile(ctx, ir, request, &mut diag)
 }
@@ -222,7 +225,8 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
-    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen);
+    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
+        .with_staging_root(ctx.project_root.join(".mars/staging"));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -290,7 +294,19 @@ pub(crate) fn build_target(
     let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
 
     for item in local_items {
-        let source_path = item.disk_path();
+        let staging_root = ctx.project_root.join(".mars/staging");
+        let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
+        let staged_path = crate::staging::stage_local_item(
+            &item.disk_path(),
+            item.discovered.id.kind,
+            crate::dialect::Dialect::resolve_local(None, &item.root),
+            &resolved.loaded.effective.skills,
+            &staging_root,
+            &item_key,
+            (item.discovered.id.kind == ItemKind::Skill).then(|| item.discovered.id.name.as_str()),
+            diag,
+        )?;
+        let source_path = staged_path;
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
             && item.discovered.source_path == Path::new(".");
         let source_hash = if is_flat_skill {
@@ -699,10 +715,12 @@ pub(crate) fn finalize(
         .dependency_changes;
     let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
 
+    let diagnostics = diag.drain();
+
     Ok(SyncReport {
         applied: state.applied.applied,
         pruned: Vec::new(),
-        diagnostics: diag.drain(),
+        diagnostics,
         dependency_changes,
         upgrades_available,
         target_outcomes: state.target_outcomes,
@@ -895,20 +913,7 @@ fn validate_skill_frontmatter_at_source(
     };
     let mut skill_diags = Vec::new();
     let _ = crate::compiler::skills::parse_skill_content(&content, &mut skill_diags);
-    for d in skill_diags {
-        if d.is_error() {
-            diag.error_with_category(
-                "skill-schema-error",
-                format!("skill `{skill_name}`: {}", d.message()),
-                crate::diagnostic::DiagnosticCategory::Validation,
-            );
-        } else {
-            diag.warn(
-                "skill-schema-warning",
-                format!("skill `{skill_name}`: {}", d.message()),
-            );
-        }
-    }
+    crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
 }
 
 #[cfg(test)]
@@ -1025,6 +1030,7 @@ mod tests {
                     subpath: None,
                     filter,
                     rename: crate::types::RenameMap::new(),
+                    dialect: None,
                     is_overridden: false,
                     original_git: None,
                 },
@@ -1041,6 +1047,7 @@ mod tests {
             EffectiveConfig {
                 dependencies: config_dependencies,
                 settings: Settings::default(),
+                skills: indexmap::IndexMap::new(),
             },
         )
     }
@@ -1051,6 +1058,7 @@ mod tests {
             path: Some(path.to_path_buf()),
             subpath: None,
             version: None,
+            dialect: None,
             filter: FilterConfig::default(),
         }
     }
@@ -1061,6 +1069,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some(version.to_string()),
+            dialect: None,
             filter,
         }
     }
@@ -1123,6 +1132,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1141,6 +1151,7 @@ mod tests {
                 frozen: true,
                 ..SyncOptions::default()
             },
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let err = validate_request(&request).unwrap_err();
@@ -1174,6 +1185,7 @@ mod tests {
                 path: None,
                 subpath: None,
                 version: None,
+                dialect: None,
                 filter: FilterConfig::default(),
             },
         );
@@ -1306,6 +1318,7 @@ mod tests {
                 entry: path_dependency_entry(source.path()),
             }),
             options: SyncOptions::default(),
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
@@ -1346,6 +1359,7 @@ mod tests {
                 dry_run: true,
                 ..SyncOptions::default()
             },
+            lossiness_mode: LossinessMode::Hidden,
         };
 
         let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
@@ -1453,6 +1467,147 @@ mod tests {
         for action in &sync_plan2.actions {
             assert!(matches!(action, plan::PlannedAction::Skip { .. }));
         }
+    }
+
+    #[test]
+    fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
+        let mut fixture = TestFixture::new();
+        let src_idx = fixture.add_source(
+            &[],
+            &[(
+                "planning",
+                "---\nname: planning\ndescription: base\ndisable-model-invocation: true\nuser-invocable: true\n---\n# Planning\n",
+            )],
+        );
+        let tree_path = fixture.tree_path(src_idx);
+        let staging_root = fixture.project_root().join(".mars/staging");
+        fs::create_dir_all(&staging_root).unwrap();
+
+        let mut config = EffectiveConfig {
+            dependencies: indexmap::IndexMap::from([(
+                "base".into(),
+                EffectiveDependency {
+                    name: "base".into(),
+                    id: crate::types::SourceId::Path {
+                        canonical: tree_path.clone(),
+                        subpath: None,
+                    },
+                    spec: SourceSpec::Path(tree_path.clone()),
+                    subpath: None,
+                    filter: FilterMode::All,
+                    rename: crate::types::RenameMap::new(),
+                    dialect: Some(crate::dialect::Dialect::Claude),
+                    is_overridden: false,
+                    original_git: None,
+                },
+            )]),
+            settings: Settings::default(),
+            skills: indexmap::IndexMap::new(),
+        };
+
+        let stage = |cfg: &EffectiveConfig| {
+            let mut diag = DiagnosticCollector::new();
+            crate::staging::stage_rooted_source(
+                &"base".into(),
+                crate::resolve::RootedSourceRef {
+                    checkout_root: tree_path.clone(),
+                    package_root: tree_path.clone(),
+                },
+                cfg.dependencies["base"].dialect.unwrap(),
+                &cfg.skills,
+                &cfg.dependencies["base"].rename,
+                &staging_root,
+                &mut diag,
+            )
+            .unwrap()
+        };
+
+        let mut graph = {
+            let (mut g, _) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
+            g.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
+            g
+        };
+
+        let cache_dir = fixture.project_root().join(".mars/cache/bases");
+        let options = SyncOptions::default();
+
+        let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
+            let (target, _) = target::build_with_collisions(graph, cfg).unwrap();
+            let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
+            let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
+            let result =
+                apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+            let new_lock =
+                crate::lock::build(graph, &result, lock, std::collections::BTreeMap::new())
+                    .unwrap();
+            (sync_diff, sync_plan, new_lock)
+        };
+
+        let lock = LockFile::empty();
+        let (first_diff, _, first_lock) = apply_sync(&graph, &config, &lock);
+        assert!(
+            first_diff
+                .items
+                .iter()
+                .all(|entry| matches!(entry, diff::DiffEntry::Add { .. }))
+        );
+
+        let (unchanged_diff, unchanged_plan, _) = apply_sync(&graph, &config, &first_lock);
+        assert!(
+            unchanged_diff
+                .items
+                .iter()
+                .all(|entry| matches!(entry, diff::DiffEntry::Unchanged { .. }))
+        );
+        assert!(
+            unchanged_plan
+                .actions
+                .iter()
+                .all(|action| matches!(action, plan::PlannedAction::Skip { .. }))
+        );
+
+        config.skills.insert(
+            "planning".to_string(),
+            SkillOverlay {
+                description: Some("Overridden".to_string()),
+                ..SkillOverlay::default()
+            },
+        );
+        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
+        let (overlay_diff, _, overlay_lock) = apply_sync(&graph, &config, &first_lock);
+        assert!(
+            overlay_diff
+                .items
+                .iter()
+                .any(|entry| matches!(entry, diff::DiffEntry::Update { .. })),
+            "expected Update after overlay change, got {:?}",
+            overlay_diff.items
+        );
+
+        config.dependencies.get_mut("base").unwrap().dialect =
+            Some(crate::dialect::Dialect::MarsNative);
+        config.skills.clear();
+        graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
+        let (dialect_diff, _, dialect_lock) = apply_sync(&graph, &config, &overlay_lock);
+        assert!(
+            dialect_diff
+                .items
+                .iter()
+                .any(|entry| matches!(entry, diff::DiffEntry::Update { .. })),
+            "expected Update after dialect change, got {:?}",
+            dialect_diff.items
+        );
+
+        let (_, frozen_plan, _) = apply_sync(&graph, &config, &dialect_lock);
+        assert!(
+            frozen_plan.actions.iter().all(|action| {
+                matches!(
+                    action,
+                    plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+                )
+            }),
+            "frozen-equivalent re-run should not schedule installs or removals"
+        );
     }
 
     #[test]

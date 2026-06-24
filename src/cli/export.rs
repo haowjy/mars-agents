@@ -124,6 +124,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             dry_run: true,
             ..SyncOptions::default()
         },
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     // Load config for dependency metadata (non-fatal: if missing, no dep metadata).
@@ -350,6 +351,7 @@ mod tests {
             path: None,
             subpath: None,
             version: None,
+            dialect: None,
             filter: Default::default(),
         };
         assert_eq!(infer_origin(&dep), "git");
@@ -363,6 +365,7 @@ mod tests {
             path: Some(std::path::PathBuf::from("../local-pkg")),
             subpath: None,
             version: None,
+            dialect: None,
             filter: Default::default(),
         };
         assert_eq!(infer_origin(&dep), "path");

@@ -203,7 +203,9 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
                 "type": type_str,
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
-                "allowed-tools": profile.allowed_tools,
+                "tools": profile.tools,
+                "disallowed-tools": profile.disallowed_tools,
+                "tools-denied": profile.tools_denied,
             }));
         } else {
             println!("name:          {skill_name}");
@@ -211,11 +213,9 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             println!("type:          {type_str}");
             println!("model-invocable: {}", profile.model_invocable);
             println!("user-invocable:  {}", profile.user_invocable);
-            if profile.allowed_tools.is_empty() {
-                println!("allowed-tools: (none)");
-            } else {
-                println!("allowed-tools: {}", profile.allowed_tools.join(", "));
-            }
+            print_str_list("tools", &profile.tools);
+            print_str_list("disallowed-tools", &profile.disallowed_tools);
+            print_str_list("tools-denied", &profile.tools_denied);
         }
 
         return Ok(0);
@@ -223,6 +223,14 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
 
     eprintln!("error: skill `{name}` not found");
     Ok(1)
+}
+
+fn print_str_list(label: &str, items: &[String]) {
+    if items.is_empty() {
+        println!("{label}:          (none)");
+    } else {
+        println!("{label}:          {}", items.join(", "));
+    }
 }
 
 fn dir_name(path: &std::path::Path) -> String {

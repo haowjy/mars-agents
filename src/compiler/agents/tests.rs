@@ -1,4 +1,6 @@
 use super::*;
+use crate::compiler::agents::lower::{self, NativeModel};
+use crate::compiler::lossiness::Lossiness;
 use crate::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
@@ -6,6 +8,20 @@ fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
     let mut diags = Vec::new();
     let profile = parse_agent_profile(&fm, &mut diags);
     (profile, diags)
+}
+
+fn lower_claude(content: &str) -> (AgentProfile, lower::LoweredOutput, Vec<AgentDiagnostic>) {
+    let fm = Frontmatter::parse(content).unwrap();
+    let mut diags = Vec::new();
+    let profile = parse_agent_profile(&fm, &mut diags);
+    let out = lower::lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+    (profile, out, diags)
+}
+
+fn dropped_invocability(out: &lower::LoweredOutput, field: &str) -> bool {
+    out.lossy_fields
+        .iter()
+        .any(|f| f.field == field && matches!(f.classification, Lossiness::Dropped))
 }
 
 // --- 3.1: Basic field parsing ---
@@ -33,27 +49,89 @@ fn parses_mode_subagent() {
 }
 
 #[test]
-fn model_invocable_defaults_true() {
-    let (p, diags) = parse("---\nmode: subagent\n---\n");
+fn model_invocable_defaults_true_without_lowering_lossiness() {
+    let (p, out, diags) = lower_claude("---\nname: coder\nharness: claude\n---\n# Body");
     assert!(diags.is_empty());
     assert!(p.model_invocable);
+    assert!(!dropped_invocability(&out, "model-invocable"));
+}
+
+#[test]
+fn user_invocable_defaults_true_without_lowering_lossiness() {
+    let (p, out, diags) = lower_claude("---\nname: coder\nharness: claude\n---\n# Body");
+    assert!(diags.is_empty());
+    assert!(p.user_invocable);
+    assert!(!dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]
 fn parses_model_invocable_false() {
-    let (p, diags) = parse("---\nmodel-invocable: false\n---\n");
+    let (p, out, diags) =
+        lower_claude("---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body");
     assert!(diags.is_empty());
     assert!(!p.model_invocable);
+    assert!(dropped_invocability(&out, "model-invocable"));
 }
 
 #[test]
-fn invalid_model_invocable_produces_diagnostic() {
-    let (p, diags) = parse("---\nmodel-invocable: nope\n---\n");
+fn parses_user_invocable_false() {
+    let (p, out, diags) =
+        lower_claude("---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body");
+    assert!(diags.is_empty());
+    assert!(!p.user_invocable);
+    assert!(p.model_invocable);
+    assert!(dropped_invocability(&out, "user-invocable"));
+    assert!(!dropped_invocability(&out, "model-invocable"));
+}
+
+#[test]
+fn explicit_true_invocability_lowers_without_lossiness() {
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nmodel-invocable: true\nuser-invocable: true\n---\n# Body",
+    );
+    assert!(diags.is_empty());
+    assert!(p.model_invocable);
+    assert!(p.user_invocable);
+    assert!(!dropped_invocability(&out, "model-invocable"));
+    assert!(!dropped_invocability(&out, "user-invocable"));
+}
+
+#[test]
+fn snake_case_invocability_keys_parse_and_warn_drop_when_false() {
+    let (p, out, diags) = lower_claude(
+        "---\nname: coder\nharness: claude\nmodel_invocable: false\nuser_invocable: false\n---\n# Body",
+    );
+    assert!(diags.is_empty());
+    assert!(!p.model_invocable);
+    assert!(!p.user_invocable);
+    assert!(dropped_invocability(&out, "model-invocable"));
+    assert!(dropped_invocability(&out, "user-invocable"));
+}
+
+#[test]
+fn invalid_model_invocable_produces_diagnostic_and_omits_lossiness() {
+    let content = "---\nname: coder\nharness: claude\nmodel-invocable: nope\n---\n# Body";
+    let (p, _, diags) = lower_claude(content);
     assert!(p.model_invocable);
     assert_eq!(diags.len(), 1);
     assert!(
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "model-invocable")
     );
+    let (_, out, _) = lower_claude(content);
+    assert!(!dropped_invocability(&out, "model-invocable"));
+}
+
+#[test]
+fn invalid_user_invocable_produces_diagnostic_and_omits_lossiness() {
+    let content = "---\nname: coder\nharness: claude\nuser-invocable: 7\n---\n# Body";
+    let (p, _, diags) = lower_claude(content);
+    assert!(p.user_invocable);
+    assert_eq!(diags.len(), 1);
+    assert!(
+        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "user-invocable")
+    );
+    let (_, out, _) = lower_claude(content);
+    assert!(!dropped_invocability(&out, "user-invocable"));
 }
 
 #[test]
@@ -233,15 +311,16 @@ fn autocompact_pct_string_produces_diagnostic() {
 
 #[test]
 fn parses_skills_tools_disallowed_mcp() {
-    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write]\ndisallowed-tools: [Agent]\nmcp-tools: [server]\n---\n";
+    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write, mcp(server)]\ndisallowed-tools: [Agent]\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
     assert!(p.skills.available.is_empty());
-    assert_eq!(p.tools, vec!["bash", "write"]);
+    assert_eq!(p.tools, vec!["bash", "write", "mcp(server)"]);
     assert!(p.tools_denied.is_empty());
     assert_eq!(p.disallowed_tools, vec!["agent"]);
-    assert_eq!(p.mcp_tools, vec!["server"]);
+    let policy = p.effective_tool_policy(&HarnessKind::Claude);
+    assert_eq!(policy.mcp_allowed.len(), 1);
 }
 
 #[test]
@@ -283,8 +362,8 @@ fn harness_overrides_do_not_replace_tool_policy() {
 tools:
   Bash: allow
   Read: deny
+  mcp(plugin:base): allow
 disallowed-tools: [Edit]
-mcp-tools: [plugin:base]
 harness-overrides:
   codex:
     tools: [shell]
@@ -298,7 +377,11 @@ harness-overrides:
     let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
     assert_eq!(codex_policy.allowed, vec!["bash"]);
     assert_eq!(codex_policy.disallowed, vec!["read", "edit"]);
-    assert_eq!(codex_policy.mcp, vec!["plugin:base"]);
+    assert_eq!(codex_policy.mcp_allowed.len(), 1);
+    assert_eq!(
+        codex_policy.mcp_allowed[0].to_canonical(),
+        "mcp(plugin:base/*)"
+    );
     assert_eq!(
         p.harness_overrides.entries["codex"]["tools"],
         serde_json::json!(["shell"])
@@ -532,4 +615,33 @@ fn subagents_absent_gives_empty_vec() {
     let (p, diags) = parse("---\nname: solo\n---\n# Solo agent");
     assert!(diags.is_empty());
     assert!(p.subagents.is_empty());
+}
+
+#[test]
+fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
+    let (p, diags) = parse("---\nname: a\ndescription: d\nmcp-tools: [plugin:demo]\n---\n# body");
+    assert!(p.tools.is_empty());
+    assert!(
+        diags.iter().any(|d| matches!(
+            d,
+            AgentDiagnostic::RemovedField { field } if field == "mcp-tools"
+        )),
+        "expected RemovedField for mcp-tools, got {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.is_error()));
+}
+
+#[test]
+fn malformed_disallowed_mcp_ref_is_hard_validation_error() {
+    let (p, diags) = parse("---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n# body");
+    assert!(p.disallowed_tools.is_empty());
+    assert!(
+        diags.iter().any(|d| matches!(
+            d,
+            AgentDiagnostic::InvalidFieldValue { field, value, .. }
+                if field == "disallowed-tools[0]" && value == "mcp()"
+        )),
+        "expected invalid tool diagnostic, got {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.is_error()));
 }

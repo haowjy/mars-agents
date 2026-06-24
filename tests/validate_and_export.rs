@@ -285,16 +285,33 @@ fn validate_json_reports_skill_removed_field_error() {
     let dir = TempDir::new().unwrap();
     let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
     let skill_content = "---\nname: legacy\ndescription: legacy skill\nallow_implicit_invocation: false\n---\n# Legacy";
-    let project = setup_synced_project(
+    let source = create_source(
         &dir,
-        "proj",
         "src",
         &[("reader", agent_content)],
         &[("legacy", skill_content)],
     );
+    let project = dir.child("proj");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies]\nsrc = {{ path = \"{}\", dialect = \"mars-native\" }}\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
 
     let output = mars()
-        .args(["validate", "--json", "--root", project.to_str().unwrap()])
+        .args([
+            "validate",
+            "--json",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .output()
         .unwrap();
 

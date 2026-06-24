@@ -186,6 +186,7 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
             subpath: Some(subpath.clone()),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -202,6 +203,7 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
             subpath: Some(subpath),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -209,6 +211,7 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let err = resolve(&config, &provider, None, &default_options())
@@ -266,6 +269,7 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -282,6 +286,7 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -289,6 +294,7 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let err = resolve(&config, &provider, None, &default_options())
@@ -1088,6 +1094,7 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
             subpath: Some(subpath),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1095,6 +1102,7 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
@@ -1149,6 +1157,7 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
             subpath: Some(subpath_foo),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1165,6 +1174,7 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
             subpath: Some(subpath_bar),
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1172,6 +1182,7 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
@@ -1305,6 +1316,7 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1318,6 +1330,7 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1325,6 +1338,7 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     let config = EffectiveConfig {
         dependencies: deps,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let err = resolve(&config, &provider, None, &default_options())
@@ -1382,6 +1396,7 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1395,6 +1410,7 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -1402,6 +1418,7 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     let config = EffectiveConfig {
         dependencies: deps,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     // Resolution must succeed — SSH and HTTPS forms of the same repo converge.
@@ -1776,6 +1793,7 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
+                dialect: None,
                 is_overridden: false,
                 original_git: None,
             },
@@ -1791,6 +1809,7 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
+                dialect: None,
                 is_overridden: false,
                 original_git: None,
             },
@@ -1800,6 +1819,7 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options())

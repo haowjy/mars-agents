@@ -18,6 +18,9 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         model: Some(model.to_string()),
         mode: None,
         model_invocable: true,
+        user_invocable: true,
+        had_model_invocable_field: false,
+        had_user_invocable_field: false,
         approval: None,
         sandbox: None,
         effort: None,
@@ -28,7 +31,6 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         tools: Vec::new(),
         tools_denied: Vec::new(),
         disallowed_tools: Vec::new(),
-        mcp_tools: Vec::new(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),
@@ -986,5 +988,219 @@ fn emit_all_ignores_overlay_harness_for_model_resolution() {
     assert!(
         !native.contains("model:"),
         "overlay.harness must be ignored; the codex model must not leak under claude: {native}"
+    );
+}
+
+#[test]
+fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
+    let dir_baseline = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir_baseline.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "worker",
+    );
+    compile_emit_all_with_overlays(
+        dir_baseline.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &IndexMap::new(),
+    );
+    let baseline =
+        std::fs::read_to_string(dir_baseline.path().join(".claude/agents/worker.md")).unwrap();
+
+    let dir_empty = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir_empty.path().join(".claude/agents")).unwrap();
+    compile_emit_all_with_overlays(
+        dir_empty.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &IndexMap::from([("worker".to_string(), crate::config::AgentOverlay::default())]),
+    );
+    let empty_overlay_native =
+        std::fs::read_to_string(dir_empty.path().join(".claude/agents/worker.md")).unwrap();
+    assert_eq!(
+        baseline, empty_overlay_native,
+        "default/empty overlay must not change lowered native output"
+    );
+}
+
+#[test]
+fn emit_all_consumes_overlay_description_and_tools_disallowed() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            description: Some("Overlay description".to_string()),
+            tools: crate::config::AgentOverlayTools {
+                disallowed: vec!["Write".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        native.contains("description: Overlay description"),
+        "overlay.description must replace profile description: {native}"
+    );
+    assert!(
+        native.contains("disallowed-tools:") && native.contains("Write"),
+        "overlay tools.disallowed must appear in lowered output: {native}"
+    );
+    assert!(
+        !native.contains("Profile desc"),
+        "profile description must be replaced: {native}"
+    );
+}
+
+#[test]
+fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let agent = parse_mars_agent("---\nname: worker\nmodel: opus\n---\n# Worker\n", "worker");
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            user_invocable: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let mut diag =
+        DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
+    let models_cache = empty_models_cache();
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir.path(),
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: &[HarnessKind::Claude],
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+        fanout_agents: &[],
+    };
+    let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
+    let mut router = test_router(&aliases, &models_cache);
+    let records = compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        &resolved,
+        &mut router,
+        &mut diag,
+    );
+    assert_eq!(records.len(), 1);
+
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        !native.contains("user-invocable"),
+        "agents have no native user-invocable key: {native}"
+    );
+
+    let dropped: Vec<_> = diag
+        .drain()
+        .into_iter()
+        .filter(|d| d.code == "agent-field-dropped")
+        .collect();
+    assert_eq!(dropped.len(), 1, "overlay false must warn-drop on emit");
+    assert!(
+        dropped[0].message.contains("user-invocable"),
+        "expected user-invocable in lossiness summary: {}",
+        dropped[0].message
+    );
+}
+
+#[test]
+fn emit_all_merged_local_overlay_wins_for_description() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\n---\n# Worker\n",
+        "worker",
+    );
+
+    let mut base_agents = IndexMap::new();
+    base_agents.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            description: Some("mars.toml description".to_string()),
+            ..Default::default()
+        },
+    );
+    let mut local_agents = IndexMap::new();
+    local_agents.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            description: Some("mars.local.toml description".to_string()),
+            ..Default::default()
+        },
+    );
+    let merged = crate::config::merged_agent_overlays(
+        &base_agents,
+        &crate::config::LocalConfig {
+            agents: local_agents,
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessKind::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &merged,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        native.contains("description: mars.local.toml description"),
+        "mars.local.toml overlay must replace mars.toml for widened fields: {native}"
     );
 }

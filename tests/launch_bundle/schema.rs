@@ -20,9 +20,8 @@ pub(crate) fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write]
+tools: [Bash, Write, mcp(plugin:context7:context7)]
 disallowed-tools: [Agent]
-mcp-tools: [plugin:context7:context7]
 ---
 
 Review code changes.
@@ -89,9 +88,16 @@ Review code changes.
         bundle["tools"]["disallowed"],
         serde_json::json!(["spawn_agent"])
     );
-    assert_eq!(
-        bundle["tools"]["mcp"],
-        serde_json::json!(["plugin:context7:context7"])
+    assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("cannot be represented for codex"))
     );
     assert!(bundle["provenance"]["harness_stability"].is_null());
 

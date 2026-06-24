@@ -72,6 +72,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
             dry_run: true,
             ..SyncOptions::default()
         },
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     // Load config to get min_mars_version for compatibility preflight.

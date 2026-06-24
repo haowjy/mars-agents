@@ -1,956 +1,31 @@
-use crate::compiler::agents::{AgentProfile, EffectiveToolPolicy, HarnessKind};
-/// Per-target agent lowering — translates a parsed [`AgentProfile`] into
-/// harness-native format bytes.
-///
-/// # Lossiness classification (per agent-compilation-mapping.md §6)
-///
-/// Every field lowering is classified as:
-/// - **exact** — field maps 1:1 to a native equivalent with identical semantics
-/// - **approximate** — semantic equivalent exists but gap is noted
-/// - **dropped** — no native equivalent; value is discarded in native artifact
-/// - **meridian-only** — consumed exclusively by Meridian; never lowered
-///
-/// Dropped fields with non-default values emit [`LossyField`] diagnostics.
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
-use crate::frontmatter::Frontmatter;
+//! Public entry points and tests for per-harness agent lowering.
+//!
+//! The implementation lives in `lower_policy.rs` so the declarative policy table
+//! and shared lowering pipeline stay separate from the regression tests.
 
-// ---------------------------------------------------------------------------
-// Lossiness result types
-// ---------------------------------------------------------------------------
+#[path = "lower_policy.rs"]
+mod lower_policy;
 
-/// A field that was dropped or only approximately lowered in the native artifact.
-#[derive(Debug, Clone)]
-pub struct LossyField {
-    pub field: String,
-    pub target: String,
-    pub classification: Lossiness,
-}
+pub use lower_policy::{NativeModel, lower_for_harness_with_model};
 
-/// Lossiness classification for a single field in a target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Lossiness {
-    Approximate { note: &'static str },
-    Dropped,
-    MeridianOnly,
-}
+#[cfg(test)]
+pub type LoweredOutput = crate::compiler::lossiness::LoweredOutput;
 
-/// Output from a single lowering pass.
-pub struct LoweredOutput {
-    /// Serialized bytes for the native artifact.
-    pub bytes: Vec<u8>,
-    /// Lossiness findings for fields that were dropped or approximated.
-    pub lossy_fields: Vec<LossyField>,
-}
+#[cfg(test)]
+pub use lower_policy::{
+    lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode, lower_to_pi,
+};
 
-// ---------------------------------------------------------------------------
-// Effective field access for target lowering
-// ---------------------------------------------------------------------------
-
-/// Effective field values read from top-level Mars semantics.
-struct Effective<'a> {
-    harness: &'a HarnessKind,
-    profile: &'a AgentProfile,
-    tools: EffectiveToolPolicy,
-}
-
-impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: &'a HarnessKind) -> Self {
-        let tools = profile.effective_tool_policy(harness);
-        Self {
-            harness,
-            profile,
-            tools,
-        }
-    }
-
-    fn effort(&self) -> Option<&crate::compiler::agents::EffortLevel> {
-        self.profile.effort.as_ref()
-    }
-
-    fn approval(&self) -> Option<&crate::compiler::agents::ApprovalMode> {
-        self.profile.approval.as_ref()
-    }
-
-    fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
-        self.profile.sandbox.as_ref()
-    }
-
-    fn skills(&self) -> Vec<String> {
-        self.profile.effective_skills(self.harness).all()
-    }
-
-    fn tools(&self) -> &[String] {
-        &self.tools.allowed
-    }
-
-    fn disallowed_tools(&self) -> &[String] {
-        &self.tools.disallowed
-    }
-
-    fn mcp_tools(&self) -> &[String] {
-        &self.tools.mcp
-    }
-
-    fn autocompact_pct(&self) -> Option<u8> {
-        self.profile.autocompact_pct
-    }
-
-    fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
-        self.profile.effective_native_config(self.harness)
-    }
-}
-
-fn normalize_tools_for_harness(
-    tools: &[String],
-    harness: &str,
-    field: &'static str,
-    lossy: &mut Vec<LossyField>,
-) -> Vec<String> {
-    tools
-        .iter()
-        .map(|tool| {
-            let projected = project_tool_for_harness(tool, harness);
-            if projected.status == ToolProjectionStatus::Unknown {
-                lossy.push(LossyField {
-                    field: field.into(),
-                    target: harness.into(),
-                    classification: Lossiness::Approximate {
-                        note: "unknown tool name passed through verbatim",
-                    },
-                });
-            }
-            projected.name
-        })
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// Claude native artifact
-// ---------------------------------------------------------------------------
-
-/// Lower an agent profile to Claude-native markdown format.
-///
-/// Per agent-compilation-mapping.md V0 §10:
-/// - Preserved: name, description, model, skills, tools, disallowed-tools, body
-/// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact, autocompact_pct,
-///   model-policies, harness-overrides,
-///   fanout, legacy-models
-///
-/// What model field a lowered native agent should carry. The native compiler is the
-/// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible
-/// authoritatively, without mutating the profile to strip its model.
-#[derive(Debug, Clone)]
-pub enum NativeModel {
-    /// Emit the profile's own model verbatim (unpinned alias / fanout token).
-    #[allow(dead_code)]
-    Inherit,
-    /// Emit this resolved model id.
-    Set(String),
-    /// Emit no model field (agent emitted to a harness its model does not resolve to).
-    Clear,
-}
-
-impl NativeModel {
-    /// The concrete model string to render for `profile`, or `None` for "no model".
-    fn resolve<'a>(&'a self, profile: &'a AgentProfile) -> Option<&'a str> {
-        match self {
-            NativeModel::Inherit => profile.model.as_deref(),
-            NativeModel::Set(model) => Some(model),
-            NativeModel::Clear => None,
-        }
-    }
-}
-
-pub fn lower_to_claude(
-    profile: &AgentProfile,
-    _fm: &Frontmatter,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    let eff = Effective::new(profile, &HarnessKind::Claude);
-    let mut lossy = Vec::new();
-
-    // Build the native frontmatter mapping
-    let mut yaml = serde_yaml::Mapping::new();
-    let yk = |s: &str| serde_yaml::Value::String(s.to_string());
-    let yv = |s: &str| serde_yaml::Value::String(s.to_string());
-
-    // name — exact
-    if let Some(name) = &profile.name {
-        yaml.insert(yk("name"), yv(name));
-    }
-    // description — exact
-    if let Some(desc) = &profile.description {
-        yaml.insert(yk("description"), yv(desc));
-    }
-    // model — exact (compile-time alias resolution may supply model_field)
-    if let Some(model) = model_field.resolve(profile) {
-        yaml.insert(yk("model"), yv(model));
-    }
-    // skills — exact (Claude reads skills natively from .claude/skills/)
-    let skills = eff.skills();
-    if !skills.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(skills.iter().map(|s| yv(s)).collect());
-        yaml.insert(yk("skills"), seq);
-    }
-    // tools — native spelling
-    let tools = normalize_tools_for_harness(eff.tools(), "claude", "tools", &mut lossy);
-    if !tools.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(tools.iter().map(|s| yv(s)).collect());
-        yaml.insert(yk("tools"), seq);
-    }
-    // disallowed-tools — native spelling
-    let dt = normalize_tools_for_harness(
-        eff.disallowed_tools(),
-        "claude",
-        "disallowed-tools",
-        &mut lossy,
-    );
-    if !dt.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(dt.iter().map(|s| yv(s)).collect());
-        yaml.insert(yk("disallowed-tools"), seq);
-    }
-
-    // mcp-tools — exact
-    let mcp = eff.mcp_tools();
-    if !mcp.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(mcp.iter().map(|s| yv(s)).collect());
-        yaml.insert(yk("mcp-tools"), seq);
-    }
-
-    // effort — exact (passed as frontmatter hint; Claude reads it)
-    if let Some(effort) = eff.effort() {
-        yaml.insert(yk("effort"), yv(effort.claude_str()));
-    }
-
-    // --- Dropped / meridian-only fields ---
-    let target = "Claude";
-    if profile.approval.is_some() {
-        lossy.push(LossyField {
-            field: "approval".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if profile.sandbox.is_some() {
-        lossy.push(LossyField {
-            field: "sandbox".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if profile.mode.is_some() {
-        lossy.push(LossyField {
-            field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.model_policies.is_empty() {
-        lossy.push(LossyField {
-            field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    // harness: field is dropped (the native artifact's location IS the harness)
-    // harness-overrides: launch-bundle passthrough only, dropped from native artifacts
-
-    // Serialize
-    let yaml_str = if yaml.is_empty() {
-        String::new()
-    } else {
-        let mut s = serde_yaml::to_string(&yaml).unwrap_or_default();
-        if let Some(stripped) = s.strip_prefix("---\n") {
-            s = stripped.to_string();
-        }
-        s
-    };
-
-    let out = if yaml.is_empty() && body.is_empty() {
-        String::new()
-    } else if yaml.is_empty() {
-        body.to_string()
-    } else {
-        format!("---\n{}---\n{}", yaml_str, body)
-    };
-
-    LoweredOutput {
-        bytes: out.into_bytes(),
-        lossy_fields: lossy,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Codex native artifact (TOML)
-// ---------------------------------------------------------------------------
-
-/// Lower an agent profile to Codex-native TOML format.
-///
-/// Per agent-compilation-mapping.md V0 §5.4 and §10:
-/// - Preserved: name, description, model, effort (as model_reasoning_effort),
-///   sandbox (as sandbox_mode), approval (as approval_policy), body
-///   (as developer_instructions)
-/// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
-///   mcp-tools (approximate), mode, autocompact, model-policies, fanout
-/// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
-pub fn lower_to_codex(
-    profile: &AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    let eff = Effective::new(profile, &HarnessKind::Codex);
-    let mut lossy = Vec::new();
-    let target = "Codex";
-
-    // Effort — exact (lowered to model_reasoning_effort)
-    let effort_str = eff.effort().map(|e| e.as_str());
-
-    // Sandbox — exact
-    let sandbox_str = eff.sandbox().map(|s| s.as_str());
-
-    // Approval — exact (lowered to approval_policy)
-    let approval_policy = eff.approval().and_then(|a| {
-        use crate::compiler::agents::ApprovalMode;
-        match a {
-            ApprovalMode::Default => None,
-            ApprovalMode::Auto => Some("on-request"),
-            ApprovalMode::Confirm => Some("untrusted"),
-            ApprovalMode::Never => Some("never"),
-        }
-    });
-
-    // Dropped fields
-    let skills = eff.skills();
-    if !skills.is_empty() {
-        lossy.push(LossyField {
-            field: "skills".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    let tools = eff.tools();
-    if !tools.is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    let dt = eff.disallowed_tools();
-    if !dt.is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Codex uses -c mcp.servers.<name>.command",
-            },
-        });
-    }
-    if profile.mode.is_some() {
-        lossy.push(LossyField {
-            field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.model_policies.is_empty() {
-        lossy.push(LossyField {
-            field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-
-    #[derive(serde::Serialize)]
-    struct CodexAgentToml<'a> {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        name: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        model: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        model_reasoning_effort: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sandbox_mode: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        approval_policy: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        developer_instructions: Option<&'a str>,
-    }
-
-    let doc = CodexAgentToml {
-        name: profile.name.as_deref(),
-        description: profile.description.as_deref(),
-        model: model_field.resolve(profile),
-        model_reasoning_effort: effort_str,
-        sandbox_mode: sandbox_str,
-        approval_policy,
-        developer_instructions: (!body.trim().is_empty()).then_some(body.trim_end()),
-    };
-
-    let out = toml::to_string_pretty(&doc).unwrap_or_default();
-
-    LoweredOutput {
-        bytes: out.into_bytes(),
-        lossy_fields: lossy,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// OpenCode native artifact
-// ---------------------------------------------------------------------------
-
-/// Lower an agent profile to OpenCode-native markdown format.
-///
-/// Per agent-compilation-mapping.md V0 §5.5 and §10:
-/// - Preserved: name, description, model (normalized to provider/model), mode
-///   (approximate — same field name), body
-/// - Dropped: most policy fields (approval, sandbox, tools, disallowed-tools,
-///   effort, mcp-tools, autocompact)
-/// - Meridian-only: model-policies, fanout
-fn lower_to_opencode_like(
-    profile: &AgentProfile,
-    body: &str,
-    harness: HarnessKind,
-    target: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    let eff = Effective::new(profile, &harness);
-    let mut lossy = Vec::new();
-
-    let mut yaml = serde_yaml::Mapping::new();
-    let yk = |s: &str| serde_yaml::Value::String(s.to_string());
-    let yv = |s: &str| serde_yaml::Value::String(s.to_string());
-
-    if let Some(name) = &profile.name {
-        yaml.insert(yk("name"), yv(name));
-    }
-    if let Some(desc) = &profile.description {
-        yaml.insert(yk("description"), yv(desc));
-    }
-    if let Some(model) = model_field.resolve(profile) {
-        yaml.insert(yk("model"), yv(model));
-    }
-    // mode — approximate (OpenCode has a mode concept: primary/subagent)
-    if let Some(mode) = &profile.mode {
-        yaml.insert(yk("mode"), yv(mode.as_str()));
-        lossy.push(LossyField {
-            field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "OpenCode uses the same mode concept",
-            },
-        });
-    }
-
-    // Dropped fields
-    if eff.approval().is_some() {
-        lossy.push(LossyField {
-            field: "approval".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.sandbox().is_some() {
-        lossy.push(LossyField {
-            field: "sandbox".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.tools().is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.disallowed_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.effort().is_some() {
-        lossy.push(LossyField {
-            field: "effort".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "effort maps to --variant on subprocess only",
-            },
-        });
-    }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "mcp-tools on subprocess errors; streaming uses session payload",
-            },
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.model_policies.is_empty() {
-        lossy.push(LossyField {
-            field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-
-    // Serialize
-    let yaml_str = if yaml.is_empty() {
-        String::new()
-    } else {
-        let mut s = serde_yaml::to_string(&yaml).unwrap_or_default();
-        if let Some(stripped) = s.strip_prefix("---\n") {
-            s = stripped.to_string();
-        }
-        s
-    };
-
-    let out = if yaml.is_empty() {
-        body.to_string()
-    } else {
-        format!("---\n{}---\n{}", yaml_str, body)
-    };
-
-    LoweredOutput {
-        bytes: out.into_bytes(),
-        lossy_fields: lossy,
-    }
-}
-
-pub fn lower_to_opencode(
-    profile: &AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    lower_to_opencode_like(
-        profile,
-        body,
-        HarnessKind::OpenCode,
-        "OpenCode",
-        model_field,
-    )
-}
-
-fn normalize_cursor_description(description: &str) -> String {
-    description.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn lower_to_cursor_with_model(
-    profile: &AgentProfile,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    let eff = Effective::new(profile, &HarnessKind::Cursor);
-    let mut lossy = Vec::new();
-    let target = "Cursor";
-
-    let mut yaml = serde_yaml::Mapping::new();
-    let yk = |s: &str| serde_yaml::Value::String(s.to_string());
-    let yv = |s: &str| serde_yaml::Value::String(s.to_string());
-
-    if let Some(name) = &profile.name {
-        yaml.insert(yk("name"), yv(name));
-    }
-    if let Some(desc) = &profile.description {
-        yaml.insert(yk("description"), yv(&normalize_cursor_description(desc)));
-    }
-    if let Some(model) = model_field.resolve(profile) {
-        yaml.insert(yk("model"), yv(model));
-    }
-    let skills = eff.skills();
-    if !skills.is_empty() {
-        let seq: serde_yaml::Value =
-            serde_yaml::Value::Sequence(skills.iter().map(|skill| yv(skill)).collect());
-        yaml.insert(yk("skills"), seq);
-    }
-    // mode — approximate (Cursor may use the same mode concept)
-    if let Some(mode) = &profile.mode {
-        yaml.insert(yk("mode"), yv(mode.as_str()));
-        lossy.push(LossyField {
-            field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Cursor may use the same mode concept",
-            },
-        });
-    }
-
-    // approval — approximate: auto maps to --force, yolo to --yolo; confirm has no Cursor
-    // equivalent and falls back to default.
-    if eff.approval().is_some() {
-        lossy.push(LossyField {
-            field: "approval".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
-            },
-        });
-    }
-    // sandbox — approximate: Cursor only supports enabled/disabled; workspace-write and
-    // danger-full-access both map to --sandbox disabled.
-    if eff.sandbox().is_some() {
-        lossy.push(LossyField {
-            field: "sandbox".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
-            },
-        });
-    }
-    if !eff.tools().is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.disallowed_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.effort().is_some() {
-        lossy.push(LossyField {
-            field: "effort".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "effort maps to --variant on subprocess only",
-            },
-        });
-    }
-    if !eff.mcp_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "mcp-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "mcp-tools on subprocess errors; streaming uses session payload",
-            },
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.model_policies.is_empty() {
-        lossy.push(LossyField {
-            field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-
-    let yaml_str = if yaml.is_empty() {
-        String::new()
-    } else {
-        let mut s = serde_yaml::to_string(&yaml).unwrap_or_default();
-        if let Some(stripped) = s.strip_prefix("---\n") {
-            s = stripped.to_string();
-        }
-        s
-    };
-
-    let out = if yaml.is_empty() {
-        body.to_string()
-    } else {
-        format!("---\n{}---\n{}", yaml_str, body)
-    };
-
-    LoweredOutput {
-        bytes: out.into_bytes(),
-        lossy_fields: lossy,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Pi native artifact
-// ---------------------------------------------------------------------------
-
-/// Lower an agent profile to Pi-native markdown format.
-///
-/// Pi's format is similar to OpenCode: markdown + YAML frontmatter with a
-/// minimal subset of fields. Per agent-compilation-mapping.md §6, all policy
-/// fields are dropped.
-pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel) -> LoweredOutput {
-    let mut lossy = Vec::new();
-    let target = "Pi";
-
-    let mut yaml = serde_yaml::Mapping::new();
-    let yk = |s: &str| serde_yaml::Value::String(s.to_string());
-    let yv = |s: &str| serde_yaml::Value::String(s.to_string());
-
-    if let Some(name) = &profile.name {
-        yaml.insert(yk("name"), yv(name));
-    }
-    if let Some(desc) = &profile.description {
-        yaml.insert(yk("description"), yv(desc));
-    }
-    if let Some(model) = model_field.resolve(profile) {
-        yaml.insert(yk("model"), yv(model));
-    }
-    // mode — approximate
-    if let Some(mode) = &profile.mode {
-        yaml.insert(yk("mode"), yv(mode.as_str()));
-        lossy.push(LossyField {
-            field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Pi may use the same mode concept",
-            },
-        });
-    }
-
-    // Everything else is dropped
-    let eff = Effective::new(profile, &HarnessKind::Pi);
-    if eff.approval().is_some() {
-        lossy.push(LossyField {
-            field: "approval".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.sandbox().is_some() {
-        lossy.push(LossyField {
-            field: "sandbox".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.tools().is_empty() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if !eff.disallowed_tools().is_empty() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.effort().is_some() {
-        lossy.push(LossyField {
-            field: "effort".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: "Pi effort semantics unverified",
-            },
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.model_policies.is_empty() {
-        lossy.push(LossyField {
-            field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-
-    let yaml_str = if yaml.is_empty() {
-        String::new()
-    } else {
-        let mut s = serde_yaml::to_string(&yaml).unwrap_or_default();
-        if let Some(stripped) = s.strip_prefix("---\n") {
-            s = stripped.to_string();
-        }
-        s
-    };
-
-    let out = if yaml.is_empty() {
-        body.to_string()
-    } else {
-        format!("---\n{}---\n{}", yaml_str, body)
-    };
-
-    LoweredOutput {
-        bytes: out.into_bytes(),
-        lossy_fields: lossy,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Dispatch: lower for a given harness
-// ---------------------------------------------------------------------------
-
-/// Lower an agent to the native format for the given harness.
-///
-/// Returns `None` for unknown harnesses (should not happen if the profile was
-/// validated, but guards against future harness additions).
-pub fn lower_for_harness_with_model(
-    harness: &HarnessKind,
-    profile: &AgentProfile,
-    fm: &Frontmatter,
-    body: &str,
-    model_field: &NativeModel,
-) -> LoweredOutput {
-    match harness {
-        HarnessKind::Claude => lower_to_claude(profile, fm, body, model_field),
-        HarnessKind::Codex => lower_to_codex(profile, body, model_field),
-        HarnessKind::OpenCode => lower_to_opencode(profile, body, model_field),
-        HarnessKind::Cursor => lower_to_cursor_with_model(profile, body, model_field),
-        HarnessKind::Pi => lower_to_pi(profile, body, model_field),
-    }
-}
+#[cfg(test)]
+use crate::compiler::lossiness::Lossiness;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
+    use crate::compiler::agents::{
+        AgentDiagnostic, AgentProfile, HarnessKind, parse_agent_content,
+    };
+    use crate::frontmatter::Frontmatter;
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
         let mut diags = Vec::new();
@@ -992,6 +67,62 @@ mod tests {
             text.contains("- Bash(git reset *)"),
             "scoped Bash not projected while preserving payload: {text}"
         );
+    }
+
+    #[test]
+    fn claude_lowering_projects_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
+        let content = "---\nname: coder\nharness: claude\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+        let (profile, fm, diags) = profile_from(content);
+        assert!(diags.is_empty());
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+
+        assert!(
+            text.contains("- MyCustomTool"),
+            "unknown custom tool should be convention-projected: {text}"
+        );
+        assert!(
+            text.contains("- mcp__server__Tool"),
+            "mcp__ wire identifier should be preserved verbatim: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "tools"
+                && field.target == "claude"
+                && matches!(
+                    field.classification,
+                    Lossiness::Approximate {
+                        note: "unknown tool projected via harness naming convention"
+                    }
+                )
+        }));
+    }
+
+    #[test]
+    fn codex_and_cursor_agent_lowering_drops_tools_without_native_projection() {
+        let content = "---\nname: coder\nharness: codex\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+
+        let codex = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let codex_text = String::from_utf8(codex.bytes).unwrap();
+        assert!(
+            !codex_text.contains("my_custom_tool") && !codex_text.contains("mcp__server__Tool"),
+            "codex native agent artifacts drop tools entirely: {codex_text}"
+        );
+        assert!(codex.lossy_fields.iter().any(|field| {
+            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
+        }));
+
+        let cursor = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
+        let cursor_text = String::from_utf8(cursor.bytes).unwrap();
+        assert!(
+            !cursor_text.contains("MyCustomTool")
+                && !cursor_text.contains("my_custom_tool")
+                && !cursor_text.contains("mcp__server__Tool"),
+            "cursor native agent artifacts drop tools entirely: {cursor_text}"
+        );
+        assert!(cursor.lossy_fields.iter().any(|field| {
+            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
+        }));
     }
 
     #[test]
@@ -1040,20 +171,68 @@ mod tests {
     }
 
     #[test]
-    fn claude_harness_override_does_not_replace_mcp_tools() {
-        let content = "---\nname: r\nharness: claude\nmcp-tools: [plugin:base]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+    fn claude_harness_override_does_not_replace_mcp() {
+        let content = "---\nname: r\nharness: claude\ntools: [mcp(plugin:base)]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            text.contains("mcp-tools"),
-            "mcp-tools should be emitted for claude: {text}"
+            !text.contains("mcp-tools:"),
+            "MCP grants belong in tools:, not a separate field: {text}"
         );
-        assert!(text.contains("plugin:base"), "base mcp missing: {text}");
+        assert!(
+            text.contains("mcp__plugin:base__*"),
+            "base mcp should project into tools: {text}"
+        );
         assert!(
             !text.contains("plugin:claude"),
-            "harness-overrides passthrough should not replace mcp-tools: {text}"
+            "harness-overrides passthrough should not replace profile mcp: {text}"
         );
+    }
+
+    #[test]
+    fn claude_agent_projects_mcp_refs_into_tools_and_disallowed() {
+        let content = "---\nname: r\nharness: claude\ntools: [mcp(github/create_issue), mcp(context7)]\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("mcp__github__create_issue"),
+            "per-tool MCP should land in tools: {text}"
+        );
+        assert!(
+            text.contains("mcp__context7__*"),
+            "whole-server MCP should land in tools: {text}"
+        );
+        assert!(
+            text.contains("mcp__github__delete_repo"),
+            "disallowed MCP should project into disallowed-tools: {text}"
+        );
+        assert!(
+            !text.contains("mcp__*__cross_server_tool"),
+            "cross-server MCP must not be emitted: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "disallowed-tools"
+                && matches!(
+                    field.classification,
+                    Lossiness::Approximate {
+                        note: "Claude cannot scope a single MCP tool across all servers"
+                    }
+                )
+        }));
+    }
+
+    #[test]
+    fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
+        let content = "---\nname: r\nharness: pi\ntools: [mcp(plugin:demo)]\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "mcp"
+                && field.target == "Pi"
+                && matches!(field.classification, Lossiness::Dropped)
+        }));
     }
 
     #[test]
@@ -1075,6 +254,40 @@ mod tests {
             .collect();
         assert!(meridian_only.contains(&"model-policies"));
         assert!(meridian_only.contains(&"fanout"));
+    }
+
+    #[test]
+    fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
+        let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("disable-model-invocation"),
+            "subagents have no invocation frontmatter; must not emit skill-only key: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|f| {
+            f.field == "model-invocable"
+                && f.target == "Claude"
+                && f.classification == Lossiness::Dropped
+        }));
+    }
+
+    #[test]
+    fn claude_agent_user_invocable_false_warn_drops() {
+        let content = "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            !text.contains("user-invocable"),
+            "no native agent key: {text}"
+        );
+        assert!(out.lossy_fields.iter().any(|f| {
+            f.field == "user-invocable"
+                && f.target == "Claude"
+                && f.classification == Lossiness::Dropped
+        }));
     }
 
     // --- 3.3: Codex lowering ---
@@ -1150,14 +363,12 @@ mod tests {
 
     #[test]
     fn codex_mcp_lossiness_uses_top_level_policy() {
-        let content = "---\nname: r\nharness: codex\nmcp-tools: [plugin:base]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
+        let content = "---\nname: r\nharness: codex\ntools: [mcp(plugin:base)]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         assert!(
-            out.lossy_fields
-                .iter()
-                .any(|field| field.field == "mcp-tools"),
-            "top-level mcp-tools should remain lossy for codex: {:?}",
+            out.lossy_fields.iter().any(|field| field.field == "mcp"),
+            "top-level mcp should remain lossy for codex: {:?}",
             out.lossy_fields
                 .iter()
                 .map(|field| field.field.clone())
@@ -1221,7 +432,7 @@ mod tests {
 
     #[test]
     fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
-        let content = "---\nname: r\nharness: cursor\ntools: [Read]\nmcp-tools: [plugin:base]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+        let content = "---\nname: r\nharness: cursor\ntools: [Read, mcp(plugin:base)]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
@@ -1236,7 +447,7 @@ mod tests {
             opencode
                 .lossy_fields
                 .iter()
-                .any(|field| field.field == "mcp-tools"),
+                .any(|field| field.field == "mcp"),
             "harness-overrides passthrough should not clear mcp lossiness",
         );
 
@@ -1249,10 +460,7 @@ mod tests {
             "cursor override should keep tools lossiness",
         );
         assert!(
-            cursor
-                .lossy_fields
-                .iter()
-                .any(|field| field.field == "mcp-tools"),
+            cursor.lossy_fields.iter().any(|field| field.field == "mcp"),
             "cursor override should keep mcp lossiness",
         );
         assert!(

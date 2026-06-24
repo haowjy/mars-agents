@@ -35,11 +35,21 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover items, detect collisions, rewrite frontmatter refs |
+| `build_target()` | Discover source items via `src/discover/`, reject cross-source destination collisions, rewrite frontmatter refs for explicit skill renames; stages local items via `crate::staging::stage_local_item` (mod.rs:299–309) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
 | `finalize()` | Write lock, persist model aliases, build report |
+
+## Lossiness Gating
+
+`SyncRequest.lossiness_mode` (mod.rs) selects `LossinessMode::Surface` or `Hidden` when
+`execute()` creates the pipeline `DiagnosticCollector`. Lossiness-category diagnostics are
+suppressed at emission (`warn_with_category` / `error_with_category`) when mode is `Hidden`.
+
+Only `mars sync` and `mars upgrade` set `Surface`; validate, export, add, repair, etc. set
+`Hidden`. `mars check` / `mars init` surface lossiness via the preview path with the same
+`LossinessMode::Surface`.
 
 ### Frozen Gate
 
@@ -79,5 +89,6 @@ let request = SyncRequest {
 
 - `src/resolve/AGENTS.md` — dependency resolution (Phase 2)
 - `src/compiler/AGENTS.md` — compilation (Phases 3-5)
+- `src/discover/.context/CONTEXT.md` — filesystem discovery contract and within-source `DiscoveryCollision` rule
 - `src/target_sync/` — target directory copying (Phase 6)
 - `src/target_sync/.context/CONTEXT.md` — per-target ownership, orphan cleanup, collision diagnostics

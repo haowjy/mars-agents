@@ -55,6 +55,7 @@ fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
             subpath: None,
             filter: FilterMode::Exclude(vec!["forbidden".into()]),
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -62,6 +63,7 @@ fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();

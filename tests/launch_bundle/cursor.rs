@@ -79,7 +79,7 @@ skills: [root_skill]
 tools:
   Read: allow
   Edit: deny
-mcp-tools: [plugin:root]
+  mcp(plugin:root): allow
 harness-overrides:
   opencode:
     skills: [opencode_skill]
@@ -158,7 +158,10 @@ harness = "cursor""#;
         bundle["tools"]["disallowed"],
         serde_json::json!(["StrReplace"])
     );
-    assert_eq!(bundle["tools"]["mcp"], serde_json::json!(["plugin:root"]));
+    assert_eq!(
+        bundle["tools"]["mcp"],
+        serde_json::json!(["Mcp(plugin:root:*)"])
+    );
     assert_eq!(
         bundle["execution_policy"]["native_config"],
         serde_json::json!({

@@ -151,6 +151,7 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -167,6 +168,7 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
                 skills: vec!["skill-a".into(), "skill-b".into()],
             },
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -174,6 +176,7 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
@@ -222,6 +225,7 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
                 skills: vec![],
             },
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -229,6 +233,7 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     // If child items were eagerly seeded through the filtered parent path,
@@ -292,6 +297,7 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
                 skills: vec![],
             },
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -299,6 +305,7 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
@@ -347,6 +354,7 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
                 skills: vec![],
             },
             rename: RenameMap::new(),
+            dialect: None,
             is_overridden: false,
             original_git: None,
         },
@@ -354,6 +362,7 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();

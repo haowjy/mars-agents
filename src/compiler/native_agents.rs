@@ -235,7 +235,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 .filter(|model| crate::models::glob_match(value, &model.id))
                 .map(|model| NativeModelCandidate {
                     token: model.id.clone(),
-                    harness_constraint: harness_constraint.clone(),
+                    harness_constraint,
                 })
                 .collect(),
         }
@@ -764,12 +764,13 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
-        for (harness, model) in qualifying_emissions(
+        for (harness, model) in qualifying_agent_emissions(
             effective_profile,
             &agent.agent_name,
             policy,
             ctx.fanout_agents,
-            ctx,
+            ctx.harness_scope,
+            ctx.configured_emit_harnesses,
             model_router,
         ) {
             emit_lowered_native_agent(
@@ -792,11 +793,15 @@ pub(crate) fn compile_native_agents<'a>(
     records
 }
 
-/// Merge a per-agent overlay's model selection over the canonical profile for native
-/// emission: `overlay.model` wins over `profile.model`, and overlay policies take
+/// Merge a per-agent overlay over the canonical profile for native emission.
+///
+/// Routing: `overlay.model` wins over `profile.model`, and overlay policies take
 /// precedence over profile policies (shared with launch-bundle via the config helpers).
 /// `overlay.harness` is intentionally ignored — native coverage is configured-target
 /// driven, not overlay-routed.
+///
+/// Content/policy: optional overlay fields replace the corresponding profile values;
+/// absent/`None`/empty overlay slots leave the profile unchanged.
 fn effective_native_profile(
     profile: &crate::compiler::agents::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
@@ -812,15 +817,41 @@ fn effective_native_profile(
         crate::config::overlay_then_profile_policies(Some(overlay), &profile.model_policies)
             .map(|(_, _, rule)| rule.clone())
             .collect();
+
+    if let Some(description) = &overlay.description {
+        effective.description = Some(description.clone());
+    }
+
+    // Overlay-provided invocation axes must flip the profile presence bits: lowering
+    // keys off `had_*_invocable_field` to decide explicit false is warn-dropped vs
+    // omitted-by-default, and those bits only reflect YAML authorship otherwise.
+    if let Some(model_invocable) = overlay.model_invocable {
+        effective.model_invocable = model_invocable;
+        effective.had_model_invocable_field = true;
+    }
+    if let Some(user_invocable) = overlay.user_invocable {
+        effective.user_invocable = user_invocable;
+        effective.had_user_invocable_field = true;
+    }
+
+    if !overlay.tools.allowed.is_empty() {
+        effective.tools = overlay.tools.allowed.clone();
+    }
+    if !overlay.tools.disallowed.is_empty() {
+        effective.disallowed_tools = overlay.tools.disallowed.clone();
+        effective.tools_denied.clear();
+    }
     effective
 }
 
-fn qualifying_emissions(
+/// Harnesses and native model fields that would receive lowered agent artifacts.
+pub(crate) fn qualifying_agent_emissions(
     profile: &crate::compiler::agents::AgentProfile,
     agent_name: &str,
     policy: &AgentSurfacePolicy,
     fanout_agents: &[String],
-    ctx: &NativeAgentCompileCtx<'_>,
+    harness_scope: Option<&[crate::compiler::agents::HarnessKind]>,
+    configured_emit_harnesses: &[crate::compiler::agents::HarnessKind],
     model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> Vec<(
     crate::compiler::agents::HarnessKind,
@@ -828,16 +859,14 @@ fn qualifying_emissions(
 )> {
     use crate::compiler::agents::HarnessKind;
 
-    let in_scope = |harness: &HarnessKind| {
-        ctx.harness_scope
-            .is_none_or(|scope| scope.contains(harness))
-    };
+    let in_scope =
+        |harness: &HarnessKind| harness_scope.is_none_or(|scope| scope.contains(harness));
 
     match policy {
         AgentSurfacePolicy::SuppressAll => Vec::new(),
         AgentSurfacePolicy::EmitAll => {
             let mut emissions = Vec::new();
-            for harness in ctx.configured_emit_harnesses {
+            for harness in configured_emit_harnesses {
                 if !in_scope(harness) {
                     continue;
                 }
@@ -849,7 +878,7 @@ fn qualifying_emissions(
                         crate::compiler::agents::lower::NativeModel::Clear
                     }
                 };
-                emissions.push((harness.clone(), model));
+                emissions.push((*harness, model));
             }
             emissions
         }
@@ -867,7 +896,7 @@ fn qualifying_emissions(
                     model_router.decision_for_profile(profile, harness, effective_fanout, false)
                 {
                     emissions.push((
-                        harness.clone(),
+                        *harness,
                         crate::compiler::agents::lower::NativeModel::Set(model_id),
                     ));
                 }
@@ -894,21 +923,11 @@ fn emit_lowered_native_agent(
         agent.model,
     );
 
-    for lf in &lowered.lossy_fields {
-        use crate::compiler::agents::lower::Lossiness;
-        match &lf.classification {
-            Lossiness::Dropped | Lossiness::MeridianOnly => {}
-            Lossiness::Approximate { note } => {
-                diag.warn(
-                    "agent-field-approximate",
-                    format!(
-                        "agent `{}`: field `{}` approximately mapped in {} ({note})",
-                        agent.agent_name, lf.field, lf.target
-                    ),
-                );
-            }
-        }
-    }
+    crate::compiler::lossiness::emit_agent_lossiness_warnings(
+        agent.agent_name,
+        &lowered.lossy_fields,
+        diag,
+    );
 
     let harness_dir = ctx.project_root.join(agent.harness.target_dir());
     let native_agents_dir = harness_dir.join("agents");
@@ -1108,9 +1127,9 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     (compiled_native_outputs, removed_native_outputs)
 }
 
-/// Apply each agent's overlay (`overlay.model` / `overlay.model_policies`) over its
-/// canonical profile, yielding agents whose `profile` is the effective native profile.
-/// Single source of overlay merging for the native lifecycle.
+/// Apply each agent's overlay over its canonical profile, yielding agents whose
+/// `profile` is the effective native profile. Single source of overlay merging
+/// for the native lifecycle (routing, description, invocation axes, tool policy).
 fn resolve_native_agent_profiles(
     mars_agents: &[MarsCanonicalAgent],
     agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,

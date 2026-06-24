@@ -11,7 +11,8 @@ All skill fields below are optional. A skill with no frontmatter is valid and is
 name: my-skill
 description: What this skill does
 model-invocable: false
-allowed-tools: [bash(git *), read, write]
+tools: [bash(git *), read, write, mcp(plugin:demo)]
+disallowed-tools: [agent]
 license: MIT
 metadata:
   owner: platform-team
@@ -106,17 +107,69 @@ user-invocable: false   # user cannot trigger via /name
 
 ---
 
-### `allowed-tools`
+### `tools`
+
+| | |
+|---|---|
+| Type | string[] **or** map of `tool-pattern: allow\|deny` |
+| Default | empty |
+
+Tool allowlist and inline denials for this skill — identical schema to agent profiles. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized.
+
+List form is allowlist-only:
+
+```yaml
+tools: [bash(git *), read]
+```
+
+Map form mixes allow and deny entries; denials merge with `disallowed-tools`:
+
+```yaml
+tools:
+  ask_user: allow
+  "bash(git *)": deny
+```
+
+Dropped by some harnesses — see the lossiness table below.
+
+**Canonical skills do not use `allowed-tools`.** Authoring `allowed-tools` or
+`allowed_tools` directly in a skill's frontmatter produces a `skill-schema-warning`
+diagnostic (Validation category, always surfaced regardless of lossiness
+settings) and the key is **stripped** before the skill reaches `.mars/`. The
+diagnostic is emitted at the staging boundary, before the strip. Use the canonical
+`tools:` field instead.
+
+During staging for foreign dialects (Claude, Codex, etc.), harness-native
+`allowed-tools` / `allowed_tools` are lifted to canonical `tools:` — this is
+the normal import path for foreign-authored skills, distinct from the warning
+path above.
+
+---
+
+### `disallowed-tools`
 
 | | |
 |---|---|
 | Type | string[] |
 | Default | empty |
 
-Tool allowlist for this skill. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case. Dropped by some harnesses — see the lossiness table below.
+Flat tool denylist merged with map-form `tools:` denials. Lowered to harness-native denylist fields where supported (Claude, Pi); warn-dropped elsewhere.
 
 ```yaml
-allowed-tools: [bash(git *), read]
+disallowed-tools: [agent, web_search]
+```
+
+**MCP grants** — same `mcp(...)` grammar as agent profiles (see
+[agent-profiles.md](agent-profiles.md#tools)). Author grants in `tools:` and denials in
+`disallowed-tools:`. The legacy `mcp-tools:` field is **removed**.
+
+On Claude, allowed MCP refs project into `allowed-tools:` as harness-native tokens (a
+**grant**, not a restriction — Mars records approximate lossiness). Other harnesses drop
+or approximate MCP from native skill artifacts; the launch bundle carries the real
+per-harness projection. See [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+
+```yaml
+tools: [bash(git *), mcp(plugin:context7)]
 ```
 
 ---
@@ -185,7 +238,9 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `model-invocable: true` | preserved | (omit) | (omit or `allow_implicit_invocation: true`)¹ | (omit) | (omit) | (omit) |
 | `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
-| `allowed-tools` | preserved | `allowed-tools` | dropped | dropped | `allowed-tools` | dropped |
+| `tools` | preserved | `allowed-tools` (+ projected MCP grants) | dropped | dropped | `allowed-tools` | dropped |
+| `disallowed-tools` | preserved | `disallowed-tools` (+ projected MCP denials) | dropped | dropped | `disallowed-tools` | dropped |
+| `mcp(...)` in `tools` / `disallowed-tools` | preserved | projected into `allowed-tools` / `disallowed-tools` | approximate | approximate | dropped | approximate |
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
 
@@ -246,7 +301,7 @@ Source tree:
 
 ```
 skills/my-skill/
-  SKILL.md          # base: model-invocable: false, allowed-tools: [bash(git *)]
+  SKILL.md          # base: model-invocable: false, tools: [bash(git *)]
   variants/
     claude/
       SKILL.md      # Claude-specific instructions
@@ -274,7 +329,10 @@ Meridian always reads from `.mars/skills/`. Skill compilation is transparent to 
 
 ## Diagnostics
 
-Mars emits diagnostics during `mars sync` and `mars validate` for skill compilation issues:
+Mars emits diagnostics during `mars sync` and `mars validate` for skill compilation issues.
+Field-loss diagnostics also surface via `mars check` and `mars init`, which run a
+lossiness preview (`lossiness_preview::collect_source_lossiness_diagnostics`)
+against the project's configured managed targets.
 
 | Code | Severity | Cause |
 |---|---|---|
@@ -285,5 +343,10 @@ Mars emits diagnostics during `mars sync` and `mars validate` for skill compilat
 | `skill-variant-missing-skill` | warning | Model variant directory has no `SKILL.md` |
 
 `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.
+
+The `skill-schema-warning` for non-canonical `allowed-tools` is a **Validation**
+category diagnostic and is **not** gated by `surface_lossiness_warnings`. It is
+always emitted when the condition is detected at the staging boundary, regardless
+of whether field-loss warnings are configured.
 
 Errors in frontmatter parsing skip frontmatter compilation for that skill; the body is still projected.

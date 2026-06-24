@@ -221,7 +221,6 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
                 "tools": profile.tools,
                 "disallowed-tools": profile.disallowed_tools,
                 "tools-denied": profile.tools_denied,
-                "mcp-tools": profile.mcp_tools,
             }));
         } else {
             println!("name:        {agent_name}");
@@ -238,7 +237,6 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             print_str_list("tools", &profile.tools);
             print_str_list("disallowed-tools", &profile.disallowed_tools);
             print_str_list("tools-denied", &profile.tools_denied);
-            print_str_list("mcp-tools", &profile.mcp_tools);
         }
 
         return Ok(0);

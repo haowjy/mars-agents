@@ -549,13 +549,7 @@ fn format_installed_harnesses(installed_harnesses: &HashSet<String>) -> String {
 }
 
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
-    match harness {
-        HarnessKind::Claude => "claude",
-        HarnessKind::Codex => "codex",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Pi => "pi",
-    }
+    crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
 #[cfg(test)]
@@ -591,6 +585,9 @@ mod tests {
             model: model.map(str::to_string),
             mode: None,
             model_invocable: false,
+            user_invocable: true,
+            had_model_invocable_field: false,
+            had_user_invocable_field: false,
             approval: None,
             sandbox: None,
             effort: None,
@@ -601,7 +598,6 @@ mod tests {
             tools: Vec::new(),
             tools_denied: Vec::new(),
             disallowed_tools: Vec::new(),
-            mcp_tools: Vec::new(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
             fanout: Vec::new(),

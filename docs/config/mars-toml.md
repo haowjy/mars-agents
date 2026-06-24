@@ -55,7 +55,7 @@ description = "Core agents and skills for meridian"  # optional
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
 
-Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots.
+Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
 
 ### `[dependencies]`
 
@@ -93,8 +93,9 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `path` | string | Local filesystem path (relative to project root or absolute) |
 | `subpath` | string | Optional package root under the fetched repo or local path |
 | `version` | string | Version constraint for git sources (see [Version Constraints](#version-constraints)) |
+| `dialect` | string | Inbound lift dialect: `claude`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
 
-`subpath` is the explicit escape hatch for monorepo packages. When omitted, Mars discovers from the source root itself.
+`subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
 
 Supported source forms in v1:
 - GitHub shorthand, `github:` aliases, repo URLs, and tree URLs
@@ -206,6 +207,69 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 
 Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
+### `[agents.<name>]` (overlay)
+
+Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; `mars.local.toml` wins when keys collide.
+
+```toml
+[agents.reviewer]
+description = "Code review specialist"
+model = "fast"
+harness = "claude"
+effort = "high"
+approval = "confirm"
+sandbox = "read-only"
+model-invocable = false
+user-invocable = true
+model-policies = [{ match = "gpt-5*", no_fallback = true }]
+
+[agents.reviewer.tools]
+allowed = ["bash(git *)", "read", "write", "mcp(plugin:demo)"]
+disallowed = ["agent"]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | string | Override the agent's description |
+| `model` | string | Model token or alias for this agent |
+| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`) |
+| `effort` | string | Effort level: `low`, `medium`, `high`, `xhigh` |
+| `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
+| `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
+| `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
+| `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
+| `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
+| `user-invocable` | bool | Whether the user can `/name` this agent |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays (MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`) |
+| `model-policies` | table[] | Model routing policy rules |
+
+The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
+`tools.allowed` (e.g. `"mcp(plugin:demo)"`). See
+[agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+
+`model-policies` rules: each entry has `match` (glob pattern against model ID/alias), `no_fallback` (bool, optional). See `config/mod.rs` for the full `ModelPolicyRule` definition.
+
+### `[skills.<name>]` (overlay)
+
+Per-skill overlay policy in `mars.toml`. Same seam as agent overlays — applied during staging, no source forking.
+
+```toml
+[skills.my-skill]
+description = "Overridden description"
+model-invocable = false
+user-invocable = true
+
+[skills.my-skill.tools]
+disallowed = ["agent"]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | string | Override the skill's description |
+| `model-invocable` | bool | Override model invocability |
+| `user-invocable` | bool | Override user invocability |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays (MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`) |
+
 ## Model Visibility
 
 Configure which models appear in `mars models list`. Consumer-only - not merged from dependencies.
@@ -258,6 +322,18 @@ Mars uses [semver](https://semver.org/) for version resolution. Sources tag rele
 
 Branch or commit pins (non-semver strings) bypass version resolution entirely and fetch the specified ref directly.
 
+## Dialect
+
+The `dialect` key on `[dependencies.<dep>]` controls how mars lifts foreign frontmatter to canonical form during the staging seam. It accepts: `claude`, `codex`, `opencode`, `cursor`, `mars-native`.
+
+Resolution order (first-wins):
+
+1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
+2. **Container inference for lift only** — if the rooted source tree contains exactly one non-empty foreign container such as `.claude/agents/` or `.claude/skills/`, the corresponding dialect is inferred. Hidden containers are still skipped by item discovery; inference does not import their contents.
+3. **Default** — `claude` for dependencies, `mars-native` for local (`_self`) items.
+
+Without this field, a source authored in Claude-native `allowed-tools` will be interpreted through the Claude lift table. Set `dialect = "mars-native"` for sources that already use canonical frontmatter. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
+
 ## Renaming
 
 Rename mappings let you change the installed name of an item from a source. This is useful for resolving naming collisions or for preferring shorter names.
@@ -267,7 +343,7 @@ Renames are set via `mars rename` (which updates the dependency's `rename` field
 ```toml
 [dependencies.base]
 url = "https://github.com/meridian-flow/meridian-base"
-rename = { "agents/coder__meridian-flow_meridian-base.md" = "agents/coder.md" }
+rename = { "agents/coder.md" = "agents/base-coder.md" }
 ```
 
 ## `[models]`

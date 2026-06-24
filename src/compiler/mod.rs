@@ -10,15 +10,22 @@ pub mod agent_copy;
 pub mod agents;
 pub mod config_entries;
 pub mod context;
-/// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
+/// Typed native harness descriptor table shared by compiler lowering lanes.
+pub(crate) mod harness_descriptor;
 pub mod hooks;
+/// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
+pub(crate) mod invocability;
+pub(crate) mod lossiness;
+pub(crate) mod lossiness_preview;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
+pub(crate) mod mcp_ref;
 pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
 pub(crate) mod tool_names;
+pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
 /// Visibility propagation rules for passive vs effectful items (D1/D10).
@@ -74,11 +81,8 @@ pub fn compile(
         agent_copy_spec.as_ref(),
         ctx.meridian_managed,
     );
-    let configured_emit_harnesses: Vec<agents::HarnessKind> = effective_settings
-        .managed_targets()
-        .iter()
-        .filter_map(|t| agents::HarnessKind::from_target_dir(t))
-        .collect();
+    let configured_emit_harnesses =
+        harness_descriptor::configured_emit_harnesses(effective_settings);
     let mars_dir = ctx.project_root.join(".mars");
     let models_cache =
         crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {

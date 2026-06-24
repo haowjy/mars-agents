@@ -248,7 +248,7 @@ pub fn resolve(
                 .filter(|request| filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, diag, &mut ctx,
+                    request, true, provider, locked, options, config, diag, &mut ctx,
                 )?;
             }
             for request in direct_requests
@@ -256,7 +256,7 @@ pub fn resolve(
                 .filter(|request| !filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, diag, &mut ctx,
+                    request, true, provider, locked, options, config, diag, &mut ctx,
                 )?;
             }
             Ok(())

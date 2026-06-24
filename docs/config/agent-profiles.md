@@ -305,12 +305,34 @@ Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are
 ```yaml
 tools: [bash, write, edit]
 tools: [bash(git status), write, read]   # scoped pattern
+tools: [mcp(context7), mcp(plugin:demo/query-docs)]   # MCP grants — see below
 tools:
   bash: allow
   "bash(meridian spawn *)": allow
   agent: deny
   edit: deny
 ```
+
+**MCP grants** — inline `mcp(...)` entries in `tools:` or `disallowed-tools:` gate MCP
+server/tool access. Server and tool segments are preserved **verbatim** (case-sensitive).
+`*` is the only wildcard.
+
+| Form | Meaning |
+|---|---|
+| `mcp(server)` | Whole server (shorthand for `mcp(server/*)`) |
+| `mcp(server/tool)` | One specific tool |
+| `mcp(server/*)` | All tools on one server |
+| `mcp(*/tool)` | A tool name across any server |
+| `mcp(*/*)` | All MCP tools |
+
+```yaml
+tools: [mcp(context7), mcp(memory-bank/store)]
+disallowed-tools: [mcp(github/delete_repo)]
+```
+
+The legacy `mcp-tools:` / `mcp_tools` frontmatter field is **removed** — use
+`tools: [mcp(server)]` instead. Per-harness projection and lossiness are documented in
+[agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
 ---
 
@@ -327,22 +349,7 @@ Tool denylist. These tools are blocked even if they'd otherwise be available. Us
 ```yaml
 disallowed-tools: [agent]
 disallowed-tools: [bash(git revert:*), bash(git reset:*)]
-```
-
----
-
-### `mcp-tools`
-
-| | |
-|---|---|
-| Type | string[] |
-| Required | no |
-| Default | empty |
-
-MCP server references for this agent. Entries are config file references for Claude (`--mcp-config`). Codex uses a different format (`-c mcp.servers.<name>.command`). Behavior varies by harness.
-
-```yaml
-mcp-tools: [context7, memory-bank]
+disallowed-tools: [mcp(plugin:audit/*)]   # MCP denials use the same mcp(...) grammar
 ```
 
 ---

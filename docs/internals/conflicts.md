@@ -2,45 +2,27 @@
 
 Mars handles three types of conflicts: naming collisions between sources, unmanaged file collisions, and content conflicts during updates.
 
-MCP server and hook name collisions are resolved separately — see [mcp-and-hooks.md](mcp-and-hooks.md#collision-resolution).
+MCP server and hook name collisions are resolved separately — see [mcp-and-hooks.md](../config/mcp-and-hooks.md#collision-resolution).
 
 ## Naming Collisions
 
-When two sources expose an item with the same destination path (e.g., both have `agents/coder.md`), Mars auto-renames both items.
+Mars treats same-name item collisions as errors until the package author or consumer makes the intended name explicit.
 
-### Auto-Rename
+### Within one source: `DiscoveryCollision`
 
-Both colliding items are suffixed with `__{owner}_{repo}` derived from the source URL or dependency name:
+If one source exposes two items with the same `(kind, name)`, discovery fails with `DiscoveryCollision`. This applies to duplicates found by convention scanning, plugin-manifest declarations, or both. There is no precedence rule inside a source.
 
-```
-agents/coder.md  (from base and from dev)
-  → agents/coder__meridian-flow_meridian-base.md
-  → agents/coder__meridian-flow_meridian-dev-workflow.md
-```
+### Across sources: destination `Collision`
 
-Skills follow the same pattern:
+If two sources would install to the same destination path, sync fails with `Collision` rather than auto-renaming either item. Resolve the collision by renaming one dependency item in `mars.toml`:
 
-```
-skills/review  (collision)
-  → skills/review__alice_agents
-  → skills/review__bob_agents
+```toml
+[dependencies.base]
+url = "https://github.com/meridian-flow/meridian-base"
+rename = { "agents/coder.md" = "agents/base-coder.md" }
 ```
 
-### Frontmatter Rewriting
-
-When skills are auto-renamed, Mars rewrites agent frontmatter (the YAML metadata block at the top of an agent Markdown file) to reference the new skill names. If agent `coder` declares `skills: [review]` and `review` was renamed to `review__alice_agents`, the installed agent file is updated to reference `review__alice_agents`.
-
-The `source_checksum` in the lock file tracks the pre-rewrite hash; `installed_checksum` tracks the post-rewrite hash. This distinction lets Mars detect whether the user modified the file vs. whether Mars's own rewriting changed it.
-
-### Resolving with `mars rename`
-
-Auto-renamed items can be given preferred names:
-
-```bash
-mars rename agents/coder__meridian-flow_meridian-base.md agents/coder.md
-```
-
-This adds a `rename` mapping in `mars.toml` for the dependency. The rename persists across syncs. If the other colliding source is later removed, the rename mapping still works (it just applies a no-op mapping).
+Skill renames are explicit too. When a skill is renamed, Mars rewrites dependent agent frontmatter (the YAML metadata block at the top of an agent Markdown file) to reference the installed skill name.
 
 ## Unmanaged File Collisions
 

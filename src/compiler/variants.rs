@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
-/// Harness identifiers accepted under `skills/<name>/variants/`.
-pub const KNOWN_HARNESS_VARIANT_KEYS: &[&str] = &["claude", "codex", "opencode", "pi", "cursor"];
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SkillVariantIndex {
     harnesses: BTreeMap<String, HarnessVariantIndex>,
@@ -186,7 +183,7 @@ fn index_harness_variant(
 }
 
 fn is_known_harness_variant_key(key: &str) -> bool {
-    KNOWN_HARNESS_VARIANT_KEYS.contains(&key)
+    crate::compiler::harness_descriptor::descriptor_for_variant_key(key).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,13 +213,17 @@ pub fn harness_skill_variant_path(skill_dir: &Path, harness_key: &str) -> Option
 /// `variants/` subtree, then optionally replace only `SKILL.md` with the
 /// harness-level variant. Passing `None` keeps the full tree and is intended
 /// for full-fidelity targets such as `.agents`.
+/// Project a canonical skill tree to a target directory.
+///
+/// Returns `true` when bytes were written to `dest`, `false` when an existing
+/// tree was already byte-identical and left untouched.
 pub fn project_skill_for_target(
     source: &Path,
     dest: &Path,
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
 
@@ -246,7 +247,12 @@ pub fn project_skill_for_target(
     }
 
     let tmp_path = tmp_dir.keep();
-    crate::platform::fs::replace_generated_dir(&tmp_path, dest)
+    if dest.exists() && crate::reconcile::fs_ops::directory_trees_content_equal(&tmp_path, dest)? {
+        let _ = crate::platform::fs::safe_remove(&tmp_path);
+        return Ok(false);
+    }
+    crate::platform::fs::replace_generated_dir(&tmp_path, dest)?;
+    Ok(true)
 }
 
 fn compile_projected_skill_frontmatter(
@@ -256,18 +262,54 @@ fn compile_projected_skill_frontmatter(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<(), MarsError> {
-    use crate::compiler::agents::lower::Lossiness;
-    use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
+    let projected_skill = projected_dir.join("SKILL.md");
+    let lowered =
+        lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
+    if let Some(bytes) = lowered {
+        fs::write(projected_skill, bytes)?;
+    }
+    Ok(())
+}
+
+/// Lower a staged skill for one native harness (variant-aware) and emit lossiness warnings.
+///
+/// Mirrors `project_skill_for_target` + `compile_projected_skill_frontmatter` without
+/// writing projected trees — used by `mars check` / `mars init` preview.
+pub(crate) fn emit_staged_skill_lossiness_for_harness(
+    staged_skill_dir: &Path,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let projected_skill = harness_skill_variant_path(staged_skill_dir, harness_key)
+        .unwrap_or_else(|| staged_skill_dir.join("SKILL.md"));
+    let _ = lower_projected_skill_for_harness(
+        staged_skill_dir,
+        &projected_skill,
+        harness_key,
+        skill_name,
+        diag,
+    )?;
+    Ok(())
+}
+
+fn lower_projected_skill_for_harness(
+    source: &Path,
+    projected_skill: &Path,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<Option<Vec<u8>>, MarsError> {
+    use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
     use crate::compiler::skills::parse_skill_content;
 
-    let Some(harness) = SkillHarness::from_variant_key(harness_key) else {
-        return Ok(());
+    let Some(harness) = skill_harness_from_variant_key(harness_key) else {
+        return Ok(None);
     };
 
     let base_skill = source.join("SKILL.md");
-    let projected_skill = projected_dir.join("SKILL.md");
     let base_content = fs::read_to_string(&base_skill)?;
-    let selected_content = fs::read_to_string(&projected_skill)?;
+    let selected_content = fs::read_to_string(projected_skill)?;
 
     let mut skill_diags = Vec::new();
     let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
@@ -280,7 +322,7 @@ fn compile_projected_skill_frontmatter(
                     crate::diagnostic::DiagnosticCategory::Validation,
                 );
             }
-            return Ok(());
+            return Ok(None);
         }
     };
 
@@ -300,7 +342,7 @@ fn compile_projected_skill_frontmatter(
     }
 
     if !profile.has_frontmatter {
-        return Ok(());
+        return Ok(None);
     }
 
     let selected_fm = match crate::frontmatter::parse(&selected_content) {
@@ -311,27 +353,18 @@ fn compile_projected_skill_frontmatter(
                 format!("skill `{skill_name}` selected variant frontmatter is malformed; raw fallback used: {e}"),
                 crate::diagnostic::DiagnosticCategory::Validation,
             );
-            return Ok(());
+            return Ok(None);
         }
     };
     let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
 
-    for lf in &lowered.lossy_fields {
-        match &lf.classification {
-            // Dropped/MeridianOnly fields are expected target-format gaps — not actionable.
-            Lossiness::Dropped | Lossiness::MeridianOnly => {}
-            Lossiness::Approximate { note } => diag.warn(
-                "skill-field-approximate",
-                format!(
-                    "skill `{skill_name}`: field `{}` approximately mapped in {} ({note})",
-                    lf.field, lf.target
-                ),
-            ),
-        }
-    }
+    crate::compiler::lossiness::emit_skill_lossiness_warnings(
+        skill_name,
+        &lowered.lossy_fields,
+        diag,
+    );
 
-    fs::write(projected_skill, lowered.bytes)?;
-    Ok(())
+    Ok(Some(lowered.bytes))
 }
 
 fn copy_dir_following_symlinks_excluding_top_level_variants(
@@ -449,6 +482,37 @@ mod tests {
     }
 
     #[test]
+    fn project_skill_for_target_skips_byte_identical_dest() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(source.join("variants/claude")).unwrap();
+        std::fs::write(source.join("SKILL.md"), "base").unwrap();
+        std::fs::write(source.join("variants/claude/SKILL.md"), "claude").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        assert!(
+            project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
+                .unwrap()
+        );
+
+        let before = std::fs::metadata(dest.join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(
+            !project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
+                .unwrap()
+        );
+        let after = std::fs::metadata(dest.join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn projects_native_skill_without_variants_and_replaces_skill_md() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("source");
@@ -482,7 +546,7 @@ mod tests {
         std::fs::create_dir_all(source.join("variants/codex")).unwrap();
         std::fs::write(
             source.join("SKILL.md"),
-            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\nBase body\n",
+            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools: [Bash(git *)]\n---\nBase body\n",
         )
         .unwrap();
         std::fs::write(
@@ -491,17 +555,26 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag =
+            DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
         project_skill_for_target(&source, &dest, Some("codex"), &mut diag, "planning").unwrap();
 
         let out = std::fs::read_to_string(dest.join("SKILL.md")).unwrap();
         assert!(out.contains("name: planning"));
-        assert!(out.contains("allow_implicit_invocation: false"));
+        assert!(!out.contains("allow_implicit_invocation"));
         assert!(!out.contains("name: ignored"));
         assert!(!out.contains("allowed-tools"));
         assert!(out.ends_with("Codex body\n"));
-        // Dropped fields are silently suppressed (not actionable), so no diagnostics expected.
-        assert!(diag.drain().is_empty());
+        // Dropped fields surface as one summarized lossiness warning per target.
+        let warnings: Vec<_> = diag
+            .drain()
+            .into_iter()
+            .filter(|d| d.code == "skill-field-dropped")
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("tools"));
+        assert!(warnings[0].message.contains("model-invocable"));
+        assert!(warnings[0].message.contains(".codex"));
     }
 
     #[test]

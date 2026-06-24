@@ -24,6 +24,17 @@ The bottom-up phase can discover that an already-resolved package would select a
 
 Convergence is guaranteed — versions only move upward toward the lock-preferred/latest-compatible optimum. Oscillation detection reports true per-package ref cycles.
 
+## Staging Seam
+
+`ResolveOptions.staging_root` (resolve/types.rs:304) enables per-dependency canonical source staging.
+`stage_rooted_package` (package.rs:384–408) runs **after** `apply_subpath` in both resolution paths (first-resolve and re-resolution). When `staging_root` is set:
+
+1. Resolves `Dialect` from `EffectiveDependency.dialect` (via `Dialect::resolve`)
+2. Calls `staging::stage_rooted_source`, which lifts foreign frontmatter to canonical form and writes the staged tree to `<staging_root>/<source-name>/<dialect>/`
+3. Repoints `package_root` to the staged tree
+
+All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
+
 ## Key Traits
 
 | Trait | Role |
@@ -49,7 +60,7 @@ Convergence is guaranteed — versions only move upward toward the lock-preferre
 
 ## Item Resolution
 
-Items (agents/skills) are discovered via DFS from seeded requests. Skill frontmatter deps are parsed and resolved transitively. Version conflicts between packages produce errors (local items skip conflicts).
+Resolved item traversal is DFS from seeded agent/skill requests. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
 
 ## Patterns
 

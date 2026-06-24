@@ -46,6 +46,7 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             to: args.to.clone(),
         }),
         options: SyncOptions::default(),
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     let report = crate::sync::execute(ctx, &request)?;

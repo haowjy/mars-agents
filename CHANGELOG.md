@@ -4,6 +4,43 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Source discovery finds convention `agents/` / `skills/` / `bootstrap/` directories nested below the package root, not only at the top level.
+- Duplicate `(kind, name)` discoveries — across convention directories, or a convention item vs a `.claude-plugin` manifest declaration — now raise `DiscoveryCollision` instead of silently keeping one by path order.
+- MCP inbound lift: merge `allowed-tools` with `mcpServers` without dropping the allowlist; preserve map-form `tools:` when appending whole-server `mcp(server)` entries.
+- Malformed `mcp(...)` tool tokens (e.g. `mcp()`, `mcp(/x)`) are validation errors instead of convention-projected unknown tools — disallowed malformed MCP refs no longer fail open.
+- Agent parser: retired top-level `mcp-tools:` / `mcp_tools` emits `RemovedField` diagnostic and staging strips the field from canonical frontmatter (mirrors skills).
+- MCP inbound lift: boundary-safe Claude `mcp__` wire parse (no UTF-8 panic on near-prefix tokens); Cursor `Mcp(server:tool)` uses the last `:` as the tool separator so namespaced server ids lift to per-tool `mcp(server/tool)` instead of whole-server; scalar `allowed-tools` / `disallowedTools` strings lift like list entries.
+- No-op `mars sync` no longer rewrites linked native skill outputs when projected bytes are already on disk (mtime churn on `.claude/skills/.../SKILL.md` etc.).
+- Hook lossiness (`hook-dropped`/`hook-approximate`) now follows the same surface/suppress policy as agent/skill lossiness — hidden on `validate`/`export`/`add` and no longer escalated into a failure by `mars validate --strict`.
+- `skill`, `workflow`, and `web` (alias of `web_search`) are recognized tool names — gating them (e.g. `skill(deep-research)`, `Workflow`) no longer emits "not a known tool; passing through verbatim" warnings and projects to native spellings (`Skill(...)`, `Workflow`, `WebSearch`). Recognition only — per-harness enforcement of `disallowed-tools` is unchanged.
+- Unknown tools now project via the target harness naming convention instead of passing through verbatim (snake_case custom tools reach Claude/Cursor as PascalCase); MCP wire names (`mcp__…`) are recognized and preserved verbatim without re-casing.
+
+### Added
+- Inbound lift of foreign MCP permission tokens to canonical `mcp(server/tool)` on import — Claude `mcp__server__tool` wire refs and Cursor `Mcp(server:tool)` refs in `allowed-tools` / `disallowed-tools` lift without case change; `mcpServers` whole-server entries lift into `tools:` as `mcp(server)`.
+- Canonical `mcp(server/tool)` grammar in `tools:` / `disallowed-tools:` — scoped MCP references are parsed and recognized (preserved verbatim, no convention projection or unknown-tool warning); real per-harness emission is a later phase.
+- Canonical source staging seam: dependencies resolve through a derived `.mars/staging/` tree with `lift_frontmatter` hook before discovery/hash/apply.
+- Per-dialect frontmatter lift tables (Claude/Codex/Cursor/OpenCode) in `staging/lift.rs`; default/inferred Claude lift is idempotent on mars-native packages.
+- `when_to_use` on `SkillProfile` with lowering to Claude/Pi and warn-drop on other harnesses.
+- `dialect` key on `[dependencies.<dep>]` plus `.opencode`/`.cursor` discovery roots for inbound dialect inference.
+- `[skills.<name>]` overlay carriage in config; applied at staging after lift (description, invocability, tool policy).
+- Skills `disallowed-tools` canonical denylist.
+- Shared `compiler/tool_policy.rs` for agent and skill tool gating (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants).
+
+### Changed
+- **Breaking:** Source discovery is a single bounded convention walk that finds `agents/` / `skills/` / `bootstrap/` directories (and a root `SKILL.md` fallback) at any depth, grounded to the shallowest package layer (deeper nested containers are ignored). Hidden dot-directories are skipped, so harness output surfaces (`.claude/`, `.codex/`, `.cursor/`, `.opencode/`) are no longer auto-scanned as discovery *sources* — import a foreign hidden layout explicitly via `subpath` + `dialect`. Replaces the previous fixed-top-level scan + container-root heuristic.
+- **Breaking:** Removed legacy `mcp-tools:` / `mcp_tools` frontmatter field and `[agents|skills].tools.mcp` overlay key. Author whole-server MCP grants as `mcp(server)` entries in `tools:` (or `tools.allowed` overlays); per-tool grants use `mcp(server/tool)`.
+- MCP emission (Phase 4b): `EffectiveToolPolicy` carries structured `mcp_allowed` / `mcp_disallowed` [`McpRef`] values; harness lowering and launch bundles project them via `project_mcp_ref` instead of verbatim `mcp-tools:` strings. Claude agents emit `mcp__…` tokens in `tools:` / `disallowed-tools:` (no `mcp-tools:` field); Claude skills grant MCP into `allowed-tools:` with a lossiness note. Unsupported projections (e.g. Claude `mcp(*/tool)`, Codex/Pi MCP) record lossiness and omit the token.
+- Inbound lift: Claude `mcpServers` now appends `mcp(server)` entries to `tools:` instead of lifting to `mcp-tools:`.
+- MCP input unification (Phase 2): inline `mcp(...)` entries in `tools:` / `disallowed-tools:` converge on one internal policy model; agent and skill parsers share the same key set.
+- Skills use the same canonical tool schema as agents: `tools:` (list or allow/deny map), `disallowed-tools:`, and inline `mcp(...)` MCP grants. Shared parser in `compiler/tool_policy.rs`. Foreign `allowed-tools` lifts to `tools:` at staging.
+- Agents honor `user-invocable` (was skills-only).
+- Agent `model-invocable` / `user-invocable` a target cannot express now warn (deduped per item×target) instead of silent drop; same for skill tool fields a target cannot carry.
+- Lossiness warnings surface only on `mars sync`, `mars upgrade`, `mars init`, and `mars check`; suppressed on validate, export, add, and other sync-pipeline commands.
+- `[agents.<name>]` overrides now adjust description, invocation axes, and tool policy (was routing fields only).
+- Codex skills: `model-invocable` warn-dropped (Codex reads invocation from sibling policy file, not SKILL.md) instead of emitting ignored `allow_implicit_invocation` frontmatter.
+- Authoring foreign flat `allowed-tools`/`disallowed_tools` in a canonical skill now warns (use `tools:`) and the key is stripped from the `.mars/` store instead of leaking into canonical and native output.
+
 ## [0.9.0] - 2026-06-22
 
 ### Fixed

@@ -197,6 +197,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v1".into()),
+            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
@@ -218,6 +219,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v1".into()),
+            dialect: None,
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()
@@ -249,6 +251,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v1".into()),
+            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["coder".into()]),
                 ..FilterConfig::default()
@@ -269,6 +272,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v2".into()),
+            dialect: None,
             filter: FilterConfig::default(),
         };
         apply_mutation(
@@ -300,6 +304,7 @@ mod tests {
             path: None,
             subpath: None,
             version: None,
+            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["coder".into()]),
                 rename: Some(rename_map),
@@ -321,6 +326,7 @@ mod tests {
             path: None,
             subpath: None,
             version: None,
+            dialect: None,
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()
@@ -359,6 +365,7 @@ mod tests {
                     path: None,
                     subpath: None,
                     version: Some("v1".into()),
+                    dialect: None,
                     filter: FilterConfig::default(),
                 },
             ),
@@ -369,6 +376,7 @@ mod tests {
                     path: None,
                     subpath: None,
                     version: Some("v2".into()),
+                    dialect: None,
                     filter: FilterConfig::default(),
                 },
             ),
@@ -388,6 +396,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v1".into()),
+            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
@@ -407,6 +416,7 @@ mod tests {
             path: None,
             subpath: None,
             version: Some("v2".into()),
+            dialect: None,
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()

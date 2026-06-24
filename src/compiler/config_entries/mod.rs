@@ -8,7 +8,7 @@ pub mod stale;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
 use crate::types::{MarsContext, SourceName};
@@ -193,23 +193,25 @@ pub(crate) fn compile_config_entries(
         for th in &translated_hooks {
             match th.lossiness {
                 crate::compiler::hooks::LossinessKind::Dropped => {
-                    diag.warn(
+                    diag.warn_with_category(
                         "hook-dropped",
                         format!(
                             "hook `{}` (event `{}`) dropped for target `{target_root}` — \
                              no native hook support",
                             th.hook.item.def.name, th.hook.item.def.event
                         ),
+                        DiagnosticCategory::Lossiness,
                     );
                 }
                 crate::compiler::hooks::LossinessKind::Approximate => {
-                    diag.info(
+                    diag.info_with_category(
                         "hook-approximate",
                         format!(
                             "hook `{}` (event `{}`) approximately mapped for target \
                              `{target_root}` — semantics may differ slightly",
                             th.hook.item.def.name, th.hook.item.def.event
                         ),
+                        DiagnosticCategory::Lossiness,
                     );
                 }
                 crate::compiler::hooks::LossinessKind::Exact => {}

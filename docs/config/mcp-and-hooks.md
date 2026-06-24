@@ -5,13 +5,35 @@ agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
 - **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, etc.).
+  `.codex/mcp.json`, etc.) from `mcp/<name>/mcp.toml` package definitions.
+- **MCP tool-policy refs** (`mcp(...)` in agent/skill `tools:` / `disallowed-tools:`)
+  gate which MCP tools an agent or skill may use — separate from server registration.
+  Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** run scripts in response to harness lifecycle events
   (`session.start`, `tool.pre`, etc.) and are registered in each target's
   hook config file.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
+
+## Tool-policy MCP references vs server definitions
+
+Two lanes work together but serve different purposes:
+
+| Lane | Authoring | What it does |
+|---|---|---|
+| **Server definitions** | `mcp/<name>/mcp.toml` in a package | Registers how to launch an MCP server in target config (`.mcp.json`, etc.) |
+| **Tool-policy refs** | `tools: [mcp(server/tool)]` on agents/skills | Grants or denies MCP tool access in the agent/skill tool policy |
+
+Whole-server **enablement** on Codex is governed by the server-definition lane (and
+`mcp_servers.enabled_tools` in harness config), not by per-tool entries in `tools:`.
+Per-tool `mcp(server/tool)` grants in frontmatter still record lossiness on Codex because
+MCP gating there is server-config based, not a tool-list form.
+
+Claude agents emit projected `mcp__…` tokens in `tools:` / `disallowed-tools:`; Claude
+skills grant allowed MCP into `allowed-tools:`. Non-Claude native agent files do not
+emit tool lists today — the launch bundle (`ToolsSpec.mcp`) carries the real per-harness
+projection at spawn time.
 
 ## Declaring MCP Servers in a Package
 

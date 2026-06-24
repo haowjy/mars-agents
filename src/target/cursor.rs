@@ -7,7 +7,7 @@
 /// - Hooks: dropped — Cursor has limited/undocumented hook surface (lossiness: dropped)
 use std::path::{Path, PathBuf};
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -88,13 +88,14 @@ impl CursorAdapter {
     ) {
         for entry in entries {
             if let ConfigEntry::Hook(hook) = entry {
-                diag.warn(
+                diag.warn_with_category(
                     "hook-dropped",
                     format!(
                         "hook `{}` (event `{}`) dropped for target `.cursor` — \
                          Cursor has no native hook support",
                         hook.name, hook.event
                     ),
+                    DiagnosticCategory::Lossiness,
                 );
             }
         }
@@ -288,11 +289,17 @@ mod tests {
     #[test]
     fn hook_lossiness_emits_diagnostic() {
         let entries = vec![make_hook_entry("audit")];
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::with_lossiness_mode(
+            crate::diagnostic::LossinessMode::Surface,
+        );
         CursorAdapter::emit_hook_lossiness_diagnostics(&entries, &mut diag);
         let collected = diag.drain();
         assert_eq!(collected.len(), 1);
         assert!(collected[0].message.contains("dropped"));
+        assert_eq!(
+            collected[0].category,
+            Some(crate::diagnostic::DiagnosticCategory::Lossiness)
+        );
     }
 
     #[test]

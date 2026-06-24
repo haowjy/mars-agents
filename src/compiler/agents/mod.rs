@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 
 use serde_yaml::Value;
 
-use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
+use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
@@ -42,7 +43,7 @@ impl std::fmt::Display for AgentMode {
 }
 
 /// Known harness execution targets.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HarnessKind {
     Claude,
     Codex,
@@ -73,7 +74,7 @@ impl HarnessKind {
         self.to_harness_id().default_target()
     }
 
-    pub fn to_harness_id(&self) -> crate::harness::registry::HarnessId {
+    pub fn to_harness_id(self) -> crate::harness::registry::HarnessId {
         match self {
             Self::Claude => crate::harness::registry::HarnessId::Claude,
             Self::Codex => crate::harness::registry::HarnessId::Codex,
@@ -99,6 +100,16 @@ impl HarnessKind {
             .iter()
             .find(|harness| harness.target_dir() == target_root)
             .cloned()
+    }
+
+    /// Inbound dialect for this harness (`None` for Pi — no foreign import surface).
+    pub fn to_dialect(self) -> Option<crate::dialect::Dialect> {
+        crate::dialect::Dialect::from_harness_id(self.to_harness_id())
+    }
+
+    /// Compiler harness for an inbound dialect (`None` for `MarsNative`).
+    pub fn from_dialect(dialect: crate::dialect::Dialect) -> Option<Self> {
+        dialect.to_harness_id().map(Self::from_harness_id)
     }
 }
 
@@ -214,13 +225,7 @@ pub struct HarnessOverrides {
 }
 
 fn harness_key(harness: &HarnessKind) -> &'static str {
-    match harness {
-        HarnessKind::Claude => "claude",
-        HarnessKind::Codex => "codex",
-        HarnessKind::OpenCode => "opencode",
-        HarnessKind::Cursor => "cursor",
-        HarnessKind::Pi => "pi",
-    }
+    crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
 impl HarnessOverrides {
@@ -266,6 +271,12 @@ pub struct AgentProfile {
     // --- Runtime policy fields ---
     pub mode: Option<AgentMode>,
     pub model_invocable: bool,
+    /// Whether the user can invoke this agent directly (slash command, picker, etc.).
+    pub user_invocable: bool,
+    /// `true` when source frontmatter explicitly set `model-invocable` (kebab or snake).
+    pub had_model_invocable_field: bool,
+    /// `true` when source frontmatter explicitly set `user-invocable` (kebab or snake).
+    pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
@@ -278,20 +289,11 @@ pub struct AgentProfile {
     pub tools: Vec<String>,
     pub tools_denied: Vec<String>,
     pub disallowed_tools: Vec<String>,
-    pub mcp_tools: Vec<String>,
 
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
     pub model_policies: Vec<ModelPolicyRule>,
     pub fanout: Vec<FanoutEntry>,
-}
-
-/// Portable tool policy from top-level Mars fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EffectiveToolPolicy {
-    pub allowed: Vec<String>,
-    pub disallowed: Vec<String>,
-    pub mcp: Vec<String>,
 }
 
 impl AgentProfile {
@@ -309,17 +311,7 @@ impl AgentProfile {
     }
 
     pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
-        EffectiveToolPolicy {
-            allowed: dedupe_ordered(self.tools.clone()),
-            disallowed: dedupe_ordered(
-                self.tools_denied
-                    .iter()
-                    .chain(self.disallowed_tools.iter())
-                    .cloned()
-                    .collect(),
-            ),
-            mcp: dedupe_ordered(self.mcp_tools.clone()),
-        }
+        tool_policy::effective_tool_policy(&self.tools, &self.tools_denied, &self.disallowed_tools)
     }
 }
 // ---------------------------------------------------------------------------
@@ -343,6 +335,8 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
+    /// Retired frontmatter field (e.g. legacy `mcp-tools:`).
+    RemovedField { field: String },
 }
 
 impl AgentDiagnostic {
@@ -352,6 +346,7 @@ impl AgentDiagnostic {
                 !field.starts_with("harness-overrides")
             }
             AgentDiagnostic::UnknownHarness { .. } => true,
+            AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
             | AgentDiagnostic::DeprecatedApprovalYolo
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
@@ -379,72 +374,38 @@ impl AgentDiagnostic {
             AgentDiagnostic::UnknownHarnessOverride { value } => {
                 format!("unknown harness override `{value}`; preserving passthrough block")
             }
+            AgentDiagnostic::RemovedField { field } => {
+                if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
+                    format!(
+                        "agent field `{field}` has been removed; {}",
+                        tool_policy::removed_mcp_tools_replacement()
+                    )
+                } else {
+                    format!("agent field `{field}` has been removed")
+                }
+            }
         }
     }
 }
 
-fn yaml_str_list(val: &Value) -> Vec<String> {
-    match val {
-        Value::Sequence(seq) => seq
-            .iter()
-            .filter_map(|v| v.as_str())
-            .map(str::to_owned)
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => vec![],
-    }
-}
-
-fn parse_tool_name_field(
-    field: &str,
-    raw: &str,
+fn push_agent_tool_invalid(
     diags: &mut Vec<AgentDiagnostic>,
-) -> Option<String> {
-    match parse_mars_tool_name(raw) {
-        Ok(ParsedToolName { name, .. }) => Some(name),
-        Err(err) => {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: field.to_string(),
-                value: raw.to_string(),
-                allowed: err.allowed(),
-            });
-            None
-        }
-    }
-}
-
-fn dedupe_ordered(values: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let key = trimmed.to_string();
-        if seen.insert(key.clone()) {
-            out.push(key);
-        }
-    }
-    out
+    field: &str,
+    value: &str,
+    allowed: &'static str,
+) {
+    diags.push(AgentDiagnostic::InvalidFieldValue {
+        field: field.to_string(),
+        value: value.to_string(),
+        allowed,
+    });
 }
 
 fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<String> {
-    dedupe_ordered(
-        yaml_str_list(val)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tool)| {
-                parse_tool_name_field(&format!("{field}[{idx}]"), &tool, diags)
-            })
-            .collect(),
-    )
-}
-
-#[derive(Default)]
-struct ParsedToolsField {
-    allowed: Vec<String>,
-    denied: Vec<String>,
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_agent_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::yaml_tool_list(field, val, &mut push)
 }
 
 fn parse_tools_field(
@@ -452,57 +413,10 @@ fn parse_tools_field(
     val: &Value,
     diags: &mut Vec<AgentDiagnostic>,
 ) -> ParsedToolsField {
-    match val {
-        Value::Mapping(mapping) => {
-            let mut allowed = Vec::new();
-            let mut denied = Vec::new();
-            for (key, value) in mapping {
-                let Some(tool_name) = key.as_str() else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: field.to_string(),
-                        value: format!("{key:?}"),
-                        allowed: "string tool keys",
-                    });
-                    continue;
-                };
-
-                let Some(policy) = value.as_str() else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: format!("{field}.{tool_name}"),
-                        value: format!("{value:?}"),
-                        allowed: "allow or deny",
-                    });
-                    continue;
-                };
-
-                let normalized_tool =
-                    parse_tool_name_field(&format!("{field}.{tool_name}"), tool_name, diags);
-                if policy.eq_ignore_ascii_case("allow") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        allowed.push(normalized_tool);
-                    }
-                } else if policy.eq_ignore_ascii_case("deny") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        denied.push(normalized_tool);
-                    }
-                } else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: format!("{field}.{tool_name}"),
-                        value: policy.to_string(),
-                        allowed: "allow or deny",
-                    });
-                }
-            }
-            ParsedToolsField {
-                allowed: dedupe_ordered(allowed),
-                denied: dedupe_ordered(denied),
-            }
-        }
-        _ => ParsedToolsField {
-            allowed: yaml_tool_list(field, val, diags),
-            denied: vec![],
-        },
-    }
+    let mut push = |field: &str, value: &str, allowed: &'static str| {
+        push_agent_tool_invalid(diags, field, value, allowed);
+    };
+    tool_policy::parse_tools_field(field, val, &mut push)
 }
 
 fn parse_native_config_value(
@@ -614,10 +528,8 @@ fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Har
             });
             continue;
         };
-        if !matches!(
-            harness_name,
-            "claude" | "codex" | "opencode" | "cursor" | "pi"
-        ) {
+        if crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness_name).is_none()
+        {
             diags.push(AgentDiagnostic::UnknownHarnessOverride {
                 value: harness_name.to_string(),
             });
@@ -755,6 +667,22 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     out
 }
 
+fn parse_invocability_field(
+    field: &str,
+    raw: Option<&Value>,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> (bool, bool) {
+    let (value, had_field, invalid) = parse_invocability_axis(raw);
+    if let Some(invalid) = invalid {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: invalid,
+            allowed: "boolean",
+        });
+    }
+    (value, had_field)
+}
+
 fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
     match val {
         Value::Sequence(seq) => seq.iter().map(|_| FanoutEntry).collect(),
@@ -810,19 +738,19 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         });
 
-    // model-invocable:
-    let model_invocable = match fm.get("model-invocable") {
-        None => true,
-        Some(Value::Bool(value)) => *value,
-        Some(value) => {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "model-invocable".to_string(),
-                value: format!("{value:?}"),
-                allowed: "boolean",
-            });
-            true
-        }
-    };
+    // model-invocable / user-invocable:
+    let model_invocability = find_invocability_field(fm, "model-invocable");
+    let (model_invocable, had_model_invocable_field) = parse_invocability_field(
+        "model-invocable",
+        model_invocability.as_ref().map(|f| &f.value),
+        diags,
+    );
+    let user_invocability = find_invocability_field(fm, "user-invocable");
+    let (user_invocable, had_user_invocable_field) = parse_invocability_field(
+        "user-invocable",
+        user_invocability.as_ref().map(|f| &f.value),
+        diags,
+    );
 
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
@@ -926,9 +854,12 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     };
 
-    // skills/subagents/tools/disallowed-tools/mcp-tools:
+    // skills/subagents/tools/disallowed-tools:
     let skills = fm.skills_structured();
-    let subagents = fm.get("subagents").map(yaml_str_list).unwrap_or_default();
+    let subagents = fm
+        .get("subagents")
+        .map(tool_policy::yaml_str_list)
+        .unwrap_or_default();
     let parsed_tools = fm
         .get("tools")
         .map(|value| parse_tools_field("tools", value, diags))
@@ -939,7 +870,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("disallowed-tools")
         .map(|value| yaml_tool_list("disallowed-tools", value, diags))
         .unwrap_or_default();
-    let mcp_tools = fm.get("mcp-tools").map(yaml_str_list).unwrap_or_default();
 
     // harness-overrides:
     let harness_overrides = fm
@@ -961,6 +891,14 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         diags.push(AgentDiagnostic::LegacyModelsField);
     }
 
+    for &field in tool_policy::REMOVED_MCP_TOOLS_FIELDS {
+        if fm.get(field).is_some() {
+            diags.push(AgentDiagnostic::RemovedField {
+                field: field.to_string(),
+            });
+        }
+    }
+
     AgentProfile {
         name,
         description,
@@ -968,6 +906,9 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         model,
         mode,
         model_invocable,
+        user_invocable,
+        had_model_invocable_field,
+        had_user_invocable_field,
         approval,
         sandbox,
         effort,
@@ -978,7 +919,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         tools,
         tools_denied,
         disallowed_tools,
-        mcp_tools,
         harness_overrides,
         model_policies,
         fanout,

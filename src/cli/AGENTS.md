@@ -33,6 +33,23 @@ Three bypass conditions:
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |
 
+## Lossiness Gating
+
+`SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Hidden`) is applied when the
+pipeline creates its `DiagnosticCollector`. Lossiness-category diagnostics are suppressed
+at emission time when mode is `Hidden`.
+
+| Route | Mechanism | `lossiness_mode` | Calls lossiness preview directly |
+|---|---|---|---|
+| `mars sync` | Sync pipeline | `Surface` | No |
+| `mars upgrade` | Sync pipeline | `Surface` | No |
+| `mars validate` / `export` / `add` / `repair` | Sync pipeline | `Hidden` | No |
+| `mars check` | Direct preview | `Surface` | Yes |
+| `mars init` | Direct preview | `Surface` | Yes |
+
+`mars check` and `mars init` call `lossiness_preview::collect_source_lossiness_diagnostics`
+with `LossinessMode::Surface` (bypassing the sync pipeline).
+
 ## Catalog / probe refresh flags
 
 `--refresh-models` and `--no-refresh-models` are mutually exclusive. They map to

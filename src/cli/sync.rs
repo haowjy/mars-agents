@@ -47,6 +47,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             no_refresh_models: args.no_refresh_models,
             check_upgrades: !no_upgrade_hint,
         },
+        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
     };
 
     let report = crate::sync::execute(ctx, &request)?;

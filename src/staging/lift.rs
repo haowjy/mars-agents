@@ -34,6 +34,31 @@ fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, 
                 .collect();
             (Value::Sequence(lifted), changed)
         }
+        Value::Mapping(map) => {
+            // Map-form `tools:` (e.g. `{ mcp__server__tool: deny }`) carries the
+            // MCP token in the mapping KEY, not the value, so the String/Sequence
+            // arms above never see it. Rewrite MCP-shaped keys through the same
+            // foreign-token parser; preserve each entry's allow/deny value and the
+            // original key order. Without this, foreign wire tokens leak into
+            // canonical `.mars/` unchanged (or get reparsed as whole-server refs),
+            // silently changing per-tool allow/deny semantics.
+            let mut changed = false;
+            let mut lifted = serde_yaml::Mapping::new();
+            for (key, entry) in map {
+                let new_key = match key
+                    .as_str()
+                    .and_then(|raw| parse_foreign_mcp_token(raw, dialect))
+                {
+                    Some(mcp_ref) => {
+                        changed = true;
+                        Value::String(mcp_ref.to_canonical())
+                    }
+                    None => key.clone(),
+                };
+                lifted.insert(new_key, entry.clone());
+            }
+            (Value::Mapping(lifted), changed)
+        }
         other => (other.clone(), false),
     }
 }
@@ -666,6 +691,41 @@ when_to_use: Use when git history matters
             profile.tools,
             vec!["mcp(GitHub/CreateIssue)", "mcp(context7/*)"]
         );
+    }
+
+    #[test]
+    fn claude_lifts_foreign_mcp_token_in_map_form_tools_key() {
+        // Map-form `tools:` carries the MCP token in the key. The deny value and
+        // any non-MCP key must survive unchanged.
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools:\n  mcp__github__delete_repo: deny\n  Read: allow\n",
+            ),
+        );
+        let mut expected = serde_yaml::Mapping::new();
+        expected.insert(
+            Value::String("mcp(github/delete_repo)".into()),
+            Value::String("deny".into()),
+        );
+        expected.insert(Value::String("Read".into()), Value::String("allow".into()));
+        assert_eq!(lifted.get("tools"), Some(&Value::Mapping(expected)));
+    }
+
+    #[test]
+    fn cursor_lifts_foreign_mcp_token_in_map_form_tools_key() {
+        let lifted = lift(
+            Dialect::Cursor,
+            ItemKind::Skill,
+            &fm("description: rule\ntools:\n  Mcp(github:delete_repo): deny\n"),
+        );
+        let mut expected = serde_yaml::Mapping::new();
+        expected.insert(
+            Value::String("mcp(github/delete_repo)".into()),
+            Value::String("deny".into()),
+        );
+        assert_eq!(lifted.get("tools"), Some(&Value::Mapping(expected)));
     }
 
     #[test]

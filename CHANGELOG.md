@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-06-25
+
 ### Fixed
 - Inbound lift now rewrites foreign MCP tokens in **map-form** `tools:` keys (e.g. Claude `{ mcp__github__delete_repo: deny }`, Cursor `{ Mcp(github:delete_repo): deny }`). Previously only string/sequence tool values were lifted, so map-form MCP keys leaked foreign wire tokens into canonical `.mars/` unchanged or were reparsed as whole-server refs — silently changing per-tool allow/deny semantics. Non-MCP keys and each entry's allow/deny value are preserved.
 

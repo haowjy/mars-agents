@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-25
+
 ### Fixed
 - OpenCode skills no longer emit a per-skill `model-invocable` dropped-field warning. OpenCode's skill frontmatter has no model-invocation gate, so the axis is structurally unrepresentable; the drop is uniform across every non-model-invocable skill and not actionable by the author. It is now an accepted known target limitation (silent drop) rather than per-item lossiness noise. Genuine OpenCode losses (tool gating, `user-invocable`) still warn.
 

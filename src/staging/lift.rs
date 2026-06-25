@@ -514,12 +514,16 @@ when_to_use: Use when git history matters
         assert_eq!(codex.siblings.len(), 1);
 
         let opencode = lower_skill_for_harness(SkillHarness::OpenCode, &profile, body);
+        // OpenCode has no model-invocation gate: the dropped axis is an accepted
+        // known limitation and must not surface as lossiness. Tool gating is a
+        // genuine loss and still warns.
         assert!(
-            opencode
+            !opencode
                 .lossy_fields
                 .iter()
-                .any(|f| f.field == "model-invocable")
+                .any(|f| f.field == "model-invocable" && f.classification == Lossiness::Dropped)
         );
+        assert!(opencode.lossy_fields.iter().any(|f| f.field == "tools"));
 
         let cursor = lower_skill_for_harness(SkillHarness::Cursor, &profile, body);
         let cursor_out = String::from_utf8(cursor.bytes).unwrap();

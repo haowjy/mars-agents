@@ -17,8 +17,14 @@ use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness
 enum ModelInvocablePolicy {
     /// Emit `disable-model-invocation: true` when `model_invocable` is false.
     EmitDisableWhenFalse,
-    /// Warn-drop when `model_invocable` is false (implicit or explicit).
-    DropWhenFalse,
+    /// Drop silently when `model_invocable` is false — no lossiness warning.
+    ///
+    /// Used for OpenCode, whose skill frontmatter exposes no model-invocation
+    /// gate: the canonical `model-invocable` axis is structurally unrepresentable
+    /// there. The drop is uniform across every non-model-invocable skill and not
+    /// actionable by the author, so surfacing it per-skill is pure noise — it is
+    /// treated as a known, accepted target limitation rather than per-item loss.
+    DropSilentlyWhenFalse,
     /// Emit sibling `openai.yaml` when source explicitly set `model-invocable: false`.
     /// Explicit `true` and absent are no-ops: Codex defaults `allow_implicit_invocation` to true.
     EmitCodexOpenaiYamlWhenExplicitFalse,
@@ -152,7 +158,7 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::McpTools,
         LoweringStep::WhenToUse,
     ],
-    model_invocable: ModelInvocablePolicy::DropWhenFalse,
+    model_invocable: ModelInvocablePolicy::DropSilentlyWhenFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
     allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
     disallowed_tools: DisallowedToolsPolicy::Drop,
@@ -353,11 +359,9 @@ impl<'a> LoweringCtx<'a> {
                         .insert(yk("disable-model-invocation"), Value::Bool(true));
                 }
             }
-            ModelInvocablePolicy::DropWhenFalse => {
-                if !profile.model_invocable {
-                    self.lossy_fields
-                        .push(dropped("model-invocable", policy.target_name));
-                }
+            ModelInvocablePolicy::DropSilentlyWhenFalse => {
+                // OpenCode has no model-invocation gate; the axis is structurally
+                // unrepresentable. Drop without lossiness — see the variant doc.
             }
             ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse => {
                 // Codex skills are model-invocable by default; only explicit false needs

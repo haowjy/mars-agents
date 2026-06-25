@@ -360,15 +360,18 @@ mod tests {
     }
 
     #[test]
-    fn opencode_drops_model_invocable_and_tools() {
+    fn opencode_silently_drops_model_invocable_but_warns_on_tools() {
+        // OpenCode has no model-invocation gate, so the dropped `model-invocable`
+        // axis is an accepted known limitation and must NOT surface as lossiness.
+        // Tool gating is genuinely lost and still warns.
         let lowered = lower_skill_to_opencode(&profile(), "Body\n");
-        assert!(has_dropped(
+        assert!(!has_dropped(
             &lowered.lossy_fields,
             "model-invocable",
             "OpenCode"
         ));
         assert!(has_dropped(&lowered.lossy_fields, "tools", "OpenCode"));
-        assert_eq!(lowered.lossy_fields.len(), 2);
+        assert_eq!(lowered.lossy_fields.len(), 1);
     }
 
     #[test]

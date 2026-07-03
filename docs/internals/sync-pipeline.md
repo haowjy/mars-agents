@@ -143,8 +143,8 @@ compares the canonical form, not the raw source.
 
 After building all items:
 5. **Detect cross-source destination collisions** — dependency agents and skills from different sources that want the same destination path are both auto-renamed with `__{source_name}`; explicit dependency `rename` mappings run first and can prevent or customize the rename
-6. **Rewrite frontmatter** — update skill references in agents to match explicit skill renames and automatic skill collision renames; update `subagents:` references to match automatic agent collision renames (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
-7. **Check unmanaged collisions** — items that would overwrite files not tracked in the lock
+6. **Check unmanaged collisions** — prune items that would overwrite files not tracked in the lock
+7. **Rewrite frontmatter** — build one `RenameIndex` from explicit skill renames and automatic collision renames that survived pruning, then apply one rewrite pass per agent; dependency fallback candidates follow mars.toml declaration order (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
 
 ### 4. Create Plan (`create_plan`)
 

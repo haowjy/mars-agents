@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Removing a rename rewrite now reinstalls the raw source instead of leaving
+  stale rewritten frontmatter on disk.
+
 ### Changed
 - Restore auto-rename for cross-source naming collisions — both colliders are
   suffixed with `__{source_name}` instead of failing with a hard error.

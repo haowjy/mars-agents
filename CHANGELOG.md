@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Restore auto-rename for cross-source naming collisions — both colliders are
+  suffixed with `__{source_name}` instead of failing with a hard error.
+  Explicit `rename` in mars.toml still takes priority.
+
 ## [0.10.3] - 2026-07-06
 
 ### Fixed

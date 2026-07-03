@@ -282,7 +282,7 @@ pub(crate) fn build_target(
     let managed_root = &mars_dir;
 
     // Build target state from resolved graph.
-    let (mut target_state, renames) =
+    let (mut target_state, renames, collision_renames) =
         target::build_with_collisions_and_diag(&resolved.graph, &resolved.loaded.effective, diag)?;
 
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
@@ -384,6 +384,13 @@ pub(crate) fn build_target(
     if !renames.is_empty() {
         let rewrite_warnings =
             target::rewrite_skill_refs(&mut target_state, &renames, &resolved.graph)?;
+        for w in &rewrite_warnings {
+            diag.warn("rewrite-warning", w.to_string());
+        }
+    }
+    if !collision_renames.is_empty() {
+        let rewrite_warnings =
+            target::rewrite_collision_refs(&mut target_state, &collision_renames, &resolved.graph)?;
         for w in &rewrite_warnings {
             diag.warn("rewrite-warning", w.to_string());
         }
@@ -1385,7 +1392,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // Build target
-        let (target, renames) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
 
@@ -1439,7 +1446,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // First sync
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -1451,7 +1458,7 @@ mod tests {
             crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
         // Second sync with same content
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let sync_diff2 =
             diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
@@ -1532,7 +1539,7 @@ mod tests {
         let options = SyncOptions::default();
 
         let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
-            let (target, _) = target::build_with_collisions(graph, cfg).unwrap();
+            let (target, _, _) = target::build_with_collisions(graph, cfg).unwrap();
             let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
             let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
             let result =
@@ -1622,7 +1629,7 @@ mod tests {
         .unwrap();
 
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
 
         let warnings = validate_skill_refs(&target);
 
@@ -1641,7 +1648,7 @@ mod tests {
         );
 
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
 
         let warnings = validate_skill_refs(&target);
 
@@ -1732,7 +1739,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // First sync
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -1748,7 +1755,7 @@ mod tests {
         fs::write(agents_dir.join("coder.md"), "# Version 2").unwrap();
 
         // Rebuild target with updated content
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let sync_diff2 =
             diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
@@ -1768,7 +1775,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // First sync
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -1787,7 +1794,7 @@ mod tests {
         .unwrap();
 
         // Re-sync (source unchanged)
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let sync_diff2 =
             diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
@@ -1814,7 +1821,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // First sync
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -1837,7 +1844,7 @@ mod tests {
         fs::write(agents_dir.join("coder.md"), "# Upstream update").unwrap();
 
         // Re-sync with --force
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let sync_diff2 =
             diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
@@ -1879,7 +1886,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // First sync — install both
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -1897,7 +1904,7 @@ mod tests {
         fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
 
         // Re-sync
-        let (target2, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let sync_diff2 =
             diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
@@ -1933,7 +1940,7 @@ mod tests {
 
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
 
@@ -1963,7 +1970,7 @@ mod tests {
         let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
         // Full pipeline minus actual sync() (which needs real config files)
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         let lock = LockFile::empty();
         let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
         let cache_dir = fixture.project_root().join(".mars/cache/bases");
@@ -2001,7 +2008,7 @@ mod tests {
             ],
         );
 
-        let (target, renames) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
 
@@ -2031,7 +2038,7 @@ mod tests {
         let (graph, config) =
             make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlySkills)]);
 
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         // Should only have the skill, not the agent
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("skills/planning"));
@@ -2053,7 +2060,7 @@ mod tests {
         let (graph, config) =
             make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         // Should have the agent + its transitive skill dep, but NOT standalone
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -2069,7 +2076,7 @@ mod tests {
         let (graph, config) =
             make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-        let (target, _) = target::build_with_collisions(&graph, &config).unwrap();
+        let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
         // No agents means nothing gets installed
         assert_eq!(target.items.len(), 0);
     }

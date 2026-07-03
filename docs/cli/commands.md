@@ -218,7 +218,10 @@ mars rename <from> <to>
 | `from` | Current managed item path (e.g., `agents/old-coder.md`) |
 | `to` | Desired item path (e.g., `agents/coder.md`) |
 
-Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs. For an initial cross-source collision that prevents sync, edit the dependency `rename` mapping directly in `mars.toml`.
+Adds a `rename` entry to the dependency's config in `mars.toml` and re-syncs.
+Cross-source agent/skill collisions auto-rename both colliders with
+`__{source_name}`; use `rename` when you want a custom installed name or want to
+avoid the automatic suffix.
 
 ---
 

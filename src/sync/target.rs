@@ -51,15 +51,24 @@ pub struct ExplicitSkillRename {
     pub source_name: SourceName,
 }
 
+/// Automatic rename applied when multiple sources target the same destination.
+#[derive(Debug, Clone)]
+pub struct CollisionRename {
+    pub original_name: ItemName,
+    pub new_name: ItemName,
+    pub source_name: SourceName,
+    pub kind: ItemKind,
+}
+
 /// Build target state with collision detection integrated.
 ///
 /// This is the main entry point — it builds the target, applies explicit
-/// rename mappings, and raises hard collisions when two sources want the same
-/// destination.
+/// rename mappings, and auto-renames cross-source agent/skill destination
+/// collisions.
 pub fn build_with_collisions(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>), MarsError> {
+) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
     let mut diag = DiagnosticCollector::new();
     build_with_collisions_and_diag(graph, config, &mut diag)
 }
@@ -68,8 +77,8 @@ pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>), MarsError> {
-    let mut items: IndexMap<DestPath, TargetItem> = IndexMap::new();
+) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
+    let mut collected_items = Vec::new();
     let mut explicit_skill_renames = Vec::new();
 
     for source_name in &graph.order {
@@ -151,19 +160,95 @@ pub fn build_with_collisions_and_diag(
                 rewritten_content: None,
             };
 
-            if let Some(existing) = items.get(&target_item.dest_path) {
-                return Err(MarsError::Collision {
-                    item: format!("{} `{}`", target_item.id.kind, target_item.id.name),
-                    source_a: existing.source_name.to_string(),
-                    source_b: target_item.source_name.to_string(),
-                });
-            }
-
-            items.insert(target_item.dest_path.clone(), target_item);
+            collected_items.push(target_item);
         }
     }
 
-    Ok((TargetState { items }, explicit_skill_renames))
+    let collision_renames = rename_destination_collisions(&mut collected_items, diag)?;
+
+    let mut items: IndexMap<DestPath, TargetItem> = IndexMap::new();
+    for target_item in collected_items {
+        if let Some(existing) = items.get(&target_item.dest_path) {
+            return Err(MarsError::Collision {
+                item: format!(
+                    "{} `{}` at `{}` after auto-rename",
+                    target_item.id.kind, target_item.id.name, target_item.dest_path
+                ),
+                source_a: existing.source_name.to_string(),
+                source_b: target_item.source_name.to_string(),
+            });
+        }
+
+        items.insert(target_item.dest_path.clone(), target_item);
+    }
+
+    Ok((
+        TargetState { items },
+        explicit_skill_renames,
+        collision_renames,
+    ))
+}
+
+fn rename_destination_collisions(
+    items: &mut [TargetItem],
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<CollisionRename>, MarsError> {
+    let mut groups: IndexMap<DestPath, Vec<usize>> = IndexMap::new();
+    for (index, item) in items.iter().enumerate() {
+        groups
+            .entry(item.dest_path.clone())
+            .or_default()
+            .push(index);
+    }
+
+    let mut renames = Vec::new();
+    for indices in groups.values().filter(|indices| indices.len() > 1) {
+        let first = &items[indices[0]];
+        let distinct_sources: HashSet<&SourceName> = indices
+            .iter()
+            .map(|&index| &items[index].source_name)
+            .collect();
+        let auto_renamable = matches!(first.id.kind, ItemKind::Agent | ItemKind::Skill)
+            && indices
+                .iter()
+                .all(|&index| items[index].id.kind == first.id.kind)
+            && distinct_sources.len() == indices.len();
+        if !auto_renamable {
+            let second = &items[indices[1]];
+            return Err(MarsError::Collision {
+                item: format!("{} `{}`", second.id.kind, second.id.name),
+                source_a: first.source_name.to_string(),
+                source_b: second.source_name.to_string(),
+            });
+        }
+
+        for &index in indices {
+            let item = &mut items[index];
+            let original_name = item.id.name.clone();
+            let new_dest_path =
+                suffixed_collision_dest_path(&item.dest_path, item.id.kind, &item.source_name)?;
+            let new_name = ItemName::from(dest_name_from_dest(&new_dest_path, item.id.kind));
+
+            diag.warn(
+                "auto-rename-collision",
+                format!(
+                    "auto-renamed {} `{}` from source `{}` → `{}`",
+                    item.id.kind, original_name, item.source_name, new_name
+                ),
+            );
+
+            item.id.name = new_name.clone();
+            item.dest_path = new_dest_path;
+            renames.push(CollisionRename {
+                original_name,
+                new_name,
+                source_name: item.source_name.clone(),
+                kind: item.id.kind,
+            });
+        }
+    }
+
+    Ok(renames)
 }
 
 fn apply_filter_union(
@@ -194,8 +279,8 @@ fn apply_filter_union(
         .collect())
 }
 
-// Re-export for API compatibility — rewrite_skill_refs moved to sync::rewrite.
-pub use crate::sync::rewrite::rewrite_skill_refs;
+// Re-export for API compatibility — rewrite helpers live in sync::rewrite.
+pub use crate::sync::rewrite::{rewrite_collision_refs, rewrite_skill_refs};
 
 /// Existing on-disk destination that is not lock-managed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,6 +423,58 @@ fn dest_name_from_dest(dest_path: &DestPath, kind: ItemKind) -> String {
                 ItemKind::BootstrapDoc => unreachable!("handled above"),
             }
         }
+    }
+}
+
+fn suffixed_collision_dest_path(
+    dest_path: &DestPath,
+    kind: ItemKind,
+    source_name: &SourceName,
+) -> Result<DestPath, MarsError> {
+    let suffix = format!("__{source_name}");
+    let path = dest_path.as_str();
+    let renamed = match kind {
+        ItemKind::Agent => {
+            let (parent, leaf) = split_parent_leaf(path);
+            let stem = leaf.strip_suffix(".md").unwrap_or(leaf);
+            join_parent_leaf(parent, &format!("{stem}{suffix}.md"))
+        }
+        ItemKind::Skill => {
+            return suffixed_leaf_dest_path(path, &suffix, source_name);
+        }
+        ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
+            unreachable!("only agent and skill collisions are auto-renamed")
+        }
+    };
+
+    DestPath::new(&renamed).map_err(|e| MarsError::Source {
+        source_name: source_name.to_string(),
+        message: format!("invalid auto-renamed destination `{renamed}`: {e}"),
+    })
+}
+
+fn suffixed_leaf_dest_path(
+    path: &str,
+    suffix: &str,
+    source_name: &SourceName,
+) -> Result<DestPath, MarsError> {
+    let (parent, leaf) = split_parent_leaf(path);
+    let renamed = join_parent_leaf(parent, &format!("{leaf}{suffix}"));
+    DestPath::new(&renamed).map_err(|e| MarsError::Source {
+        source_name: source_name.to_string(),
+        message: format!("invalid auto-renamed destination `{renamed}`: {e}"),
+    })
+}
+
+fn split_parent_leaf(path: &str) -> (&str, &str) {
+    path.rsplit_once('/').unwrap_or(("", path))
+}
+
+fn join_parent_leaf(parent: &str, leaf: &str) -> String {
+    if parent.is_empty() {
+        leaf.to_string()
+    } else {
+        format!("{parent}/{leaf}")
     }
 }
 
@@ -484,7 +621,7 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -506,7 +643,7 @@ mod tests {
         )]);
         let mut diag = DiagnosticCollector::new();
 
-        let (target, _) = build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap();
+        let (target, _, _) = build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap();
         let diagnostics = diag.drain();
 
         assert!(!target.items.contains_key("agents/bad:name.md"));
@@ -534,7 +671,7 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "agents/new-name.md".into());
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
@@ -601,7 +738,7 @@ mod tests {
     // === Collision tests ===
 
     #[test]
-    fn collision_errors_instead_of_auto_renaming() {
+    fn collision_auto_renames_both() {
         let tree1 = make_source_tree(&[("coder.md", "# coder from source 1")], &[]);
         let tree2 = make_source_tree(&[("coder.md", "# coder from source 2")], &[]);
 
@@ -619,9 +756,179 @@ mod tests {
                 FilterMode::All,
             ),
         ]);
+        let mut diag = DiagnosticCollector::new();
+
+        let (target, explicit_renames, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap();
+        let diagnostics = diag.drain();
+
+        assert!(explicit_renames.is_empty());
+        assert_eq!(collision_renames.len(), 2);
+        assert!(target.items.contains_key("agents/coder__source-a.md"));
+        assert!(target.items.contains_key("agents/coder__source-b.md"));
+        assert!(!target.items.contains_key("agents/coder.md"));
+        assert_eq!(
+            target.items["agents/coder__source-a.md"].id.name,
+            "coder__source-a"
+        );
+        assert_eq!(
+            target.items["agents/coder__source-b.md"].id.name,
+            "coder__source-b"
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "auto-rename-collision")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn skill_collision_auto_renames_both() {
+        let tree1 = make_source_tree(&[], &[("planning", "# planning from source 1")]);
+        let tree2 = make_source_tree(&[], &[("planning", "# planning from source 2")]);
+
+        let (graph, config) = make_graph_and_config(vec![
+            ("source-a", &tree1, None, FilterMode::All),
+            ("source-b", &tree2, None, FilterMode::All),
+        ]);
+
+        let (target, explicit_renames, collision_renames) =
+            build_with_collisions(&graph, &config).unwrap();
+
+        assert!(explicit_renames.is_empty());
+        assert_eq!(collision_renames.len(), 2);
+        assert!(target.items.contains_key("skills/planning__source-a"));
+        assert!(target.items.contains_key("skills/planning__source-b"));
+        assert!(!target.items.contains_key("skills/planning"));
+        assert_eq!(
+            target.items["skills/planning__source-a"].id.name,
+            "planning__source-a"
+        );
+        assert_eq!(
+            target.items["skills/planning__source-b"].id.name,
+            "planning__source-b"
+        );
+    }
+
+    #[test]
+    fn three_way_collision_renames_all() {
+        let tree1 = make_source_tree(&[("coder.md", "# coder from source 1")], &[]);
+        let tree2 = make_source_tree(&[("coder.md", "# coder from source 2")], &[]);
+        let tree3 = make_source_tree(&[("coder.md", "# coder from source 3")], &[]);
+
+        let (graph, config) = make_graph_and_config(vec![
+            ("source-a", &tree1, None, FilterMode::All),
+            ("source-b", &tree2, None, FilterMode::All),
+            ("source-c", &tree3, None, FilterMode::All),
+        ]);
+
+        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+
+        assert_eq!(collision_renames.len(), 3);
+        assert!(target.items.contains_key("agents/coder__source-a.md"));
+        assert!(target.items.contains_key("agents/coder__source-b.md"));
+        assert!(target.items.contains_key("agents/coder__source-c.md"));
+        assert!(!target.items.contains_key("agents/coder.md"));
+    }
+
+    #[test]
+    fn explicit_rename_prevents_collision() {
+        let tree1 = make_source_tree(&[("coder.md", "# coder from source 1")], &[]);
+        let tree2 = make_source_tree(&[("coder.md", "# coder from source 2")], &[]);
+
+        let (graph, mut config) = make_graph_and_config(vec![
+            ("source-a", &tree1, None, FilterMode::All),
+            ("source-b", &tree2, None, FilterMode::All),
+        ]);
+        config
+            .dependencies
+            .get_mut("source-a")
+            .unwrap()
+            .rename
+            .insert("agents/coder.md".into(), "agents/source-a-coder.md".into());
+
+        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+
+        assert!(collision_renames.is_empty());
+        assert!(target.items.contains_key("agents/source-a-coder.md"));
+        assert!(target.items.contains_key("agents/coder.md"));
+        assert!(!target.items.contains_key("agents/coder__source-a.md"));
+        assert!(!target.items.contains_key("agents/coder__source-b.md"));
+    }
+
+    #[test]
+    fn same_source_explicit_rename_collision_stays_hard_error() {
+        let tree = make_source_tree(
+            &[
+                ("coder.md", "# coder"),
+                ("reviewer.md", "# reviewer renamed into coder"),
+            ],
+            &[],
+        );
+        let (graph, mut config) =
+            make_graph_and_config(vec![("source-a", &tree, None, FilterMode::All)]);
+        config
+            .dependencies
+            .get_mut("source-a")
+            .unwrap()
+            .rename
+            .insert("agents/reviewer.md".into(), "agents/coder.md".into());
 
         let err = build_with_collisions(&graph, &config).unwrap_err();
+
         assert!(matches!(err, MarsError::Collision { .. }));
+    }
+
+    #[test]
+    fn mixed_kind_explicit_rename_collision_stays_hard_error() {
+        let tree = make_source_tree(&[("coder.md", "# coder")], &[("planning", "# planning")]);
+        let (graph, mut config) =
+            make_graph_and_config(vec![("source-a", &tree, None, FilterMode::All)]);
+        config
+            .dependencies
+            .get_mut("source-a")
+            .unwrap()
+            .rename
+            .insert("agents/coder.md".into(), "skills/planning".into());
+
+        let err = build_with_collisions(&graph, &config).unwrap_err();
+
+        assert!(matches!(err, MarsError::Collision { .. }));
+    }
+
+    #[test]
+    fn duplicate_source_in_cross_source_group_stays_hard_error_without_auto_warning() {
+        let tree1 = make_source_tree(
+            &[
+                ("coder.md", "# coder"),
+                ("reviewer.md", "# reviewer renamed into coder"),
+            ],
+            &[],
+        );
+        let tree2 = make_source_tree(&[("coder.md", "# coder from source 2")], &[]);
+        let (graph, mut config) = make_graph_and_config(vec![
+            ("source-a", &tree1, None, FilterMode::All),
+            ("source-b", &tree2, None, FilterMode::All),
+        ]);
+        config
+            .dependencies
+            .get_mut("source-a")
+            .unwrap()
+            .rename
+            .insert("agents/reviewer.md".into(), "agents/coder.md".into());
+        let mut diag = DiagnosticCollector::new();
+
+        let err = build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap_err();
+        let diagnostics = diag.drain();
+
+        assert!(matches!(err, MarsError::Collision { .. }));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "auto-rename-collision")
+        );
     }
 
     #[test]
@@ -644,8 +951,9 @@ mod tests {
             ),
         ]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, collision_renames) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
+        assert!(collision_renames.is_empty());
         assert_eq!(target.items.len(), 2);
     }
 
@@ -668,7 +976,7 @@ mod tests {
             },
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2); // coder + planning
         assert!(target.items.contains_key("agents/coder.md"));
@@ -688,7 +996,7 @@ mod tests {
             FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -721,7 +1029,7 @@ mod tests {
             ],
         );
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 3);
         assert!(target.items.contains_key("skills/skill-a"));
@@ -736,7 +1044,7 @@ mod tests {
 
         let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
@@ -753,7 +1061,7 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -780,7 +1088,7 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -805,7 +1113,7 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -831,7 +1139,7 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 

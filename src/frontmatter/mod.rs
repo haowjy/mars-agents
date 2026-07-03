@@ -220,6 +220,14 @@ pub fn rewrite_skills(
     renamed
 }
 
+/// Rename subagents in frontmatter using exact-match replacement.
+pub fn rewrite_subagents(
+    fm: &mut Frontmatter,
+    renames: &IndexMap<String, String>,
+) -> IndexSet<String> {
+    rewrite_string_list_field(fm, "subagents", renames)
+}
+
 /// Parse content, rewrite skills, and render updated content if changed.
 pub fn rewrite_content_skills(
     content: &str,
@@ -232,6 +240,34 @@ pub fn rewrite_content_skills(
     } else {
         Ok(Some(fm.render()))
     }
+}
+
+/// Parse content, rewrite subagents, and render updated content if changed.
+pub fn rewrite_content_subagents(
+    content: &str,
+    renames: &IndexMap<String, String>,
+) -> Result<Option<String>, FrontmatterError> {
+    let mut fm = Frontmatter::parse(content)?;
+    let renamed = rewrite_subagents(&mut fm, renames);
+    if renamed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(fm.render()))
+    }
+}
+
+fn rewrite_string_list_field(
+    fm: &mut Frontmatter,
+    field_name: &str,
+    renames: &IndexMap<String, String>,
+) -> IndexSet<String> {
+    let mut renamed = IndexSet::new();
+    let key = yaml_key(field_name);
+    if let Some(value) = fm.yaml.get_mut(&key) {
+        rewrite_string_list_value(value, renames, &mut renamed);
+    }
+
+    renamed
 }
 
 fn yaml_str_list(val: &Value) -> Vec<String> {
@@ -252,28 +288,39 @@ fn rewrite_skill_value(
     renamed: &mut IndexSet<String>,
 ) {
     match value {
-        Value::Sequence(seq) => {
-            for item in seq {
-                let Some(skill) = item.as_str() else {
-                    continue;
-                };
-                if let Some(new_name) = renames.get(skill) {
-                    renamed.insert(skill.to_string());
-                    *item = Value::String(new_name.clone());
-                }
-            }
-        }
-        Value::String(skill) => {
-            if let Some(new_name) = renames.get(skill.as_str()) {
-                renamed.insert(skill.clone());
-                *skill = new_name.clone();
-            }
-        }
+        Value::Sequence(_) | Value::String(_) => rewrite_string_list_value(value, renames, renamed),
         Value::Mapping(mapping) => {
             for field in ["load", "available"] {
                 if let Some(child) = mapping.get_mut(yaml_key(field)) {
                     rewrite_skill_value(child, renames, renamed);
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_string_list_value(
+    value: &mut Value,
+    renames: &IndexMap<String, String>,
+    renamed: &mut IndexSet<String>,
+) {
+    match value {
+        Value::Sequence(seq) => {
+            for item in seq {
+                let Some(name) = item.as_str() else {
+                    continue;
+                };
+                if let Some(new_name) = renames.get(name) {
+                    renamed.insert(name.to_string());
+                    *item = Value::String(new_name.clone());
+                }
+            }
+        }
+        Value::String(name) => {
+            if let Some(new_name) = renames.get(name.as_str()) {
+                renamed.insert(name.clone());
+                *name = new_name.clone();
             }
         }
         _ => {}
@@ -393,6 +440,22 @@ mod tests {
                 "planner",
                 "planning-extended"
             ]
+        );
+    }
+
+    #[test]
+    fn rewrite_subagents_uses_exact_matches() {
+        let input = "---\nsubagents:\n- web-researcher\n- web\n---\nbody\n";
+        let renames = IndexMap::from([(
+            "web-researcher".to_string(),
+            "web-researcher__source-a".to_string(),
+        )]);
+
+        let rewritten = rewrite_content_subagents(input, &renames).unwrap().unwrap();
+        let fm = Frontmatter::parse(&rewritten).unwrap();
+        assert_eq!(
+            fm.get("subagents").map(yaml_str_list).unwrap(),
+            vec!["web-researcher__source-a", "web"]
         );
     }
 }

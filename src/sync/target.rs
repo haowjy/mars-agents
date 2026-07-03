@@ -279,9 +279,6 @@ fn apply_filter_union(
         .collect())
 }
 
-// Re-export for API compatibility — rewrite helpers live in sync::rewrite.
-pub use crate::sync::rewrite::{rewrite_collision_refs, rewrite_skill_refs};
-
 /// Existing on-disk destination that is not lock-managed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnmanagedCollision {

@@ -380,27 +380,6 @@ pub(crate) fn build_target(
         );
     }
 
-    // Handle collisions + rewrite frontmatter refs.
-    if !renames.is_empty() {
-        let rewrite_warnings =
-            target::rewrite_skill_refs(&mut target_state, &renames, &resolved.graph)?;
-        for w in &rewrite_warnings {
-            diag.warn("rewrite-warning", w.to_string());
-        }
-    }
-    if !collision_renames.is_empty() {
-        let rewrite_warnings =
-            target::rewrite_collision_refs(&mut target_state, &collision_renames, &resolved.graph)?;
-        for w in &rewrite_warnings {
-            diag.warn("rewrite-warning", w.to_string());
-        }
-    }
-
-    validate_skill_frontmatter_in_target(&target_state, diag);
-
-    // Validate skill references.
-    let warnings = validate_skill_refs(&target_state);
-
     // Prevent managed installs from overwriting unmanaged files.
     let unmanaged_collisions = target::check_unmanaged_collisions(
         managed_root,
@@ -418,6 +397,32 @@ pub(crate) fn build_target(
         );
         target_state.items.shift_remove(&collision.path);
     }
+
+    // Rewrite frontmatter refs against the post-prune target state.
+    let rename_index = rewrite::RenameIndex::new(&renames, &collision_renames, &target_state);
+    if !rename_index.is_empty() {
+        let dep_precedence: Vec<SourceName> = resolved
+            .loaded
+            .effective
+            .dependencies
+            .keys()
+            .cloned()
+            .collect();
+        let rewrite_warnings = rewrite::apply_renames(
+            &mut target_state,
+            &rename_index,
+            &resolved.graph,
+            &dep_precedence,
+        )?;
+        for w in &rewrite_warnings {
+            diag.warn("rewrite-warning", w.to_string());
+        }
+    }
+
+    validate_skill_frontmatter_in_target(&target_state, diag);
+
+    // Validate skill references.
+    let warnings = validate_skill_refs(&target_state);
 
     Ok(TargetedState {
         resolved,
@@ -1088,6 +1093,74 @@ mod tests {
     ) -> plan::SyncPlan {
         let mut diag = DiagnosticCollector::new();
         plan::create(sync_diff, options, cache_bases_dir, &mut diag)
+    }
+
+    #[test]
+    fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
+        let mut fixture = TestFixture::new();
+        let source_a = fixture.add_source(
+            &[("coder.md", "---\nskills: [planning]\n---\n# Agent\n")],
+            &[("planning", "# Planning A")],
+        );
+        let source_b = fixture.add_source(&[], &[("planning", "# Planning B")]);
+        let (mut graph, mut effective) = make_graph_config(
+            &fixture,
+            vec![
+                ("source-a", source_a, FilterMode::All),
+                ("source-b", source_b, FilterMode::All),
+            ],
+        );
+        graph
+            .nodes
+            .get_mut(&SourceName::from("source-a"))
+            .unwrap()
+            .deps = vec!["source-b".into()];
+        effective
+            .dependencies
+            .get_mut(&SourceName::from("source-b"))
+            .unwrap()
+            .rename
+            .insert("planning".into(), "planning__source-b".into());
+
+        let unmanaged_skill = fixture.project_root().join(".mars/skills/planning");
+        fs::create_dir_all(&unmanaged_skill).unwrap();
+        fs::write(unmanaged_skill.join("SKILL.md"), "# unmanaged").unwrap();
+
+        let sync_lock =
+            crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
+        let resolved = ResolvedState {
+            loaded: LoadedConfig {
+                config: Config::default(),
+                local: LocalConfig::default(),
+                effective,
+                old_lock: LockFile::empty(),
+                dependency_changes: Vec::new(),
+                sync_lock,
+            },
+            graph,
+            upgrades_available: 0,
+        };
+        let ctx = MarsContext::for_test(
+            fixture.project_root().to_path_buf(),
+            fixture.managed_root().to_path_buf(),
+        );
+        let request = SyncRequest {
+            resolution: ResolutionMode::Normal,
+            mutation: None,
+            options: SyncOptions::default(),
+            lossiness_mode: LossinessMode::Hidden,
+        };
+        let mut diag = DiagnosticCollector::new();
+
+        let targeted = build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
+
+        assert!(!targeted.target.items.contains_key("skills/planning"));
+        let rewritten = targeted.target.items["agents/coder.md"]
+            .rewritten_content
+            .as_ref()
+            .expect("agent ref should rewrite after unmanaged source skill is pruned");
+        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        assert_eq!(fm.skills(), vec!["planning__source-b"]);
     }
 
     fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {

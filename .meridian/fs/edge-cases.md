@@ -106,12 +106,12 @@ When `list_versions()` returns empty (no semver tags):
 
 ### Frontmatter Rewriting
 
-When skills are auto-renamed and agents reference the old name in `skills:` frontmatter:
+When skills are renamed and agents reference the old name in `skills:` frontmatter:
 
-1. Build a map: `original_skill_name → [(new_name, source_name)]`
+1. Build a unified rename index from explicit config renames and collision renames after unmanaged-collision pruning.
 2. For each agent, determine which renamed variant to use:
    - Prefer the variant from the agent's own source
-   - Fall back to the variant from a dependency of the agent's source
+   - Fall back to dependency variants in mars.toml declaration order
 3. Parse frontmatter via `frontmatter::rewrite_content_skills()` — **exact string match** replacement in the `skills:` list. Substrings are safe: renaming `"plan"` does not affect `"planner"` or `"planning-extended"`.
 4. Rewritten content stored in `target_item.rewritten_content` — applied during install.
 

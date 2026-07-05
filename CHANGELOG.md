@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Codex hook lowering now writes current `hooks.json` command-hook bindings with native Codex event names.
+
 ## [0.10.2] - 2026-06-25
 
 ### Fixed

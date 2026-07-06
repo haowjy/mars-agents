@@ -4,7 +4,7 @@
 ///
 /// Codex-native lowering:
 /// - MCP: writes to `codex_mcp.json` (mcpServers section), env vars as plain names
-/// - Hooks: writes to `codex_hooks.json` with structural hook entries
+/// - Hooks: writes to `hooks.json` with Codex command hook entries
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
@@ -191,19 +191,25 @@ fn remove_codex_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<
 }
 
 // ---------------------------------------------------------------------------
-// Codex hooks — `codex_hooks.json` format
+// Codex hooks — `hooks.json` format
 // ---------------------------------------------------------------------------
 //
-// Structural hook entries — Codex uses event → command list mapping.
+// Codex command hook entries.
 // {
 //   "hooks": {
-//     "pre-exec": ["bash /path/to/script.sh"],
-//     "post-exec": [...]
+//     "PreToolUse": [
+//       {
+//         "matcher": "Bash",
+//         "hooks": [
+//           { "type": "command", "command": "bash /path/to/script.sh" }
+//         ]
+//       }
+//     ]
 //   }
 // }
 
 fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("codex_hooks.json");
+    let path = target_dir.join("hooks.json");
 
     let mut root: serde_json::Value = if path.is_file() {
         let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
@@ -229,8 +235,15 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
     })?;
 
     for hook in hooks {
-        let command = hook_command(&hook.script_path);
         let native_event = hook.native_event.clone();
+        let command_entry = serde_json::json!({
+            "type": "command",
+            "command": hook_command(&hook.script_path),
+        });
+        let hook_binding = serde_json::json!({
+            "matcher": codex_hook_matcher(&native_event),
+            "hooks": [command_entry],
+        });
         let event_hooks = hooks_map
             .entry(native_event.clone())
             .or_insert_with(|| serde_json::json!([]))
@@ -240,8 +253,8 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
                     message: format!("{}: hooks.{native_event} is not an array", path.display()),
                 })
             })?;
-        remove_managed_hook_commands(event_hooks, &hook.name);
-        event_hooks.push(serde_json::Value::String(command));
+        remove_managed_hook_bindings(event_hooks, &hook.name);
+        event_hooks.push(hook_binding);
     }
 
     let content = serde_json::to_string_pretty(&root).map_err(|e| {
@@ -251,14 +264,30 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())?;
 
+    remove_stale_codex_hooks_json(target_dir, hooks)?;
+
     Ok(path)
 }
 
-fn remove_managed_hook_commands(commands: &mut Vec<serde_json::Value>, hook_name: &str) {
-    commands.retain(|cmd| {
-        cmd.as_str()
-            .map(|cmd| !is_managed_hook_command_for(cmd, hook_name))
-            .unwrap_or(true)
+fn codex_hook_matcher(native_event: &str) -> &'static str {
+    match native_event {
+        "PreToolUse" | "PostToolUse" | "PermissionRequest" => "Bash",
+        _ => "",
+    }
+}
+
+fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
+    bindings.retain_mut(|binding| {
+        let Some(hooks) = binding.get_mut("hooks").and_then(|v| v.as_array_mut()) else {
+            return true;
+        };
+        hooks.retain(|hook| {
+            hook.get("command")
+                .and_then(|v| v.as_str())
+                .map(|command| !is_managed_hook_command_for(command, hook_name))
+                .unwrap_or(true)
+        });
+        !hooks.is_empty()
     });
 }
 
@@ -268,11 +297,6 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 }
 
 fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let path = target_dir.join("codex_hooks.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
     let hook_keys: Vec<(String, &str)> = entry_keys
         .iter()
         .filter_map(|k| {
@@ -286,6 +310,20 @@ fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result
         return Ok(());
     }
 
+    remove_codex_hook_entries_from_hooks_json(&hook_keys, target_dir)?;
+    remove_codex_hook_entries_from_legacy_codex_hooks_json(&hook_keys, target_dir)?;
+    Ok(())
+}
+
+fn remove_codex_hook_entries_from_hooks_json(
+    hook_keys: &[(String, &str)],
+    target_dir: &Path,
+) -> Result<(), MarsError> {
+    let path = target_dir.join("hooks.json");
+    if !path.is_file() {
+        return Ok(());
+    }
+
     let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
     let mut root: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
@@ -295,11 +333,48 @@ fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result
         .and_then(|o| o.get_mut("hooks"))
         .and_then(|v| v.as_object_mut())
     {
-        for (event, name) in &hook_keys {
+        for (event, name) in hook_keys {
             if let Some(arr) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
+                remove_managed_hook_bindings(arr, name);
+            }
+        }
+    }
+
+    let content = serde_json::to_string_pretty(&root).map_err(|e| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("failed to serialize {}: {e}", path.display()),
+        })
+    })?;
+    crate::fs::atomic_write(&path, content.as_bytes())?;
+    Ok(())
+}
+
+fn remove_codex_hook_entries_from_legacy_codex_hooks_json(
+    hook_keys: &[(String, &str)],
+    target_dir: &Path,
+) -> Result<(), MarsError> {
+    let path = target_dir.join("codex_hooks.json");
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
+    let mut root: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+
+    if let Some(hooks_map) = root
+        .as_object_mut()
+        .and_then(|o| o.get_mut("hooks"))
+        .and_then(|v| v.as_object_mut())
+    {
+        for (event, name) in hook_keys {
+            let legacy_event = legacy_codex_hook_event(event);
+            if let Some(arr) = hooks_map
+                .get_mut(legacy_event)
+                .and_then(|v| v.as_array_mut())
+            {
                 arr.retain(|cmd| {
                     let cmd_str = cmd.as_str().unwrap_or("");
-                    // Exact path-segment match to avoid partial name collisions.
                     !is_managed_hook_command_for(cmd_str, name)
                 });
             }
@@ -315,12 +390,30 @@ fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result
     Ok(())
 }
 
+fn remove_stale_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
+    let hook_keys: Vec<(String, &str)> = hooks
+        .iter()
+        .map(|hook| (hook.native_event.clone(), hook.name.as_str()))
+        .collect();
+    remove_codex_hook_entries_from_legacy_codex_hooks_json(&hook_keys, target_dir)
+}
+
+fn legacy_codex_hook_event(event: &str) -> &str {
+    match event {
+        "SessionStart" => "start",
+        "Stop" => "stop",
+        "PreToolUse" => "pre-exec",
+        "PostToolUse" => "post-exec",
+        other => other,
+    }
+}
+
 fn codex_hook_event(event: &str) -> Option<&'static str> {
     match event {
-        "session.start" => Some("start"),
-        "session.end" => Some("stop"),
-        "tool.pre" => Some("pre-exec"),
-        "tool.post" => Some("post-exec"),
+        "session.start" => Some("SessionStart"),
+        "session.end" => Some("Stop"),
+        "tool.pre" => Some("PreToolUse"),
+        "tool.post" => Some("PostToolUse"),
         _ => None,
     }
 }
@@ -405,15 +498,23 @@ mod tests {
     }
 
     #[test]
-    fn write_hooks_creates_codex_hooks_json() {
+    fn write_hooks_creates_hooks_json() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
-        let entries = vec![make_hook_entry("audit", "pre-exec")];
+        let entries = vec![make_hook_entry("audit", "PreToolUse")];
         adapter.write_config_entries(&entries, tmp.path()).unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["hooks"]["pre-exec"].is_array());
+        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(hooks[0]["matcher"], "Bash");
+        assert_eq!(hooks[0]["hooks"][0]["type"], "command");
+        assert!(
+            hooks[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("/hooks/audit/")
+        );
     }
 
     #[test]
@@ -424,7 +525,7 @@ mod tests {
             .write_config_entries(
                 &[make_hook_entry_with_path(
                     "audit",
-                    "pre-exec",
+                    "PreToolUse",
                     "/old/hooks/audit/run.sh",
                 )],
                 tmp.path(),
@@ -434,18 +535,23 @@ mod tests {
             .write_config_entries(
                 &[make_hook_entry_with_path(
                     "audit",
-                    "pre-exec",
+                    "PreToolUse",
                     "/new/hooks/audit/run.sh",
                 )],
                 tmp.path(),
             )
             .unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = json["hooks"]["pre-exec"].as_array().unwrap();
+        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(hooks.len(), 1);
-        assert!(hooks[0].as_str().unwrap().contains("/new/hooks/audit/"));
+        assert!(
+            hooks[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("/new/hooks/audit/")
+        );
     }
 
     #[test]
@@ -470,25 +576,78 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let existing = serde_json::json!({
             "hooks": {
-                "pre-exec": [
-                    "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"",
-                    "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\""
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"" }
+                        ]
+                    },
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\"" }
+                        ]
+                    }
                 ]
             }
         });
         std::fs::write(
-            tmp.path().join("codex_hooks.json"),
+            tmp.path().join("hooks.json"),
             serde_json::to_string_pretty(&existing).unwrap(),
         )
         .unwrap();
 
         remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = json["hooks"]["pre-exec"].as_array().unwrap();
+        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(hooks.len(), 1);
-        assert!(hooks[0].as_str().unwrap().contains("audit-extended"));
+        assert!(
+            hooks[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("audit-extended")
+        );
+    }
+
+    #[test]
+    fn remove_hook_entries_preserves_unmanaged_handler_in_same_binding() {
+        let tmp = TempDir::new().unwrap();
+        let existing = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "bash \"/pkg/hooks/audit/run.sh\"" },
+                            { "type": "command", "command": "bash \"/user/hooks/custom.sh\"" }
+                        ]
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            tmp.path().join("hooks.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let bindings = json["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(bindings.len(), 1);
+        let hooks = bindings[0]["hooks"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert!(
+            hooks[0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("/user/hooks/custom.sh")
+        );
     }
 
     #[test]
@@ -496,21 +655,35 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let existing = serde_json::json!({
             "hooks": {
-                "pre-exec": ["bash \"/pkg/hooks/audit/run.sh\""],
-                "post-exec": ["bash \"/pkg/hooks/audit/run.sh\""]
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "bash \"/pkg/hooks/audit/run.sh\"" }
+                        ]
+                    }
+                ],
+                "PostToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "bash \"/pkg/hooks/audit/run.sh\"" }
+                        ]
+                    }
+                ]
             }
         });
         std::fs::write(
-            tmp.path().join("codex_hooks.json"),
+            tmp.path().join("hooks.json"),
             serde_json::to_string_pretty(&existing).unwrap(),
         )
         .unwrap();
 
         remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
 
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["hooks"]["pre-exec"].as_array().unwrap().is_empty());
-        assert_eq!(json["hooks"]["post-exec"].as_array().unwrap().len(), 1);
+        assert!(json["hooks"]["PreToolUse"].as_array().unwrap().is_empty());
+        assert_eq!(json["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
     }
 }

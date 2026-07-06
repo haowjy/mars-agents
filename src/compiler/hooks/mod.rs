@@ -336,7 +336,10 @@ pub struct TranslatedHook {
 ///   tool.post     → PostToolUse  (exact)
 ///
 /// Lossiness table (Codex):
-///   All events → approximate (Codex hook config is structural, not event-named)
+///   session.start → SessionStart (approximate — matcher semantics differ)
+///   session.end   → Stop         (approximate — Codex uses Stop not End)
+///   tool.pre      → PreToolUse   (approximate — matcher defaults are target-owned)
+///   tool.post     → PostToolUse  (approximate — matcher defaults are target-owned)
 ///
 /// Lossiness table (OpenCode):
 ///   All events → approximate (plugin hooks)
@@ -372,12 +375,11 @@ fn classify_for_target(
             UniversalEvent::ToolPost => (LossinessKind::Exact, Some("PostToolUse".to_string())),
         },
         ".codex" => {
-            // Codex uses structural hook entries, not named events — approximate for all.
             let codex_event = match event {
-                UniversalEvent::SessionStart => "start",
-                UniversalEvent::SessionEnd => "stop",
-                UniversalEvent::ToolPre => "pre-exec",
-                UniversalEvent::ToolPost => "post-exec",
+                UniversalEvent::SessionStart => "SessionStart",
+                UniversalEvent::SessionEnd => "Stop",
+                UniversalEvent::ToolPre => "PreToolUse",
+                UniversalEvent::ToolPost => "PostToolUse",
             };
             (LossinessKind::Approximate, Some(codex_event.to_string()))
         }

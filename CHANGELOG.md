@@ -15,6 +15,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rename rewrites now run once after unmanaged collision pruning and choose
   dependency candidates in mars.toml declaration order.
 
+### Added
+- `config-rename-dangle` warning when a config reference
+  (`[settings.meridian.fanout].agents`, `[agents.<name>]` overlays, or
+  `[skills.<name>]` overlays) points at an agent or skill name that an
+  explicit or collision rename has replaced, so a silently mismatched
+  config no longer goes undiagnosed.
+
 ## [0.10.3] - 2026-07-06
 
 ### Fixed

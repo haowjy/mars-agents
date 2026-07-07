@@ -156,6 +156,7 @@ Config → Mutate → Merge → Resolve → Target → Diff → Plan → Apply �
 **Post-processing** (called by `sync::execute()`):
 - `check_unmanaged_collisions()` — items whose dest exists on disk but not in lock → skip installation, warn
 - `rewrite::apply_renames()` — after pruning, applies explicit and collision renames to agent frontmatter in one pass
+- `validate::validate_skill_refs()` / `validate_skill_frontmatter_in_target()` / `validate::warn_config_dangles_after_rename()` — check skill references, frontmatter schema, and config-side dangles after renames
 
 **Invariants:**
 - Discovery uses `src/discover/mod.rs` — agents: `agents/*.md`, skills: `skills/*/SKILL.md`, flat skill fallback: root `SKILL.md` when no conventional items found

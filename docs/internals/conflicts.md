@@ -40,6 +40,27 @@ When an explicit skill rename changes the installed skill name, Mars also
 rewrites dependent agent frontmatter (the YAML metadata block at the top of an
 agent Markdown file) to reference the installed skill name.
 
+### Config references dangled by rename
+
+A rename (explicit or collision auto-rename) can leave config-side name
+references pointing at an agent or skill name that no longer exists. Mars
+warns with a `config-rename-dangle` diagnostic for each affected reference:
+
+- `[settings.meridian.fanout].agents` entries
+- `[agents.<name>]` overlay keys
+- `[skills.<name>]` overlay keys
+
+```
+warning: `web-researcher` in [settings.meridian.fanout].agents no longer
+matches an installed agent after rename (now: web-researcher__base,
+web-researcher__team); update the config
+```
+
+The warning lists the new installed names so the user can update the config
+reference. It fires only when the original name is no longer installed — if
+another source still provides the unrenamed name, the reference is left
+alone.
+
 ## Unmanaged File Collisions
 
 When sync would install an item at a path where an unmanaged file already exists (not tracked in `mars.lock`), Mars skips the install and warns:

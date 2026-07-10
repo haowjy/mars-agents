@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-07-10
+
 ### Fixed
 - Removing a rename rewrite now reinstalls the raw source instead of leaving
   stale rewritten frontmatter on disk.

@@ -6,15 +6,29 @@ MCP server and hook name collisions are resolved separately — see [mcp-and-hoo
 
 ## Naming Collisions
 
-Mars treats same-name item collisions as errors until the package author or consumer makes the intended name explicit.
+Mars treats within-source duplicates as errors. Across dependency sources, Mars
+keeps both colliding items by making their installed names explicit.
 
 ### Within one source: `DiscoveryCollision`
 
 If one source exposes two items with the same `(kind, name)`, discovery fails with `DiscoveryCollision`. This applies to duplicates found by convention scanning, plugin-manifest declarations, or both. There is no precedence rule inside a source.
 
-### Across sources: destination `Collision`
+### Across sources: auto-rename both
 
-If two sources would install to the same destination path, sync fails with `Collision` rather than auto-renaming either item. Resolve the collision by renaming one dependency item in `mars.toml`:
+If two dependency sources would install an agent or skill to the same destination
+path, sync auto-renames both colliders by appending `__{source_name}` to the
+installed name:
+
+- `agents/coder.md` from `base` → `agents/coder__base.md`
+- `skills/planning` from `team` → `skills/planning__team`
+
+Mars emits an `auto-rename-collision` warning for each automatic rename. Agent
+frontmatter references are rewritten in scope: `skills:` references follow
+renamed skills, and `subagents:` references follow renamed agents from the same
+source or that source's dependency graph.
+
+To choose custom names or prevent auto-renaming, add an explicit dependency
+rename in `mars.toml`; explicit renames are applied before collision detection:
 
 ```toml
 [dependencies.base]
@@ -22,7 +36,30 @@ url = "https://github.com/meridian-flow/meridian-base"
 rename = { "agents/coder.md" = "agents/base-coder.md" }
 ```
 
-Skill renames are explicit too. When a skill is renamed, Mars rewrites dependent agent frontmatter (the YAML metadata block at the top of an agent Markdown file) to reference the installed skill name.
+When an explicit skill rename changes the installed skill name, Mars also
+rewrites dependent agent frontmatter (the YAML metadata block at the top of an
+agent Markdown file) to reference the installed skill name.
+
+### Config references dangled by rename
+
+A rename (explicit or collision auto-rename) can leave config-side name
+references pointing at an agent or skill name that no longer exists. Mars
+warns with a `config-rename-dangle` diagnostic for each affected reference:
+
+- `[settings.meridian.fanout].agents` entries
+- `[agents.<name>]` overlay keys
+- `[skills.<name>]` overlay keys
+
+```
+warning: `web-researcher` in [settings.meridian.fanout].agents no longer
+matches an installed agent after rename (now: web-researcher__base,
+web-researcher__team); update the config
+```
+
+The warning lists the new installed names so the user can update the config
+reference. It fires only when the original name is no longer installed — if
+another source still provides the unrenamed name, the reference is left
+alone.
 
 ## Unmanaged File Collisions
 

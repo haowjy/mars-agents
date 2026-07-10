@@ -65,9 +65,10 @@ pub fn compute(
             lock_index.find_output(CANONICAL_TARGET_ROOT, &target_item.dest_path)
         {
             // Item exists in lock — compare checksums
+            let effective_installed = rewritten_installed_checksum(target_item)
+                .unwrap_or_else(|| target_item.source_hash.clone());
             let source_changed = target_item.source_hash != locked_item.source_checksum
-                || rewritten_installed_checksum(target_item)
-                    .is_some_and(|checksum| checksum != locked_item.installed_checksum);
+                || effective_installed != locked_item.installed_checksum;
 
             // Check disk hash against the expected baseline.
             // In --force mode, baseline is source_checksum so conflicted files
@@ -465,7 +466,9 @@ mod tests {
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
         // Target has same source hash as before (no upstream change)
-        let target_item = make_target_item("coder", ItemKind::Agent, &source_hash, source_path);
+        let mut target_item = make_target_item("coder", ItemKind::Agent, &source_hash, source_path);
+        target_item.rewritten_content =
+            Some(String::from_utf8(installed_content.to_vec()).unwrap());
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState {
@@ -597,15 +600,15 @@ mod tests {
         fs::write(agents_dir.join("coder.md"), conflicted_content).unwrap();
 
         let mut target_items = IndexMap::new();
-        target_items.insert(
-            "agents/coder.md".into(),
-            make_target_item(
-                "coder",
-                ItemKind::Agent,
-                &source_hash,
-                PathBuf::from("/tmp/source/agents/coder.md"),
-            ),
+        let mut target_item = make_target_item(
+            "coder",
+            ItemKind::Agent,
+            &source_hash,
+            PathBuf::from("/tmp/source/agents/coder.md"),
         );
+        target_item.rewritten_content =
+            Some(String::from_utf8(conflicted_content.to_vec()).unwrap());
+        target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState {
             items: target_items,
         };
@@ -772,5 +775,53 @@ mod tests {
         assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
 
         assert_ne!(rewritten_hash, old_installed_hash);
+    }
+
+    #[test]
+    fn rewrite_removed_produces_update() {
+        let root = TempDir::new().unwrap();
+
+        let source_content = b"---\nsubagents:\n- web-researcher\n---\n# Agent\n";
+        let source_hash = hash::hash_bytes(source_content);
+        let old_installed_content = b"---\nsubagents:\n- web-researcher__pkg-a\n---\n# Agent\n";
+        let old_installed_hash = hash::hash_bytes(old_installed_content);
+
+        let agents_dir = root.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("orchestrator.md"), old_installed_content).unwrap();
+
+        let mut target_items = IndexMap::new();
+        target_items.insert(
+            "agents/orchestrator.md".into(),
+            make_target_item(
+                "orchestrator",
+                ItemKind::Agent,
+                &source_hash,
+                PathBuf::from("/tmp/source/agents/orchestrator.md"),
+            ),
+        );
+        let target = TargetState {
+            items: target_items,
+        };
+
+        let mut lock_items = IndexMap::new();
+        let (key, item) = make_v2_item(
+            "orchestrator",
+            ItemKind::Agent,
+            &source_hash,
+            &old_installed_hash,
+        );
+        lock_items.insert(key, item);
+        let lock = LockFile {
+            version: 2,
+            dependencies: IndexMap::new(),
+            items: lock_items,
+            config_entries: std::collections::BTreeMap::new(),
+            dependency_model_aliases: IndexMap::new(),
+        };
+
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
+        assert_eq!(diff.items.len(), 1);
+        assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
     }
 }

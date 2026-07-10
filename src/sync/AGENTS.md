@@ -1,6 +1,6 @@
 # src/sync/ — Sync Engine
 
-Unified sync pipeline orchestration. 10 files, ~6500 lines.
+Unified sync pipeline orchestration. 12 files, ~8200 lines.
 
 ## Mental Model
 
@@ -35,7 +35,7 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover source items via `src/discover/`, reject cross-source destination collisions, rewrite frontmatter refs for explicit skill renames; stages local items via `crate::staging::stage_local_item` (mod.rs:299–309) |
+| `build_target()` | Discover source items via `src/discover/`, auto-rename cross-source destination collisions, prune unmanaged collisions, apply one unified frontmatter rename pass, then validate target state (`src/sync/validate.rs`); stages local items via `crate::staging::stage_local_item` |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |

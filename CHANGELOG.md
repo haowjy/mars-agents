@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- npm publishing stays on npm 11.18.0 until npm 12 restores the missing
+  `sigstore` provenance dependency, preventing release jobs from failing before
+  the first platform package is published.
+
 ## [0.10.4] - 2026-07-10
 
 ### Fixed

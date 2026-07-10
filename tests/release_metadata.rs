@@ -310,6 +310,15 @@ fn release_workflow_marks_rc_prerelease_and_uses_npm_dist_tags() {
 }
 
 #[test]
+fn release_workflow_pins_known_good_npm_for_provenance() {
+    let workflow = read(".github/workflows/release.yml");
+
+    assert!(workflow.contains("npm install -g npm@11.18.0"));
+    assert!(workflow.contains("npm/node_modules/sigstore/package.json"));
+    assert!(!workflow.contains("npm install -g npm@latest"));
+}
+
+#[test]
 fn release_workflow_pypi_publish_uses_trusted_publisher_with_required_inputs() {
     let workflow = read(".github/workflows/release.yml");
 

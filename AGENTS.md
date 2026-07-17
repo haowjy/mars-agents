@@ -22,6 +22,23 @@ control repo. Pass the root explicitly when invoking Meridian from this repo:
 meridian -C "$MERIDIAN_TASK_DIR" mars sync
 ```
 
+## Branch Discipline
+
+**The primary checkout (`~/gitrepos/mars-agents`) stays on `main`.** Never
+`checkout`/`switch` it to a feature branch — it is a shared workspace and
+sessions launch with cwd pointed here. Enforced by the `meridian.stayOnMain`
+git guard (one-shot override: `GIT_ALLOW_LEAVE_MAIN=1`, for emergencies only).
+
+All branch work happens in worktrees:
+
+```bash
+git worktree add ../mars-agents.worktrees/<slug> -b <branch> main
+```
+
+Pass the worktree as `--task-dir` when spawning agents. After the PR merges:
+remove the worktree, delete the branch (local + origin) — merged-branch
+residue in the primary checkout is how drift starts.
+
 ## Target Support Status
 
 - `.claude`, `.codex`, `.opencode`, `.cursor` are first-class targets.

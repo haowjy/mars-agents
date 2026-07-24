@@ -273,6 +273,11 @@ hooks until you re-trust them with `/hooks`. This re-trust churn is an accepted
 Codex behavior; deterministic ordering minimizes it but cannot prevent it when
 a new hook sorts ahead of an existing one.
 
+The trust hash covers the hook definition, not the referenced script contents.
+Editing a script therefore runs the new code under the existing approval,
+without another trust prompt. Review script changes with the same care as hook
+definition changes even though Codex does not ask again.
+
 File-mode placement ignores `order`: OpenCode and Pi load discovered filenames,
 so managed plugin ordering is alphabetical by `mars-<name>.ts`. An `order`
 value still affects the same hook's merge-mode targets but does not rename or

@@ -97,12 +97,21 @@ impl TargetAdapter for CodexAdapter {
         Ok(written)
     }
 
+    fn config_file_names(&self) -> &'static [&'static str] {
+        &["codex_mcp.json", "hooks.json"]
+    }
+
+    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
+        &["codex_hooks.json"]
+    }
+
     fn remove_owned_hook_entries(
         &self,
         records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         target_dir: &Path,
+        diag: &mut crate::diagnostic::DiagnosticCollector,
     ) -> Result<(), MarsError> {
-        remove_owned_codex_hooks(records, target_dir)
+        remove_owned_codex_hooks(records, target_dir, diag)
     }
 
     fn remove_config_entries(
@@ -139,8 +148,7 @@ fn write_codex_mcp_json(
     let path = target_dir.join("codex_mcp.json");
 
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -196,9 +204,7 @@ fn remove_codex_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(&path)?;
 
     if let Some(mcp_map) = root
         .as_object_mut()
@@ -243,8 +249,7 @@ fn write_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, 
     let path = target_dir.join("hooks.json");
 
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -266,6 +271,9 @@ fn write_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, 
     })?;
 
     for hook in hooks {
+        if hook.entries.is_empty() {
+            continue;
+        }
         let native_event = hook.native_event.clone();
 
         let event_hooks = hooks_map
@@ -326,22 +334,30 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 fn remove_owned_codex_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    remove_owned_codex_hooks_from_file(records, &target_dir.join("hooks.json"))?;
+    remove_owned_codex_hooks_from_file(records, &target_dir.join("hooks.json"), Some(diag))?;
     // Existing legacy-Codex sweep remains until #130's next-release cleanup.
-    remove_owned_codex_hooks_from_file(records, &target_dir.join("codex_hooks.json"))
+    let legacy_records: std::collections::BTreeMap<_, _> = records
+        .iter()
+        .filter(|(_, record)| record.emitted_json.is_none())
+        .map(|(key, record)| (key.clone(), record.clone()))
+        .collect();
+    if legacy_records.is_empty() {
+        return Ok(());
+    }
+    remove_owned_codex_hooks_from_file(&legacy_records, &target_dir.join("codex_hooks.json"), None)
 }
 
 fn remove_owned_codex_hooks_from_file(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     path: &Path,
+    mut diag: Option<&mut crate::diagnostic::DiagnosticCollector>,
 ) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
-    let raw = std::fs::read_to_string(path)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(path)?;
     if let Some(hooks_map) = root
         .as_object_mut()
         .and_then(|o| o.get_mut("hooks"))
@@ -360,6 +376,7 @@ fn remove_owned_codex_hooks_from_file(
                 .as_deref()
                 .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
             {
+                let mut missing = expected.len();
                 if let Some(bindings) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
                     let before = bindings.len();
                     for entry in expected {
@@ -367,11 +384,23 @@ fn remove_owned_codex_hooks_from_file(
                             bindings.iter().position(|candidate| candidate == &entry)
                         {
                             bindings.remove(index);
+                            missing -= 1;
                         }
                     }
                     if before > 0 && bindings.is_empty() {
                         emptied_events.insert(event.to_string());
                     }
+                }
+                if missing > 0
+                    && let Some(diag) = diag.as_deref_mut()
+                {
+                    diag.warn(
+                        "config-divergence",
+                        format!(
+                            "config-divergence: managed hook `{name}` diverged in target `.codex` at `{}`; preserving edited config and appending the package entry",
+                            path.display()
+                        ),
+                    );
                 }
             } else {
                 for (event, value) in hooks_map.iter_mut() {
@@ -434,9 +463,7 @@ fn remove_codex_hook_entries_from_file(hook_names: &[&str], path: &Path) -> Resu
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(path)?;
 
     if let Some(hooks_map) = root
         .as_object_mut()

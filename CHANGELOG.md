@@ -17,6 +17,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode and Pi hooks place substituted TypeScript file fragments at
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
+### Fixed
+- Scope hook directory ownership per target, preflight unmanaged destinations
+  and every merge config before writes, and reject malformed JSON without
+  replacing user files.
+- Restrict legacy command-path cleanup to legacy lock records, surface edited
+  managed entries as config divergence, omit empty event contributions, and
+  route legacy OpenCode hook records through their removal-only sweep.
+
 ## [0.11.0] - 2026-07-24
 
 ### Changed

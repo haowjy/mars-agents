@@ -97,12 +97,17 @@ impl TargetAdapter for CursorAdapter {
         Ok(written)
     }
 
+    fn config_file_names(&self) -> &'static [&'static str] {
+        &["mcp.json", "hooks.json"]
+    }
+
     fn remove_owned_hook_entries(
         &self,
         records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         target_dir: &Path,
+        diag: &mut crate::diagnostic::DiagnosticCollector,
     ) -> Result<(), MarsError> {
-        remove_owned_cursor_hooks(records, target_dir)
+        remove_owned_cursor_hooks(records, target_dir, diag)
     }
 
     fn remove_config_entries(
@@ -118,8 +123,7 @@ impl TargetAdapter for CursorAdapter {
 fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
     let path = target_dir.join("hooks.json");
     let mut root: serde_json::Value = if path.is_file() {
-        serde_json::from_str(&std::fs::read_to_string(&path)?)
-            .unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -139,6 +143,9 @@ fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pa
             })
         })?;
     for hook in hooks {
+        if hook.entries.is_empty() {
+            continue;
+        }
         let event = hooks_map
             .entry(hook.native_event.clone())
             .or_insert_with(|| serde_json::json!([]))
@@ -170,20 +177,20 @@ fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pa
 fn remove_owned_cursor_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let path = target_dir.join("hooks.json");
     if !path.is_file() {
         return Ok(());
     }
-    let mut root: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)
-        .unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(&path)?;
     if let Some(hooks_map) = root
         .get_mut("hooks")
         .and_then(serde_json::Value::as_object_mut)
     {
         let mut emptied = Vec::new();
         for (key, record) in records {
-            let Some((event, _name)) = key
+            let Some((event, name)) = key
                 .strip_prefix("hook:")
                 .and_then(|rest| rest.split_once(':'))
             else {
@@ -196,6 +203,7 @@ fn remove_owned_cursor_hooks(
             else {
                 continue;
             };
+            let mut missing = expected.len();
             if let Some(entries) = hooks_map
                 .get_mut(event)
                 .and_then(serde_json::Value::as_array_mut)
@@ -204,11 +212,21 @@ fn remove_owned_cursor_hooks(
                 for owned in expected {
                     if let Some(index) = entries.iter().position(|entry| entry == &owned) {
                         entries.remove(index);
+                        missing -= 1;
                     }
                 }
                 if before > 0 && entries.is_empty() {
                     emptied.push(event.to_string());
                 }
+            }
+            if missing > 0 {
+                diag.warn(
+                    "config-divergence",
+                    format!(
+                        "config-divergence: managed hook `{name}` diverged in target `.cursor` at `{}`; preserving edited config and appending the package entry",
+                        path.display()
+                    ),
+                );
             }
         }
         for event in emptied {
@@ -249,8 +267,7 @@ fn write_cursor_mcp_json(
     let path = target_dir.join("mcp.json");
 
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -311,9 +328,7 @@ fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(&path)?;
 
     if let Some(mcp_map) = root
         .as_object_mut()

@@ -118,12 +118,21 @@ impl TargetAdapter for ClaudeAdapter {
         Ok(written)
     }
 
+    fn config_file_names(&self) -> &'static [&'static str] {
+        &[".mcp.json", "settings.local.json"]
+    }
+
+    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
+        &["settings.json"]
+    }
+
     fn remove_owned_hook_entries(
         &self,
         records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         target_dir: &Path,
+        diag: &mut crate::diagnostic::DiagnosticCollector,
     ) -> Result<(), MarsError> {
-        remove_owned_claude_hooks(records, target_dir)
+        remove_owned_claude_hooks(records, target_dir, diag)
     }
 
     fn remove_config_entries(
@@ -162,8 +171,7 @@ fn write_mcp_json(target_dir: &Path, servers: &[&McpServerEntry]) -> Result<Path
 
     // Load existing config or start fresh.
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -220,9 +228,7 @@ fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(&path)?;
 
     if let Some(mcp_map) = root
         .as_object_mut()
@@ -271,8 +277,7 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
     let path = target_dir.join("settings.local.json");
 
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -294,6 +299,9 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
     })?;
 
     for hook in hooks {
+        if hook.entries.is_empty() {
+            continue;
+        }
         let native_event = &hook.native_event;
 
         let event_hooks = hooks_map
@@ -315,70 +323,7 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())?;
 
-    // Migrate any stale managed hooks out of the committed settings.json. Users
-    // who synced before hooks moved to settings.local.json have leftover entries
-    // there with machine-local paths; clean them up so they don't persist.
-    let hook_names: Vec<&str> = hooks.iter().map(|h| h.name.as_str()).collect();
-    migrate_hooks_from_settings_json(target_dir, &hook_names)?;
-
     Ok(path)
-}
-
-/// Remove mars-managed hook bindings from the committed `settings.json`.
-///
-/// Hooks now live in `settings.local.json`; this strips any leftover managed
-/// bindings (matched by `/hooks/<name>/` in the command path) from
-/// `settings.json` so stale machine-local paths don't persist in the committed
-/// file. Writes back only when something changed.
-fn migrate_hooks_from_settings_json(
-    target_dir: &Path,
-    hook_names: &[&str],
-) -> Result<(), MarsError> {
-    let path = target_dir.join("settings.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
-
-    let mut changed = false;
-
-    if let Some(obj) = root.as_object_mut()
-        && let Some(hooks_value) = obj.get_mut("hooks")
-        && let Some(hooks_map) = hooks_value.as_object_mut()
-    {
-        for event_hooks in hooks_map.values_mut() {
-            if let Some(arr) = event_hooks.as_array_mut() {
-                let before = arr.len();
-                for name in hook_names {
-                    remove_managed_hook_bindings(arr, name);
-                }
-                if arr.len() != before {
-                    changed = true;
-                }
-            }
-        }
-
-        // Drop empty event arrays, then the hooks section if nothing remains.
-        hooks_map.retain(|_, v| !v.as_array().map(|a| a.is_empty()).unwrap_or(false));
-        if hooks_map.is_empty() {
-            obj.remove("hooks");
-            changed = true;
-        }
-    }
-
-    if changed {
-        let content = serde_json::to_string_pretty(&root).map_err(|e| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("failed to serialize {}: {e}", path.display()),
-            })
-        })?;
-        crate::fs::atomic_write(&path, content.as_bytes())?;
-    }
-
-    Ok(())
 }
 
 fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
@@ -403,23 +348,35 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 fn remove_owned_claude_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    remove_owned_claude_hooks_from_file(records, &target_dir.join("settings.local.json"))?;
+    remove_owned_claude_hooks_from_file(
+        records,
+        &target_dir.join("settings.local.json"),
+        Some(diag),
+    )?;
     // One-release bridge: v0.11.0 command-path emissions and pre-local-settings residue.
     // Delete with the other #130 sweeps after the next release.
-    remove_owned_claude_hooks_from_file(records, &target_dir.join("settings.json"))
+    let legacy_records: std::collections::BTreeMap<_, _> = records
+        .iter()
+        .filter(|(_, record)| record.emitted_json.is_none())
+        .map(|(key, record)| (key.clone(), record.clone()))
+        .collect();
+    if legacy_records.is_empty() {
+        return Ok(());
+    }
+    remove_owned_claude_hooks_from_file(&legacy_records, &target_dir.join("settings.json"), None)
 }
 
 fn remove_owned_claude_hooks_from_file(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     path: &Path,
+    mut diag: Option<&mut crate::diagnostic::DiagnosticCollector>,
 ) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
-    let raw = std::fs::read_to_string(path)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(path)?;
     if let Some(hooks_map) = root
         .as_object_mut()
         .and_then(|o| o.get_mut("hooks"))
@@ -438,12 +395,28 @@ fn remove_owned_claude_hooks_from_file(
                 .as_deref()
                 .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
             {
-                if let Some(bindings) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
+                let missing = if let Some(bindings) =
+                    hooks_map.get_mut(event).and_then(|v| v.as_array_mut())
+                {
                     let before = bindings.len();
-                    remove_structural_matches(bindings, &expected);
+                    let missing = remove_structural_matches(bindings, &expected);
                     if before > 0 && bindings.is_empty() {
                         emptied_events.insert(event.to_string());
                     }
+                    missing
+                } else {
+                    expected.len()
+                };
+                if missing > 0
+                    && let Some(diag) = diag.as_deref_mut()
+                {
+                    diag.warn(
+                        "config-divergence",
+                        format!(
+                            "config-divergence: managed hook `{name}` diverged in target `.claude` at `{}`; preserving edited config and appending the package entry",
+                            path.display()
+                        ),
+                    );
                 }
             } else {
                 for (event, value) in hooks_map.iter_mut() {
@@ -480,12 +453,19 @@ fn remove_owned_claude_hooks_from_file(
     )
 }
 
-fn remove_structural_matches(current: &mut Vec<serde_json::Value>, expected: &[serde_json::Value]) {
+fn remove_structural_matches(
+    current: &mut Vec<serde_json::Value>,
+    expected: &[serde_json::Value],
+) -> usize {
+    let mut missing = 0;
     for entry in expected {
         if let Some(index) = current.iter().position(|candidate| candidate == entry) {
             current.remove(index);
+        } else {
+            missing += 1;
         }
     }
+    missing
 }
 
 /// Remove hook entries by key from `settings.local.json`.
@@ -524,9 +504,7 @@ fn remove_hook_names_from_file(path: &Path, hook_names: &[&str]) -> Result<(), M
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(path)?;
 
     if let Some(hooks_map) = root
         .as_object_mut()
@@ -792,11 +770,11 @@ mod tests {
     }
 
     #[test]
-    fn write_hooks_migrates_stale_hooks_out_of_settings_json() {
+    fn write_hooks_never_name_matches_committed_settings_json() {
         let tmp = TempDir::new().unwrap();
 
-        // Simulate an older sync that wrote a managed hook into the committed
-        // settings.json, alongside a user-owned hook that must be preserved.
+        // Without a legacy lock record, path-like user commands are not evidence
+        // of ownership and the committed file must remain byte-for-byte intact.
         let stale = serde_json::json!({
             "hooks": {
                 "PreToolUse": [
@@ -820,6 +798,7 @@ mod tests {
             serde_json::to_string_pretty(&stale).unwrap(),
         )
         .unwrap();
+        let before = std::fs::read(tmp.path().join("settings.json")).unwrap();
 
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
@@ -837,46 +816,9 @@ mod tests {
                 .contains("/hooks/audit/")
         );
 
-        // Stale managed hook is gone from settings.json; user-owned hook stays.
-        let committed_raw = std::fs::read_to_string(tmp.path().join("settings.json")).unwrap();
-        let committed: serde_json::Value = serde_json::from_str(&committed_raw).unwrap();
-        let committed_hooks = committed["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(committed_hooks.len(), 1);
-        assert_eq!(committed_hooks[0]["hooks"][0]["command"], "echo user-owned");
-    }
-
-    #[test]
-    fn write_hooks_drops_empty_hooks_section_from_settings_json() {
-        let tmp = TempDir::new().unwrap();
-
-        // Only a managed hook in settings.json — after migration the hooks
-        // section should be removed entirely.
-        let stale = serde_json::json!({
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "bash /old/cache/hooks/audit/run.sh" }
-                        ]
-                    }
-                ]
-            },
-            "other": "preserved"
-        });
-        std::fs::write(
-            tmp.path().join("settings.json"),
-            serde_json::to_string_pretty(&stale).unwrap(),
-        )
-        .unwrap();
-
-        let adapter = ClaudeAdapter;
-        let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
-
-        let committed_raw = std::fs::read_to_string(tmp.path().join("settings.json")).unwrap();
-        let committed: serde_json::Value = serde_json::from_str(&committed_raw).unwrap();
-        assert!(committed.get("hooks").is_none());
-        assert_eq!(committed["other"], "preserved");
+        assert_eq!(
+            std::fs::read(tmp.path().join("settings.json")).unwrap(),
+            before
+        );
     }
 }

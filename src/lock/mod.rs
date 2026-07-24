@@ -1064,10 +1064,26 @@ fn upsert_target_output(
     installed_checksum: &ContentHash,
 ) {
     let dest = DestPath::from(dest_path);
+    let scoped_hook_owner = dest_path.strip_prefix("hooks/").map(|hook_name| {
+        format!(
+            "hooks/{}/{}",
+            target_root.trim_start_matches('.'),
+            hook_name
+        )
+    });
     for item in lock.items.values_mut() {
-        if !item.outputs.iter().any(|output| {
+        let owns_output = item.outputs.iter().any(|output| {
             crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
-        }) {
+                || (item.kind == ItemKind::Hook
+                    && scoped_hook_owner.as_deref().is_some_and(|owner| {
+                        output.target_root == CANONICAL_TARGET_ROOT
+                            && crate::target::dest_paths_equivalent(
+                                output.dest_path.as_str(),
+                                owner,
+                            )
+                    }))
+        });
+        if !owns_output {
             continue;
         }
 

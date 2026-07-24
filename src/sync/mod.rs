@@ -295,6 +295,12 @@ pub(crate) fn build_target(
     let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
 
     for item in local_items {
+        // Hook config and materialization are both discovered from project-root
+        // `hooks/`; treating `.mars-src` hook directories as ordinary canonical
+        // items would bypass per-target identity.
+        if item.discovered.id.kind == ItemKind::Hook {
+            continue;
+        }
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(
@@ -386,42 +392,52 @@ pub(crate) fn build_target(
     for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0)? {
         let source_path = hook.hook_dir.clone();
         let source_hash = ContentHash::from(hash::compute_hash(&source_path, ItemKind::Hook)?);
-        let dest_path = default_dest_path(ItemKind::Hook, &hook.def.name);
-        if let Some(existing) = target_state.items.shift_remove(&dest_path)
-            && existing.source_hash != source_hash
-        {
-            diag.warn(
-                "local-shadow",
-                format!(
-                    "local hook `{}` shadows dependency `{}` hook `{}`",
-                    hook.def.name, existing.source_name, existing.id.name
-                ),
+        for target_name in hook.def.targets.keys().filter(|target| {
+            resolved
+                .loaded
+                .effective
+                .settings
+                .managed_targets()
+                .contains(target)
+        }) {
+            let dest_path = target::hook_canonical_dest_path(target_name, &hook.def.name);
+            if let Some(existing) = target_state.items.shift_remove(&dest_path)
+                && existing.source_hash != source_hash
+            {
+                diag.warn(
+                    "local-shadow",
+                    format!(
+                        "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
+                        hook.def.name, existing.source_name
+                    ),
+                );
+            }
+            let disk_path = dest_path.resolve(managed_root);
+            if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+                && disk_path.symlink_metadata().is_ok()
+            {
+                diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
+                continue;
+            }
+            target_state.items.insert(
+                dest_path.clone(),
+                TargetItem {
+                    id: ItemId {
+                        kind: ItemKind::Hook,
+                        name: format!("{}@{}", hook.def.name, target_name.trim_start_matches('.'))
+                            .into(),
+                    },
+                    source_name: local_source_name.clone(),
+                    origin: SourceOrigin::LocalPackage,
+                    source_id: local_source_id.clone(),
+                    source_path: source_path.clone(),
+                    dest_path,
+                    source_hash: source_hash.clone(),
+                    is_flat_skill: false,
+                    rewritten_content: None,
+                },
             );
         }
-        let disk_path = dest_path.resolve(managed_root);
-        if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
-            && disk_path.symlink_metadata().is_ok()
-        {
-            diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
-            continue;
-        }
-        target_state.items.insert(
-            dest_path.clone(),
-            TargetItem {
-                id: ItemId {
-                    kind: ItemKind::Hook,
-                    name: hook.def.name.into(),
-                },
-                source_name: local_source_name.clone(),
-                origin: SourceOrigin::LocalPackage,
-                source_id: local_source_id.clone(),
-                source_path,
-                dest_path,
-                source_hash,
-                is_flat_skill: false,
-                rewritten_content: None,
-            },
-        );
     }
 
     // Prevent managed installs from overwriting unmanaged files.

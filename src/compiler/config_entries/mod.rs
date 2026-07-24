@@ -20,6 +20,7 @@ use crate::types::{MarsContext, SourceName};
 pub(crate) fn preflight_hooks(
     ctx: &MarsContext,
     resolved: &crate::sync::ResolvedState,
+    force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), crate::error::MarsError> {
     use crate::compiler::hooks::{discover_hook_items, load_file_fragment, load_merge_fragment};
@@ -39,8 +40,51 @@ pub(crate) fn preflight_hooks(
     }
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
+    for target_name in resolved.loaded.effective.settings.managed_targets() {
+        if let Some(adapter) = registry.get(&target_name)
+            && let Err(error) = crate::target::validate_json_config_files(
+                adapter,
+                &ctx.project_root.join(&target_name),
+            )
+        {
+            errors.push(error.to_string());
+        }
+        if let Some(adapter) = registry.get(&target_name)
+            && resolved
+                .loaded
+                .old_lock
+                .config_entries
+                .get(&target_name)
+                .is_some_and(|records| {
+                    records.iter().any(|(key, record)| {
+                        key.starts_with("hook:") && record.emitted_json.is_none()
+                    })
+                })
+        {
+            for name in adapter.legacy_hook_config_file_names() {
+                let path = ctx.project_root.join(&target_name).join(name);
+                if path.is_file()
+                    && let Err(error) = crate::target::parse_json_file(&path)
+                {
+                    errors.push(error.to_string());
+                }
+            }
+        }
+    }
     for item in hooks {
+        if item.source_name != "_self" && item.def.visibility != "exported" {
+            continue;
+        }
         for target_name in item.def.targets.keys() {
+            if !resolved
+                .loaded
+                .effective
+                .settings
+                .managed_targets()
+                .contains(target_name)
+            {
+                continue;
+            }
             let adapter = registry.get(target_name);
             let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
             let installed = ctx
@@ -48,6 +92,30 @@ pub(crate) fn preflight_hooks(
                 .join(target_name)
                 .join("hooks")
                 .join(&item.def.name);
+            if !force
+                && installed.symlink_metadata().is_ok()
+                && !resolved
+                    .loaded
+                    .old_lock
+                    .contains_output(target_name, &format!("hooks/{}", item.def.name))
+            {
+                let disk_matches =
+                    crate::hash::compute_hash(&installed, crate::lock::ItemKind::Hook)
+                        .ok()
+                        .zip(
+                            crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook)
+                                .ok(),
+                        )
+                        .is_some_and(|(disk, source)| disk == source);
+                if !disk_matches {
+                    errors.push(format!(
+                        "unmanaged target hook directory `{}` blocks hook `{}`",
+                        installed.display(),
+                        item.def.name
+                    ));
+                    continue;
+                }
+            }
             let result = match mode {
                 Some(HookFragmentMode::MergeJson) => {
                     match adapter.and_then(|adapter| adapter.known_hook_events()) {
@@ -285,15 +353,17 @@ pub(crate) fn compile_config_entries(
                     diag,
                     false,
                 ) {
-                    Ok(fragment) => {
-                        contributions.extend(fragment.events.into_iter().map(|(event, entries)| {
-                            LoadedHookContribution {
+                    Ok(fragment) => contributions.extend(
+                        fragment
+                            .events
+                            .into_iter()
+                            .filter(|(_, entries)| !entries.is_empty())
+                            .map(|(event, entries)| LoadedHookContribution {
                                 item,
                                 event,
                                 entries,
-                            }
-                        }))
-                    }
+                            }),
+                    ),
                     Err(error) => {
                         diag.error("hook-fragment", error.to_string());
                         continue;
@@ -446,7 +516,9 @@ pub(crate) fn compile_config_entries(
             }
             if let Some(adapter) = registry.get(target_root) {
                 let target_dir = ctx.project_root.join(target_root);
-                if let Err(error) = adapter.remove_owned_hook_entries(&hook_records, &target_dir) {
+                if let Err(error) =
+                    adapter.remove_owned_hook_entries(&hook_records, &target_dir, diag)
+                {
                     diag.warn(
                         "config-entry-remove",
                         format!(

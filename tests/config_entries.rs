@@ -30,6 +30,245 @@ fn sync(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Assert {
         .assert()
 }
 
+fn write_dependency_hook(
+    source: &assert_fs::fixture::ChildPath,
+    name: &str,
+    target: &str,
+    event: &str,
+    command: &str,
+) {
+    write_hook(
+        source,
+        name,
+        &format!("visibility = \"exported\"\n[targets.\"{target}\"]\n"),
+    );
+    write_fragment(
+        source,
+        name,
+        &format!("{}.json", target.trim_start_matches('.')),
+        &format!(r#"{{"{event}":[{{"hooks":[{{"type":"command","command":"{command}"}}]}}]}}"#),
+    );
+}
+
+#[test]
+fn hook_identity_and_materialization_are_scoped_per_target() {
+    let dir = TempDir::new().unwrap();
+    let claude_source = dir.child("claude-source");
+    let codex_source = dir.child("codex-source");
+    claude_source.create_dir_all().unwrap();
+    codex_source.create_dir_all().unwrap();
+    write_dependency_hook(
+        &claude_source,
+        "audit",
+        ".claude",
+        "SessionStart",
+        "printf dep-claude",
+    );
+    write_dependency_hook(
+        &codex_source,
+        "audit",
+        ".codex",
+        "SessionStart",
+        "printf dep-codex",
+    );
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\", \".codex\"]\n[dependencies]\nclaude-source = {{ path = \"{}\" }}\ncodex-source = {{ path = \"{}\" }}\n",
+            claude_source.path().display(),
+            codex_source.path().display()
+        ))
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf local-claude"}]}]}"#,
+    );
+
+    sync(&project).success();
+    let claude = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    let codex = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+    assert!(claude.contains("local-claude"));
+    assert!(!claude.contains("dep-claude"));
+    assert!(codex.contains("dep-codex"));
+    project
+        .child(".claude/hooks/audit/claude.json")
+        .assert(predicate::str::contains("local-claude"));
+    project
+        .child(".codex/hooks/audit/codex.json")
+        .assert(predicate::str::contains("dep-codex"));
+}
+
+#[test]
+fn unmanaged_target_hook_directory_fails_before_emission_or_canonical_mutation() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+    project
+        .child(".claude/hooks/audit")
+        .create_dir_all()
+        .unwrap();
+    project
+        .child(".claude/hooks/audit/user.sh")
+        .write_str("user")
+        .unwrap();
+    project
+        .child(".claude/settings.local.json")
+        .write_str(r#"{"sentinel":true}"#)
+        .unwrap();
+
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("unmanaged"))
+        .stderr(predicate::str::contains(".claude/hooks/audit"));
+    project
+        .child(".claude/settings.local.json")
+        .assert(r#"{"sentinel":true}"#);
+    project.child(".claude/hooks/audit/user.sh").assert("user");
+    project
+        .child(".mars/hooks/claude/audit")
+        .assert(predicate::path::missing());
+}
+
+#[test]
+fn new_emission_never_name_matches_user_hooks_in_committed_claude_settings() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    project.child(".claude").create_dir_all().unwrap();
+    let original = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/user/hooks/audit/run.sh"}]}],"UserPromptSubmit":[]}}"#;
+    project
+        .child(".claude/settings.json")
+        .write_str(original)
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf managed"}]}]}"#,
+    );
+
+    sync(&project).success();
+    project.child(".claude/settings.json").assert(original);
+}
+
+#[test]
+fn malformed_merge_target_configs_fail_preflight_without_mutation() {
+    for (target, config) in [
+        (".claude", "settings.local.json"),
+        (".codex", "hooks.json"),
+        (".cursor", "hooks.json"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
+            .unwrap();
+        project.child(target).create_dir_all().unwrap();
+        project
+            .child(target)
+            .child(config)
+            .write_str("{bad,")
+            .unwrap();
+        write_hook(&project, "audit", &format!("[targets.\"{target}\"]\n"));
+        let (event, entry) = if target == ".cursor" {
+            ("sessionStart", r#"{"command":"true"}"#)
+        } else {
+            (
+                "SessionStart",
+                r#"{"hooks":[{"type":"command","command":"true"}]}"#,
+            )
+        };
+        write_fragment(
+            &project,
+            "audit",
+            &format!("{}.json", target.trim_start_matches('.')),
+            &format!(r#"{{"{event}":[{entry}]}}"#),
+        );
+
+        sync(&project)
+            .failure()
+            .stderr(predicate::str::contains(config))
+            .stderr(predicate::str::contains("valid JSON"));
+        project.child(target).child(config).assert("{bad,");
+        project
+            .child(format!(
+                ".mars/hooks/{}/audit",
+                target.trim_start_matches('.')
+            ))
+            .assert(predicate::path::missing());
+    }
+}
+
+#[test]
+fn malformed_legacy_claude_settings_fail_before_the_migration_sweep() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+    sync(&project).success();
+    let lock_path = project.child("mars.lock");
+    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["config_entries"][".claude"]["hook:SessionStart:audit"]
+        .as_table_mut()
+        .unwrap()
+        .remove("emitted_json");
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+    project
+        .child(".claude/settings.json")
+        .write_str("{legacy-malformed,")
+        .unwrap();
+    let local_before =
+        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("settings.json"))
+        .stderr(predicate::str::contains("valid JSON"));
+    project
+        .child(".claude/settings.json")
+        .assert("{legacy-malformed,");
+    assert_eq!(
+        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap(),
+        local_before
+    );
+}
+
 #[test]
 fn fragments_pass_through_native_entries_substitute_installed_paths_and_copy_hook_dirs() {
     let dir = TempDir::new().unwrap();
@@ -152,7 +391,7 @@ fn exported_dependency_hook_uses_item_lifecycle_for_whole_directory_copy() {
         .child(".claude/hooks/dep-hook/asset.txt")
         .assert("copied verbatim");
     let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-    assert!(lock.contains("hooks/dep-hook"));
+    assert!(lock.contains("hooks/claude/dep-hook"));
 }
 
 #[test]
@@ -248,11 +487,9 @@ fn unknown_event_is_strict_by_default_and_unchecked_warns_and_passes() {
     sync(&project).success().stderr(predicate::str::contains(
         "passes unknown event `FutureEvent`",
     ));
-    let json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap(),
-    )
-    .unwrap();
-    assert!(json["hooks"]["FutureEvent"].is_array());
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::path::missing());
 }
 
 #[test]
@@ -294,14 +531,19 @@ fn name_defaults_to_directory_and_explicit_override_controls_install_and_key() {
         &project,
         "defaulted",
         "claude.json",
-        r#"{"SessionStart":[]}"#,
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
     );
     write_hook(
         &project,
         "source-dir",
         "name = \"renamed\"\n[targets.\".claude\"]\n",
     );
-    write_fragment(&project, "source-dir", "claude.json", r#"{"Stop":[]}"#);
+    write_fragment(
+        &project,
+        "source-dir",
+        "claude.json",
+        r#"{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
     sync(&project).success();
     project
         .child(".claude/hooks/defaulted")
@@ -355,6 +597,116 @@ fn structural_ownership_preserves_edited_and_user_entries_and_prunes_emptied_eve
     assert_eq!(after["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
     assert!(after["hooks"].get("PostToolUse").is_none());
     assert!(after["hooks"]["UserPromptSubmit"].is_array());
+}
+
+#[test]
+fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
+    for (target, event, original_entry, edited_command) in [
+        (
+            ".claude",
+            "SessionStart",
+            r#"{"hooks":[{"type":"command","command":"printf owned"}]}"#,
+            "printf edited-claude",
+        ),
+        (
+            ".codex",
+            "SessionStart",
+            r#"{"hooks":[{"type":"command","command":"printf owned"}]}"#,
+            "printf edited-codex",
+        ),
+        (
+            ".cursor",
+            "sessionStart",
+            r#"{"command":"printf owned"}"#,
+            "printf edited-cursor",
+        ),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
+            .unwrap();
+        write_hook(&project, "audit", &format!("[targets.\"{target}\"]\n"));
+        write_fragment(
+            &project,
+            "audit",
+            &format!("{}.json", target.trim_start_matches('.')),
+            &format!(r#"{{"{event}":[{original_entry}]}}"#),
+        );
+        sync(&project).success();
+        let config = if target == ".claude" {
+            "settings.local.json"
+        } else {
+            "hooks.json"
+        };
+        let path = project.child(target).child(config);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
+        if target == ".cursor" {
+            json["hooks"][event][0]["command"] = edited_command.into();
+        } else {
+            json["hooks"][event][0]["hooks"][0]["command"] = edited_command.into();
+        }
+        path.write_str(&serde_json::to_string_pretty(&json).unwrap())
+            .unwrap();
+
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains("config-divergence"))
+            .stderr(predicate::str::contains(target))
+            .stderr(predicate::str::contains("audit"))
+            .stderr(predicate::str::contains("exists locally").not());
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
+        assert_eq!(after["hooks"][event].as_array().unwrap().len(), 2);
+    }
+}
+
+#[test]
+fn empty_fragment_events_never_create_merge_config_residue() {
+    for (target, event, config) in [
+        (".claude", "SessionStart", "settings.local.json"),
+        (".codex", "SessionStart", "hooks.json"),
+        (".cursor", "sessionStart", "hooks.json"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
+            .unwrap();
+        project.child(target).create_dir_all().unwrap();
+        project
+            .child(target)
+            .child(config)
+            .write_str(r#"{"sentinel":true}"#)
+            .unwrap();
+        write_hook(&project, "empty", &format!("[targets.\"{target}\"]\n"));
+        write_fragment(
+            &project,
+            "empty",
+            &format!("{}.json", target.trim_start_matches('.')),
+            &format!(r#"{{"{event}":[]}}"#),
+        );
+
+        sync(&project).success();
+        let after: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(project.child(target).child(config).path()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after["sentinel"], true);
+        assert!(after.get("hooks").is_none());
+        fs::remove_dir_all(project.child("hooks/empty").path()).unwrap();
+        sync(&project).success();
+        let removed: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(project.child(target).child(config).path()).unwrap(),
+        )
+        .unwrap();
+        assert!(removed.get("hooks").is_none());
+    }
 }
 
 #[test]
@@ -434,6 +786,54 @@ fn one_sync_migrates_v011_command_path_residue_and_is_idempotent() {
         first_codex
     );
     assert_eq!(fs::read_to_string(lock_path.path()).unwrap(), first_lock);
+}
+
+#[test]
+fn legacy_opencode_hook_records_reach_the_removal_only_sweep() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".opencode\"]\n")
+        .unwrap();
+    write_hook(
+        &project,
+        "audit",
+        "[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n",
+    );
+    write_fragment(&project, "audit", "plugin.ts", "export default {}");
+    sync(&project).success();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    let records = lock["config_entries"][".opencode"].as_table_mut().unwrap();
+    records.clear();
+    records.insert(
+        "hook:tool.pre:audit".into(),
+        toml::Table::from_iter([("source".into(), Value::String("_self".into()))]).into(),
+    );
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+    project
+        .child(".opencode/opencode.json")
+        .write_str(
+            r#"{"user":true,"hooks":{"tool.pre":["/cache/hooks/audit/run.sh","printf user"]}}"#,
+        )
+        .unwrap();
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+
+    sync(&project).success();
+    let json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project.child(".opencode/opencode.json").path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json["user"], true);
+    assert_eq!(
+        json["hooks"]["tool.pre"],
+        serde_json::json!(["printf user"])
+    );
 }
 
 #[test]
@@ -635,6 +1035,63 @@ fn file_fragment_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
             .assert(predicate::path::missing());
         assert!(!project.child(".mars/hooks/bad").exists());
     }
+}
+
+#[test]
+fn all_merge_destinations_are_validated_before_the_first_write() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    project.child(".claude").create_dir_all().unwrap();
+    project
+        .child(".claude/.mcp.json")
+        .write_str(r#"{"sentinel":"mcp"}"#)
+        .unwrap();
+    project
+        .child(".claude/settings.local.json")
+        .write_str(r#"{"hooks":[]}"#)
+        .unwrap();
+    let mcp = project.child("mcp/audit");
+    mcp.create_dir_all().unwrap();
+    mcp.child("mcp.toml")
+        .write_str("command = \"node\"\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("settings.local.json"))
+        .stderr(predicate::str::contains("hooks is not an object"));
+    project
+        .child(".claude/.mcp.json")
+        .assert(r#"{"sentinel":"mcp"}"#);
+    project
+        .child(".claude/settings.local.json")
+        .assert(r#"{"hooks":[]}"#);
+    project
+        .child(".mars/hooks/claude/audit")
+        .assert(predicate::path::missing());
+}
+
+#[test]
+fn codex_trust_docs_warn_that_script_edits_do_not_reprompt() {
+    let docs = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/docs/config/mcp-and-hooks.md"
+    ))
+    .unwrap();
+    assert!(docs.contains("script contents"));
+    assert!(docs.contains("without another trust prompt"));
 }
 
 #[test]

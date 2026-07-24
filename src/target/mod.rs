@@ -150,6 +150,17 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Existing JSON files this adapter may mutate during config-entry sync.
+    fn config_file_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// One-release legacy hook files touched only when old lock records lack
+    /// structural emission data.
+    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Emit target-specific pre-write diagnostics (e.g., lossiness warnings).
     ///
     /// Called unconditionally before `write_config_entries`, even on dry runs.
@@ -166,6 +177,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         &self,
         _records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         _target_dir: &Path,
+        _diag: &mut crate::diagnostic::DiagnosticCollector,
     ) -> Result<(), MarsError> {
         Ok(())
     }
@@ -181,6 +193,53 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) -> Result<(), MarsError> {
         Ok(())
     }
+}
+
+pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsError> {
+    let raw = std::fs::read_to_string(path)?;
+    serde_json::from_str(&raw).map_err(|error| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{} is not valid JSON: {error}", path.display()),
+        })
+    })
+}
+
+pub(crate) fn validate_json_config_files(
+    adapter: &dyn TargetAdapter,
+    target_dir: &Path,
+) -> Result<(), MarsError> {
+    for name in adapter.config_file_names() {
+        let path = target_dir.join(name);
+        if path.is_file() {
+            let root = parse_json_file(&path)?;
+            let object = root.as_object().ok_or_else(|| {
+                MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!("{} is not a JSON object", path.display()),
+                })
+            })?;
+            if object
+                .get("mcpServers")
+                .is_some_and(|value| !value.is_object())
+            {
+                return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!("{}: mcpServers is not an object", path.display()),
+                }));
+            }
+            if let Some(hooks) = object.get("hooks") {
+                let hooks = hooks.as_object().ok_or_else(|| {
+                    MarsError::Config(crate::error::ConfigError::Invalid {
+                        message: format!("{}: hooks is not an object", path.display()),
+                    })
+                })?;
+                if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
+                    return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                        message: format!("{}: hooks.{event} is not an array", path.display()),
+                    }));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Registry of target adapters, keyed by target root name.

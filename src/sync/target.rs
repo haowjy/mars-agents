@@ -80,6 +80,7 @@ pub fn build_with_collisions_and_diag(
 ) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
     let mut explicit_skill_renames = Vec::new();
+    let managed_targets: HashSet<String> = config.settings.managed_targets().into_iter().collect();
 
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
@@ -111,11 +112,49 @@ pub fn build_with_collisions_and_diag(
             .unwrap_or_default();
 
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
+        let parsed_hooks = crate::compiler::hooks::discover_hook_items(
+            &node.rooted_ref.package_root,
+            source_name.as_str(),
+            1,
+            0,
+        )?;
 
         for item in filtered {
-            if item.id.kind == ItemKind::Hook
-                && !hook_is_exported(&node.rooted_ref.package_root.join(&item.source_path))
-            {
+            if item.id.kind == ItemKind::Hook {
+                let hook_dir = node.rooted_ref.package_root.join(&item.source_path);
+                if !hook_is_exported(&hook_dir) {
+                    continue;
+                }
+                let parsed = parsed_hooks
+                    .iter()
+                    .find(|hook| hook.hook_dir == hook_dir)
+                    .ok_or_else(|| MarsError::Source {
+                        source_name: source_name.to_string(),
+                        message: format!("failed to resolve hook at `{}`", hook_dir.display()),
+                    })?;
+                let source_hash = ContentHash::from(hash::compute_hash(&hook_dir, ItemKind::Hook)?);
+                for target_name in parsed
+                    .def
+                    .targets
+                    .keys()
+                    .filter(|target| managed_targets.contains(*target))
+                {
+                    let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
+                    collected_items.push(TargetItem {
+                        id: ItemId {
+                            kind: ItemKind::Hook,
+                            name: hook_scoped_item_name(target_name, &parsed.def.name),
+                        },
+                        source_name: source_name.clone(),
+                        origin: SourceOrigin::Dependency(source_name.clone()),
+                        source_id: source_id.clone(),
+                        source_path: hook_dir.clone(),
+                        dest_path,
+                        source_hash: source_hash.clone(),
+                        is_flat_skill: false,
+                        rewritten_content: None,
+                    });
+                }
                 continue;
             }
             let is_flat_skill =
@@ -192,6 +231,30 @@ pub fn build_with_collisions_and_diag(
         explicit_skill_renames,
         collision_renames,
     ))
+}
+
+/// Canonical hook directories are target-scoped so providers with the same
+/// name can independently serve different harnesses.
+pub fn hook_canonical_dest_path(target_name: &str, hook_name: &str) -> DestPath {
+    DestPath::new(format!(
+        "hooks/{}/{}",
+        target_name.trim_start_matches('.'),
+        hook_name
+    ))
+    .expect("validated target and hook names form a safe canonical path")
+}
+
+fn hook_scoped_item_name(target_name: &str, hook_name: &str) -> ItemName {
+    format!("{}@{}", hook_name, target_name.trim_start_matches('.')).into()
+}
+
+/// Map a target-scoped canonical hook path to its native target destination.
+pub fn hook_target_dest_path(canonical: &DestPath) -> Option<(&str, String)> {
+    let mut parts = canonical.as_str().split('/');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("hooks"), Some(target), Some(name), None) => Some((target, format!("hooks/{name}"))),
+        _ => None,
+    }
 }
 
 fn hook_is_exported(hook_dir: &Path) -> bool {

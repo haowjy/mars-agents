@@ -67,7 +67,7 @@ pub fn compile(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_hooks(ctx, &planned.targeted.resolved, diag)?;
+    config_entries::preflight_hooks(ctx, &planned.targeted.resolved, request.options.force, diag)?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;

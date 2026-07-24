@@ -65,6 +65,20 @@ impl TargetAdapter for OpencodeAdapter {
         Ok(vec![path])
     }
 
+    fn config_file_names(&self) -> &'static [&'static str] {
+        &["opencode.json"]
+    }
+
+    fn remove_owned_hook_entries(
+        &self,
+        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+        target_dir: &Path,
+        _diag: &mut crate::diagnostic::DiagnosticCollector,
+    ) -> Result<(), MarsError> {
+        let keys: Vec<String> = records.keys().cloned().collect();
+        remove_opencode_entries(&keys, target_dir)
+    }
+
     fn remove_config_entries(
         &self,
         entry_keys: &[String],
@@ -96,8 +110,7 @@ fn write_opencode_config(
     let path = target_dir.join("opencode.json");
 
     let mut root: serde_json::Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        super::parse_json_file(&path)?
     } else {
         serde_json::json!({})
     };
@@ -168,9 +181,7 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    let mut root = super::parse_json_file(&path)?;
 
     let root_obj = match root.as_object_mut() {
         Some(o) => o,

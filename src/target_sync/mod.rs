@@ -147,13 +147,22 @@ fn sync_one_target(
         if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
             continue;
         }
-        let dest_rel = outcome.dest_path.as_str();
-        if outcome.item_id.kind == crate::lock::ItemKind::Hook
-            && !matches!(outcome.action, ActionTaken::Removed)
-            && !hook_declares_target(&mars_dir.join(dest_rel), target_name)
-        {
-            continue;
-        }
+        let canonical_dest_rel = outcome.dest_path.as_str();
+        let hook_dest;
+        let dest_rel = if outcome.item_id.kind == crate::lock::ItemKind::Hook {
+            let Some((hook_target, target_dest)) =
+                crate::sync::target::hook_target_dest_path(&outcome.dest_path)
+            else {
+                continue;
+            };
+            if hook_target != target_name.trim_start_matches('.') {
+                continue;
+            }
+            hook_dest = target_dest;
+            hook_dest.as_str()
+        } else {
+            canonical_dest_rel
+        };
         if outcome.item_id.kind == crate::lock::ItemKind::Agent && !target_accepts_canonical_agents
         {
             if matches!(outcome.action, ActionTaken::Removed) {
@@ -187,7 +196,7 @@ fn sync_one_target(
             }
             ActionTaken::Skipped => {
                 expected_paths.insert(dest_rel.to_string());
-                let source = mars_dir.join(dest_rel);
+                let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
                 if source.exists() || source.symlink_metadata().is_ok() {
                     let should_refresh_native_skill = outcome.item_id.kind
@@ -279,7 +288,7 @@ fn sync_one_target(
             }
             _ => {
                 expected_paths.insert(dest_rel.to_string());
-                let source = mars_dir.join(dest_rel);
+                let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
                 if (source.exists() || source.symlink_metadata().is_ok())
                     && should_copy_to_target(
@@ -410,19 +419,6 @@ fn record_synced_output(
             installed_checksum: ContentHash::from(checksum),
         });
     }
-}
-
-fn hook_declares_target(hook_dir: &Path, target_name: &str) -> bool {
-    std::fs::read_to_string(hook_dir.join("hook.toml"))
-        .ok()
-        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-        .and_then(|value| {
-            value
-                .get("targets")
-                .and_then(toml::Value::as_table)
-                .cloned()
-        })
-        .is_some_and(|targets| targets.contains_key(target_name))
 }
 
 /// Copy an item (file or directory) from .mars/ to a target directory.

@@ -429,7 +429,7 @@ fn remove_hook_keys_from_file(path: &Path, hook_keys: &[(String, &str)]) -> Resu
 fn claude_hook_event(event: &str) -> Option<&'static str> {
     match event {
         "session.start" => Some("SessionStart"),
-        "session.end" => Some("SessionStop"),
+        "session.end" => Some("SessionEnd"),
         "tool.pre" => Some("PreToolUse"),
         "tool.post" => Some("PostToolUse"),
         _ => None,

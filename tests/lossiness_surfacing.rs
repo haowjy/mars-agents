@@ -430,7 +430,7 @@ fn sync_surfaces_dropped_hook_lossiness() {
 #[test]
 fn validate_suppresses_approximate_hook_lossiness() {
     let dir = TempDir::new().unwrap();
-    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".claude"]);
+    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".codex"]);
 
     let output = mars()
         .args(["validate", "--json", "--root", project.to_str().unwrap()])
@@ -452,13 +452,13 @@ fn validate_suppresses_approximate_hook_lossiness() {
 #[test]
 fn sync_surfaces_approximate_hook_lossiness() {
     let dir = TempDir::new().unwrap();
-    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".claude"]);
+    let project = setup_hook_project(&dir, "hooks-pkg", "cleanup", "session.end", &[".codex"]);
 
     mars()
         .args(["sync", "--root", project.to_str().unwrap()])
         .assert()
         .success()
         .stderr(predicate::str::contains(
-            "approximately mapped for target `.claude`",
+            "approximately mapped for target `.codex`",
         ));
 }

@@ -156,7 +156,7 @@ support all events:
 | Universal event | `.claude` | `.codex` | `.opencode` | `.cursor` | `.pi` |
 |---|---|---|---|---|---|
 | `session.start` | `SessionStart` (exact) | `SessionStart` (approx) | `session:start` (approx) | — dropped | — dropped |
-| `session.end` | `SessionStop` (approx) | `Stop` (approx) | `session:end` (approx) | — dropped | — dropped |
+| `session.end` | `SessionEnd` (exact) | `Stop` (approx) | `session:end` (approx) | — dropped | — dropped |
 | `tool.pre` | `PreToolUse` (exact) | `PreToolUse` (approx) | `tool:before` (approx) | — dropped | — dropped |
 | `tool.post` | `PostToolUse` (exact) | `PostToolUse` (approx) | `tool:after` (approx) | — dropped | — dropped |
 

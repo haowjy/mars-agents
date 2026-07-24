@@ -76,7 +76,7 @@ pub struct HookEntry {
     pub entries: Vec<serde_json::Value>,
 }
 
-/// How a target consumes hook fragments. Later phases add file-mode emission.
+/// How a target consumes hook fragments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HookFragmentMode {
     MergeJson,
@@ -109,6 +109,11 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
 
     /// Native fragment placement mechanism declared by this adapter.
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        None
+    }
+
+    /// Relative destination for an opaque file-mode fragment.
+    fn hook_file_dest_path(&self, _name: &str) -> Option<PathBuf> {
         None
     }
 
@@ -330,8 +335,16 @@ mod tests {
         assert!(claude.contains(&"SessionEnd"));
         assert_eq!(codex.len(), 10);
         assert!(!codex.contains(&"SessionEnd"));
+        let cursor = registry
+            .get(".cursor")
+            .unwrap()
+            .known_hook_events()
+            .unwrap();
+        assert_eq!(cursor.len(), 21);
+        assert!(cursor.contains(&"beforeShellExecution"));
+        assert!(cursor.contains(&"sessionStart"));
 
-        for target in [".cursor", ".opencode", ".pi"] {
+        for target in [".opencode", ".pi"] {
             assert!(registry.get(target).unwrap().known_hook_events().is_none());
         }
     }

@@ -26,6 +26,10 @@ impl TargetAdapter for OpencodeAdapter {
         Some(HookFragmentMode::File)
     }
 
+    fn hook_file_dest_path(&self, name: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(format!("plugins/mars-{name}.ts")))
+    }
+
     fn skill_variant_key(&self) -> Option<&str> {
         Some("opencode")
     }

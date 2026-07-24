@@ -437,27 +437,203 @@ fn one_sync_migrates_v011_command_path_residue_and_is_idempotent() {
 }
 
 #[test]
-fn later_phase_hook_targets_keep_existing_no_mechanism_errors() {
-    for (target, detail) in [
-        (".opencode", "TypeScript plugins"),
-        (".pi", "TypeScript extensions"),
+fn cursor_fragments_emit_flat_versioned_entries_and_preserve_user_entries() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".cursor\"]\n")
+        .unwrap();
+    project.child(".cursor").create_dir_all().unwrap();
+    project
+        .child(".cursor/hooks.json")
+        .write_str(r#"{"version":99,"hooks":{"sessionStart":[{"command":"printf user"}]}}"#)
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".cursor\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "cursor.json",
+        r#"{"version":1,"hooks":{
+          "beforeShellExecution":[{"command":"bash \"${MARS_HOOK_DIR}/run.sh\"","matcher":"^git ","timeout":5,"futureField":true}],
+          "postToolUse":[{"command":"printf managed"}]
+        }}"#,
+    );
+
+    sync(&project).success();
+    let path = project.child(".cursor/hooks.json");
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
+    assert_eq!(json["version"], 1);
+    assert_eq!(json["hooks"]["sessionStart"][0]["command"], "printf user");
+    let emitted = &json["hooks"]["beforeShellExecution"][0];
+    assert_eq!(emitted["matcher"], "^git ");
+    assert_eq!(emitted["futureField"], true);
+    assert!(emitted.get("hooks").is_none());
+    assert!(
+        emitted["command"]
+            .as_str()
+            .unwrap()
+            .contains("/.cursor/hooks/audit/run.sh")
+    );
+
+    let mut edited = json;
+    edited["hooks"]["postToolUse"][0]["command"] = serde_json::json!("printf user-edited");
+    path.write_str(&serde_json::to_string_pretty(&edited).unwrap())
+        .unwrap();
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    sync(&project).success();
+    let after: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
+    assert!(after["hooks"].get("beforeShellExecution").is_none());
+    assert_eq!(after["hooks"]["sessionStart"][0]["command"], "printf user");
+    assert_eq!(
+        after["hooks"]["postToolUse"][0]["command"],
+        "printf user-edited"
+    );
+}
+
+#[test]
+fn cursor_allowlist_is_camel_case_and_unchecked_passes_unknown_events() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".cursor\"]\n")
+        .unwrap();
+    write_hook(&project, "future", "[targets.\".cursor\"]\n");
+    write_fragment(
+        &project,
+        "future",
+        "cursor.json",
+        r#"{"FutureEvent":[{"command":"true"}]}"#,
+    );
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains(
+            "valid events: beforeShellExecution, beforeMCPExecution",
+        ))
+        .stderr(predicate::str::contains("sessionStart"))
+        .stderr(predicate::str::contains("preToolUse"));
+    project
+        .child("hooks/future/hook.toml")
+        .write_str("[targets.\".cursor\"]\nunchecked = true\n")
+        .unwrap();
+    sync(&project).success();
+    let json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project.child(".cursor/hooks.json").path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json["hooks"]["FutureEvent"][0]["command"], "true");
+}
+
+#[test]
+fn file_fragments_place_substitute_remove_and_resync_idempotently() {
+    for (target, destination, export) in [
+        (
+            ".opencode",
+            "plugins/mars-audit.ts",
+            r#"import type { Plugin } from "@opencode-ai/plugin"
+const SCRIPT = "${MARS_HOOK_DIR}/run.sh"
+export const Audit: Plugin = async ({ $ }) => ({
+  "tool.execute.before": async () => { await $`bash ${SCRIPT}` }
+})"#,
+        ),
+        (
+            ".pi",
+            "extensions/mars-audit.ts",
+            r#"import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
+const SCRIPT = "${MARS_HOOK_DIR}/run.sh"
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async () => { await pi.exec("bash", [SCRIPT]) })
+}"#,
+        ),
     ] {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
         project.create_dir_all().unwrap();
-        project.child("mars.toml").write_str("").unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
+            .unwrap();
         write_hook(
             &project,
-            "unsupported",
+            "audit",
             &format!("[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"),
         );
-        write_fragment(&project, "unsupported", "plugin.ts", "export default {};");
-        sync(&project)
-            .failure()
-            .stderr(predicate::str::contains(format!(
-                "target `{target}` has no command-hook mechanism"
-            )))
-            .stderr(predicate::str::contains(detail));
+        write_fragment(&project, "audit", "plugin.ts", export);
+        sync(&project).success();
+        let placed = project.child(target).child(destination);
+        let first = fs::read_to_string(placed.path()).unwrap();
+        assert!(!first.contains("${MARS_HOOK_DIR}"));
+        assert!(first.contains(&format!("{target}/hooks/audit/run.sh")));
+        let first_lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+        sync(&project).success();
+        assert_eq!(fs::read_to_string(placed.path()).unwrap(), first);
+        assert_eq!(
+            fs::read_to_string(project.child("mars.lock").path()).unwrap(),
+            first_lock
+        );
+        project
+            .child(target)
+            .child(if target == ".opencode" {
+                "plugins/user.ts"
+            } else {
+                "extensions/user.ts"
+            })
+            .write_str("user")
+            .unwrap();
+        fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+        sync(&project).success();
+        placed.assert(predicate::path::missing());
+        project
+            .child(target)
+            .child(if target == ".opencode" {
+                "plugins/user.ts"
+            } else {
+                "extensions/user.ts"
+            })
+            .assert("user");
+    }
+}
+
+#[test]
+fn file_fragment_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
+    for manifest in [
+        "[targets.\".opencode\"]\nfragment = \"missing.ts\"\n",
+        "[targets.\".opencode\"]\nfragment = \"plugin.ts\"\nunchecked = false\n",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str("[settings]\ntargets = [\".opencode\"]\n")
+            .unwrap();
+        project.child(".opencode/plugins").create_dir_all().unwrap();
+        project
+            .child(".opencode/plugins/sentinel.ts")
+            .write_str("sentinel")
+            .unwrap();
+        write_hook(&project, "bad", manifest);
+        if manifest.contains("plugin.ts") {
+            write_fragment(&project, "bad", "plugin.ts", "export default {}");
+        }
+        let assertion = sync(&project).failure();
+        if manifest.contains("missing.ts") {
+            assertion.stderr(predicate::str::contains("failed to read fragment"));
+        } else {
+            assertion.stderr(predicate::str::contains("`unchecked` is not supported"));
+        }
+        project
+            .child(".opencode/plugins/sentinel.ts")
+            .assert("sentinel");
+        project
+            .child(".opencode/plugins/mars-bad.ts")
+            .assert(predicate::path::missing());
+        assert!(!project.child(".mars/hooks/bad").exists());
     }
 }
 

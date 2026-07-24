@@ -125,8 +125,8 @@ Discovers MCP server items, validates env refs, detects collisions.
 
 ## Hooks Compilation (`hooks/`)
 
-Discovers hook items, validates native events against target adapter allowlists,
-and orders bindings. Targets without declarative command hooks are rejected.
+Discovers hook items, validates merge-mode native events against target adapter
+allowlists, orders bindings, and places opaque OpenCode/Pi file fragments.
 
 ## Variants (`variants/`)
 

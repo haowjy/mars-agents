@@ -5,14 +5,13 @@
 /// Cursor-native lowering:
 /// - MCP: writes to `mcp.json` (mcpServers section), env vars as `${env:VAR}` syntax
 ///
-/// Hook authoring is currently unsupported, so `known_hook_events()` is `None`.
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
-use super::{ConfigEntry, McpServerEntry, TargetAdapter};
+use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -20,6 +19,38 @@ pub struct CursorAdapter;
 impl TargetAdapter for CursorAdapter {
     fn name(&self) -> &str {
         ".cursor"
+    }
+
+    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        // cursor-agent 2026.07.16 installed-binary validator, extracted and
+        // verified by p5714 on 2026-07-24; p5695 provided the docs baseline.
+        Some(&[
+            "beforeShellExecution",
+            "beforeMCPExecution",
+            "afterShellExecution",
+            "afterMCPExecution",
+            "beforeReadFile",
+            "afterFileEdit",
+            "beforeTabFileRead",
+            "afterTabFileEdit",
+            "stop",
+            "beforeSubmitPrompt",
+            "afterAgentResponse",
+            "afterAgentThought",
+            "sessionStart",
+            "sessionEnd",
+            "preCompact",
+            "subagentStart",
+            "subagentStop",
+            "preToolUse",
+            "postToolUse",
+            "postToolUseFailure",
+            "workspaceOpen",
+        ])
+    }
+
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        Some(HookFragmentMode::MergeJson)
     }
 
     fn skill_variant_key(&self) -> Option<&str> {
@@ -48,13 +79,30 @@ impl TargetAdapter for CursorAdapter {
                 }
             })
             .collect();
+        let hooks: Vec<&HookEntry> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ConfigEntry::Hook(hook) => Some(hook),
+                ConfigEntry::McpServer(_) => None,
+            })
+            .collect();
 
-        if mcp_servers.is_empty() {
-            return Ok(Vec::new());
+        let mut written = Vec::new();
+        if !mcp_servers.is_empty() {
+            written.push(write_cursor_mcp_json(target_dir, &mcp_servers)?);
         }
+        if !hooks.is_empty() {
+            written.push(write_cursor_hooks_json(target_dir, &hooks)?);
+        }
+        Ok(written)
+    }
 
-        let path = write_cursor_mcp_json(target_dir, &mcp_servers)?;
-        Ok(vec![path])
+    fn remove_owned_hook_entries(
+        &self,
+        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+        target_dir: &Path,
+    ) -> Result<(), MarsError> {
+        remove_owned_cursor_hooks(records, target_dir)
     }
 
     fn remove_config_entries(
@@ -64,6 +112,119 @@ impl TargetAdapter for CursorAdapter {
     ) -> Result<(), MarsError> {
         remove_cursor_mcp_entries(entry_keys, target_dir)
     }
+}
+
+// Cursor uses a flat entry array and requires the version wrapper.
+fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
+    let path = target_dir.join("hooks.json");
+    let mut root: serde_json::Value = if path.is_file() {
+        serde_json::from_str(&std::fs::read_to_string(&path)?)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    let root_object = root.as_object_mut().ok_or_else(|| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{} is not a JSON object", path.display()),
+        })
+    })?;
+    root_object.insert("version".into(), serde_json::json!(1));
+    let hooks_map = root_object
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| {
+            MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks is not an object", path.display()),
+            })
+        })?;
+    for hook in hooks {
+        let event = hooks_map
+            .entry(hook.native_event.clone())
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| {
+                MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!(
+                        "{}: hooks.{} is not an array",
+                        path.display(),
+                        hook.native_event
+                    ),
+                })
+            })?;
+        event.extend(hook.entries.iter().cloned());
+    }
+    crate::fs::atomic_write(
+        &path,
+        serde_json::to_string_pretty(&root)
+            .map_err(|error| {
+                MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!("failed to serialize {}: {error}", path.display()),
+                })
+            })?
+            .as_bytes(),
+    )?;
+    Ok(path)
+}
+
+fn remove_owned_cursor_hooks(
+    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+    target_dir: &Path,
+) -> Result<(), MarsError> {
+    let path = target_dir.join("hooks.json");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let mut root: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(hooks_map) = root
+        .get_mut("hooks")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let mut emptied = Vec::new();
+        for (key, record) in records {
+            let Some((event, _name)) = key
+                .strip_prefix("hook:")
+                .and_then(|rest| rest.split_once(':'))
+            else {
+                continue;
+            };
+            let Some(expected) = record
+                .emitted_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
+            else {
+                continue;
+            };
+            if let Some(entries) = hooks_map
+                .get_mut(event)
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                let before = entries.len();
+                for owned in expected {
+                    if let Some(index) = entries.iter().position(|entry| entry == &owned) {
+                        entries.remove(index);
+                    }
+                }
+                if before > 0 && entries.is_empty() {
+                    emptied.push(event.to_string());
+                }
+            }
+        }
+        for event in emptied {
+            hooks_map.remove(&event);
+        }
+    }
+    crate::fs::atomic_write(
+        &path,
+        serde_json::to_string_pretty(&root)
+            .map_err(|error| {
+                MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!("failed to serialize {}: {error}", path.display()),
+                })
+            })?
+            .as_bytes(),
+    )
 }
 
 // ---------------------------------------------------------------------------

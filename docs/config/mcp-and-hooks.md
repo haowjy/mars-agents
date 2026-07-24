@@ -9,8 +9,9 @@ agents and skills. Mars compiles these into target-specific config files during
 - **MCP tool-policy refs** (`mcp(...)` in agent/skill `tools:` / `disallowed-tools:`)
   gate which MCP tools an agent or skill may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
-- **Hooks** contribute target-native JSON fragments to Claude and Codex hook
-  config and install their complete hook directories beside the target.
+- **Hooks** contribute target-native JSON fragments to Claude, Codex, and
+  Cursor config, or whole TypeScript plugins to OpenCode and Pi, and install
+  their complete hook directories beside the target.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
@@ -90,14 +91,17 @@ command = "node"
 
 ## Declaring Hooks in a Package
 
-A hook directory contains `hook.toml`, one native JSON fragment per declared
-target, and any scripts or assets it needs:
+A hook directory contains `hook.toml`, one native fragment per declared target,
+and any scripts or assets it needs:
 
 ```
 my-package/hooks/audit/
   hook.toml
   claude.json
   codex.json
+  cursor.json
+  opencode.ts
+  pi.ts
   run.sh
 ```
 
@@ -115,6 +119,9 @@ fragment = "claude.json"    # optional; this is the default filename
 
 [targets.".codex"]
 fragment = "codex.json"     # optional; this is the default filename
+
+[targets.".cursor"]
+fragment = "cursor.json"    # optional; this is the default filename
 ```
 
 Each fragment is the harness's native event-keyed object—the value that its
@@ -154,12 +161,33 @@ unwraps `hooks` when the only sibling keys are `version` and/or `description`:
 }
 ```
 
+Cursor uses a flat native entry shape. This is a complete, copy-pasteable
+Cursor fragment—do not put a Claude-style nested `hooks` array inside an entry:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "bash \"${MARS_HOOK_DIR}/run.sh\"",
+        "matcher": "^git ",
+        "timeout": 5
+      }
+    ]
+  }
+}
+```
+
+Mars owns the emitted `{"version": 1, "hooks": {...}}` wrapper in
+`.cursor/hooks.json`. The schema and 21 camelCase event names were confirmed
+against the `cursor-agent` 2026.07.16 validator. Runtime firing remains
+unverified because the probe could not authenticate.
+
 Only declared target tables receive the hook. Mars copies the whole authored
 directory to `<target>/hooks/<name>/`; `hook.toml` and fragment files remain
-there as inert package metadata. Phase A supports merge-mode fragments for
-Claude (`settings.local.json`) and Codex (`hooks.json`). Cursor and the
-OpenCode/Pi TypeScript file modes are not yet enabled and fail rather than
-silently dropping a declaration.
+there as inert package metadata. Merge-mode destinations are Claude
+`settings.local.json`, Codex `hooks.json`, and Cursor `hooks.json`.
 
 Mars validates only the merge contract:
 
@@ -168,7 +196,8 @@ Mars validates only the merge contract:
 3. every event value is an array.
 
 Nested matcher, handler, timeout, and harness-specific fields pass through
-unchanged. Claude currently has 29 known events; Codex has 10. Codex
+unchanged. Claude currently has 29 known events, Codex has 10, and Cursor has
+21. Codex
 `SessionEnd` remains excluded because it was runtime-verified not to fire in
 Codex 0.144.4. To use a newly shipped native event before Mars updates its
 allowlist, opt in on that target:
@@ -181,6 +210,55 @@ unchecked = true
 Mars warns and passes unknown keys when `unchecked = true`; without it, the
 error lists valid events. All fragment parsing and validation happens before
 Mars mutates the canonical store or any target config.
+
+### OpenCode and Pi file fragments
+
+OpenCode and Pi consume opaque files rather than JSON event maps. Point their
+target table at any fragment filename (a `.ts` file is expected); Mars performs
+textual `${MARS_HOOK_DIR}` substitution and places it under a managed name:
+
+```toml
+[targets.".opencode"]
+fragment = "opencode.ts"
+
+[targets.".pi"]
+fragment = "pi.ts"
+```
+
+Self-contained OpenCode plugin:
+
+```ts
+import type { Plugin } from "@opencode-ai/plugin"
+
+const SCRIPT = "${MARS_HOOK_DIR}/run.sh"
+
+export const AuditPlugin: Plugin = async ({ $ }) => ({
+  "tool.execute.before": async () => {
+    await $`bash ${SCRIPT}`
+  },
+})
+```
+
+Mars places it at `.opencode/plugins/mars-<name>.ts`.
+
+Self-contained Pi extension:
+
+```ts
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
+
+const SCRIPT = "${MARS_HOOK_DIR}/run.sh"
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async () => {
+    await pi.exec("bash", [SCRIPT])
+  })
+}
+```
+
+Mars places it at `.pi/extensions/mars-<name>.ts`. File fragments receive no
+content or event validation; only file existence and substitution are checked
+in preflight. `unchecked` is therefore meaningless and rejected for file-mode
+targets, even when set to `false`.
 
 ### Ordering and Codex trust
 
@@ -195,6 +273,11 @@ hooks until you re-trust them with `/hooks`. This re-trust churn is an accepted
 Codex behavior; deterministic ordering minimizes it but cannot prevent it when
 a new hook sorts ahead of an existing one.
 
+File-mode placement ignores `order`: OpenCode and Pi load discovered filenames,
+so managed plugin ordering is alphabetical by `mars-<name>.ts`. An `order`
+value still affects the same hook's merge-mode targets but does not rename or
+reorder its file-mode artifact.
+
 ### Ownership and removal
 
 For each `hook:<Event>:<name>` key, `mars.lock` stores the exact emitted entry
@@ -202,6 +285,10 @@ array after path substitution. Before writing replacements, Mars removes
 structurally equal entries from the current config. User-edited entries no
 longer match and are preserved; user-authored entries and unrelated config are
 always untouched. Event keys emptied by Mars are pruned.
+
+For file-mode targets, the lock records `hook-file:<name>` and ownership is the
+placed `mars-<name>.ts` file itself. Removal deletes that file and leaves every
+other plugin or extension untouched.
 
 For one release, removal also recognizes v0.11.0 command-path entries containing
 `/hooks/<name>/`, including staging-path commands. This migration sweep runs
@@ -214,8 +301,9 @@ When two packages declare an MCP server or hook with the same name for the same
 target, Mars resolves the collision deterministically:
 
 **For MCP servers**, collision identity is the server name + target root.
-**For hooks**, collision identity is `(event, name)` + target root — hooks with
-the same name on different events are distinct and both install.
+**For merge-mode hooks**, collision identity is `(event, name)` + target root —
+hooks with the same name on different events are distinct and both install.
+**For file-mode hooks**, collision identity is the hook name + target root.
 
 **Precedence rules (highest to lowest):**
 

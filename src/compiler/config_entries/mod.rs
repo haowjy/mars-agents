@@ -22,7 +22,7 @@ pub(crate) fn preflight_hooks(
     resolved: &crate::sync::ResolvedState,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), crate::error::MarsError> {
-    use crate::compiler::hooks::{discover_hook_items, load_merge_fragment};
+    use crate::compiler::hooks::{discover_hook_items, load_file_fragment, load_merge_fragment};
     use crate::error::{ConfigError, MarsError};
     use crate::target::{HookFragmentMode, TargetRegistry};
 
@@ -43,29 +43,37 @@ pub(crate) fn preflight_hooks(
         for target_name in item.def.targets.keys() {
             let adapter = registry.get(target_name);
             let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-            let known = adapter.and_then(|adapter| adapter.known_hook_events());
-            if mode != Some(HookFragmentMode::MergeJson) || known.is_none() {
-                let detail = if target_name == ".opencode" {
-                    "extensibility is TypeScript plugins"
-                } else if target_name == ".pi" {
-                    "extensibility is TypeScript extensions"
-                } else {
-                    "no declarative command-hook mechanism is available"
-                };
-                errors.push(format!(
-                    "hook `{}`: target `{target_name}` has no command-hook mechanism ({detail})",
-                    item.def.name
-                ));
-                continue;
-            }
             let installed = ctx
                 .project_root
                 .join(target_name)
                 .join("hooks")
                 .join(&item.def.name);
-            if let Err(error) =
-                load_merge_fragment(&item, target_name, known.unwrap(), &installed, diag, true)
-            {
+            let result = match mode {
+                Some(HookFragmentMode::MergeJson) => {
+                    match adapter.and_then(|adapter| adapter.known_hook_events()) {
+                        Some(known) => {
+                            load_merge_fragment(&item, target_name, known, &installed, diag, true)
+                                .map(|_| ())
+                        }
+                        None => Err(MarsError::Config(ConfigError::Invalid {
+                            message: format!(
+                                "hook `{}`: target `{target_name}` has no native event allowlist",
+                                item.def.name
+                            ),
+                        })),
+                    }
+                }
+                Some(HookFragmentMode::File) => {
+                    load_file_fragment(&item, target_name, &installed).map(|_| ())
+                }
+                None => Err(MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "hook `{}`: target `{target_name}` has no hook fragment mechanism",
+                        item.def.name
+                    ),
+                })),
+            };
+            if let Err(error) = result {
                 errors.push(error.to_string());
             }
         }
@@ -99,8 +107,8 @@ pub(crate) fn compile_config_entries(
     diag: &mut DiagnosticCollector,
 ) -> BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> {
     use crate::compiler::config_entries::resolve::{
-        LoadedHookContribution, resolve_hook_collisions_for_target,
-        resolve_mcp_collisions_for_target,
+        LoadedHookContribution, resolve_file_hook_collisions_for_target,
+        resolve_hook_collisions_for_target, resolve_mcp_collisions_for_target,
     };
     use crate::compiler::hooks::discover_hook_items;
     use crate::compiler::mcp::{TargetMcpEntry, check_env_refs, discover_mcp_items};
@@ -227,6 +235,7 @@ pub(crate) fn compile_config_entries(
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
     let mut pending_writes: BTreeMap<String, Vec<ConfigEntry>> = BTreeMap::new();
+    let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
 
     // First lower every target without mutating its config. Stale hook removal
     // is name-based across native events, so it must run before replacement
@@ -253,39 +262,42 @@ pub(crate) fn compile_config_entries(
         let Some(adapter) = registry.get(target_root) else {
             continue;
         };
-        let Some(known_events) = adapter.known_hook_events() else {
-            continue;
-        };
+        let mode = adapter.hook_fragment_mode();
         let mut contributions = Vec::new();
-        for item in all_hooks
-            .iter()
-            .filter(|item| item.def.targets.contains_key(target_root))
-        {
-            let installed = ctx
-                .project_root
-                .join(target_root)
-                .join("hooks")
-                .join(&item.def.name);
-            match crate::compiler::hooks::load_merge_fragment(
-                item,
-                target_root,
-                known_events,
-                &installed,
-                diag,
-                false,
-            ) {
-                Ok(fragment) => {
-                    contributions.extend(fragment.events.into_iter().map(|(event, entries)| {
-                        LoadedHookContribution {
-                            item,
-                            event,
-                            entries,
-                        }
-                    }))
-                }
-                Err(error) => {
-                    diag.error("hook-fragment", error.to_string());
-                    continue;
+        if mode == Some(crate::target::HookFragmentMode::MergeJson) {
+            let Some(known_events) = adapter.known_hook_events() else {
+                continue;
+            };
+            for item in all_hooks
+                .iter()
+                .filter(|item| item.def.targets.contains_key(target_root))
+            {
+                let installed = ctx
+                    .project_root
+                    .join(target_root)
+                    .join("hooks")
+                    .join(&item.def.name);
+                match crate::compiler::hooks::load_merge_fragment(
+                    item,
+                    target_root,
+                    known_events,
+                    &installed,
+                    diag,
+                    false,
+                ) {
+                    Ok(fragment) => {
+                        contributions.extend(fragment.events.into_iter().map(|(event, entries)| {
+                            LoadedHookContribution {
+                                item,
+                                event,
+                                entries,
+                            }
+                        }))
+                    }
+                    Err(error) => {
+                        diag.error("hook-fragment", error.to_string());
+                        continue;
+                    }
                 }
             }
         }
@@ -317,8 +329,44 @@ pub(crate) fn compile_config_entries(
         // Combine all entries.
         entries_with_source.extend(hook_entries);
 
-        if entries_with_source.is_empty() {
-            continue;
+        // Resolve and load whole-file hooks independently of merge ordering.
+        let mut file_writes = Vec::new();
+        let mut file_records = BTreeMap::new();
+        if mode == Some(crate::target::HookFragmentMode::File) {
+            for item in resolve_file_hook_collisions_for_target(&all_hooks, target_root, diag) {
+                let installed = ctx
+                    .project_root
+                    .join(target_root)
+                    .join("hooks")
+                    .join(&item.def.name);
+                let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
+                    diag.error(
+                        "hook-fragment",
+                        format!(
+                            "target `{target_root}` declares file-mode hooks without a placement path"
+                        ),
+                    );
+                    continue;
+                };
+                match crate::compiler::hooks::load_file_fragment(item, target_root, &installed) {
+                    Ok(content) => {
+                        let record_key = format!("hook-file:{}", item.def.name);
+                        file_records.insert(
+                            record_key.clone(),
+                            ConfigEntryRecord {
+                                source: item.source_name.clone(),
+                                emitted_json: None,
+                            },
+                        );
+                        file_writes.push((
+                            record_key,
+                            relative_dest.to_string_lossy().into_owned(),
+                            content,
+                        ));
+                    }
+                    Err(error) => diag.error("hook-fragment", error.to_string()),
+                }
+            }
         }
 
         // Write via the target adapter (if one is registered).
@@ -343,8 +391,16 @@ pub(crate) fn compile_config_entries(
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
         adapter.emit_pre_write_diagnostics(&entries, diag);
-        desired_records.insert(target_root.clone(), target_records);
-        pending_writes.insert(target_root.clone(), entries);
+        target_records.extend(file_records);
+        if !target_records.is_empty() {
+            desired_records.insert(target_root.clone(), target_records);
+        }
+        if !entries.is_empty() {
+            pending_writes.insert(target_root.clone(), entries);
+        }
+        if !file_writes.is_empty() {
+            pending_file_writes.insert(target_root.clone(), file_writes);
+        }
     }
 
     let previous_records = &applied
@@ -362,6 +418,24 @@ pub(crate) fn compile_config_entries(
     // the one-release command-path bridge in the adapters.
     if !dry_run {
         for (target_root, records) in previous_records {
+            if let Some(adapter) = registry.get(target_root) {
+                for key in records.keys().filter(|key| key.starts_with("hook-file:")) {
+                    let Some(name) = key.strip_prefix("hook-file:") else {
+                        continue;
+                    };
+                    if let Some(relative) = adapter.hook_file_dest_path(name) {
+                        let path = ctx.project_root.join(target_root).join(relative);
+                        if let Err(error) = std::fs::remove_file(&path)
+                            && error.kind() != std::io::ErrorKind::NotFound
+                        {
+                            diag.warn(
+                                "config-entry-remove",
+                                format!("failed to remove `{}`: {error}", path.display()),
+                            );
+                        }
+                    }
+                }
+            }
             let hook_records: BTreeMap<_, _> = records
                 .iter()
                 .filter(|(key, _)| key.starts_with("hook:"))
@@ -401,7 +475,7 @@ pub(crate) fn compile_config_entries(
         let target_dir = ctx.project_root.join(&target_root);
         let non_hook_keys: Vec<String> = keys
             .iter()
-            .filter(|key| !key.starts_with("hook:"))
+            .filter(|key| !key.starts_with("hook:") && !key.starts_with("hook-file:"))
             .cloned()
             .collect();
         if let Err(e) = adapter.remove_config_entries(&non_hook_keys, &target_dir) {
@@ -445,11 +519,16 @@ pub(crate) fn compile_config_entries(
         let target_dir = ctx.project_root.join(&target_root);
         match adapter.write_config_entries(&entries, &target_dir) {
             Ok(_) => {
-                if let Some(records) = desired_records.remove(&target_root) {
+                if let Some(records) = desired_records.get(&target_root) {
                     current_records
-                        .entry(target_root)
+                        .entry(target_root.clone())
                         .or_default()
-                        .extend(records);
+                        .extend(
+                            records
+                                .iter()
+                                .filter(|(key, _)| !key.starts_with("hook-file:"))
+                                .map(|(key, record)| (key.clone(), record.clone())),
+                        );
                 }
             }
             Err(e) => {
@@ -457,6 +536,34 @@ pub(crate) fn compile_config_entries(
                     "config-entry-write",
                     format!("failed to write config entries to `{target_root}`: {e}"),
                 );
+            }
+        }
+    }
+
+    for (target_root, files) in pending_file_writes {
+        for (record_key, relative, content) in files {
+            let path = ctx.project_root.join(&target_root).join(relative);
+            let result = (|| -> Result<(), crate::error::MarsError> {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                crate::fs::atomic_write(&path, content.as_bytes())
+            })();
+            if let Err(error) = result {
+                diag.warn(
+                    "config-entry-write",
+                    format!("failed to write file hook `{}`: {error}", path.display()),
+                );
+                continue;
+            }
+            if let Some(record) = desired_records
+                .get(&target_root)
+                .and_then(|records| records.get(&record_key))
+            {
+                current_records
+                    .entry(target_root.clone())
+                    .or_default()
+                    .insert(record_key, record.clone());
             }
         }
     }

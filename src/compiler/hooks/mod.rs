@@ -15,7 +15,7 @@ pub struct HookTarget {
     #[serde(default)]
     pub fragment: Option<String>,
     #[serde(default)]
-    pub unchecked: bool,
+    pub unchecked: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,7 +211,7 @@ pub fn load_merge_fragment(
     let mut events = BTreeMap::new();
     for (event, entries) in object {
         if !known_events.contains(&event.as_str()) {
-            if target.unchecked {
+            if target.unchecked.unwrap_or(false) {
                 if emit_unchecked_warning {
                     diag.warn("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
@@ -232,26 +232,57 @@ pub fn load_merge_fragment(
             event.clone(),
             array
                 .iter()
-                .map(|entry| substitute_strings(entry.clone(), installed_hook_dir))
+                .map(|entry| substitute_json_strings(entry.clone(), installed_hook_dir))
                 .collect(),
         );
     }
     Ok(HookFragment { events })
 }
 
-fn substitute_strings(mut value: Value, installed_hook_dir: &Path) -> Value {
+/// Load a file-mode fragment and apply the same textual path substitution used
+/// for JSON string values. File-mode fragments are otherwise opaque.
+pub fn load_file_fragment(
+    item: &ParsedHookItem,
+    target_name: &str,
+    installed_hook_dir: &Path,
+) -> Result<String, MarsError> {
+    let target = &item.def.targets[target_name];
+    if target.unchecked.is_some() {
+        return Err(invalid(
+            &item.hook_dir.join("hook.toml"),
+            &format!(
+                "target `{target_name}` uses file-mode fragments; `unchecked` is not supported because file contents and events are not validated"
+            ),
+        ));
+    }
+    let fragment_name = target
+        .fragment
+        .clone()
+        .unwrap_or_else(|| default_fragment_name(target_name));
+    let path = item.hook_dir.join(fragment_name);
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
+    Ok(substitute_hook_dir(&raw, installed_hook_dir))
+}
+
+fn substitute_hook_dir(text: &str, installed_hook_dir: &Path) -> String {
+    text.replace(
+        "${MARS_HOOK_DIR}",
+        installed_hook_dir.to_string_lossy().as_ref(),
+    )
+}
+
+fn substitute_json_strings(mut value: Value, installed_hook_dir: &Path) -> Value {
     match &mut value {
-        Value::String(text) => {
-            *text = text.replace("${MARS_HOOK_DIR}", &installed_hook_dir.to_string_lossy())
-        }
+        Value::String(text) => *text = substitute_hook_dir(text, installed_hook_dir),
         Value::Array(values) => {
             for value in values {
-                *value = substitute_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), installed_hook_dir);
             }
         }
         Value::Object(values) => {
             for value in values.values_mut() {
-                *value = substitute_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), installed_hook_dir);
             }
         }
         _ => {}

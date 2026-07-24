@@ -34,7 +34,8 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `write_config_entries(entries, target_dir)` | MCP/hook config file writes |
 | `known_hook_events()` | Native merge-fragment event allowlist, or `None` when unsupported |
-| `hook_fragment_mode()` | Declares merge/file fragment placement; Phase A enables merge only |
+| `hook_fragment_mode()` | Declares merge/file fragment placement |
+| `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `remove_config_entries(keys, target_dir)` | Stale config cleanup |
 
 ## Config Entries

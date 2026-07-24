@@ -3,6 +3,8 @@
 /// Future: Pi-native agent lowering and config-entry writing.
 ///
 /// V0: stub only — no per-target behavior yet.
+use std::path::PathBuf;
+
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
@@ -18,6 +20,10 @@ impl TargetAdapter for PiAdapter {
 
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
         Some(HookFragmentMode::File)
+    }
+
+    fn hook_file_dest_path(&self, name: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(format!("extensions/mars-{name}.ts")))
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

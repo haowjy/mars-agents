@@ -67,6 +67,25 @@ pub fn resolve_hook_collisions_for_target<'a>(
         .collect()
 }
 
+/// Resolve file-mode hook collisions by placed filename (`mars-<name>.ts`).
+pub fn resolve_file_hook_collisions_for_target<'a>(
+    items: &'a [ParsedHookItem],
+    target_root: &str,
+    diag: &mut DiagnosticCollector,
+) -> Vec<&'a ParsedHookItem> {
+    let mut groups: BTreeMap<&str, Vec<&ParsedHookItem>> = BTreeMap::new();
+    for item in items
+        .iter()
+        .filter(|item| item.def.targets.contains_key(target_root))
+    {
+        groups.entry(item.def.name.as_str()).or_default().push(item);
+    }
+    groups
+        .into_values()
+        .map(|group| resolve_group(group, target_root, "file hook", diag))
+        .collect()
+}
+
 trait CollisionItem {
     fn source_name(&self) -> &str;
     fn decl_order(&self) -> usize;
@@ -96,6 +115,18 @@ impl CollisionItem for LoadedHookContribution<'_> {
     }
     fn display_name(&self) -> String {
         self.item.def.name.clone()
+    }
+}
+
+impl CollisionItem for ParsedHookItem {
+    fn source_name(&self) -> &str {
+        &self.source_name
+    }
+    fn decl_order(&self) -> usize {
+        self.decl_order
+    }
+    fn display_name(&self) -> String {
+        self.def.name.clone()
     }
 }
 

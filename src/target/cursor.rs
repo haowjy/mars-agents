@@ -100,6 +100,12 @@ impl TargetAdapter for CursorAdapter {
     fn config_file_names(&self) -> &'static [&'static str] {
         &["mcp.json", "hooks.json"]
     }
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
+        &["mcp.json"]
+    }
+    fn hook_config_file_names(&self) -> &'static [&'static str] {
+        &["hooks.json"]
+    }
 
     fn remove_owned_hook_entries(
         &self,

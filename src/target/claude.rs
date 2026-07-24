@@ -121,6 +121,12 @@ impl TargetAdapter for ClaudeAdapter {
     fn config_file_names(&self) -> &'static [&'static str] {
         &[".mcp.json", "settings.local.json"]
     }
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
+        &[".mcp.json"]
+    }
+    fn hook_config_file_names(&self) -> &'static [&'static str] {
+        &["settings.local.json"]
+    }
 
     fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
         &["settings.json"]
@@ -377,6 +383,7 @@ fn remove_owned_claude_hooks_from_file(
         return Ok(());
     }
     let mut root = super::parse_json_file(path)?;
+    let mut changed = false;
     if let Some(hooks_map) = root
         .as_object_mut()
         .and_then(|o| o.get_mut("hooks"))
@@ -400,6 +407,7 @@ fn remove_owned_claude_hooks_from_file(
                 {
                     let before = bindings.len();
                     let missing = remove_structural_matches(bindings, &expected);
+                    changed |= bindings.len() != before;
                     if before > 0 && bindings.is_empty() {
                         emptied_events.insert(event.to_string());
                     }
@@ -423,6 +431,7 @@ fn remove_owned_claude_hooks_from_file(
                     if let Some(bindings) = value.as_array_mut() {
                         let before = bindings.len();
                         remove_managed_hook_bindings(bindings, name);
+                        changed |= bindings.len() != before;
                         if before > 0 && bindings.is_empty() {
                             emptied_events.insert(event.clone());
                         }
@@ -434,12 +443,16 @@ fn remove_owned_claude_hooks_from_file(
             hooks_map.remove(&event);
         }
     }
-    if root
-        .get("hooks")
-        .and_then(|v| v.as_object())
-        .is_some_and(serde_json::Map::is_empty)
+    if changed
+        && root
+            .get("hooks")
+            .and_then(|v| v.as_object())
+            .is_some_and(serde_json::Map::is_empty)
     {
         root.as_object_mut().unwrap().remove("hooks");
+    }
+    if !changed {
+        return Ok(());
     }
     crate::fs::atomic_write(
         path,

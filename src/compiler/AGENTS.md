@@ -15,10 +15,10 @@ create_plan()      ← diff + plan
     ↓
 apply_plan()       ← persist config, write to .mars/ canonical store
     ↓
-dual_surface_compile()  ← emit native harness artifacts (.claude/agents/, etc.)
-config_entries_compile() ← MCP servers, hooks
+sync_targets()     ← copy canonical content to managed target directories
     ↓
-sync_targets()     ← copy to managed target directories
+config_entries_compile() ← emit MCP servers and bindings for installed hooks
+dual_surface_compile()   ← emit native harness artifacts (.claude/agents/, etc.)
     ↓
 finalize()         ← write lock, build report
 ```

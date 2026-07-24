@@ -206,12 +206,12 @@ fn sync_one_target(
                     let wants_copy = force || !dest_exists || should_refresh_native_skill;
                     if wants_copy {
                         if should_copy_to_target(
+                            &source,
                             &dest,
+                            outcome.item_id.kind,
                             target_name,
                             dest_rel,
-                            old_lock,
-                            force,
-                            collision_hint,
+                            ctx,
                             diag,
                         ) {
                             let previous_target_hash = if should_refresh_native_skill && dest_exists
@@ -249,7 +249,16 @@ fn sync_one_target(
                                         );
                                     }
                                 }
-                                Ok(false) => {}
+                                Ok(false) => {
+                                    // Byte-identical content is an installation outcome too:
+                                    // adopt it into the ownership lock even though no bytes moved.
+                                    record_synced_output(
+                                        &mut synced_outputs,
+                                        &dest,
+                                        dest_rel,
+                                        outcome.item_id.kind,
+                                    );
+                                }
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
                         }
@@ -292,12 +301,12 @@ fn sync_one_target(
                 let dest = target_root.join(dest_rel);
                 if (source.exists() || source.symlink_metadata().is_ok())
                     && should_copy_to_target(
+                        &source,
                         &dest,
+                        outcome.item_id.kind,
                         target_name,
                         dest_rel,
-                        old_lock,
-                        force,
-                        collision_hint,
+                        ctx,
                         diag,
                     )
                 {
@@ -318,7 +327,16 @@ fn sync_one_target(
                                 outcome.item_id.kind,
                             );
                         }
-                        Ok(false) => {}
+                        Ok(false) => {
+                            // Existing desired bytes and newly copied bytes have the same
+                            // ownership semantics.
+                            record_synced_output(
+                                &mut synced_outputs,
+                                &dest,
+                                dest_rel,
+                                outcome.item_id.kind,
+                            );
+                        }
                         Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                     }
                 }
@@ -352,32 +370,45 @@ fn sync_one_target(
 }
 
 fn should_copy_to_target(
+    source: &Path,
     dest: &Path,
+    kind: crate::lock::ItemKind,
     target_name: &str,
     dest_rel: &str,
-    old_lock: &LockFile,
-    force: bool,
-    collision_hint: CollisionAdoptHint,
+    ctx: &TargetSyncContext<'_>,
     diag: &mut DiagnosticCollector,
 ) -> bool {
     let dest_exists = surface_ownership::target_dest_exists(dest);
-    match surface_ownership::copy_decision(old_lock, target_name, dest_rel, dest_exists, force) {
+    match surface_ownership::copy_decision(
+        ctx.old_lock,
+        target_name,
+        dest_rel,
+        dest_exists,
+        ctx.force,
+    ) {
         SurfaceCopyDecision::Proceed => {
-            if dest_exists && force && !old_lock.contains_output(target_name, dest_rel) {
+            if dest_exists && ctx.force && !ctx.old_lock.contains_output(target_name, dest_rel) {
                 surface_ownership::warn_unmanaged_adopted(
                     target_name,
                     dest_rel,
-                    collision_hint,
+                    ctx.collision_hint,
                     diag,
                 );
             }
             true
         }
         SurfaceCopyDecision::SkipUnmanagedCollision => {
+            let desired_is_in_place = crate::hash::compute_hash(source, kind)
+                .ok()
+                .zip(crate::hash::compute_hash(dest, kind).ok())
+                .is_some_and(|(source, dest)| source == dest);
+            if desired_is_in_place {
+                return true;
+            }
             surface_ownership::warn_unmanaged_collision(
                 target_name,
                 dest_rel,
-                collision_hint,
+                ctx.collision_hint,
                 diag,
             );
             false

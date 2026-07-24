@@ -40,21 +40,87 @@ pub(crate) fn preflight_hooks(
     }
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
-    for target_name in resolved.loaded.effective.settings.managed_targets() {
-        if let Some(adapter) = registry.get(&target_name)
-            && let Err(error) = crate::target::validate_json_config_files(
-                adapter,
-                &ctx.project_root.join(&target_name),
-            )
-        {
-            errors.push(error.to_string());
+    let managed_targets = resolved.loaded.effective.settings.managed_targets();
+    let mut touched_targets: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+    for (target, records) in &resolved.loaded.old_lock.config_entries {
+        let touch = touched_targets.entry(target.clone()).or_default();
+        touch.0 |= records.keys().any(|key| key.starts_with("mcp:"));
+        touch.1 |= records.keys().any(|key| key.starts_with("hook"));
+    }
+    for hook in &hooks {
+        if hook.source_name == "_self" || hook.def.visibility == "exported" {
+            for target in hook
+                .def
+                .targets
+                .keys()
+                .filter(|target| managed_targets.contains(target))
+            {
+                touched_targets.entry(target.clone()).or_default().1 = true;
+            }
         }
-        if let Some(adapter) = registry.get(&target_name)
+    }
+    let mut mcp_items = crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0)?;
+    for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
+        if let Some(node) = resolved.graph.nodes.get(source_name) {
+            mcp_items.extend(crate::compiler::mcp::discover_mcp_items(
+                &node.rooted_ref.package_root,
+                source_name.as_str(),
+                decl_order,
+            )?);
+        }
+    }
+    for item in mcp_items {
+        if item.source_name != "_self" && item.def.visibility != "exported" {
+            continue;
+        }
+        if item.def.targets.is_empty() {
+            for target in &managed_targets {
+                touched_targets.entry(target.clone()).or_default().0 = true;
+            }
+        } else {
+            for target in item
+                .def
+                .targets
+                .iter()
+                .filter(|target| managed_targets.contains(target))
+            {
+                touched_targets.entry(target.clone()).or_default().0 = true;
+            }
+        }
+    }
+    for (target_name, (touches_mcp, touches_hooks)) in &touched_targets {
+        let target_dir = ctx.project_root.join(target_name);
+        if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
+            errors.push(error);
+            continue;
+        }
+        if let Some(adapter) = registry.get(target_name) {
+            let names = adapter
+                .mcp_config_file_names()
+                .iter()
+                .filter(|_| *touches_mcp)
+                .chain(
+                    adapter
+                        .hook_config_file_names()
+                        .iter()
+                        .filter(|_| *touches_hooks),
+                );
+            for name in names {
+                let path = target_dir.join(name);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                    errors.push(error);
+                }
+                if let Err(error) = crate::target::validate_json_config_file(&path) {
+                    errors.push(error.to_string());
+                }
+            }
+        }
+        if let Some(adapter) = registry.get(target_name)
             && resolved
                 .loaded
                 .old_lock
                 .config_entries
-                .get(&target_name)
+                .get(target_name)
                 .is_some_and(|records| {
                     records.iter().any(|(key, record)| {
                         key.starts_with("hook:") && record.emitted_json.is_none()
@@ -62,7 +128,7 @@ pub(crate) fn preflight_hooks(
                 })
         {
             for name in adapter.legacy_hook_config_file_names() {
-                let path = ctx.project_root.join(&target_name).join(name);
+                let path = ctx.project_root.join(target_name).join(name);
                 if path.is_file()
                     && let Err(error) = crate::target::parse_json_file(&path)
                 {
@@ -92,6 +158,10 @@ pub(crate) fn preflight_hooks(
                 .join(target_name)
                 .join("hooks")
                 .join(&item.def.name);
+            if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
+                errors.push(error);
+                continue;
+            }
             if !force
                 && installed.symlink_metadata().is_ok()
                 && !resolved
@@ -132,6 +202,17 @@ pub(crate) fn preflight_hooks(
                     }
                 }
                 Some(HookFragmentMode::File) => {
+                    if let Some(relative) =
+                        adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
+                    {
+                        let destination = ctx.project_root.join(target_name).join(relative);
+                        if let Err(error) =
+                            validate_destination_path(&ctx.project_root, &destination, false)
+                        {
+                            errors.push(error);
+                            continue;
+                        }
+                    }
                     load_file_fragment(&item, target_name, &installed).map(|_| ())
                 }
                 None => Err(MarsError::Config(ConfigError::Invalid {
@@ -153,6 +234,36 @@ pub(crate) fn preflight_hooks(
             message: errors.join("\n"),
         }))
     }
+}
+
+fn validate_destination_path(
+    root: &std::path::Path,
+    destination: &std::path::Path,
+    directory: bool,
+) -> Result<(), String> {
+    let relative = destination.strip_prefix(root).unwrap_or(destination);
+    let mut current = root.to_path_buf();
+    let components: Vec<_> = relative.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        current.push(component);
+        let is_destination = index + 1 == components.len();
+        let Ok(metadata) = std::fs::metadata(&current) else {
+            continue;
+        };
+        let expects_directory = !is_destination || directory;
+        if metadata.is_dir() != expects_directory {
+            let expected = if expects_directory {
+                "directory"
+            } else {
+                "file"
+            };
+            return Err(format!(
+                "destination `{}` must be a {expected}",
+                current.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Phase 5 config-entry compilation: MCP servers and hooks.
@@ -345,6 +456,17 @@ pub(crate) fn compile_config_entries(
                     .join(target_root)
                     .join("hooks")
                     .join(&item.def.name);
+                if !dry_run && !hook_directory_is_installed(item, &installed) {
+                    diag.warn(
+                        "hook-not-installed",
+                        format!(
+                            "not emitting hook `{}` for `{target_root}` because `{}` is not installed",
+                            item.def.name,
+                            installed.display()
+                        ),
+                    );
+                    continue;
+                }
                 match crate::compiler::hooks::load_merge_fragment(
                     item,
                     target_root,
@@ -409,6 +531,17 @@ pub(crate) fn compile_config_entries(
                     .join(target_root)
                     .join("hooks")
                     .join(&item.def.name);
+                if !dry_run && !hook_directory_is_installed(item, &installed) {
+                    diag.warn(
+                        "hook-not-installed",
+                        format!(
+                            "not emitting hook `{}` for `{target_root}` because `{}` is not installed",
+                            item.def.name,
+                            installed.display()
+                        ),
+                    );
+                    continue;
+                }
                 let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
                     diag.error(
                         "hook-fragment",
@@ -589,25 +722,35 @@ pub(crate) fn compile_config_entries(
             continue;
         };
         let target_dir = ctx.project_root.join(&target_root);
-        match adapter.write_config_entries(&entries, &target_dir) {
-            Ok(_) => {
-                if let Some(records) = desired_records.get(&target_root) {
-                    current_records
-                        .entry(target_root.clone())
-                        .or_default()
-                        .extend(
-                            records
-                                .iter()
-                                .filter(|(key, _)| !key.starts_with("hook-file:"))
-                                .map(|(key, record)| (key.clone(), record.clone())),
-                        );
-                }
+        let (mcp_entries, hook_entries): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|entry| matches!(entry, ConfigEntry::McpServer(_)));
+        for surface_entries in [mcp_entries, hook_entries] {
+            if surface_entries.is_empty() {
+                continue;
             }
-            Err(e) => {
-                diag.warn(
-                    "config-entry-write",
-                    format!("failed to write config entries to `{target_root}`: {e}"),
-                );
+            match adapter.write_config_entries(&surface_entries, &target_dir) {
+                Ok(_) => {
+                    if let Some(records) = desired_records.get(&target_root) {
+                        let written_keys: std::collections::BTreeSet<_> =
+                            surface_entries.iter().map(ConfigEntry::key).collect();
+                        current_records
+                            .entry(target_root.clone())
+                            .or_default()
+                            .extend(
+                                records
+                                    .iter()
+                                    .filter(|(key, _)| written_keys.contains(*key))
+                                    .map(|(key, record)| (key.clone(), record.clone())),
+                            );
+                    }
+                }
+                Err(e) => {
+                    diag.warn(
+                        "config-entry-write",
+                        format!("failed to write config entries to `{target_root}`: {e}"),
+                    );
+                }
             }
         }
     }
@@ -641,6 +784,16 @@ pub(crate) fn compile_config_entries(
     }
 
     current_records
+}
+
+fn hook_directory_is_installed(
+    item: &crate::compiler::hooks::ParsedHookItem,
+    installed: &std::path::Path,
+) -> bool {
+    crate::hash::compute_hash(installed, crate::lock::ItemKind::Hook)
+        .ok()
+        .zip(crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook).ok())
+        .is_some_and(|(installed, desired)| installed == desired)
 }
 
 /// Compute package depth for hook ordering.

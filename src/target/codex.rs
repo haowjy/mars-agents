@@ -100,6 +100,12 @@ impl TargetAdapter for CodexAdapter {
     fn config_file_names(&self) -> &'static [&'static str] {
         &["codex_mcp.json", "hooks.json"]
     }
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
+        &["codex_mcp.json"]
+    }
+    fn hook_config_file_names(&self) -> &'static [&'static str] {
+        &["hooks.json"]
+    }
 
     fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
         &["codex_hooks.json"]

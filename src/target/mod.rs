@@ -155,6 +155,16 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         &[]
     }
 
+    /// Config files mutated by MCP entries.
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
+        self.config_file_names()
+    }
+
+    /// Config files mutated by merge-mode hook entries.
+    fn hook_config_file_names(&self) -> &'static [&'static str] {
+        self.config_file_names()
+    }
+
     /// One-release legacy hook files touched only when old lock records lack
     /// structural emission data.
     fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
@@ -204,39 +214,34 @@ pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsErro
     })
 }
 
-pub(crate) fn validate_json_config_files(
-    adapter: &dyn TargetAdapter,
-    target_dir: &Path,
-) -> Result<(), MarsError> {
-    for name in adapter.config_file_names() {
-        let path = target_dir.join(name);
-        if path.is_file() {
-            let root = parse_json_file(&path)?;
-            let object = root.as_object().ok_or_else(|| {
-                MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!("{} is not a JSON object", path.display()),
-                })
-            })?;
-            if object
-                .get("mcpServers")
-                .is_some_and(|value| !value.is_object())
-            {
-                return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!("{}: mcpServers is not an object", path.display()),
-                }));
-            }
-            if let Some(hooks) = object.get("hooks") {
-                let hooks = hooks.as_object().ok_or_else(|| {
-                    MarsError::Config(crate::error::ConfigError::Invalid {
-                        message: format!("{}: hooks is not an object", path.display()),
-                    })
-                })?;
-                if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
-                    return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                        message: format!("{}: hooks.{event} is not an array", path.display()),
-                    }));
-                }
-            }
+pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let root = parse_json_file(path)?;
+    let object = root.as_object().ok_or_else(|| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{} is not a JSON object", path.display()),
+        })
+    })?;
+    if object
+        .get("mcpServers")
+        .is_some_and(|value| !value.is_object())
+    {
+        return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{}: mcpServers is not an object", path.display()),
+        }));
+    }
+    if let Some(hooks) = object.get("hooks") {
+        let hooks = hooks.as_object().ok_or_else(|| {
+            MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks is not an object", path.display()),
+            })
+        })?;
+        if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks.{event} is not an array", path.display()),
+            }));
         }
     }
     Ok(())

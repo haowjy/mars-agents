@@ -106,13 +106,13 @@ pub fn compile(
         });
     let mars_agents = native_agents::scan_mars_agents(&mars_dir, diag);
 
-    // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
-    let config_entry_records =
-        config_entries::compile_config_entries(ctx, &applied, request.options.dry_run, diag);
-
-    // Phase 6: copy from canonical store to managed target directories.
+    // Phase 6: install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
-    synced.config_entries = config_entry_records;
+
+    // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation. Merge-mode
+    // hook bindings are now emitted only after their directories are installed.
+    synced.config_entries =
+        config_entries::compile_config_entries(ctx, &synced.applied, request.options.dry_run, diag);
 
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;

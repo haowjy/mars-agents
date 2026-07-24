@@ -24,6 +24,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Restrict legacy command-path cleanup to legacy lock records, surface edited
   managed entries as config divergence, omit empty event contributions, and
   route legacy OpenCode hook records through their removal-only sweep.
+- Couple hook config ownership to successful installation, adopt identical
+  target content, and preflight only the config destinations a sync will touch.
 
 ## [0.11.0] - 2026-07-24
 

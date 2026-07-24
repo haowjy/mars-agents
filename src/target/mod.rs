@@ -43,7 +43,7 @@ impl ConfigEntry {
     pub fn key(&self) -> String {
         match self {
             ConfigEntry::McpServer(e) => format!("mcp:{}", e.name),
-            ConfigEntry::Hook(e) => format!("hook:{}:{}", e.event, e.name),
+            ConfigEntry::Hook(e) => format!("hook:{}:{}", e.native_event, e.name),
         }
     }
 }
@@ -70,10 +70,10 @@ pub struct HookEntry {
     /// Hook name (for identification — two hooks with the same name from
     /// different packages are both executed; hooks are additive).
     pub name: String,
-    /// Universal event name (e.g. "tool.pre").
-    pub event: String,
-    /// Native event name for this target (e.g. "PreToolUse" for Claude).
+    /// Native event name for this target.
     pub native_event: String,
+    /// Optional harness-native matcher, passed through unchanged.
+    pub matcher: Option<String>,
     /// Script path to execute, relative to the target directory.
     pub script_path: String,
     /// Explicit ordering hint (lower = earlier).
@@ -97,6 +97,12 @@ pub struct HookEntry {
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
+
+    /// Documented native command-hook events, or `None` when this target has
+    /// no declarative command-hook mechanism.
+    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        None
+    }
 
     /// Skill variant harness key used when projecting skills to this target.
     ///
@@ -306,6 +312,25 @@ mod tests {
         for (target, key) in expected {
             let adapter = registry.get(target).unwrap();
             assert_eq!(adapter.skill_variant_key(), key);
+        }
+    }
+
+    #[test]
+    fn hook_event_allowlists_match_supported_command_hook_targets() {
+        let registry = TargetRegistry::new();
+        let claude = registry
+            .get(".claude")
+            .unwrap()
+            .known_hook_events()
+            .unwrap();
+        let codex = registry.get(".codex").unwrap().known_hook_events().unwrap();
+        assert_eq!(claude.len(), 29);
+        assert!(claude.contains(&"SessionEnd"));
+        assert_eq!(codex.len(), 11);
+        assert!(codex.contains(&"SessionEnd"));
+
+        for target in [".cursor", ".opencode", ".pi"] {
+            assert!(registry.get(target).unwrap().known_hook_events().is_none());
         }
     }
 

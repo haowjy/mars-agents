@@ -13,7 +13,7 @@ pub mod context;
 /// Typed native harness descriptor table shared by compiler lowering lanes.
 pub(crate) mod harness_descriptor;
 pub mod hooks;
-/// Hook compiler lane: discovery, event validation, ordering, lossiness classification.
+/// Hook compiler lane: native event discovery, validation, and ordering.
 pub(crate) mod invocability;
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
@@ -65,6 +65,9 @@ pub fn compile(
     if request.options.frozen {
         check_frozen_gate(&planned)?;
     }
+
+    // Hook schemas and native allowlists are resolved before any mutation.
+    config_entries::preflight_hooks(ctx, &planned.targeted.resolved, diag)?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;

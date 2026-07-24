@@ -21,6 +21,24 @@ impl TargetAdapter for CodexAdapter {
         ".codex"
     }
 
+    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        // https://developers.openai.com/codex/hooks — verified 2026-07-24.
+        Some(&[
+            "SessionStart",
+            // Documented publicly; absent from the locally audited 0.144.4 binary.
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
+            "Stop",
+        ])
+    }
+
     fn skill_variant_key(&self) -> Option<&str> {
         Some("codex")
     }
@@ -240,10 +258,10 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
             "type": "command",
             "command": hook_command(&hook.script_path),
         });
-        let hook_binding = serde_json::json!({
-            "matcher": codex_hook_matcher(&native_event),
-            "hooks": [command_entry],
-        });
+        let mut hook_binding = serde_json::json!({ "hooks": [command_entry] });
+        if let Some(matcher) = &hook.matcher {
+            hook_binding["matcher"] = serde_json::Value::String(matcher.clone());
+        }
         let event_hooks = hooks_map
             .entry(native_event.clone())
             .or_insert_with(|| serde_json::json!([]))
@@ -264,16 +282,7 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())?;
 
-    remove_stale_codex_hooks_json(target_dir, hooks)?;
-
     Ok(path)
-}
-
-fn codex_hook_matcher(native_event: &str) -> &'static str {
-    match native_event {
-        "PreToolUse" | "PostToolUse" | "PermissionRequest" => "Bash",
-        _ => "",
-    }
 }
 
 fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
@@ -297,26 +306,25 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 }
 
 fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let hook_keys: Vec<(String, &str)> = entry_keys
+    let hook_names: Vec<&str> = entry_keys
         .iter()
         .filter_map(|k| {
             let rest = k.strip_prefix("hook:")?;
-            let (event, name) = rest.split_once(':')?;
-            Some((codex_hook_event(event)?.to_string(), name))
+            let (_, name) = rest.split_once(':')?;
+            Some(name)
         })
         .collect();
 
-    if hook_keys.is_empty() {
+    if hook_names.is_empty() {
         return Ok(());
     }
 
-    remove_codex_hook_entries_from_hooks_json(&hook_keys, target_dir)?;
-    remove_codex_hook_entries_from_legacy_codex_hooks_json(&hook_keys, target_dir)?;
+    remove_codex_hook_entries_from_hooks_json(&hook_names, target_dir)?;
     Ok(())
 }
 
 fn remove_codex_hook_entries_from_hooks_json(
-    hook_keys: &[(String, &str)],
+    hook_names: &[&str],
     target_dir: &Path,
 ) -> Result<(), MarsError> {
     let path = target_dir.join("hooks.json");
@@ -333,9 +341,11 @@ fn remove_codex_hook_entries_from_hooks_json(
         .and_then(|o| o.get_mut("hooks"))
         .and_then(|v| v.as_object_mut())
     {
-        for (event, name) in hook_keys {
-            if let Some(arr) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
-                remove_managed_hook_bindings(arr, name);
+        for value in hooks_map.values_mut() {
+            if let Some(arr) = value.as_array_mut() {
+                for name in hook_names {
+                    remove_managed_hook_bindings(arr, name);
+                }
             }
         }
     }
@@ -347,75 +357,6 @@ fn remove_codex_hook_entries_from_hooks_json(
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())?;
     Ok(())
-}
-
-fn remove_codex_hook_entries_from_legacy_codex_hooks_json(
-    hook_keys: &[(String, &str)],
-    target_dir: &Path,
-) -> Result<(), MarsError> {
-    let path = target_dir.join("codex_hooks.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
-    let mut root: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
-
-    if let Some(hooks_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("hooks"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for (event, name) in hook_keys {
-            let legacy_event = legacy_codex_hook_event(event);
-            if let Some(arr) = hooks_map
-                .get_mut(legacy_event)
-                .and_then(|v| v.as_array_mut())
-            {
-                arr.retain(|cmd| {
-                    let cmd_str = cmd.as_str().unwrap_or("");
-                    !is_managed_hook_command_for(cmd_str, name)
-                });
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-    Ok(())
-}
-
-fn remove_stale_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
-    let hook_keys: Vec<(String, &str)> = hooks
-        .iter()
-        .map(|hook| (hook.native_event.clone(), hook.name.as_str()))
-        .collect();
-    remove_codex_hook_entries_from_legacy_codex_hooks_json(&hook_keys, target_dir)
-}
-
-fn legacy_codex_hook_event(event: &str) -> &str {
-    match event {
-        "SessionStart" => "start",
-        "Stop" => "stop",
-        "PreToolUse" => "pre-exec",
-        "PostToolUse" => "post-exec",
-        other => other,
-    }
-}
-
-fn codex_hook_event(event: &str) -> Option<&'static str> {
-    match event {
-        "session.start" => Some("SessionStart"),
-        "session.end" => Some("Stop"),
-        "tool.pre" => Some("PreToolUse"),
-        "tool.post" => Some("PostToolUse"),
-        _ => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -451,8 +392,8 @@ mod tests {
     fn make_hook_entry(name: &str, native: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
-            event: "tool.pre".to_string(),
             native_event: native.to_string(),
+            matcher: Some("Bash".to_string()),
             script_path: format!("/hooks/{name}/run.sh"),
             order: 0,
         })
@@ -461,8 +402,8 @@ mod tests {
     fn make_hook_entry_with_path(name: &str, native: &str, script_path: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
-            event: "tool.pre".to_string(),
             native_event: native.to_string(),
+            matcher: None,
             script_path: script_path.to_string(),
             order: 0,
         })
@@ -651,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_hook_entries_scopes_by_universal_event() {
+    fn remove_hook_entries_sweeps_name_across_old_lock_event_keys() {
         let tmp = TempDir::new().unwrap();
         let existing = serde_json::json!({
             "hooks": {
@@ -684,6 +625,6 @@ mod tests {
         let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(json["hooks"]["PreToolUse"].as_array().unwrap().is_empty());
-        assert_eq!(json["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert!(json["hooks"]["PostToolUse"].as_array().unwrap().is_empty());
     }
 }

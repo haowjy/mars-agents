@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** hooks now declare harness-native events in per-target
+  `[targets."<target>"]` tables. Migrate `event =` plus `targets = [...]` to
+  `events = ["<native event>"]` under each target table.
+
+### Fixed
+- Stop writing fabricated OpenCode `hooks` config. A removal-only sweep remains
+  for one release to clean entries written by earlier Mars versions.
+
 ## [0.10.6] - 2026-07-24
 
 ### Fixed

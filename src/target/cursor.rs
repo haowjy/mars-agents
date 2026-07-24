@@ -4,10 +4,10 @@
 ///
 /// Cursor-native lowering:
 /// - MCP: writes to `mcp.json` (mcpServers section), env vars as `${env:VAR}` syntax
-/// - Hooks: dropped — Cursor has limited/undocumented hook surface (lossiness: dropped)
+///
+/// Hook authoring is currently unsupported, so `known_hook_events()` is `None`.
 use std::path::{Path, PathBuf};
 
-use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
@@ -33,14 +33,6 @@ impl TargetAdapter for CursorAdapter {
         }
     }
 
-    fn emit_pre_write_diagnostics(
-        &self,
-        entries: &[ConfigEntry],
-        diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) {
-        CursorAdapter::emit_hook_lossiness_diagnostics(entries, diag);
-    }
-
     fn write_config_entries(
         &self,
         entries: &[ConfigEntry],
@@ -57,9 +49,6 @@ impl TargetAdapter for CursorAdapter {
             })
             .collect();
 
-        // Hooks are dropped for Cursor — no native hook surface.
-        // Callers should have already emitted lossiness diagnostics for dropped hooks.
-
         if mcp_servers.is_empty() {
             return Ok(Vec::new());
         }
@@ -74,31 +63,6 @@ impl TargetAdapter for CursorAdapter {
         target_dir: &Path,
     ) -> Result<(), MarsError> {
         remove_cursor_mcp_entries(entry_keys, target_dir)
-    }
-}
-
-impl CursorAdapter {
-    /// Emit diagnostics for any hook entries in `entries` (all dropped for Cursor).
-    ///
-    /// Called by the compiler before `write_config_entries` so that the
-    /// lossiness is reported even though hooks are silently skipped in write.
-    pub fn emit_hook_lossiness_diagnostics(
-        entries: &[ConfigEntry],
-        diag: &mut DiagnosticCollector,
-    ) {
-        for entry in entries {
-            if let ConfigEntry::Hook(hook) = entry {
-                diag.warn_with_category(
-                    "hook-dropped",
-                    format!(
-                        "hook `{}` (event `{}`) dropped for target `.cursor` — \
-                         Cursor has no native hook support",
-                        hook.name, hook.event
-                    ),
-                    DiagnosticCategory::Lossiness,
-                );
-            }
-        }
     }
 }
 
@@ -218,7 +182,7 @@ fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::target::{HookEntry, McpServerEntry};
+    use crate::target::McpServerEntry;
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
@@ -232,16 +196,6 @@ mod tests {
             command: "npx".to_string(),
             args: vec![],
             env,
-        })
-    }
-
-    fn make_hook_entry(name: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
-            name: name.to_string(),
-            event: "tool.pre".to_string(),
-            native_event: "PreToolUse".to_string(),
-            script_path: "/hooks/run.sh".to_string(),
-            order: 0,
         })
     }
 
@@ -272,33 +226,6 @@ mod tests {
         assert_eq!(
             json["mcpServers"]["server"]["env"]["API_KEY"],
             "${env:MY_SECRET}"
-        );
-    }
-
-    #[test]
-    fn write_hooks_dropped_no_file_written() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CursorAdapter;
-        let entries = vec![make_hook_entry("audit")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
-        // Hooks are dropped — no file written.
-        assert!(written.is_empty());
-        assert!(!tmp.path().join("settings.json").exists());
-    }
-
-    #[test]
-    fn hook_lossiness_emits_diagnostic() {
-        let entries = vec![make_hook_entry("audit")];
-        let mut diag = crate::diagnostic::DiagnosticCollector::with_lossiness_mode(
-            crate::diagnostic::LossinessMode::Surface,
-        );
-        CursorAdapter::emit_hook_lossiness_diagnostics(&entries, &mut diag);
-        let collected = diag.drain();
-        assert_eq!(collected.len(), 1);
-        assert!(collected[0].message.contains("dropped"));
-        assert_eq!(
-            collected[0].category,
-            Some(crate::diagnostic::DiagnosticCategory::Lossiness)
         );
     }
 

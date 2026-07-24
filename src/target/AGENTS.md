@@ -33,14 +33,14 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `write_config_entries(entries, target_dir)` | MCP/hook config file writes |
-| `emit_pre_write_diagnostics(entries, diag)` | Lossiness warnings before writes |
+| `known_hook_events()` | Native command-hook allowlist, or `None` when unsupported |
 | `remove_config_entries(keys, target_dir)` | Stale config cleanup |
 
 ## Config Entries
 
 Two entry types flow through adapters:
 - `McpServerEntry` — name, command, args, env (symbolic variable names)
-- `HookEntry` — name, event, native_event, script_path, order
+- `HookEntry` — name, native_event, optional matcher, script_path, order
 
 Adapters translate env variable names to target interpolation syntax (e.g., `${VAR}` for Claude).
 

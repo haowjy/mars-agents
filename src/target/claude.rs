@@ -25,6 +25,41 @@ impl TargetAdapter for ClaudeAdapter {
         ".claude"
     }
 
+    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
+        Some(&[
+            "SessionStart",
+            "Setup",
+            "UserPromptSubmit",
+            "UserPromptExpansion",
+            "PreToolUse",
+            "PermissionRequest",
+            "PermissionDenied",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PostToolBatch",
+            "SubagentStart",
+            "SubagentStop",
+            "TaskCreated",
+            "TaskCompleted",
+            "Stop",
+            "StopFailure",
+            "TeammateIdle",
+            "PreCompact",
+            "PostCompact",
+            "Elicitation",
+            "ElicitationResult",
+            "Notification",
+            "ConfigChange",
+            "InstructionsLoaded",
+            "CwdChanged",
+            "FileChanged",
+            "WorktreeCreate",
+            "WorktreeRemove",
+            "SessionEnd",
+        ])
+    }
+
     fn skill_variant_key(&self) -> Option<&str> {
         Some("claude")
     }
@@ -252,10 +287,10 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
             "type": "command",
             "command": hook_command(&hook.script_path),
         });
-        let hook_binding = serde_json::json!({
-            "matcher": "",
-            "hooks": [command_entry],
-        });
+        let mut hook_binding = serde_json::json!({ "hooks": [command_entry] });
+        if let Some(matcher) = &hook.matcher {
+            hook_binding["matcher"] = serde_json::Value::String(matcher.clone());
+        }
 
         let event_hooks = hooks_map
             .entry(native_event.clone())
@@ -371,21 +406,21 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 /// We also apply the same removal to the committed `settings.json` so any stale
 /// managed bindings left there by an older sync get cleaned up.
 fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let hook_keys: Vec<(String, &str)> = entry_keys
+    let hook_names: Vec<&str> = entry_keys
         .iter()
         .filter_map(|k| {
             let rest = k.strip_prefix("hook:")?;
-            let (event, name) = rest.split_once(':')?;
-            Some((claude_hook_event(event)?.to_string(), name))
+            let (_, name) = rest.split_once(':')?;
+            Some(name)
         })
         .collect();
 
-    if hook_keys.is_empty() {
+    if hook_names.is_empty() {
         return Ok(());
     }
 
-    remove_hook_keys_from_file(&target_dir.join("settings.local.json"), &hook_keys)?;
-    remove_hook_keys_from_file(&target_dir.join("settings.json"), &hook_keys)?;
+    remove_hook_names_from_file(&target_dir.join("settings.local.json"), &hook_names)?;
+    remove_hook_names_from_file(&target_dir.join("settings.json"), &hook_names)?;
 
     Ok(())
 }
@@ -393,7 +428,7 @@ fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Resul
 /// Remove the given (event, name) managed hook bindings from a single settings
 /// file, if it exists. Conservative — only removes entries whose command path
 /// matches a mars-managed hook (`/hooks/<name>/`).
-fn remove_hook_keys_from_file(path: &Path, hook_keys: &[(String, &str)]) -> Result<(), MarsError> {
+fn remove_hook_names_from_file(path: &Path, hook_names: &[&str]) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
@@ -407,11 +442,11 @@ fn remove_hook_keys_from_file(path: &Path, hook_keys: &[(String, &str)]) -> Resu
         .and_then(|o| o.get_mut("hooks"))
         .and_then(|v| v.as_object_mut())
     {
-        for (event, name) in hook_keys {
-            if let Some(event_hooks) = hooks_map.get_mut(event)
-                && let Some(arr) = event_hooks.as_array_mut()
-            {
-                remove_managed_hook_bindings(arr, name);
+        for event_hooks in hooks_map.values_mut() {
+            if let Some(arr) = event_hooks.as_array_mut() {
+                for name in hook_names {
+                    remove_managed_hook_bindings(arr, name);
+                }
             }
         }
     }
@@ -424,16 +459,6 @@ fn remove_hook_keys_from_file(path: &Path, hook_keys: &[(String, &str)]) -> Resu
     crate::fs::atomic_write(path, content.as_bytes())?;
 
     Ok(())
-}
-
-fn claude_hook_event(event: &str) -> Option<&'static str> {
-    match event {
-        "session.start" => Some("SessionStart"),
-        "session.end" => Some("SessionEnd"),
-        "tool.pre" => Some("PreToolUse"),
-        "tool.post" => Some("PostToolUse"),
-        _ => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -466,11 +491,11 @@ mod tests {
         })
     }
 
-    fn make_hook_entry(name: &str, event: &str, native: &str) -> ConfigEntry {
+    fn make_hook_entry(name: &str, _event: &str, native: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
-            event: event.to_string(),
             native_event: native.to_string(),
+            matcher: None,
             script_path: format!("/hooks/{name}/run.sh"),
             order: 0,
         })
@@ -478,14 +503,14 @@ mod tests {
 
     fn make_hook_entry_with_path(
         name: &str,
-        event: &str,
+        _event: &str,
         native: &str,
         script_path: &str,
     ) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
-            event: event.to_string(),
             native_event: native.to_string(),
+            matcher: None,
             script_path: script_path.to_string(),
             order: 0,
         })

@@ -326,8 +326,8 @@ mod tests {
         let codex = registry.get(".codex").unwrap().known_hook_events().unwrap();
         assert_eq!(claude.len(), 29);
         assert!(claude.contains(&"SessionEnd"));
-        assert_eq!(codex.len(), 11);
-        assert!(codex.contains(&"SessionEnd"));
+        assert_eq!(codex.len(), 10);
+        assert!(!codex.contains(&"SessionEnd"));
 
         for target in [".cursor", ".opencode", ".pi"] {
             assert!(registry.get(target).unwrap().known_hook_events().is_none());

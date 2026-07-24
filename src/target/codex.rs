@@ -25,8 +25,9 @@ impl TargetAdapter for CodexAdapter {
         // https://developers.openai.com/codex/hooks — verified 2026-07-24.
         Some(&[
             "SessionStart",
-            // Documented publicly; absent from the locally audited 0.144.4 binary.
-            "SessionEnd",
+            // SessionEnd is documented at developers.openai.com/codex/hooks but was
+            // runtime-verified non-firing in codex-cli 0.144.4 (2026-07-24). Re-add
+            // once verified functional; authors can use `unchecked = true` meanwhile.
             "UserPromptSubmit",
             "PreToolUse",
             "PermissionRequest",

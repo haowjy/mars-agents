@@ -86,7 +86,7 @@ impl TargetAdapter for CodexAdapter {
         }
 
         if !hooks.is_empty() {
-            let path = write_codex_hooks_json(target_dir, &hooks)?;
+            let path = write_hooks_json(target_dir, &hooks)?;
             written.push(path);
         }
 
@@ -227,7 +227,7 @@ fn remove_codex_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<
 //   }
 // }
 
-fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
+fn write_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
     let path = target_dir.join("hooks.json");
 
     let mut root: serde_json::Value = if path.is_file() {
@@ -272,7 +272,7 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
                     message: format!("{}: hooks.{native_event} is not an array", path.display()),
                 })
             })?;
-        remove_managed_hook_bindings(event_hooks, &hook.name);
+        remove_managed_hook_entries(event_hooks, &hook.name);
         event_hooks.push(hook_binding);
     }
 
@@ -286,19 +286,32 @@ fn write_codex_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pat
     Ok(path)
 }
 
-fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
+fn remove_managed_hook_entries(bindings: &mut Vec<serde_json::Value>, hook_name: &str) -> bool {
+    let mut removed = false;
     bindings.retain_mut(|binding| {
+        if let Some(command) = binding.as_str() {
+            let is_managed = is_managed_hook_command_for(command, hook_name);
+            removed |= is_managed;
+            return !is_managed;
+        }
+
         let Some(hooks) = binding.get_mut("hooks").and_then(|v| v.as_array_mut()) else {
             return true;
         };
+        let mut removed_from_binding = false;
         hooks.retain(|hook| {
-            hook.get("command")
+            let is_managed = hook
+                .get("command")
                 .and_then(|v| v.as_str())
-                .map(|command| !is_managed_hook_command_for(command, hook_name))
-                .unwrap_or(true)
+                .map(|command| is_managed_hook_command_for(command, hook_name))
+                .unwrap_or(false);
+            removed_from_binding |= is_managed;
+            !is_managed
         });
-        !hooks.is_empty()
+        removed |= removed_from_binding;
+        !removed_from_binding || !hooks.is_empty()
     });
+    removed
 }
 
 fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
@@ -341,13 +354,16 @@ fn remove_codex_hook_entries_from_file(hook_names: &[&str], path: &Path) -> Resu
         .and_then(|o| o.get_mut("hooks"))
         .and_then(|v| v.as_object_mut())
     {
-        for value in hooks_map.values_mut() {
+        hooks_map.retain(|_, value| {
             if let Some(arr) = value.as_array_mut() {
+                let mut removed = false;
                 for name in hook_names {
-                    remove_managed_hook_bindings(arr, name);
+                    removed |= remove_managed_hook_entries(arr, name);
                 }
+                return !removed || !arr.is_empty();
             }
-        }
+            true
+        });
     }
 
     let content = serde_json::to_string_pretty(&root).map_err(|e| {
@@ -592,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_hook_entries_sweeps_name_across_old_lock_event_keys() {
+    fn remove_hook_entries_prunes_sweep_emptied_events_but_preserves_user_empty_events() {
         let tmp = TempDir::new().unwrap();
         let existing = serde_json::json!({
             "hooks": {
@@ -611,7 +627,8 @@ mod tests {
                             { "type": "command", "command": "bash \"/pkg/hooks/audit/run.sh\"" }
                         ]
                     }
-                ]
+                ],
+                "UserEmptyEvent": []
             }
         });
         std::fs::write(
@@ -624,36 +641,23 @@ mod tests {
 
         let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["hooks"]["PreToolUse"].as_array().unwrap().is_empty());
-        assert!(json["hooks"]["PostToolUse"].as_array().unwrap().is_empty());
+        assert!(json["hooks"]["PreToolUse"].is_null());
+        assert!(json["hooks"]["PostToolUse"].is_null());
+        assert_eq!(json["hooks"]["UserEmptyEvent"], serde_json::json!([]));
     }
 
     #[test]
-    fn remove_hook_entries_cleans_legacy_codex_hooks_json_only_by_managed_path() {
+    fn remove_hook_entries_cleans_real_legacy_codex_hooks_json_only_by_managed_path() {
         let tmp = TempDir::new().unwrap();
         let legacy = serde_json::json!({
             "userSetting": "preserved",
             "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "bash \"/cache/pkg/hooks/audit/run.sh\""
-                            }
-                        ]
-                    },
-                    {
-                        "matcher": "user-matcher",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "printf user-owned"
-                            }
-                        ]
-                    }
-                ]
+                "pre-exec": [
+                    "bash \"/cache/pkg/hooks/audit/run.sh\"",
+                    "printf user-owned"
+                ],
+                "post-exec": ["bash \"/cache/pkg/hooks/audit/run.sh\""],
+                "user-empty": []
             }
         });
         std::fs::write(
@@ -667,6 +671,47 @@ mod tests {
         let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(json["userSetting"], "preserved");
+        assert_eq!(
+            json["hooks"]["pre-exec"],
+            serde_json::json!(["printf user-owned"])
+        );
+        assert!(json["hooks"]["post-exec"].is_null());
+        assert_eq!(json["hooks"]["user-empty"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn remove_hook_entries_still_cleans_object_bindings() {
+        let tmp = TempDir::new().unwrap();
+        let hooks = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "bash \"/cache/pkg/hooks/audit/run.sh\""
+                        }]
+                    },
+                    {
+                        "matcher": "user-matcher",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "printf user-owned"
+                        }]
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            tmp.path().join("hooks.json"),
+            serde_json::to_string_pretty(&hooks).unwrap(),
+        )
+        .unwrap();
+
+        remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let bindings = json["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0]["matcher"], "user-matcher");

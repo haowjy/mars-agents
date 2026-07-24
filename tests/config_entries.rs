@@ -118,6 +118,44 @@ order = 7
 }
 
 #[test]
+fn exported_dependency_hook_uses_item_lifecycle_for_whole_directory_copy() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("base");
+    source.create_dir_all().unwrap();
+    write_hook(
+        &source,
+        "dep-hook",
+        "visibility = \"exported\"\n[targets.\".claude\"]\n",
+    );
+    write_fragment(
+        &source,
+        "dep-hook",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf dep"}]}]}"#,
+    );
+    source
+        .child("hooks/dep-hook/asset.txt")
+        .write_str("copied verbatim")
+        .unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\"]\n[dependencies]\nbase = {{ path = \"{}\" }}\n",
+            source.path().display()
+        ))
+        .unwrap();
+
+    sync(&project).success();
+    project
+        .child(".claude/hooks/dep-hook/asset.txt")
+        .assert("copied verbatim");
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("hooks/dep-hook"));
+}
+
+#[test]
 fn wrapped_and_bare_fragments_emit_equal_entries() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");

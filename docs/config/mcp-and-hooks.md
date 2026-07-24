@@ -9,9 +9,8 @@ agents and skills. Mars compiles these into target-specific config files during
 - **MCP tool-policy refs** (`mcp(...)` in agent/skill `tools:` / `disallowed-tools:`)
   gate which MCP tools an agent or skill may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
-- **Hooks** run scripts in response to harness lifecycle events
-  (`session.start`, `tool.pre`, etc.) and are registered in each target's
-  hook config file.
+- **Hooks** contribute target-native JSON fragments to Claude and Codex hook
+  config and install their complete hook directories beside the target.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
@@ -91,93 +90,123 @@ command = "node"
 
 ## Declaring Hooks in a Package
 
-Place one directory per hook under `hooks/` at the package root:
+A hook directory contains `hook.toml`, one native JSON fragment per declared
+target, and any scripts or assets it needs:
 
 ```
-my-package/
-  hooks/
-    audit/
-      hook.toml
-      run.sh
-    cleanup/
-      hook.toml
-      run.sh
+my-package/hooks/audit/
+  hook.toml
+  claude.json
+  codex.json
+  run.sh
 ```
 
-Each `hook.toml` specifies the hook:
+`hook.toml` controls identity, propagation, deterministic placement, and which
+fragments ship. The hook name defaults to the directory name.
 
 ```toml
 # hooks/audit/hook.toml
-name = "audit"
-visibility = "exported"
-order = 10
+name = "audit"              # optional; defaults to "audit"
+visibility = "exported"     # dependencies must export hooks
+order = 10                  # deterministic merge tiebreaker; default 0
 
-# Event names and matchers are native to each target.
 [targets.".claude"]
-events = ["PreToolUse", "PostToolUse"]
-matcher = "Bash|Agent"
+fragment = "claude.json"    # optional; this is the default filename
 
 [targets.".codex"]
-events = ["PreToolUse"]
-matcher = "Bash"
-
-[action]
-kind = "script"
-path = "./run.sh" # relative to the hook directory
+fragment = "codex.json"     # optional; this is the default filename
 ```
 
-Only declared target tables receive the hook; there is no implicit "all
-targets" default. `matcher` is optional and is passed through unchanged to
-every event in that target table. Lower `order` values run earlier (default
-`0`). Dependency hooks must set `visibility = "exported"` to cross the package
-boundary.
+Each fragment is the harness's native event-keyed object—the value that its
+documentation places under `"hooks"`. Mars preserves every entry field and
+only merges arrays by event:
 
-Mars validates events against these native allowlists:
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "Bash|Agent",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \"${MARS_HOOK_DIR}/run.sh\"",
+          "timeout": 30
+        }
+      ]
+    }
+  ]
+}
+```
 
-- **Claude (29):** `SessionStart`, `Setup`, `UserPromptSubmit`,
-  `UserPromptExpansion`, `PreToolUse`, `PermissionRequest`,
-  `PermissionDenied`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`,
-  `SubagentStart`, `SubagentStop`, `TaskCreated`, `TaskCompleted`, `Stop`,
-  `StopFailure`, `TeammateIdle`, `PreCompact`, `PostCompact`, `Elicitation`,
-  `ElicitationResult`, `Notification`, `ConfigChange`, `InstructionsLoaded`,
-  `CwdChanged`, `FileChanged`, `WorktreeCreate`, `WorktreeRemove`,
-  `SessionEnd`.
-- **Codex (10):** `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
-  `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
-  `SubagentStart`, `SubagentStop`, `Stop`. `SessionEnd` is intentionally absent:
-  it was runtime-verified not to fire in Codex 0.144.4.
+The quoted command form matters when a project path contains spaces. Authors
+own the complete command string; Mars does not add a shell or quoting wrapper.
+It textually replaces every `${MARS_HOOK_DIR}` occurrence in every JSON string
+with the absolute installed directory, such as
+`/work/project/.claude/hooks/audit`. A fragment may omit the placeholder.
 
-An unknown event is a hard error by default. To pass through a newer
-harness-native event before Mars updates its allowlist, opt in per target:
+For copy-paste convenience, Mars also accepts a full documented wrapper and
+unwraps `hooks` when the only sibling keys are `version` and/or `description`:
+
+```json
+{
+  "description": "audit hooks",
+  "hooks": { "SessionStart": [] }
+}
+```
+
+Only declared target tables receive the hook. Mars copies the whole authored
+directory to `<target>/hooks/<name>/`; `hook.toml` and fragment files remain
+there as inert package metadata. Phase A supports merge-mode fragments for
+Claude (`settings.local.json`) and Codex (`hooks.json`). Cursor and the
+OpenCode/Pi TypeScript file modes are not yet enabled and fail rather than
+silently dropping a declaration.
+
+Mars validates only the merge contract:
+
+1. the fragment is valid JSON;
+2. its top-level event names appear in the target allowlist;
+3. every event value is an array.
+
+Nested matcher, handler, timeout, and harness-specific fields pass through
+unchanged. Claude currently has 29 known events; Codex has 10. Codex
+`SessionEnd` remains excluded because it was runtime-verified not to fire in
+Codex 0.144.4. To use a newly shipped native event before Mars updates its
+allowlist, opt in on that target:
 
 ```toml
-name = "future-event"
-
 [targets.".claude"]
-events = ["FutureEvent"]
 unchecked = true
-
-[action]
-kind = "script"
-path = "./run.sh"
 ```
 
-Mars warns for each unchecked unknown event. `.opencode` and `.pi` reject hook
-tables because their extensibility surfaces are TypeScript plugins/extensions;
-targets without a declarative command-hook mechanism are errors rather than
-silently dropped.
+Mars warns and passes unknown keys when `unchecked = true`; without it, the
+error lists valid events. All fragment parsing and validation happens before
+Mars mutates the canonical store or any target config.
 
-**Script path constraints** — paths must be relative to the hook directory and
-must not escape the package root with `..` components or absolute paths. Mars
-rejects invalid paths at discovery time.
+### Ordering and Codex trust
 
-The lock records native ownership as
-`hook:<NativeEvent>:<name>` (for example,
-`hook:PreToolUse:audit`) under each target. During migration, stale universal
-keys trigger conservative, path-matched residue sweeps: OpenCode's old
-`opencode.json` hooks and Codex's old `codex_hooks.json` hooks are removal-only
-surfaces. Mars removes commands whose paths contain `/hooks/<name>/` and
-preserves unrelated user entries.
+Mars sorts contributions by package depth, dependency declaration order,
+`order`, and hook name, preserving each fragment array's internal order. It
+appends the managed block after user-authored entries. This guarantees stable
+placement, not execution order—Claude runs matching hooks in parallel.
+
+Codex trust is indexed by hook file, event, and array position. Adding or
+reordering managed hooks can shift indices, so Codex may silently skip affected
+hooks until you re-trust them with `/hooks`. This re-trust churn is an accepted
+Codex behavior; deterministic ordering minimizes it but cannot prevent it when
+a new hook sorts ahead of an existing one.
+
+### Ownership and removal
+
+For each `hook:<Event>:<name>` key, `mars.lock` stores the exact emitted entry
+array after path substitution. Before writing replacements, Mars removes
+structurally equal entries from the current config. User-edited entries no
+longer match and are preserved; user-authored entries and unrelated config are
+always untouched. Event keys emptied by Mars are pruned.
+
+For one release, removal also recognizes v0.11.0 command-path entries containing
+`/hooks/<name>/`, including staging-path commands. This migration sweep runs
+before fragment writes and shares the next-release deletion ledger with the
+existing OpenCode and legacy-Codex residue sweeps.
 
 ## Collision Resolution
 
@@ -245,33 +274,12 @@ info[stale-config-entry]: removed stale config entries from `.claude`:
   mcp:context7, hook:tool.pre:audit
 ```
 
-## Hook Ordering
-
-Within a target, hooks are ordered deterministically:
-
-1. **Package depth** — hooks from the root consumer project (depth 0) run
-   before hooks from direct dependencies (depth 1), which run before transitive
-   dependencies (depth 2+).
-2. **Declaration order** — within the same depth, hooks from earlier `[dependencies]`
-   entries run before later ones. Transitive packages inherit the declaration
-   order of the earliest direct dependency that reaches them.
-3. **`order` field** — lower values run earlier (default `0`). Use this to fine-tune
-   ordering within a single package.
-4. **Hook name** — lexicographic tiebreaker.
-
 ## Windows Compatibility
 
-**Hook script invocation** — Mars generates `bash` invocations for all targets.
-On POSIX, single-quoting is used; on Windows, double-quoting with forward-slash
-normalization ensures Git for Windows bash compatibility:
-
-```
-# POSIX
-bash '/abs/path/to/hooks/audit/run.sh'
-
-# Windows
-bash "C:/abs/path/to/hooks/audit/run.sh"
-```
+**Hook script invocation** — hook fragments own the entire native command
+string, including the shell and quoting. Mars only substitutes the absolute
+`${MARS_HOOK_DIR}` value. Author commands for every platform the package claims
+to support; Mars does not normalize separators or synthesize a Windows branch.
 
 **Agent filename validation** — Mars validates agent names against Windows
 filename constraints at compile time, on all platforms. An agent named with

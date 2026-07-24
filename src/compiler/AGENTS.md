@@ -41,7 +41,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
-- `hooks/` — native hook item discovery, per-target schema validation, and ordering
+- `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
 - `visibility/` — D1/D10 propagation rules
 

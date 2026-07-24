@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** hooks now author per-target native JSON fragments instead of
+  `events`/`matcher`/`[action]`; Mars installs whole hook directories,
+  substitutes `${MARS_HOOK_DIR}`, and records exact emitted arrays for safe
+  structural removal. The v0.11.0 command-path cleanup joins the #130
+  one-release sweep deletion ledger.
+
 ## [0.11.0] - 2026-07-24
 
 ### Changed

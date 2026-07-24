@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude Code hooks on `session.end` now compile to the valid `SessionEnd`
+  event, so the hooks actually fire when a session ends.
+
 ## [0.10.5] - 2026-07-10
 
 ### Fixed

@@ -331,7 +331,7 @@ pub struct TranslatedHook {
 ///
 /// Lossiness table (Claude):
 ///   session.start → SessionStart (exact)
-///   session.end   → SessionStop  (approximate — Claude uses Stop not End)
+///   session.end   → SessionEnd   (exact)
 ///   tool.pre      → PreToolUse   (exact)
 ///   tool.post     → PostToolUse  (exact)
 ///
@@ -368,8 +368,8 @@ fn classify_for_target(
                 (LossinessKind::Exact, Some("SessionStart".to_string()))
             }
             UniversalEvent::SessionEnd => {
-                // Claude uses SessionStop, not SessionEnd — close but not exact.
-                (LossinessKind::Approximate, Some("SessionStop".to_string()))
+                // Claude's SessionEnd event exactly matches the universal session end.
+                (LossinessKind::Exact, Some("SessionEnd".to_string()))
             }
             UniversalEvent::ToolPre => (LossinessKind::Exact, Some("PreToolUse".to_string())),
             UniversalEvent::ToolPost => (LossinessKind::Exact, Some("PostToolUse".to_string())),
@@ -576,14 +576,14 @@ path = "./a.sh"
     }
 
     #[test]
-    fn translate_claude_session_end_is_approximate() {
+    fn translate_claude_session_end_is_exact() {
         let tmp = TempDir::new().unwrap();
         make_script_hook(tmp.path(), "cleanup", "session.end");
         let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
         let ordered = order_hooks(items);
         let translated = translate_hook_for_target(ordered.into_iter().next().unwrap(), ".claude");
-        assert_eq!(translated.lossiness, LossinessKind::Approximate);
-        assert_eq!(translated.native_event.as_deref(), Some("SessionStop"));
+        assert_eq!(translated.lossiness, LossinessKind::Exact);
+        assert_eq!(translated.native_event.as_deref(), Some("SessionEnd"));
     }
 
     #[test]

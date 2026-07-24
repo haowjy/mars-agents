@@ -136,13 +136,11 @@ fn is_excluded_top_level(path: &Path, excluded_top_level: &[&str]) -> bool {
     excluded_top_level.iter().any(|excluded| first == *excluded)
 }
 
-/// Remove a file or directory (skills are dirs; agents/hooks/mcp/bootstrap are files).
+/// Remove a managed item; skills and hooks are directory trees.
 pub fn remove_item(path: &Path, kind: ItemKind) -> Result<(), MarsError> {
     match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            fs::remove_file(path)?
-        }
-        ItemKind::Skill => fs::remove_dir_all(path)?,
+        ItemKind::Agent | ItemKind::McpServer | ItemKind::BootstrapDoc => fs::remove_file(path)?,
+        ItemKind::Skill | ItemKind::Hook => fs::remove_dir_all(path)?,
     }
     Ok(())
 }

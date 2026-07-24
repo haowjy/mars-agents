@@ -331,6 +331,9 @@ pub struct OutputRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
     pub source: String,
+    /// Canonical JSON for the exact post-substitution hook entry array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_json: Option<String>,
 }
 
 /// Flat view of a single installed item — used by diff, plan, and apply stages.
@@ -1387,6 +1390,7 @@ installed_checksum = "sha256:bbb"
                 "mcp:context7".to_string(),
                 ConfigEntryRecord {
                     source: "base".to_string(),
+                    emitted_json: None,
                 },
             )]),
         );

@@ -34,6 +34,7 @@ mod tests {
     fn record(source: &str) -> ConfigEntryRecord {
         ConfigEntryRecord {
             source: source.to_string(),
+            emitted_json: None,
         }
     }
 

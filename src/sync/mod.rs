@@ -381,6 +381,49 @@ pub(crate) fn build_target(
         );
     }
 
+    // Project-root hooks are authored outside `.mars-src`; materialize each whole
+    // directory into the canonical store so target sync can use normal item ownership.
+    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0)? {
+        let source_path = hook.hook_dir.clone();
+        let source_hash = ContentHash::from(hash::compute_hash(&source_path, ItemKind::Hook)?);
+        let dest_path = default_dest_path(ItemKind::Hook, &hook.def.name);
+        if let Some(existing) = target_state.items.shift_remove(&dest_path)
+            && existing.source_hash != source_hash
+        {
+            diag.warn(
+                "local-shadow",
+                format!(
+                    "local hook `{}` shadows dependency `{}` hook `{}`",
+                    hook.def.name, existing.source_name, existing.id.name
+                ),
+            );
+        }
+        let disk_path = dest_path.resolve(managed_root);
+        if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+            && disk_path.symlink_metadata().is_ok()
+        {
+            diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
+            continue;
+        }
+        target_state.items.insert(
+            dest_path.clone(),
+            TargetItem {
+                id: ItemId {
+                    kind: ItemKind::Hook,
+                    name: hook.def.name.into(),
+                },
+                source_name: local_source_name.clone(),
+                origin: SourceOrigin::LocalPackage,
+                source_id: local_source_id.clone(),
+                source_path,
+                dest_path,
+                source_hash,
+                is_flat_skill: false,
+                rewritten_content: None,
+            },
+        );
+    }
+
     // Prevent managed installs from overwriting unmanaged files.
     let unmanaged_collisions = target::check_unmanaged_collisions(
         managed_root,

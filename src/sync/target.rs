@@ -113,6 +113,11 @@ pub fn build_with_collisions_and_diag(
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
 
         for item in filtered {
+            if item.id.kind == ItemKind::Hook
+                && !hook_is_exported(&node.rooted_ref.package_root.join(&item.source_path))
+            {
+                continue;
+            }
             let is_flat_skill =
                 item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
             let source_content_path = node.rooted_ref.package_root.join(&item.source_path);
@@ -187,6 +192,19 @@ pub fn build_with_collisions_and_diag(
         explicit_skill_renames,
         collision_renames,
     ))
+}
+
+fn hook_is_exported(hook_dir: &Path) -> bool {
+    std::fs::read_to_string(hook_dir.join("hook.toml"))
+        .ok()
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("visibility")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|visibility| visibility == "exported")
 }
 
 fn rename_destination_collisions(

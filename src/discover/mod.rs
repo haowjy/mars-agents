@@ -31,6 +31,7 @@ const PLUGIN_MANIFESTS: &[&str] = &[
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
 const AGENTS_DIR_NAME: &str = "agents";
 const SKILLS_DIR_NAME: &str = "skills";
+const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
@@ -100,6 +101,7 @@ fn discover_convention_items(
     let mut scratch = Vec::new();
     let mut visited_agents = HashSet::new();
     let mut visited_skills = HashSet::new();
+    let mut visited_hooks = HashSet::new();
     let mut visited_bootstrap = HashSet::new();
     let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
 
@@ -117,6 +119,10 @@ fn discover_convention_items(
             }
             Some(SKILLS_DIR_NAME) => {
                 scan_skill_dir(package_root, &base_rel, &mut scratch, &mut visited_skills)?;
+                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
+            }
+            Some(HOOKS_DIR_NAME) => {
+                scan_hook_dir(package_root, &base_rel, &mut scratch, &mut visited_hooks)?;
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(BOOTSTRAP_DIR_NAME) => {
@@ -211,6 +217,52 @@ fn scan_skill_dir(
         register_skill_dir(package_root, &rel, items, visited)?;
     }
 
+    Ok(())
+}
+
+fn scan_hook_dir(
+    package_root: &Path,
+    relative_root: &Path,
+    items: &mut Vec<DiscoveredItem>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), MarsError> {
+    let dir = package_root.join(relative_root);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for path in read_dir_paths_sorted(&dir)? {
+        if !path.is_dir() || !path.join("hook.toml").is_file() {
+            continue;
+        }
+        let rel = relative_to(package_root, &path)?;
+        if !visited.insert(rel.clone()) {
+            continue;
+        }
+        let dir_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if dir_name.starts_with('.') {
+            continue;
+        }
+        let raw = std::fs::read_to_string(path.join("hook.toml"))?;
+        let name = toml::from_str::<toml::Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| dir_name.to_string());
+        items.push(DiscoveredItem {
+            id: ItemId {
+                kind: ItemKind::Hook,
+                name: ItemName::from(name),
+            },
+            source_path: rel,
+        });
+    }
     Ok(())
 }
 

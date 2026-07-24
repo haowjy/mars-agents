@@ -19,6 +19,7 @@ pub mod pi;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
@@ -64,20 +65,22 @@ pub struct McpServerEntry {
     pub env: IndexMap<String, String>,
 }
 
-/// A hook binding entry ready to be written into a target config file.
+/// A native fragment contribution ready to be merged into a target config.
 #[derive(Debug, Clone)]
 pub struct HookEntry {
-    /// Hook name (for identification — two hooks with the same name from
-    /// different packages are both executed; hooks are additive).
+    /// Hook name, retained as ownership provenance.
     pub name: String,
     /// Native event name for this target.
     pub native_event: String,
-    /// Optional harness-native matcher, passed through unchanged.
-    pub matcher: Option<String>,
-    /// Script path to execute, relative to the target directory.
-    pub script_path: String,
-    /// Explicit ordering hint (lower = earlier).
-    pub order: i32,
+    /// Opaque native entries, in author-declared order.
+    pub entries: Vec<serde_json::Value>,
+}
+
+/// How a target consumes hook fragments. Later phases add file-mode emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HookFragmentMode {
+    MergeJson,
+    File,
 }
 
 /// Per-target compilation adapter.
@@ -101,6 +104,11 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Documented native command-hook events, or `None` when this target has
     /// no declarative command-hook mechanism.
     fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Native fragment placement mechanism declared by this adapter.
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
         None
     }
 
@@ -146,6 +154,15 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         _entries: &[ConfigEntry],
         _diag: &mut crate::diagnostic::DiagnosticCollector,
     ) {
+    }
+
+    /// Remove hook entries recorded in the previous lock by structural equality.
+    fn remove_owned_hook_entries(
+        &self,
+        _records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+        _target_dir: &Path,
+    ) -> Result<(), MarsError> {
+        Ok(())
     }
 
     /// Remove stale config entries from this target's config file.
@@ -205,21 +222,6 @@ impl TargetRegistry {
 impl Default for TargetRegistry {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Build a platform-appropriate command string for executing a hook script.
-pub fn hook_command(script_path: &str) -> String {
-    hook_command_for_platform(script_path, cfg!(windows))
-}
-
-fn hook_command_for_platform(script_path: &str, windows: bool) -> String {
-    if windows {
-        // Use double quotes for Windows cmd.exe compatibility.
-        format!("bash \"{}\"", script_path.replace('\\', "/"))
-    } else {
-        // POSIX: single quotes with proper escaping.
-        format!("bash '{}'", script_path.replace('\'', "'\\''"))
     }
 }
 
@@ -350,22 +352,6 @@ mod tests {
             .default_dest_path(ItemKind::Skill, "planning")
             .unwrap();
         assert_eq!(path.as_str(), "skills/planning");
-    }
-
-    #[test]
-    fn hook_command_posix_uses_single_quotes() {
-        assert_eq!(
-            hook_command_for_platform("/hooks/audit/run.sh", false),
-            "bash '/hooks/audit/run.sh'"
-        );
-    }
-
-    #[test]
-    fn hook_command_windows_uses_double_quotes_and_normalizes_backslashes() {
-        assert_eq!(
-            hook_command_for_platform(r"C:\hooks\audit\run.sh", true),
-            "bash \"C:/hooks/audit/run.sh\""
-        );
     }
 
     #[test]

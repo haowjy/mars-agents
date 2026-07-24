@@ -295,7 +295,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
 /// Returns the installed checksum (hash of what was written to disk).
 fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
+        ItemKind::Agent | ItemKind::McpServer => {
             let content = content_to_install(target)?;
             write_file_and_verify(dest, &content)
         }
@@ -309,7 +309,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
             fs_ops::atomic_install_dir(&target.source_path, doc_dest)?;
             crate::hash::compute_hash(doc_dest, ItemKind::BootstrapDoc).map(ContentHash::from)
         }
-        ItemKind::Skill => {
+        ItemKind::Skill | ItemKind::Hook => {
             if target.is_flat_skill {
                 crate::fs::atomic_install_dir_filtered(
                     &target.source_path,
@@ -355,10 +355,10 @@ fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
 /// Read source content for merge operations.
 fn read_target_content_for_merge(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
     match target.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
+        ItemKind::Agent | ItemKind::McpServer | ItemKind::BootstrapDoc => {
             content_to_install(target)
         }
-        ItemKind::Skill => read_item_content(&target.source_path, target.id.kind),
+        ItemKind::Skill | ItemKind::Hook => read_item_content(&target.source_path, target.id.kind),
     }
 }
 
@@ -368,9 +368,9 @@ fn read_target_content_for_merge(target: &TargetItem) -> Result<Vec<u8>, MarsErr
 /// For now, read the primary file content.
 fn read_item_content(path: &Path, kind: ItemKind) -> Result<Vec<u8>, MarsError> {
     match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => Ok(std::fs::read(path)?),
+        ItemKind::Agent | ItemKind::McpServer => Ok(std::fs::read(path)?),
         ItemKind::BootstrapDoc => Ok(std::fs::read(path.join("BOOTSTRAP.md"))?),
-        ItemKind::Skill => {
+        ItemKind::Skill | ItemKind::Hook => {
             // For skills (directories), read the SKILL.md as the merge target
             let skill_md = path.join("SKILL.md");
             if skill_md.exists() {
@@ -403,7 +403,7 @@ fn cache_base_content(
     }
 
     match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
+        ItemKind::Agent | ItemKind::McpServer => {
             let content = std::fs::read(dest)?;
             fs_ops::atomic_write_file(&cache_path, &content)?;
         }
@@ -411,7 +411,7 @@ fn cache_base_content(
             let content = std::fs::read(dest)?;
             fs_ops::atomic_write_file(&cache_path, &content)?;
         }
-        ItemKind::Skill => {
+        ItemKind::Skill | ItemKind::Hook => {
             // For skills, cache the SKILL.md content (the merge-relevant part)
             let skill_md = dest.join("SKILL.md");
             if skill_md.exists() {

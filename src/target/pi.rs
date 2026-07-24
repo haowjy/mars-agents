@@ -6,7 +6,7 @@
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
-use super::TargetAdapter;
+use super::{HookFragmentMode, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -14,6 +14,10 @@ pub struct PiAdapter;
 impl TargetAdapter for PiAdapter {
     fn name(&self) -> &str {
         ".pi"
+    }
+
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        Some(HookFragmentMode::File)
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

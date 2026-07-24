@@ -12,7 +12,7 @@ use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
-use super::{ConfigEntry, McpServerEntry, TargetAdapter};
+use super::{ConfigEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
 
 #[derive(Debug)]
 pub struct OpencodeAdapter;
@@ -20,6 +20,10 @@ pub struct OpencodeAdapter;
 impl TargetAdapter for OpencodeAdapter {
     fn name(&self) -> &str {
         ".opencode"
+    }
+
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        Some(HookFragmentMode::File)
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

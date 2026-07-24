@@ -35,38 +35,34 @@ pub fn resolve_mcp_collisions_for_target<'a>(
         .collect()
 }
 
-/// Resolve hook collisions for a single target root.
-///
-/// One collision-resolved native hook binding.
-pub struct ResolvedHook<'a> {
+/// One loaded native fragment contribution before collision resolution.
+#[derive(Debug, Clone)]
+pub struct LoadedHookContribution<'a> {
     pub item: &'a ParsedHookItem,
-    pub event: &'a str,
+    pub event: String,
+    pub entries: Vec<serde_json::Value>,
 }
 
 /// Hook identity is `(native event, name)` within a target table.
 pub fn resolve_hook_collisions_for_target<'a>(
-    items: &'a [ParsedHookItem],
+    contributions: &'a [LoadedHookContribution<'a>],
     target_root: &str,
     diag: &mut DiagnosticCollector,
-) -> Vec<ResolvedHook<'a>> {
-    let mut groups: BTreeMap<(&str, &str), Vec<&ParsedHookItem>> = BTreeMap::new();
-    for item in items
-        .iter()
-        .filter(|item| hook_applies_to_target(item, target_root))
-    {
-        for event in &item.def.targets[target_root].events {
-            groups
-                .entry((event.as_str(), item.def.name.as_str()))
-                .or_default()
-                .push(item);
-        }
+) -> Vec<&'a LoadedHookContribution<'a>> {
+    let mut groups: BTreeMap<(&str, &str), Vec<&LoadedHookContribution<'a>>> = BTreeMap::new();
+    for contribution in contributions {
+        groups
+            .entry((
+                contribution.event.as_str(),
+                contribution.item.def.name.as_str(),
+            ))
+            .or_default()
+            .push(contribution);
     }
-
     groups
         .into_iter()
-        .map(|((event, _), group)| ResolvedHook {
-            item: resolve_group(group, target_root, &format!("hook event `{event}`"), diag),
-            event,
+        .map(|((event, _), group)| {
+            resolve_group(group, target_root, &format!("hook event `{event}`"), diag)
         })
         .collect()
 }
@@ -91,17 +87,15 @@ impl CollisionItem for ParsedMcpItem {
     }
 }
 
-impl CollisionItem for ParsedHookItem {
+impl CollisionItem for LoadedHookContribution<'_> {
     fn source_name(&self) -> &str {
-        &self.source_name
+        &self.item.source_name
     }
-
     fn decl_order(&self) -> usize {
-        self.decl_order
+        self.item.decl_order
     }
-
     fn display_name(&self) -> String {
-        self.def.name.clone()
+        self.item.def.name.clone()
     }
 }
 
@@ -153,14 +147,9 @@ fn mcp_applies_to_target(item: &ParsedMcpItem, target_root: &str) -> bool {
     item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == target_root)
 }
 
-fn hook_applies_to_target(item: &ParsedHookItem, target_root: &str) -> bool {
-    item.def.targets.contains_key(target_root)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::hooks::discover_hook_items;
     use crate::compiler::mcp::discover_mcp_items;
     use tempfile::TempDir;
 
@@ -173,25 +162,6 @@ mod tests {
         std::fs::write(
             server_dir.join("mcp.toml"),
             format!("command = \"{command}\"{targets}\n"),
-        )
-        .unwrap();
-    }
-
-    fn make_hook(dir: &std::path::Path, name: &str, event: &str) {
-        let hook_dir = dir.join("hooks").join(name);
-        std::fs::create_dir_all(&hook_dir).unwrap();
-        std::fs::write(
-            hook_dir.join("hook.toml"),
-            format!(
-                r#"
-name = "{name}"
-[targets.".claude"]
-events = ["{event}"]
-[action]
-kind = "script"
-path = "./run.sh"
-"#
-            ),
         )
         .unwrap();
     }
@@ -295,25 +265,6 @@ path = "./run.sh"
         assert_eq!(claude_resolved[0].source_name, "claude");
         assert_eq!(codex_resolved.len(), 1);
         assert_eq!(codex_resolved[0].source_name, "codex");
-        assert!(diag.drain().is_empty());
-    }
-
-    #[test]
-    fn hook_identity_includes_native_event_and_name() {
-        let pre = TempDir::new().unwrap();
-        let post = TempDir::new().unwrap();
-        make_hook(pre.path(), "audit", "PreToolUse");
-        make_hook(post.path(), "audit", "PostToolUse");
-
-        let mut items = discover_hook_items(pre.path(), "pre-source", 1, 1).unwrap();
-        items.extend(discover_hook_items(post.path(), "post-source", 1, 2).unwrap());
-        let mut diag = DiagnosticCollector::new();
-
-        let resolved = resolve_hook_collisions_for_target(&items, ".claude", &mut diag);
-
-        assert_eq!(resolved.len(), 2);
-        assert!(resolved.iter().any(|hook| hook.event == "PreToolUse"));
-        assert!(resolved.iter().any(|hook| hook.event == "PostToolUse"));
         assert!(diag.drain().is_empty());
     }
 }

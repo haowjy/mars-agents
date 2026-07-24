@@ -15,7 +15,7 @@ use crate::error::{ConfigError, MarsError};
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
-use super::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter, hook_command};
+use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -58,6 +58,10 @@ impl TargetAdapter for ClaudeAdapter {
             "WorktreeRemove",
             "SessionEnd",
         ])
+    }
+
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        Some(HookFragmentMode::MergeJson)
     }
 
     fn skill_variant_key(&self) -> Option<&str> {
@@ -112,6 +116,14 @@ impl TargetAdapter for ClaudeAdapter {
         }
 
         Ok(written)
+    }
+
+    fn remove_owned_hook_entries(
+        &self,
+        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+        target_dir: &Path,
+    ) -> Result<(), MarsError> {
+        remove_owned_claude_hooks(records, target_dir)
     }
 
     fn remove_config_entries(
@@ -283,14 +295,6 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
 
     for hook in hooks {
         let native_event = &hook.native_event;
-        let command_entry = serde_json::json!({
-            "type": "command",
-            "command": hook_command(&hook.script_path),
-        });
-        let mut hook_binding = serde_json::json!({ "hooks": [command_entry] });
-        if let Some(matcher) = &hook.matcher {
-            hook_binding["matcher"] = serde_json::Value::String(matcher.clone());
-        }
 
         let event_hooks = hooks_map
             .entry(native_event.clone())
@@ -301,8 +305,7 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
                     message: format!("{}: hooks.{native_event} is not an array", path.display()),
                 })
             })?;
-        remove_managed_hook_bindings(event_hooks, &hook.name);
-        event_hooks.push(hook_binding);
+        event_hooks.extend(hook.entries.iter().cloned());
     }
 
     let content = serde_json::to_string_pretty(&root).map_err(|e| {
@@ -395,6 +398,94 @@ fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name
 fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
     let normalized = command.replace('\\', "/").replace("//", "/");
     normalized.contains(&format!("/hooks/{hook_name}/"))
+}
+
+fn remove_owned_claude_hooks(
+    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+    target_dir: &Path,
+) -> Result<(), MarsError> {
+    remove_owned_claude_hooks_from_file(records, &target_dir.join("settings.local.json"))?;
+    // One-release bridge: v0.11.0 command-path emissions and pre-local-settings residue.
+    // Delete with the other #130 sweeps after the next release.
+    remove_owned_claude_hooks_from_file(records, &target_dir.join("settings.json"))
+}
+
+fn remove_owned_claude_hooks_from_file(
+    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
+    path: &Path,
+) -> Result<(), MarsError> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let raw = std::fs::read_to_string(path)?;
+    let mut root: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(hooks_map) = root
+        .as_object_mut()
+        .and_then(|o| o.get_mut("hooks"))
+        .and_then(|v| v.as_object_mut())
+    {
+        let mut emptied_events = std::collections::BTreeSet::new();
+        for (key, record) in records.iter().filter(|(key, _)| key.starts_with("hook:")) {
+            let Some((event, name)) = key
+                .strip_prefix("hook:")
+                .and_then(|rest| rest.split_once(':'))
+            else {
+                continue;
+            };
+            if let Some(expected) = record
+                .emitted_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
+            {
+                if let Some(bindings) = hooks_map.get_mut(event).and_then(|v| v.as_array_mut()) {
+                    let before = bindings.len();
+                    remove_structural_matches(bindings, &expected);
+                    if before > 0 && bindings.is_empty() {
+                        emptied_events.insert(event.to_string());
+                    }
+                }
+            } else {
+                for (event, value) in hooks_map.iter_mut() {
+                    if let Some(bindings) = value.as_array_mut() {
+                        let before = bindings.len();
+                        remove_managed_hook_bindings(bindings, name);
+                        if before > 0 && bindings.is_empty() {
+                            emptied_events.insert(event.clone());
+                        }
+                    }
+                }
+            }
+        }
+        for event in emptied_events {
+            hooks_map.remove(&event);
+        }
+    }
+    if root
+        .get("hooks")
+        .and_then(|v| v.as_object())
+        .is_some_and(serde_json::Map::is_empty)
+    {
+        root.as_object_mut().unwrap().remove("hooks");
+    }
+    crate::fs::atomic_write(
+        path,
+        serde_json::to_string_pretty(&root)
+            .map_err(|e| {
+                MarsError::Config(ConfigError::Invalid {
+                    message: format!("failed to serialize {}: {e}", path.display()),
+                })
+            })?
+            .as_bytes(),
+    )
+}
+
+fn remove_structural_matches(current: &mut Vec<serde_json::Value>, expected: &[serde_json::Value]) {
+    for entry in expected {
+        if let Some(index) = current.iter().position(|candidate| candidate == entry) {
+            current.remove(index);
+        }
+    }
 }
 
 /// Remove hook entries by key from `settings.local.json`.
@@ -495,9 +586,9 @@ mod tests {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
-            matcher: None,
-            script_path: format!("/hooks/{name}/run.sh"),
-            order: 0,
+            entries: vec![
+                serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '/hooks/{name}/run.sh'")} ]}),
+            ],
         })
     }
 
@@ -510,9 +601,9 @@ mod tests {
         ConfigEntry::Hook(HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
-            matcher: None,
-            script_path: script_path.to_string(),
-            order: 0,
+            entries: vec![
+                serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script_path}'")} ]}),
+            ],
         })
     }
 
@@ -589,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn write_hooks_replaces_existing_managed_hook_with_same_event_and_name() {
+    fn write_hooks_appends_opaque_entries_in_call_order() {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         adapter
@@ -618,9 +709,19 @@ mod tests {
         let raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(hooks.len(), 1);
-        let command = hooks[0]["hooks"][0]["command"].as_str().unwrap();
-        assert!(command.contains("/new/hooks/audit/"));
+        assert_eq!(hooks.len(), 2);
+        assert!(
+            hooks[0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("/old/hooks/audit/")
+        );
+        assert!(
+            hooks[1]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("/new/hooks/audit/")
+        );
     }
 
     #[test]

@@ -148,6 +148,12 @@ fn sync_one_target(
             continue;
         }
         let dest_rel = outcome.dest_path.as_str();
+        if outcome.item_id.kind == crate::lock::ItemKind::Hook
+            && !matches!(outcome.action, ActionTaken::Removed)
+            && !hook_declares_target(&mars_dir.join(dest_rel), target_name)
+        {
+            continue;
+        }
         if outcome.item_id.kind == crate::lock::ItemKind::Agent && !target_accepts_canonical_agents
         {
             if matches!(outcome.action, ActionTaken::Removed) {
@@ -404,6 +410,19 @@ fn record_synced_output(
             installed_checksum: ContentHash::from(checksum),
         });
     }
+}
+
+fn hook_declares_target(hook_dir: &Path, target_name: &str) -> bool {
+    std::fs::read_to_string(hook_dir.join("hook.toml"))
+        .ok()
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("targets")
+                .and_then(toml::Value::as_table)
+                .cloned()
+        })
+        .is_some_and(|targets| targets.contains_key(target_name))
 }
 
 /// Copy an item (file or directory) from .mars/ to a target directory.

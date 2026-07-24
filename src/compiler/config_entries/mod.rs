@@ -22,31 +22,29 @@ pub(crate) fn preflight_hooks(
     resolved: &crate::sync::ResolvedState,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), crate::error::MarsError> {
-    use crate::compiler::hooks::discover_hook_items;
+    use crate::compiler::hooks::{discover_hook_items, load_merge_fragment};
     use crate::error::{ConfigError, MarsError};
-    use crate::target::TargetRegistry;
+    use crate::target::{HookFragmentMode, TargetRegistry};
 
     let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
     for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
-        let Some(node) = resolved.graph.nodes.get(source_name) else {
-            continue;
-        };
-        hooks.extend(discover_hook_items(
-            &node.rooted_ref.package_root,
-            source_name.as_str(),
-            1,
-            decl_order,
-        )?);
+        if let Some(node) = resolved.graph.nodes.get(source_name) {
+            hooks.extend(discover_hook_items(
+                &node.rooted_ref.package_root,
+                source_name.as_str(),
+                1,
+                decl_order,
+            )?);
+        }
     }
-
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     for item in hooks {
-        for (target_name, target) in &item.def.targets {
-            let known = registry
-                .get(target_name)
-                .and_then(|adapter| adapter.known_hook_events());
-            let Some(known) = known else {
+        for target_name in item.def.targets.keys() {
+            let adapter = registry.get(target_name);
+            let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
+            let known = adapter.and_then(|adapter| adapter.known_hook_events());
+            if mode != Some(HookFragmentMode::MergeJson) || known.is_none() {
                 let detail = if target_name == ".opencode" {
                     "extensibility is TypeScript plugins"
                 } else if target_name == ".pi" {
@@ -59,29 +57,16 @@ pub(crate) fn preflight_hooks(
                     item.def.name
                 ));
                 continue;
-            };
-            for event in &target.events {
-                if known.contains(&event.as_str()) {
-                    continue;
-                }
-                if target.unchecked {
-                    diag.warn(
-                        "hook-event-unchecked",
-                        format!(
-                            "hook `{}` passes unknown event `{event}` through verbatim to \
-                             `{target_name}` because `unchecked = true`",
-                            item.def.name
-                        ),
-                    );
-                } else {
-                    errors.push(format!(
-                        "hook `{}`: unknown event `{event}` for target `{target_name}`; valid \
-                         events: {}; use `unchecked = true` to pass a newer native event \
-                         through verbatim",
-                        item.def.name,
-                        known.join(", ")
-                    ));
-                }
+            }
+            let installed = ctx
+                .project_root
+                .join(target_name)
+                .join("hooks")
+                .join(&item.def.name);
+            if let Err(error) =
+                load_merge_fragment(&item, target_name, known.unwrap(), &installed, diag, true)
+            {
+                errors.push(error.to_string());
             }
         }
     }
@@ -114,7 +99,8 @@ pub(crate) fn compile_config_entries(
     diag: &mut DiagnosticCollector,
 ) -> BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> {
     use crate::compiler::config_entries::resolve::{
-        resolve_hook_collisions_for_target, resolve_mcp_collisions_for_target,
+        LoadedHookContribution, resolve_hook_collisions_for_target,
+        resolve_mcp_collisions_for_target,
     };
     use crate::compiler::hooks::discover_hook_items;
     use crate::compiler::mcp::{TargetMcpEntry, check_env_refs, discover_mcp_items};
@@ -263,58 +249,68 @@ pub(crate) fn compile_config_entries(
             ));
         }
 
-        // Resolve hooks authored explicitly for this target.
-        let mut target_hooks = resolve_hook_collisions_for_target(&all_hooks, target_root, diag);
+        // Load opaque fragment arrays, then collision-resolve by (event, name).
+        let Some(adapter) = registry.get(target_root) else {
+            continue;
+        };
+        let Some(known_events) = adapter.known_hook_events() else {
+            continue;
+        };
+        let mut contributions = Vec::new();
+        for item in all_hooks
+            .iter()
+            .filter(|item| item.def.targets.contains_key(target_root))
+        {
+            let installed = ctx
+                .project_root
+                .join(target_root)
+                .join("hooks")
+                .join(&item.def.name);
+            match crate::compiler::hooks::load_merge_fragment(
+                item,
+                target_root,
+                known_events,
+                &installed,
+                diag,
+                false,
+            ) {
+                Ok(fragment) => {
+                    contributions.extend(fragment.events.into_iter().map(|(event, entries)| {
+                        LoadedHookContribution {
+                            item,
+                            event,
+                            entries,
+                        }
+                    }))
+                }
+                Err(error) => {
+                    diag.error("hook-fragment", error.to_string());
+                    continue;
+                }
+            }
+        }
+        let mut target_hooks =
+            resolve_hook_collisions_for_target(&contributions, target_root, diag);
         target_hooks.sort_by_key(|hook| {
             (
                 hook.item.package_depth,
                 hook.item.decl_order,
                 hook.item.def.order,
                 hook.item.def.name.as_str(),
-                hook.event,
+                hook.event.as_str(),
             )
         });
-        let Some(adapter) = registry.get(target_root) else {
-            continue;
-        };
-
-        // Build one config entry per native event.
         let hook_entries: Vec<(ConfigEntry, String)> = target_hooks
             .into_iter()
-            .filter_map(|hook| {
-                let target = &hook.item.def.targets[target_root];
-                let source = hook.item.source_name.clone();
-                let script_path = match &hook.item.def.action {
-                    crate::compiler::hooks::HookAction::Script { path } => {
-                        let resolved = hook
-                            .item
-                            .package_root
-                            .join("hooks")
-                            .join(&hook.item.def.name)
-                            .join(path);
-                        if resolved.strip_prefix(&hook.item.package_root).is_err() {
-                            diag.warn(
-                                "hook-path-escape",
-                                format!(
-                                    "hook `{}`: script path `{path}` escapes package root — skipped",
-                                    hook.item.def.name
-                                ),
-                            );
-                            return None;
-                        }
-                        resolved.to_string_lossy().to_string()
-                    }
-                };
-                Some((
+            .map(|hook| {
+                (
                     ConfigEntry::Hook(HookEntry {
                         name: hook.item.def.name.clone(),
-                        native_event: hook.event.to_string(),
-                        matcher: target.matcher.clone(),
-                        script_path,
-                        order: hook.item.def.order,
+                        native_event: hook.event.clone(),
+                        entries: hook.entries.clone(),
                     }),
-                    source,
-                ))
+                    hook.item.source_name.clone(),
+                )
             })
             .collect();
 
@@ -337,6 +333,10 @@ pub(crate) fn compile_config_entries(
                 entry.key(),
                 ConfigEntryRecord {
                     source: source.clone(),
+                    emitted_json: match entry {
+                        ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
+                        ConfigEntry::McpServer(_) => None,
+                    },
                 },
             );
         }
@@ -356,6 +356,33 @@ pub(crate) fn compile_config_entries(
         .config_entries;
     let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
     let mut retained_stale_records = BTreeMap::new();
+
+    // Sweep every prior hook emission before writing replacements. Exact fragment
+    // arrays come from the lock; records from v0.11.0 intentionally fall back to
+    // the one-release command-path bridge in the adapters.
+    if !dry_run {
+        for (target_root, records) in previous_records {
+            let hook_records: BTreeMap<_, _> = records
+                .iter()
+                .filter(|(key, _)| key.starts_with("hook:"))
+                .map(|(key, record)| (key.clone(), record.clone()))
+                .collect();
+            if hook_records.is_empty() {
+                continue;
+            }
+            if let Some(adapter) = registry.get(target_root) {
+                let target_dir = ctx.project_root.join(target_root);
+                if let Err(error) = adapter.remove_owned_hook_entries(&hook_records, &target_dir) {
+                    diag.warn(
+                        "config-entry-remove",
+                        format!(
+                            "failed to remove prior hook entries from `{target_root}`: {error}"
+                        ),
+                    );
+                }
+            }
+        }
+    }
     for (target_root, keys) in stale_entries {
         if dry_run {
             diag.warn(
@@ -372,7 +399,12 @@ pub(crate) fn compile_config_entries(
             continue;
         };
         let target_dir = ctx.project_root.join(&target_root);
-        if let Err(e) = adapter.remove_config_entries(&keys, &target_dir) {
+        let non_hook_keys: Vec<String> = keys
+            .iter()
+            .filter(|key| !key.starts_with("hook:"))
+            .cloned()
+            .collect();
+        if let Err(e) = adapter.remove_config_entries(&non_hook_keys, &target_dir) {
             diag.warn(
                 "config-entry-remove",
                 format!("failed to remove stale config entries from `{target_root}`: {e}"),

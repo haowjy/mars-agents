@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-24
+
 ### Changed
 - **Breaking:** hooks now declare harness-native events in per-target
   `[targets."<target>"]` tables. Migrate `event =` plus `targets = [...]` to

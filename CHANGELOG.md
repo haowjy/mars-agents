@@ -4,6 +4,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** hooks now declare harness-native events in per-target
+  `[targets."<target>"]` tables. Migrate `event =` plus `targets = [...]` to
+  `events = ["<native event>"]` under each target table.
+- Codex `SessionEnd` hooks are rejected because the upstream-documented event
+  is non-functional in codex-cli 0.144.4; use `unchecked = true` to override.
+
+### Fixed
+- Stop writing fabricated OpenCode `hooks` config. A removal-only sweep remains
+  for one release to clean entries written by earlier Mars versions.
+- Sweep stale hook bindings before writing native replacements so one sync
+  converges upgraded config and lock state.
+- Remove path-matched managed hook residue from legacy Codex string bindings
+  in `codex_hooks.json` for one release while preserving user-authored commands.
+- Prune Codex hook event keys emptied by managed-binding cleanup while
+  preserving pre-existing user-authored empty arrays.
+
 ## [0.10.6] - 2026-07-24
 
 ### Fixed

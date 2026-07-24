@@ -214,12 +214,19 @@ writes them to per-target config files.
      is emitted.
 6. Order hooks deterministically: package depth → declaration order → `order`
    field → hook name.
-7. Translate universal hook events to native target events (with lossiness
-   classification); drop events with no native support and emit a warning.
-8. Write entries to target config files via target adapters (`.mcp.json`,
-   `settings.json`, etc.). Non-fatal per-target.
-9. Compare current config entries against the previous lock to find stale
-   entries, then remove them via `adapter.remove_config_entries()`.
+7. Validate each per-target native event against the target adapter's
+   allowlist. Unknown events hard-error unless that target table sets
+   `unchecked = true`; targets without declarative command hooks hard-error.
+8. Lower desired entries and derive native lock keys such as
+   `hook:PreToolUse:audit`.
+9. Compare desired entries against the previous lock and remove stale entries
+   before writing replacements. Removal is ownership-gated and hook commands
+   are path-matched by name. The same phase performs temporary removal-only
+   residue sweeps for legacy OpenCode `opencode.json` hooks and Codex
+   `codex_hooks.json` hooks.
+10. Write desired entries to target config files via target adapters
+    (`.mcp.json`, `settings.local.json`, `hooks.json`, etc.). Non-fatal
+    per-target.
 
 In `--diff` (dry run) mode, stale entries are reported as warnings but not
 removed; writes are skipped.

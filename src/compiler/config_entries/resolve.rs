@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::compiler::hooks::{ParsedHookItem, UniversalEvent};
+use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::ParsedMcpItem;
 use crate::diagnostic::DiagnosticCollector;
 
@@ -37,27 +37,37 @@ pub fn resolve_mcp_collisions_for_target<'a>(
 
 /// Resolve hook collisions for a single target root.
 ///
-/// Hook identity is `(event, name)`, so hooks with the same name on different
-/// universal events are distinct.
+/// One collision-resolved native hook binding.
+pub struct ResolvedHook<'a> {
+    pub item: &'a ParsedHookItem,
+    pub event: &'a str,
+}
+
+/// Hook identity is `(native event, name)` within a target table.
 pub fn resolve_hook_collisions_for_target<'a>(
     items: &'a [ParsedHookItem],
     target_root: &str,
     diag: &mut DiagnosticCollector,
-) -> Vec<&'a ParsedHookItem> {
-    let mut groups: BTreeMap<(UniversalEvent, &str), Vec<&ParsedHookItem>> = BTreeMap::new();
+) -> Vec<ResolvedHook<'a>> {
+    let mut groups: BTreeMap<(&str, &str), Vec<&ParsedHookItem>> = BTreeMap::new();
     for item in items
         .iter()
         .filter(|item| hook_applies_to_target(item, target_root))
     {
-        groups
-            .entry((item.def.event.clone(), item.def.name.as_str()))
-            .or_default()
-            .push(item);
+        for event in &item.def.targets[target_root].events {
+            groups
+                .entry((event.as_str(), item.def.name.as_str()))
+                .or_default()
+                .push(item);
+        }
     }
 
     groups
-        .into_values()
-        .map(|group| resolve_group(group, target_root, "hook", diag))
+        .into_iter()
+        .map(|((event, _), group)| ResolvedHook {
+            item: resolve_group(group, target_root, &format!("hook event `{event}`"), diag),
+            event,
+        })
         .collect()
 }
 
@@ -91,7 +101,7 @@ impl CollisionItem for ParsedHookItem {
     }
 
     fn display_name(&self) -> String {
-        format!("{}:{}", self.def.event, self.def.name)
+        self.def.name.clone()
     }
 }
 
@@ -144,7 +154,7 @@ fn mcp_applies_to_target(item: &ParsedMcpItem, target_root: &str) -> bool {
 }
 
 fn hook_applies_to_target(item: &ParsedHookItem, target_root: &str) -> bool {
-    item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == target_root)
+    item.def.targets.contains_key(target_root)
 }
 
 #[cfg(test)]
@@ -175,7 +185,8 @@ mod tests {
             format!(
                 r#"
 name = "{name}"
-event = "{event}"
+[targets.".claude"]
+events = ["{event}"]
 [action]
 kind = "script"
 path = "./run.sh"
@@ -288,11 +299,11 @@ path = "./run.sh"
     }
 
     #[test]
-    fn hook_identity_includes_event_and_name() {
+    fn hook_identity_includes_native_event_and_name() {
         let pre = TempDir::new().unwrap();
         let post = TempDir::new().unwrap();
-        make_hook(pre.path(), "audit", "tool.pre");
-        make_hook(post.path(), "audit", "tool.post");
+        make_hook(pre.path(), "audit", "PreToolUse");
+        make_hook(post.path(), "audit", "PostToolUse");
 
         let mut items = discover_hook_items(pre.path(), "pre-source", 1, 1).unwrap();
         items.extend(discover_hook_items(post.path(), "post-source", 1, 2).unwrap());
@@ -301,6 +312,8 @@ path = "./run.sh"
         let resolved = resolve_hook_collisions_for_target(&items, ".claude", &mut diag);
 
         assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|hook| hook.event == "PreToolUse"));
+        assert!(resolved.iter().any(|hook| hook.event == "PostToolUse"));
         assert!(diag.drain().is_empty());
     }
 }

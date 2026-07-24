@@ -1,95 +1,36 @@
-/// Hook compiler lane.
-///
-/// Discovers, parses, validates, orders, and translates hook definitions
-/// from package trees into per-target config entries.
-///
-/// V0 scope:
-/// - Universal event vocabulary: `session.start`, `session.end`, `tool.pre`, `tool.post`
-/// - Non-V0 events are rejected with a hard error
-/// - Per-target lossiness classification: exact | approximate | dropped
-/// - Deterministic total ordering: depth → dependency order → `order` field → name
-use std::fmt;
+//! Native hook discovery, validation, and deterministic ordering.
+
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::error::{ConfigError, MarsError};
 
-// ---------------------------------------------------------------------------
-// Universal event vocabulary (V0)
-// ---------------------------------------------------------------------------
-
-/// V0 universal hook events.
-///
-/// Any event string not in this list is rejected by the compiler.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum UniversalEvent {
-    SessionStart,
-    SessionEnd,
-    ToolPre,
-    ToolPost,
-}
-
-impl UniversalEvent {
-    /// Parse a string into a universal event, rejecting unknown/non-V0 values.
-    pub fn parse(s: &str) -> Result<Self, MarsError> {
-        match s {
-            "session.start" => Ok(Self::SessionStart),
-            "session.end" => Ok(Self::SessionEnd),
-            "tool.pre" => Ok(Self::ToolPre),
-            "tool.post" => Ok(Self::ToolPost),
-            other => Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "unknown or unsupported hook event `{other}` — \
-                     V0 events are: session.start, session.end, tool.pre, tool.post"
-                ),
-            })),
-        }
-    }
-
-    /// The canonical event string.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::SessionStart => "session.start",
-            Self::SessionEnd => "session.end",
-            Self::ToolPre => "tool.pre",
-            Self::ToolPost => "tool.post",
-        }
-    }
-}
-
-impl fmt::Display for UniversalEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Schema types
-// ---------------------------------------------------------------------------
-
-/// The action a hook performs.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind")]
 pub enum HookAction {
-    /// Run a script.
     #[serde(rename = "script")]
-    Script {
-        /// Path to the script, relative to the hook directory.
-        path: String,
-    },
+    Script { path: String },
 }
 
-/// Raw deserialization form of a hook definition.
-/// Exists so we can parse the `event` as a plain string before validating.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookTarget {
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub matcher: Option<String>,
+    #[serde(default)]
+    pub unchecked: bool,
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawHookDef {
     name: String,
-    event: String,
     #[serde(default = "default_visibility")]
     visibility: String,
-    #[serde(default)]
-    targets: Vec<String>,
+    targets: BTreeMap<String, HookTarget>,
     action: HookAction,
     #[serde(default)]
     order: i32,
@@ -99,45 +40,28 @@ fn default_visibility() -> String {
     "local".to_string()
 }
 
-/// A parsed, validated hook definition.
 #[derive(Debug, Clone)]
 pub struct HookDef {
     pub name: String,
-    pub event: UniversalEvent,
     pub visibility: String,
-    pub targets: Vec<String>,
+    pub targets: BTreeMap<String, HookTarget>,
     pub action: HookAction,
-    /// Explicit ordering hint (lower = earlier).
     pub order: i32,
 }
 
-/// A discovered hook item with provenance.
 #[derive(Debug, Clone)]
 pub struct ParsedHookItem {
     pub def: HookDef,
-    /// Source package name.
     pub source_name: String,
-    /// Depth in the dependency graph (0 = root package).
     pub package_depth: usize,
-    /// Position of the source in the dependency declaration order.
-    /// Used for stable ordering within the same depth.
     pub decl_order: usize,
-    /// Absolute path to the package root this hook was discovered in.
     pub package_root: PathBuf,
 }
 
-// ---------------------------------------------------------------------------
-// Path traversal validation
-// ---------------------------------------------------------------------------
-
-/// Validate a hook name used as a path component.
-///
-/// Rejects names that could escape the package root via path traversal.
 fn validate_path_component(name: &str) -> Result<(), &'static str> {
     if name.contains('\0') {
         return Err("contains null byte");
     }
-    // Reject any path component that is or starts with `..`.
     for component in Path::new(name).components() {
         use std::path::Component;
         match component {
@@ -151,11 +75,6 @@ fn validate_path_component(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Validate a script path from `HookAction::Script`.
-///
-/// - Rejects absolute paths (POSIX `/` or Windows drive letters).
-/// - Rejects paths containing `..` components.
-/// - Rejects paths with null bytes.
 fn validate_hook_script_path(path: &str) -> Result<(), &'static str> {
     if path.contains('\0') {
         return Err("contains null byte");
@@ -173,13 +92,6 @@ fn validate_hook_script_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Discovery
-// ---------------------------------------------------------------------------
-
-/// Discover hook items from a package root.
-///
-/// Scans `<package_root>/hooks/<name>/hook.toml` for each subdirectory.
 pub fn discover_hook_items(
     package_root: &Path,
     source_name: &str,
@@ -194,64 +106,69 @@ pub fn discover_hook_items(
     let mut items = Vec::new();
     let mut entries: Vec<_> = std::fs::read_dir(&hooks_dir)
         .map_err(MarsError::from)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
         .collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
-        let dir_name = entry.file_name();
-        let hook_dir_name = dir_name.to_string_lossy();
-        if hook_dir_name.starts_with('.') {
+        if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-
         let toml_path = entry.path().join("hook.toml");
         if !toml_path.is_file() {
             continue;
         }
-
         let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
-        let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!("failed to parse {}: {e}", toml_path.display()),
-            })
-        })?;
-
-        // Validate event — reject non-V0 events with a hard error.
-        let event = UniversalEvent::parse(&raw_def.event)?;
-
-        // Validate the hook name used in path construction.
-        if let Err(msg) = validate_path_component(&raw_def.name) {
+        let value: toml::Value =
+            toml::from_str(&raw).map_err(|error| invalid_parse(&toml_path, error))?;
+        if value.get("event").is_some() || value.get("targets").is_some_and(toml::Value::is_array) {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
-                    "hook in {}: invalid name `{}`: {msg}",
-                    toml_path.display(),
-                    raw_def.name
+                    "{} uses the removed universal hook schema; migrate by replacing `event =` \
+                     and `targets = [...]` with `[targets.\".claude\"]` (or another target) and \
+                     `events = [\"<native event>\"]`",
+                    toml_path.display()
                 ),
             }));
         }
+        let raw_def: RawHookDef =
+            toml::from_str(&raw).map_err(|error| invalid_parse(&toml_path, error))?;
 
-        // Validate the script path from HookAction::Script.
-        {
-            let HookAction::Script {
-                path: ref script_path,
-            } = raw_def.action;
-            if let Err(msg) = validate_hook_script_path(script_path) {
-                return Err(MarsError::Config(ConfigError::Invalid {
-                    message: format!(
-                        "hook `{}` in {}: invalid script path `{script_path}`: {msg}",
-                        raw_def.name,
-                        toml_path.display()
-                    ),
-                }));
+        if raw_def.targets.is_empty() {
+            return Err(invalid(&toml_path, "at least one target table is required"));
+        }
+        for (target, spec) in &raw_def.targets {
+            if spec.events.is_empty() {
+                return Err(invalid(
+                    &toml_path,
+                    &format!("target `{target}` must declare at least one event"),
+                ));
             }
+            if spec.events.iter().any(|event| event.is_empty()) {
+                return Err(invalid(&toml_path, "hook event names must not be empty"));
+            }
+        }
+        if let Err(message) = validate_path_component(&raw_def.name) {
+            return Err(invalid(
+                &toml_path,
+                &format!("invalid name `{}`: {message}", raw_def.name),
+            ));
+        }
+        let HookAction::Script { path } = &raw_def.action;
+        if let Err(message) = validate_hook_script_path(path) {
+            return Err(invalid(
+                &toml_path,
+                &format!(
+                    "hook `{}` has invalid script path `{path}`: {message}",
+                    raw_def.name
+                ),
+            ));
         }
 
         items.push(ParsedHookItem {
             def: HookDef {
                 name: raw_def.name,
-                event,
                 visibility: raw_def.visibility,
                 targets: raw_def.targets,
                 action: raw_def.action,
@@ -263,454 +180,98 @@ pub fn discover_hook_items(
             package_root: package_root.to_path_buf(),
         });
     }
-
     Ok(items)
 }
 
-// ---------------------------------------------------------------------------
-// Ordering
-// ---------------------------------------------------------------------------
-
-/// A hook with a fully computed sort key for deterministic ordering.
-#[derive(Debug, Clone)]
-pub struct OrderedHook {
-    pub item: ParsedHookItem,
-    /// Sort key: (depth, decl_order, order_field, name)
-    pub sort_key: (usize, usize, i32, String),
+fn invalid_parse(path: &Path, error: toml::de::Error) -> MarsError {
+    invalid(path, &format!("failed to parse: {error}"))
 }
 
-/// Order hooks by the deterministic total order defined in the spec:
-///
-/// 1. package depth (root first, depth 0 < depth 1 < ...)
-/// 2. dependency declaration order within the same depth
-/// 3. explicit `order` field (lower = earlier; default 0)
-/// 4. hook name (lexicographic, final tie-breaker)
-pub fn order_hooks(items: Vec<ParsedHookItem>) -> Vec<OrderedHook> {
-    let mut ordered: Vec<OrderedHook> = items
-        .into_iter()
-        .map(|item| {
-            let sort_key = (
-                item.package_depth,
-                item.decl_order,
-                item.def.order,
-                item.def.name.clone(),
-            );
-            OrderedHook { item, sort_key }
-        })
-        .collect();
-
-    ordered.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
-    ordered
+fn invalid(path: &Path, message: &str) -> MarsError {
+    MarsError::Config(ConfigError::Invalid {
+        message: format!("{}: {message}", path.display()),
+    })
 }
-
-// ---------------------------------------------------------------------------
-// Lossiness classification and target translation
-// ---------------------------------------------------------------------------
-
-/// How well a universal hook event maps to a target's native hook mechanism.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LossinessKind {
-    /// Native target has the same semantics.
-    Exact,
-    /// Native target has a nearby semantic equivalent.
-    Approximate,
-    /// No native equivalent — the hook entry will be dropped with a warning.
-    Dropped,
-}
-
-/// Result of translating a hook for a specific target.
-#[derive(Debug, Clone)]
-pub struct TranslatedHook {
-    pub hook: OrderedHook,
-    pub lossiness: LossinessKind,
-    /// Native event name in the target (None when Dropped).
-    pub native_event: Option<String>,
-}
-
-/// Translate an ordered hook for a specific target root.
-///
-/// Lossiness table (Claude):
-///   session.start → SessionStart (exact)
-///   session.end   → SessionEnd   (exact)
-///   tool.pre      → PreToolUse   (exact)
-///   tool.post     → PostToolUse  (exact)
-///
-/// Lossiness table (Codex):
-///   session.start → SessionStart (approximate — matcher semantics differ)
-///   session.end   → Stop         (approximate — Codex uses Stop not End)
-///   tool.pre      → PreToolUse   (approximate — matcher defaults are target-owned)
-///   tool.post     → PostToolUse  (approximate — matcher defaults are target-owned)
-///
-/// Lossiness table (OpenCode):
-///   All events → approximate (plugin hooks)
-///
-/// Lossiness table (Cursor):
-///   All events → dropped (limited/undocumented hook surface)
-///
-/// Lossiness table (Pi):
-///   All events → dropped (no native hook support)
-pub fn translate_hook_for_target(hook: OrderedHook, target_root: &str) -> TranslatedHook {
-    let (lossiness, native_event) = classify_for_target(hook.item.def.event.clone(), target_root);
-    TranslatedHook {
-        hook,
-        lossiness,
-        native_event,
-    }
-}
-
-fn classify_for_target(
-    event: UniversalEvent,
-    target_root: &str,
-) -> (LossinessKind, Option<String>) {
-    match target_root {
-        ".claude" => match event {
-            UniversalEvent::SessionStart => {
-                (LossinessKind::Exact, Some("SessionStart".to_string()))
-            }
-            UniversalEvent::SessionEnd => {
-                // Claude's SessionEnd event exactly matches the universal session end.
-                (LossinessKind::Exact, Some("SessionEnd".to_string()))
-            }
-            UniversalEvent::ToolPre => (LossinessKind::Exact, Some("PreToolUse".to_string())),
-            UniversalEvent::ToolPost => (LossinessKind::Exact, Some("PostToolUse".to_string())),
-        },
-        ".codex" => {
-            let codex_event = match event {
-                UniversalEvent::SessionStart => "SessionStart",
-                UniversalEvent::SessionEnd => "Stop",
-                UniversalEvent::ToolPre => "PreToolUse",
-                UniversalEvent::ToolPost => "PostToolUse",
-            };
-            (LossinessKind::Approximate, Some(codex_event.to_string()))
-        }
-        ".opencode" => {
-            let opencode_event = match event {
-                UniversalEvent::SessionStart => "session:start",
-                UniversalEvent::SessionEnd => "session:end",
-                UniversalEvent::ToolPre => "tool:before",
-                UniversalEvent::ToolPost => "tool:after",
-            };
-            (LossinessKind::Approximate, Some(opencode_event.to_string()))
-        }
-        ".cursor" | ".pi" => {
-            // No native hook surface.
-            (LossinessKind::Dropped, None)
-        }
-        _ => (LossinessKind::Dropped, None),
-    }
-}
-
-/// Translate all hooks for a target root, filtering to those that apply.
-///
-/// Dropped hooks emit a log-level warning (callers should emit diagnostics).
-/// Returns both non-dropped and dropped entries so callers can report lossiness.
-pub fn translate_hooks_for_target(
-    ordered: Vec<OrderedHook>,
-    target_root: &str,
-) -> Vec<TranslatedHook> {
-    ordered
-        .into_iter()
-        .filter(|h| {
-            h.item.def.targets.is_empty() || h.item.def.targets.iter().any(|t| t == target_root)
-        })
-        .map(|h| translate_hook_for_target(h, target_root))
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn make_hook_toml_dir(dir: &Path, hook_name: &str, toml: &str) {
-        let hook_dir = dir.join("hooks").join(hook_name);
-        std::fs::create_dir_all(&hook_dir).unwrap();
-        std::fs::write(hook_dir.join("hook.toml"), toml).unwrap();
-    }
-
-    fn make_script_hook(dir: &Path, hook_name: &str, event: &str) {
-        make_hook_toml_dir(
-            dir,
-            hook_name,
-            &format!(
-                r#"
-name = "{hook_name}"
-event = "{event}"
-[action]
-kind = "script"
-path = "./run.sh"
-"#
-            ),
-        );
+    fn write_hook(root: &Path, name: &str, body: &str) {
+        let dir = root.join("hooks").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("hook.toml"), body).unwrap();
     }
 
     #[test]
-    fn discover_finds_hook_items() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "audit", "tool.pre");
-
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].def.name, "audit");
-        assert_eq!(items[0].def.event, UniversalEvent::ToolPre);
-    }
-
-    #[test]
-    fn discover_empty_when_no_hooks_dir() {
-        let tmp = TempDir::new().unwrap();
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn discover_rejects_non_v0_event() {
-        let tmp = TempDir::new().unwrap();
-        make_hook_toml_dir(
-            tmp.path(),
-            "bad-hook",
+    fn parses_multi_target_multi_event_and_matchers() {
+        let temp = TempDir::new().unwrap();
+        write_hook(
+            temp.path(),
+            "audit",
             r#"
-name = "bad"
-event = "spawn.created"
+name = "audit"
+[targets.".claude"]
+events = ["PreToolUse", "PostToolUse"]
+matcher = "Bash"
+[targets.".codex"]
+events = ["SessionStart"]
 [action]
 kind = "script"
-path = "./run.sh"
+path = "run.sh"
 "#,
         );
-        let result = discover_hook_items(tmp.path(), "base", 0, 0);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("spawn.created"));
-    }
-
-    #[test]
-    fn universal_event_parse_accepts_all_v0() {
-        assert!(UniversalEvent::parse("session.start").is_ok());
-        assert!(UniversalEvent::parse("session.end").is_ok());
-        assert!(UniversalEvent::parse("tool.pre").is_ok());
-        assert!(UniversalEvent::parse("tool.post").is_ok());
-    }
-
-    #[test]
-    fn universal_event_parse_rejects_unknown() {
-        let err = UniversalEvent::parse("work.start").unwrap_err();
-        assert!(err.to_string().contains("work.start"));
-    }
-
-    #[test]
-    fn order_hooks_depth_first() {
-        let tmp_root = TempDir::new().unwrap();
-        let tmp_dep = TempDir::new().unwrap();
-
-        make_script_hook(tmp_root.path(), "root-hook", "tool.pre");
-        make_script_hook(tmp_dep.path(), "dep-hook", "tool.pre");
-
-        let mut root_items = discover_hook_items(tmp_root.path(), "root", 0, 0).unwrap();
-        let dep_items = discover_hook_items(tmp_dep.path(), "dep", 1, 0).unwrap();
-        root_items.extend(dep_items);
-
-        let ordered = order_hooks(root_items);
-        assert_eq!(ordered[0].item.def.name, "root-hook");
-        assert_eq!(ordered[1].item.def.name, "dep-hook");
-    }
-
-    #[test]
-    fn order_hooks_explicit_order_field() {
-        let tmp = TempDir::new().unwrap();
-        make_hook_toml_dir(
-            tmp.path(),
-            "hook-b",
-            r#"
-name = "hook-b"
-event = "tool.pre"
-order = 10
-[action]
-kind = "script"
-path = "./b.sh"
-"#,
+        let items = discover_hook_items(temp.path(), "base", 0, 0).unwrap();
+        assert_eq!(items[0].def.targets[".claude"].events.len(), 2);
+        assert_eq!(
+            items[0].def.targets[".claude"].matcher.as_deref(),
+            Some("Bash")
         );
-        make_hook_toml_dir(
-            tmp.path(),
-            "hook-a",
-            r#"
-name = "hook-a"
-event = "tool.pre"
-order = 5
-[action]
-kind = "script"
-path = "./a.sh"
-"#,
-        );
-
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-        // hook-a has lower order (5) so it runs first.
-        assert_eq!(ordered[0].item.def.name, "hook-a");
-        assert_eq!(ordered[1].item.def.name, "hook-b");
+        assert!(items[0].def.targets[".codex"].matcher.is_none());
     }
 
     #[test]
-    fn order_hooks_name_as_tiebreaker() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "zebra", "tool.pre");
-        make_script_hook(tmp.path(), "alpha", "tool.pre");
-
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-        // Same depth, same order field (0), name tiebreaker: alpha < zebra.
-        assert_eq!(ordered[0].item.def.name, "alpha");
-        assert_eq!(ordered[1].item.def.name, "zebra");
-    }
-
-    #[test]
-    fn translate_claude_tool_pre_is_exact() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "audit", "tool.pre");
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-        let translated = translate_hook_for_target(ordered.into_iter().next().unwrap(), ".claude");
-        assert_eq!(translated.lossiness, LossinessKind::Exact);
-        assert_eq!(translated.native_event.as_deref(), Some("PreToolUse"));
-    }
-
-    #[test]
-    fn translate_claude_session_end_is_exact() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "cleanup", "session.end");
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-        let translated = translate_hook_for_target(ordered.into_iter().next().unwrap(), ".claude");
-        assert_eq!(translated.lossiness, LossinessKind::Exact);
-        assert_eq!(translated.native_event.as_deref(), Some("SessionEnd"));
-    }
-
-    #[test]
-    fn translate_cursor_is_dropped() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "hook", "tool.pre");
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-        let translated = translate_hook_for_target(ordered.into_iter().next().unwrap(), ".cursor");
-        assert_eq!(translated.lossiness, LossinessKind::Dropped);
-        assert!(translated.native_event.is_none());
-    }
-
-    #[test]
-    fn translate_hooks_filters_by_target() {
-        let tmp = TempDir::new().unwrap();
-        make_hook_toml_dir(
-            tmp.path(),
-            "claude-only",
-            r#"
-name = "claude-only"
+    fn old_schema_error_names_file_and_gives_migration_hint() {
+        let temp = TempDir::new().unwrap();
+        write_hook(
+            temp.path(),
+            "old",
+            r#"name = "old"
 event = "tool.pre"
 targets = [".claude"]
 [action]
 kind = "script"
-path = "./run.sh"
+path = "run.sh"
 "#,
         );
-        make_script_hook(tmp.path(), "all-targets", "tool.post");
-
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let ordered = order_hooks(items);
-
-        let claude_hooks = translate_hooks_for_target(ordered.clone(), ".claude");
-        assert_eq!(claude_hooks.len(), 2);
-
-        let codex_hooks = translate_hooks_for_target(ordered, ".codex");
-        assert_eq!(codex_hooks.len(), 1);
-        assert_eq!(codex_hooks[0].hook.item.def.name, "all-targets");
+        let error = discover_hook_items(temp.path(), "base", 0, 0)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("hook.toml"));
+        assert!(error.contains("removed universal hook schema"));
+        assert!(error.contains("[targets.\".claude\"]"));
     }
 
     #[test]
-    fn ordering_is_deterministic_across_multiple_calls() {
-        let tmp = TempDir::new().unwrap();
-        make_script_hook(tmp.path(), "c-hook", "tool.pre");
-        make_script_hook(tmp.path(), "a-hook", "session.start");
-        make_script_hook(tmp.path(), "b-hook", "tool.post");
-
-        let items = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-        let first: Vec<String> = order_hooks(items.clone())
-            .iter()
-            .map(|h| h.item.def.name.clone())
-            .collect();
-        for _ in 0..5 {
-            let items2 = discover_hook_items(tmp.path(), "base", 0, 0).unwrap();
-            let current: Vec<String> = order_hooks(items2)
-                .iter()
-                .map(|h| h.item.def.name.clone())
-                .collect();
-            assert_eq!(first, current);
-        }
-    }
-
-    #[test]
-    fn discover_rejects_dotdot_in_script_path() {
-        let tmp = TempDir::new().unwrap();
-        make_hook_toml_dir(
-            tmp.path(),
-            "bad-hook",
-            r#"
-name = "bad"
-event = "tool.pre"
+    fn rejects_empty_events() {
+        let temp = TempDir::new().unwrap();
+        write_hook(
+            temp.path(),
+            "bad",
+            r#"name = "bad"
+[targets.".claude"]
+events = []
 [action]
 kind = "script"
-path = "../../etc/passwd"
+path = "run.sh"
 "#,
         );
-        let result = discover_hook_items(tmp.path(), "base", 0, 0);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains(".."), "expected traversal error, got: {msg}");
-    }
-
-    #[test]
-    fn discover_rejects_absolute_script_path() {
-        let tmp = TempDir::new().unwrap();
-        make_hook_toml_dir(
-            tmp.path(),
-            "bad-hook",
-            r#"
-name = "bad"
-event = "tool.pre"
-[action]
-kind = "script"
-path = "/etc/passwd"
-"#,
-        );
-        let result = discover_hook_items(tmp.path(), "base", 0, 0);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("absolute"),
-            "expected absolute-path error, got: {msg}"
+            discover_hook_items(temp.path(), "base", 0, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("at least one event")
         );
-    }
-
-    #[test]
-    fn validate_path_component_rejects_dotdot() {
-        assert!(validate_path_component("..").is_err());
-        assert!(validate_path_component("../foo").is_err());
-    }
-
-    #[test]
-    fn validate_path_component_accepts_normal_name() {
-        assert!(validate_path_component("my-hook").is_ok());
-        assert!(validate_path_component("audit_v2").is_ok());
-    }
-
-    #[test]
-    fn validate_hook_script_path_rejects_null_byte() {
-        assert!(validate_hook_script_path("run\0.sh").is_err());
-    }
-
-    #[test]
-    fn validate_hook_script_path_accepts_relative() {
-        assert!(validate_hook_script_path("./run.sh").is_ok());
-        assert!(validate_hook_script_path("run.sh").is_ok());
-        assert!(validate_hook_script_path("scripts/run.sh").is_ok());
     }
 }

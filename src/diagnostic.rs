@@ -476,16 +476,16 @@ mod tests {
     fn collector_suppresses_info_lossiness_when_hidden() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
         coll.info_with_category(
-            "hook-approximate",
-            "hook `x`: approximate",
+            "field-approximate",
+            "field `x`: approximate",
             DiagnosticCategory::Lossiness,
         );
         assert!(coll.drain().is_empty());
 
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         coll.info_with_category(
-            "hook-approximate",
-            "hook `x`: approximate",
+            "field-approximate",
+            "field `x`: approximate",
             DiagnosticCategory::Lossiness,
         );
         let diags = coll.drain();

@@ -8,10 +8,91 @@ pub mod stale;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
+use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
 use crate::types::{MarsContext, SourceName};
+
+/// Validate all hook schemas and native event names before the apply phase.
+///
+/// This is deliberately separate from config emission so an invalid hook
+/// cannot leave canonical or target state partially mutated.
+pub(crate) fn preflight_hooks(
+    ctx: &MarsContext,
+    resolved: &crate::sync::ResolvedState,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), crate::error::MarsError> {
+    use crate::compiler::hooks::discover_hook_items;
+    use crate::error::{ConfigError, MarsError};
+    use crate::target::TargetRegistry;
+
+    let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
+    for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
+        let Some(node) = resolved.graph.nodes.get(source_name) else {
+            continue;
+        };
+        hooks.extend(discover_hook_items(
+            &node.rooted_ref.package_root,
+            source_name.as_str(),
+            1,
+            decl_order,
+        )?);
+    }
+
+    let registry = TargetRegistry::new();
+    let mut errors = Vec::new();
+    for item in hooks {
+        for (target_name, target) in &item.def.targets {
+            let known = registry
+                .get(target_name)
+                .and_then(|adapter| adapter.known_hook_events());
+            let Some(known) = known else {
+                let detail = if target_name == ".opencode" {
+                    "extensibility is TypeScript plugins"
+                } else if target_name == ".pi" {
+                    "extensibility is TypeScript extensions"
+                } else {
+                    "no declarative command-hook mechanism is available"
+                };
+                errors.push(format!(
+                    "hook `{}`: target `{target_name}` has no command-hook mechanism ({detail})",
+                    item.def.name
+                ));
+                continue;
+            };
+            for event in &target.events {
+                if known.contains(&event.as_str()) {
+                    continue;
+                }
+                if target.unchecked {
+                    diag.warn(
+                        "hook-event-unchecked",
+                        format!(
+                            "hook `{}` passes unknown event `{event}` through verbatim to \
+                             `{target_name}` because `unchecked = true`",
+                            item.def.name
+                        ),
+                    );
+                } else {
+                    errors.push(format!(
+                        "hook `{}`: unknown event `{event}` for target `{target_name}`; valid \
+                         events: {}; use `unchecked = true` to pass a newer native event \
+                         through verbatim",
+                        item.def.name,
+                        known.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(MarsError::Config(ConfigError::Invalid {
+            message: errors.join("\n"),
+        }))
+    }
+}
 
 /// Phase 5 config-entry compilation: MCP servers and hooks.
 ///
@@ -35,7 +116,7 @@ pub(crate) fn compile_config_entries(
     use crate::compiler::config_entries::resolve::{
         resolve_hook_collisions_for_target, resolve_mcp_collisions_for_target,
     };
-    use crate::compiler::hooks::{discover_hook_items, order_hooks, translate_hooks_for_target};
+    use crate::compiler::hooks::discover_hook_items;
     use crate::compiler::mcp::{TargetMcpEntry, check_env_refs, discover_mcp_items};
     use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetRegistry};
 
@@ -68,7 +149,7 @@ pub(crate) fn compile_config_entries(
     let local_hooks = match discover_hook_items(&ctx.project_root, "_self", 0, 0) {
         Ok(items) => items,
         Err(e) => {
-            diag.warn(
+            diag.error(
                 "hook-discover",
                 format!("failed to scan local hook items: {e}"),
             );
@@ -102,7 +183,7 @@ pub(crate) fn compile_config_entries(
         match discover_hook_items(package_root, source_name.as_str(), depth, decl_order) {
             Ok(items) => all_hooks.extend(items),
             Err(e) => {
-                diag.warn(
+                diag.error(
                     "hook-discover",
                     format!("failed to scan hook items in `{source_name}`: {e}"),
                 );
@@ -157,13 +238,14 @@ pub(crate) fn compile_config_entries(
 
     // Get the target registry.
     let registry = TargetRegistry::new();
-    let mut current_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
+    let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
+    let mut pending_writes: BTreeMap<String, Vec<ConfigEntry>> = BTreeMap::new();
 
-    // For each target root, lower and write config entries.
+    // First lower every target without mutating its config. Stale hook removal
+    // is name-based across native events, so it must run before replacement
+    // bindings with the same name are written.
     for target_root in &target_roots {
-        let target_dir = ctx.project_root.join(target_root);
-
         // Lower MCP items for this target.
         let mut entries_with_source: Vec<(ConfigEntry, String)> = Vec::new();
 
@@ -181,65 +263,41 @@ pub(crate) fn compile_config_entries(
             ));
         }
 
-        // Resolve and translate hooks for this target, filtering dropped ones.
-        let target_hooks: Vec<_> =
-            resolve_hook_collisions_for_target(&all_hooks, target_root, diag)
-                .into_iter()
-                .cloned()
-                .collect();
-        let translated_hooks = translate_hooks_for_target(order_hooks(target_hooks), target_root);
+        // Resolve hooks authored explicitly for this target.
+        let mut target_hooks = resolve_hook_collisions_for_target(&all_hooks, target_root, diag);
+        target_hooks.sort_by_key(|hook| {
+            (
+                hook.item.package_depth,
+                hook.item.decl_order,
+                hook.item.def.order,
+                hook.item.def.name.as_str(),
+                hook.event,
+            )
+        });
+        let Some(adapter) = registry.get(target_root) else {
+            continue;
+        };
 
-        // Emit lossiness diagnostics for dropped and approximate hooks.
-        for th in &translated_hooks {
-            match th.lossiness {
-                crate::compiler::hooks::LossinessKind::Dropped => {
-                    diag.warn_with_category(
-                        "hook-dropped",
-                        format!(
-                            "hook `{}` (event `{}`) dropped for target `{target_root}` — \
-                             no native hook support",
-                            th.hook.item.def.name, th.hook.item.def.event
-                        ),
-                        DiagnosticCategory::Lossiness,
-                    );
-                }
-                crate::compiler::hooks::LossinessKind::Approximate => {
-                    diag.info_with_category(
-                        "hook-approximate",
-                        format!(
-                            "hook `{}` (event `{}`) approximately mapped for target \
-                             `{target_root}` — semantics may differ slightly",
-                            th.hook.item.def.name, th.hook.item.def.event
-                        ),
-                        DiagnosticCategory::Lossiness,
-                    );
-                }
-                crate::compiler::hooks::LossinessKind::Exact => {}
-            }
-        }
-
-        // Build hook config entries (only non-dropped ones).
-        let hook_entries: Vec<(ConfigEntry, String)> = translated_hooks
+        // Build one config entry per native event.
+        let hook_entries: Vec<(ConfigEntry, String)> = target_hooks
             .into_iter()
-            .filter_map(|th| {
-                let native_event = th.native_event?;
-                let source = th.hook.item.source_name.clone();
-                let script_path = match &th.hook.item.def.action {
+            .filter_map(|hook| {
+                let target = &hook.item.def.targets[target_root];
+                let source = hook.item.source_name.clone();
+                let script_path = match &hook.item.def.action {
                     crate::compiler::hooks::HookAction::Script { path } => {
-                        // Resolve script path relative to the package root the hook came from.
-                        let resolved = th.hook
+                        let resolved = hook
                             .item
                             .package_root
                             .join("hooks")
-                            .join(&th.hook.item.def.name)
+                            .join(&hook.item.def.name)
                             .join(path);
-                        // Safety check: resolved path must stay within the package root.
-                        if resolved.strip_prefix(&th.hook.item.package_root).is_err() {
+                        if resolved.strip_prefix(&hook.item.package_root).is_err() {
                             diag.warn(
                                 "hook-path-escape",
                                 format!(
                                     "hook `{}`: script path `{path}` escapes package root — skipped",
-                                    th.hook.item.def.name
+                                    hook.item.def.name
                                 ),
                             );
                             return None;
@@ -249,11 +307,11 @@ pub(crate) fn compile_config_entries(
                 };
                 Some((
                     ConfigEntry::Hook(HookEntry {
-                        name: th.hook.item.def.name.clone(),
-                        event: th.hook.item.def.event.to_string(),
-                        native_event,
+                        name: hook.item.def.name.clone(),
+                        native_event: hook.event.to_string(),
+                        matcher: target.matcher.clone(),
                         script_path,
-                        order: th.hook.item.def.order,
+                        order: hook.item.def.order,
                     }),
                     source,
                 ))
@@ -268,11 +326,6 @@ pub(crate) fn compile_config_entries(
         }
 
         // Write via the target adapter (if one is registered).
-        let Some(adapter) = registry.get(target_root) else {
-            // No adapter registered — skip.
-            continue;
-        };
-
         let entries: Vec<ConfigEntry> = entries_with_source
             .iter()
             .map(|(entry, _)| entry.clone())
@@ -290,22 +343,8 @@ pub(crate) fn compile_config_entries(
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
         adapter.emit_pre_write_diagnostics(&entries, diag);
-
-        if dry_run {
-            current_records.insert(target_root.clone(), target_records);
-        } else {
-            match adapter.write_config_entries(&entries, &target_dir) {
-                Ok(_) => {
-                    current_records.insert(target_root.clone(), target_records);
-                }
-                Err(e) => {
-                    diag.warn(
-                        "config-entry-write",
-                        format!("failed to write config entries to `{target_root}`: {e}"),
-                    );
-                }
-            }
-        }
+        desired_records.insert(target_root.clone(), target_records);
+        pending_writes.insert(target_root.clone(), entries);
     }
 
     let previous_records = &applied
@@ -315,7 +354,8 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let stale_entries = stale::find_stale_entries(previous_records, &current_records);
+    let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
+    let mut retained_stale_records = BTreeMap::new();
     for (target_root, keys) in stale_entries {
         if dry_run {
             diag.warn(
@@ -338,7 +378,9 @@ pub(crate) fn compile_config_entries(
                 format!("failed to remove stale config entries from `{target_root}`: {e}"),
             );
             if let Some(previous_target_records) = previous_records.get(&target_root) {
-                let target_records = current_records.entry(target_root.clone()).or_default();
+                let target_records = retained_stale_records
+                    .entry(target_root.clone())
+                    .or_insert_with(BTreeMap::new);
                 for key in &keys {
                     if let Some(record) = previous_target_records.get(key) {
                         target_records.insert(key.clone(), record.clone());
@@ -353,6 +395,37 @@ pub(crate) fn compile_config_entries(
                     keys.join(", ")
                 ),
             );
+        }
+    }
+
+    if dry_run {
+        return desired_records;
+    }
+
+    // Write desired entries only after every stale/name-matched binding has
+    // been swept. A single sync therefore converges both config and lock when
+    // a hook keeps its name but changes from a universal to native event key.
+    let mut current_records = retained_stale_records;
+    for (target_root, entries) in pending_writes {
+        let Some(adapter) = registry.get(&target_root) else {
+            continue;
+        };
+        let target_dir = ctx.project_root.join(&target_root);
+        match adapter.write_config_entries(&entries, &target_dir) {
+            Ok(_) => {
+                if let Some(records) = desired_records.remove(&target_root) {
+                    current_records
+                        .entry(target_root)
+                        .or_default()
+                        .extend(records);
+                }
+            }
+            Err(e) => {
+                diag.warn(
+                    "config-entry-write",
+                    format!("failed to write config entries to `{target_root}`: {e}"),
+                );
+            }
         }
     }
 

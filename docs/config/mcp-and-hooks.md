@@ -108,63 +108,76 @@ Each `hook.toml` specifies the hook:
 
 ```toml
 # hooks/audit/hook.toml
-name  = "audit"
-event = "tool.pre"
+name = "audit"
+visibility = "exported"
+order = 10
+
+# Event names and matchers are native to each target.
+[targets.".claude"]
+events = ["PreToolUse", "PostToolUse"]
+matcher = "Bash|Agent"
+
+[targets.".codex"]
+events = ["PreToolUse"]
+matcher = "Bash"
 
 [action]
 kind = "script"
-path = "./run.sh"   # relative to the hook directory, must not traverse outside package
+path = "./run.sh" # relative to the hook directory
 ```
 
-**Supported events (V0):**
+Only declared target tables receive the hook; there is no implicit "all
+targets" default. `matcher` is optional and is passed through unchanged to
+every event in that target table. Lower `order` values run earlier (default
+`0`). Dependency hooks must set `visibility = "exported"` to cross the package
+boundary.
 
-| Event | Fires when |
-|---|---|
-| `session.start` | Agent session starts |
-| `session.end` | Agent session ends |
-| `tool.pre` | Before a tool call executes |
-| `tool.post` | After a tool call executes |
+Mars validates events against these native allowlists:
 
-Non-V0 events are rejected with an error at sync time.
+- **Claude (29):** `SessionStart`, `Setup`, `UserPromptSubmit`,
+  `UserPromptExpansion`, `PreToolUse`, `PermissionRequest`,
+  `PermissionDenied`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`,
+  `SubagentStart`, `SubagentStop`, `TaskCreated`, `TaskCompleted`, `Stop`,
+  `StopFailure`, `TeammateIdle`, `PreCompact`, `PostCompact`, `Elicitation`,
+  `ElicitationResult`, `Notification`, `ConfigChange`, `InstructionsLoaded`,
+  `CwdChanged`, `FileChanged`, `WorktreeCreate`, `WorktreeRemove`,
+  `SessionEnd`.
+- **Codex (10):** `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+  `SubagentStart`, `SubagentStop`, `Stop`. `SessionEnd` is intentionally absent:
+  it was runtime-verified not to fire in Codex 0.144.4.
 
-**Target restriction and ordering:**
+An unknown event is a hard error by default. To pass through a newer
+harness-native event before Mars updates its allowlist, opt in per target:
 
 ```toml
-name  = "claude-only-hook"
-event = "session.start"
+name = "future-event"
 
-# Restrict to specific targets (default: all targets)
-targets = [".claude"]
-
-# Explicit ordering hint — lower runs earlier (default: 0)
-order = 10
+[targets.".claude"]
+events = ["FutureEvent"]
+unchecked = true
 
 [action]
 kind = "script"
 path = "./run.sh"
 ```
 
+Mars warns for each unchecked unknown event. `.opencode` and `.pi` reject hook
+tables because their extensibility surfaces are TypeScript plugins/extensions;
+targets without a declarative command-hook mechanism are errors rather than
+silently dropped.
+
 **Script path constraints** — paths must be relative to the hook directory and
 must not escape the package root with `..` components or absolute paths. Mars
 rejects invalid paths at discovery time.
 
-## Hook Event Mapping Per Target
-
-Mars translates universal events to native equivalents. Some targets don't
-support all events:
-
-| Universal event | `.claude` | `.codex` | `.opencode` | `.cursor` | `.pi` |
-|---|---|---|---|---|---|
-| `session.start` | `SessionStart` (exact) | `SessionStart` (approx) | `session:start` (approx) | — dropped | — dropped |
-| `session.end` | `SessionEnd` (exact) | `Stop` (approx) | `session:end` (approx) | — dropped | — dropped |
-| `tool.pre` | `PreToolUse` (exact) | `PreToolUse` (approx) | `tool:before` (approx) | — dropped | — dropped |
-| `tool.post` | `PostToolUse` (exact) | `PostToolUse` (approx) | `tool:after` (approx) | — dropped | — dropped |
-
-- **Exact** — semantics match the universal definition precisely.
-- **Approx** — closest available native event; semantics may differ slightly.
-  Mars emits an `info`-level diagnostic.
-- **Dropped** — no native hook surface; the hook is skipped for this target
-  with a `warning`-level diagnostic. The hook still runs on other targets.
+The lock records native ownership as
+`hook:<NativeEvent>:<name>` (for example,
+`hook:PreToolUse:audit`) under each target. During migration, stale universal
+keys trigger conservative, path-matched residue sweeps: OpenCode's old
+`opencode.json` hooks and Codex's old `codex_hooks.json` hooks are removal-only
+surfaces. Mars removes commands whose paths contain `/hooks/<name>/` and
+preserves unrelated user entries.
 
 ## Collision Resolution
 

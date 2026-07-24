@@ -320,20 +320,19 @@ fn remove_codex_hook_entries(entry_keys: &[String], target_dir: &Path) -> Result
         return Ok(());
     }
 
-    remove_codex_hook_entries_from_hooks_json(&hook_names, target_dir)?;
+    remove_codex_hook_entries_from_file(&hook_names, &target_dir.join("hooks.json"))?;
+    // Removal-only residue cleanup. Mars before f80062d wrote managed hooks to
+    // `codex_hooks.json`; delete this sweep after the next release.
+    remove_codex_hook_entries_from_file(&hook_names, &target_dir.join("codex_hooks.json"))?;
     Ok(())
 }
 
-fn remove_codex_hook_entries_from_hooks_json(
-    hook_names: &[&str],
-    target_dir: &Path,
-) -> Result<(), MarsError> {
-    let path = target_dir.join("hooks.json");
+fn remove_codex_hook_entries_from_file(hook_names: &[&str], path: &Path) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
 
-    let raw = std::fs::read_to_string(&path).map_err(MarsError::from)?;
+    let raw = std::fs::read_to_string(path).map_err(MarsError::from)?;
     let mut root: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
 
@@ -356,7 +355,7 @@ fn remove_codex_hook_entries_from_hooks_json(
             message: format!("failed to serialize {}: {e}", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
+    crate::fs::atomic_write(path, content.as_bytes())?;
     Ok(())
 }
 
@@ -627,5 +626,50 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(json["hooks"]["PreToolUse"].as_array().unwrap().is_empty());
         assert!(json["hooks"]["PostToolUse"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_hook_entries_cleans_legacy_codex_hooks_json_only_by_managed_path() {
+        let tmp = TempDir::new().unwrap();
+        let legacy = serde_json::json!({
+            "userSetting": "preserved",
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "bash \"/cache/pkg/hooks/audit/run.sh\""
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": "user-matcher",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "printf user-owned"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            tmp.path().join("codex_hooks.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        remove_codex_hook_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
+
+        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(json["userSetting"], "preserved");
+        let bindings = json["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0]["matcher"], "user-matcher");
+        assert_eq!(bindings[0]["hooks"][0]["command"], "printf user-owned");
     }
 }

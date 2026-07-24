@@ -238,13 +238,14 @@ pub(crate) fn compile_config_entries(
 
     // Get the target registry.
     let registry = TargetRegistry::new();
-    let mut current_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
+    let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
+    let mut pending_writes: BTreeMap<String, Vec<ConfigEntry>> = BTreeMap::new();
 
-    // For each target root, lower and write config entries.
+    // First lower every target without mutating its config. Stale hook removal
+    // is name-based across native events, so it must run before replacement
+    // bindings with the same name are written.
     for target_root in &target_roots {
-        let target_dir = ctx.project_root.join(target_root);
-
         // Lower MCP items for this target.
         let mut entries_with_source: Vec<(ConfigEntry, String)> = Vec::new();
 
@@ -342,22 +343,8 @@ pub(crate) fn compile_config_entries(
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
         adapter.emit_pre_write_diagnostics(&entries, diag);
-
-        if dry_run {
-            current_records.insert(target_root.clone(), target_records);
-        } else {
-            match adapter.write_config_entries(&entries, &target_dir) {
-                Ok(_) => {
-                    current_records.insert(target_root.clone(), target_records);
-                }
-                Err(e) => {
-                    diag.warn(
-                        "config-entry-write",
-                        format!("failed to write config entries to `{target_root}`: {e}"),
-                    );
-                }
-            }
-        }
+        desired_records.insert(target_root.clone(), target_records);
+        pending_writes.insert(target_root.clone(), entries);
     }
 
     let previous_records = &applied
@@ -367,7 +354,8 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let stale_entries = stale::find_stale_entries(previous_records, &current_records);
+    let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
+    let mut retained_stale_records = BTreeMap::new();
     for (target_root, keys) in stale_entries {
         if dry_run {
             diag.warn(
@@ -390,7 +378,9 @@ pub(crate) fn compile_config_entries(
                 format!("failed to remove stale config entries from `{target_root}`: {e}"),
             );
             if let Some(previous_target_records) = previous_records.get(&target_root) {
-                let target_records = current_records.entry(target_root.clone()).or_default();
+                let target_records = retained_stale_records
+                    .entry(target_root.clone())
+                    .or_insert_with(BTreeMap::new);
                 for key in &keys {
                     if let Some(record) = previous_target_records.get(key) {
                         target_records.insert(key.clone(), record.clone());
@@ -405,6 +395,37 @@ pub(crate) fn compile_config_entries(
                     keys.join(", ")
                 ),
             );
+        }
+    }
+
+    if dry_run {
+        return desired_records;
+    }
+
+    // Write desired entries only after every stale/name-matched binding has
+    // been swept. A single sync therefore converges both config and lock when
+    // a hook keeps its name but changes from a universal to native event key.
+    let mut current_records = retained_stale_records;
+    for (target_root, entries) in pending_writes {
+        let Some(adapter) = registry.get(&target_root) else {
+            continue;
+        };
+        let target_dir = ctx.project_root.join(&target_root);
+        match adapter.write_config_entries(&entries, &target_dir) {
+            Ok(_) => {
+                if let Some(records) = desired_records.remove(&target_root) {
+                    current_records
+                        .entry(target_root)
+                        .or_default()
+                        .extend(records);
+                }
+            }
+            Err(e) => {
+                diag.warn(
+                    "config-entry-write",
+                    format!("failed to write config entries to `{target_root}`: {e}"),
+                );
+            }
         }
     }
 

@@ -259,3 +259,68 @@ fn malformed_opencode_legacy_sweep_cannot_replace_file_hook() {
         toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
     assert!(after["config_entries"][".opencode"]["hook:PreToolUse:audit"].is_table());
 }
+
+#[cfg(unix)]
+#[test]
+fn unconfirmed_opencode_legacy_sweep_suppresses_replacement_file_hook() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, ".opencode");
+    sync(&project).success();
+    let plugin = project.child(".opencode/plugins/mars-audit.ts");
+    let original = fs::read_to_string(plugin.path()).unwrap();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock.as_table_mut()
+        .unwrap()
+        .entry("config_entries")
+        .or_insert_with(|| Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .unwrap()
+        .entry(".opencode")
+        .or_insert_with(|| Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "hook:PreToolUse:audit".into(),
+            toml::Table::from_iter([("source".into(), Value::String("_self".into()))]).into(),
+        );
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+    let prior_lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    let prior_record = prior_lock.config_entries[".opencode"]["hook:PreToolUse:audit"].clone();
+    project
+        .child("hooks/audit/plugin.ts")
+        .write_str("export default 'replacement'\n")
+        .unwrap();
+    project
+        .child(".opencode/opencode.json")
+        .write_str("{}")
+        .unwrap();
+
+    let target_dir = project.child(".opencode");
+    let original_permissions = fs::metadata(target_dir.path()).unwrap().permissions();
+    fs::set_permissions(target_dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let attempted = sync(&project);
+    fs::set_permissions(target_dir.path(), original_permissions).unwrap();
+    attempted
+        .success()
+        .stderr(predicate::str::contains(
+            "failed to remove prior hook entries",
+        ))
+        .stderr(predicate::str::contains("Permission denied"));
+
+    let after: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    assert_eq!(
+        after.config_entries[".opencode"]["hook:PreToolUse:audit"],
+        prior_record
+    );
+    plugin.assert(original.as_str());
+    assert_config_entry_consistency(&project);
+}

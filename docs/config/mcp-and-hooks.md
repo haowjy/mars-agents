@@ -376,9 +376,11 @@ info[stale-config-entry]: removed stale config entries from `.claude`:
 ## Windows Compatibility
 
 **Hook script invocation** — hook fragments own the entire native command
-string, including the shell and quoting. Mars only substitutes the absolute
-`${MARS_HOOK_DIR}` value. Author commands for every platform the package claims
-to support; Mars does not normalize separators or synthesize a Windows branch.
+string, including the shell and quoting. Mars substitutes the absolute
+`${MARS_HOOK_DIR}` value and normalizes that substituted directory's separators
+to `/`, keeping JSON and TypeScript string literals escape-safe. Author commands
+for every platform the package claims to support; Mars does not synthesize a
+Windows command branch.
 
 **Agent filename validation** — Mars validates agent names against Windows
 filename constraints at compile time, on all platforms. An agent named with

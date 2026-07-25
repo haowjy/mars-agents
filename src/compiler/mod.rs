@@ -67,7 +67,12 @@ pub fn compile(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_hooks(ctx, &planned.targeted.resolved, request.options.force, diag)?;
+    config_entries::preflight_config_entries(
+        ctx,
+        &planned.targeted.resolved,
+        request.options.force,
+        diag,
+    )?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;
@@ -116,8 +121,8 @@ pub fn compile(
         &synced.target_outcomes,
     );
 
-    // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation. Merge-mode
-    // hook bindings are now emitted only after their directories are installed.
+    // Post-target-sync MCP and hook config-entry compilation. Merge-mode hook
+    // bindings are emitted only after their directories are installed.
     let config_entry_compilation = config_entries::compile_config_entries(
         ctx,
         &synced.applied,

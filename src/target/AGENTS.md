@@ -36,7 +36,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `known_hook_events()` | Native merge-fragment event allowlist, or `None` when unsupported |
 | `hook_fragment_mode()` | Declares `MergeJson` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
-| `config_file_names()` | All JSON files this adapter may mutate |
+| `mcp_config_file_names()` | Config files mutated by MCP entries |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
 | `legacy_hook_config_file_names()` | One-release legacy hook files for old lock records |
 | `remove_owned_hook_entries(records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |

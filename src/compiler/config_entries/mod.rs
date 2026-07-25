@@ -73,7 +73,7 @@ pub(crate) fn file_hook_output_preserve_paths(
 ///
 /// This is deliberately separate from config emission so an invalid hook
 /// cannot leave canonical or target state partially mutated.
-pub(crate) fn preflight_hooks(
+pub(crate) fn preflight_config_entries(
     ctx: &MarsContext,
     resolved: &crate::sync::ResolvedState,
     force: bool,
@@ -332,7 +332,7 @@ fn validate_destination_path(
     Ok(())
 }
 
-/// Phase 5 config-entry compilation: MCP servers and hooks.
+/// Post-target-sync config-entry compilation: MCP servers and hooks.
 ///
 /// For each package in the resolved graph:
 /// 1. Discover MCP items from `mcp/<name>/mcp.toml`

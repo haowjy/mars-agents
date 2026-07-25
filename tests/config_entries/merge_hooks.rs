@@ -353,6 +353,61 @@ fn structural_ownership_preserves_edited_and_user_entries_and_prunes_emptied_eve
 }
 
 #[test]
+#[cfg(unix)]
+fn stale_hook_diagnostics_distinguish_planned_and_unconfirmed_removals() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf owned"}]}]}"#,
+    );
+    sync(&project).success();
+
+    fs::rename(
+        project.child("hooks/audit").path(),
+        project.child("audit.removed").path(),
+    )
+    .unwrap();
+    mars()
+        .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "target `.claude` has stale config entries: hook:SessionStart:audit",
+        ));
+
+    let target_dir = project.child(".claude");
+    fs::set_permissions(target_dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let assertion = sync(&project);
+    fs::set_permissions(target_dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    assertion
+        .success()
+        .stderr(predicate::str::contains(
+            "failed to remove prior hook entries",
+        ))
+        .stderr(predicate::str::contains("removed stale config entries").not());
+
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::path::is_file());
+    assert!(
+        fs::read_to_string(project.child("mars.lock").path())
+            .unwrap()
+            .contains("hook:SessionStart:audit")
+    );
+}
+
+#[test]
 fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
     for (target, event, original_entry, edited_command) in [
         (

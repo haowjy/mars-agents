@@ -8,6 +8,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `mars.lock` version 3 distinguishes installed outputs from
   pending-deletion ownership records. Version 2 locks are promoted for one release
   so legacy hook cleanup can run; version 1 locks must be removed and regenerated.
+- **Breaking:** `mars unlink` now removes only outputs and config entries recorded
+  as owned for that target; handwritten files remain in place, and the target
+  directory remains when it is not empty.
 - **Breaking:** remove unused public helpers, wrappers, re-exports, and unread
   fields from the library API.
 - `discover_installed` now scans only installed item identity and path instead of
@@ -31,6 +34,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Preflight `mars adopt` before moving user content, and restore the original
+  path if the subsequent sync fails.
+- Report stale config entries as removed only when removal was confirmed for
+  that entry's MCP or hook surface.
 - Record exact emitted hook config and remove only structural matches, preserving
   hand edits and reporting them as config divergence.
 - Preserve untracked and hand-edited linked-target files; require `--force` to

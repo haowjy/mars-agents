@@ -118,15 +118,21 @@ impl RemovalPlan {
             outcomes.insert((target_root, surface), outcome);
         }
         for (target_root, keys) in stale_keys {
-            if !matches!(
-                outcomes.get(&(target_root.clone(), Surface::Mcp)),
-                Some(RemovalOutcome::Unconfirmed { .. })
-            ) {
+            let removed_keys: Vec<_> = keys
+                .into_iter()
+                .filter(|key| {
+                    !matches!(
+                        outcomes.get(&(target_root.clone(), Surface::of_key(key))),
+                        Some(RemovalOutcome::Unconfirmed { .. })
+                    )
+                })
+                .collect();
+            if !removed_keys.is_empty() {
                 diag.info(
                     "stale-config-entry",
                     format!(
                         "removed stale config entries from `{target_root}`: {}",
-                        keys.join(", ")
+                        removed_keys.join(", ")
                     ),
                 );
             }
@@ -370,6 +376,43 @@ mod tests {
             BTreeMap::from([(
                 ".claude".to_owned(),
                 BTreeMap::from([("mcp:old".to_owned(), record(None))])
+            )])
+        );
+        let diagnostics = diag.drain();
+        let stale = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "stale-config-entry")
+            .expect("successful hook removal should be reported");
+        assert!(stale.message.contains("hook:SessionStart:audit"));
+        assert!(!stale.message.contains("mcp:old"));
+    }
+
+    #[test]
+    fn failed_hook_removal_is_not_reported_as_removed() {
+        let previous = BTreeMap::from([(
+            ".claude".to_owned(),
+            BTreeMap::from([("hook:SessionStart:audit".to_owned(), record(Some("[]")))]),
+        )]);
+        let plan = RemovalPlan::build(&previous, &BTreeMap::new());
+        let mut diag = DiagnosticCollector::new();
+        let retention = plan.execute(
+            |operation, _| {
+                let (_, removal) = operation.into_parts(Path::new("."));
+                RemovalReport::failed("hook failed", removal.prior_records.clone())
+            },
+            &mut diag,
+        );
+
+        assert!(
+            diag.drain()
+                .iter()
+                .all(|diagnostic| diagnostic.code != "stale-config-entry")
+        );
+        assert_eq!(
+            retention.into_retained_records(),
+            BTreeMap::from([(
+                ".claude".to_owned(),
+                BTreeMap::from([("hook:SessionStart:audit".to_owned(), record(Some("[]")))])
             )])
         );
     }

@@ -177,7 +177,6 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
 fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsError> {
     let ctx = MarsContext {
         project_root: project_root.to_path_buf(),
-        managed_root: project_root.join(".mars"),
         meridian_managed: false,
     };
     let request = SyncRequest {
@@ -476,10 +475,7 @@ mod tests {
         run_git_test(repo.path(), ["add", "."]);
         run_git_test(repo.path(), ["commit", "-m", "init"]);
 
-        let ctx = super::super::MarsContext::for_test(
-            repo.path().to_path_buf(),
-            repo.path().join(".agents"),
-        );
+        let ctx = super::super::MarsContext::for_test(repo.path().to_path_buf());
         (repo, ctx)
     }
 

@@ -83,7 +83,7 @@ See [`src/models/AGENTS.md`](../models/AGENTS.md) for the full matrix.
 **Project context:**
 ```rust
 let ctx = find_agents_root(cli.root.as_deref())?;
-// ctx.project_root, ctx.managed_root, ctx.meridian_managed
+// ctx.project_root, ctx.meridian_managed
 ```
 
 ## See Also

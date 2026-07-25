@@ -94,7 +94,6 @@ impl MarsContext {
         }
 
         Ok(MarsContext {
-            managed_root: managed_canon,
             project_root: project_canon,
             meridian_managed: crate::types::meridian_managed_from_env(),
         })
@@ -400,20 +399,6 @@ fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn find_root_with_explicit_path() {
-        let dir = TempDir::new().unwrap();
-        // Canonicalize once and use everywhere to avoid Windows 8.3 short-name mismatches
-        let canonical_dir = dunce::canonicalize(dir.path()).unwrap();
-        std::fs::write(canonical_dir.join("mars.toml"), "[dependencies]\n").unwrap();
-
-        // --root points to a dir with mars.toml — should find it via walk-up
-        let ctx = find_agents_root(Some(&canonical_dir)).unwrap();
-        assert_eq!(ctx.project_root, canonical_dir);
-        assert_eq!(ctx.managed_root, ctx.project_root.join(".mars"));
-    }
-
     #[test]
     fn package_manifest_without_dependencies_is_valid_project_root() {
         let dir = TempDir::new().unwrap();
@@ -426,52 +411,6 @@ mod tests {
         let ctx = find_agents_root(Some(dir.path())).unwrap();
         assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
     }
-
-    #[test]
-    fn find_root_ignores_leftover_agents_dir_without_explicit_config() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
-        std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
-
-        let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
-        assert_eq!(ctx.managed_root, ctx.project_root.join(".mars"));
-    }
-
-    #[test]
-    fn find_root_with_custom_managed_dir_from_settings() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[dependencies]\n\n[settings]\nmanaged_root = \".claude\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
-
-        let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
-        assert_eq!(
-            ctx.managed_root,
-            dunce::canonicalize(dir.path().join(".claude")).unwrap()
-        );
-    }
-
-    #[test]
-    fn find_root_with_agents_target_from_settings_targets() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[dependencies]\n\n[settings]\ntargets = [\".agents\"]\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
-
-        let ctx = MarsContext::new(dir.path().to_path_buf()).unwrap();
-        assert_eq!(
-            ctx.managed_root,
-            dunce::canonicalize(dir.path().join(".agents")).unwrap()
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn context_rejects_symlinked_managed_root_outside_project() {

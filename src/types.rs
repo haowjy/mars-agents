@@ -453,15 +453,11 @@ impl<'de> Deserialize<'de> for DestPath {
     }
 }
 
-/// Resolved context for a mars command — project root + managed output root.
-///
-/// Named fields prevent argument-order bugs that plague `(project_root, managed_root)` pairs.
+/// Resolved context for a mars command.
 #[derive(Debug, Clone)]
 pub struct MarsContext {
     /// Project root containing mars.toml and mars.lock.
     pub project_root: PathBuf,
-    /// Managed output directory (legacy/explicit target, e.g. /project/.claude).
-    pub managed_root: PathBuf,
     /// Whether mars is running under Meridian management.
     ///
     /// Captured at context construction time so compilation decisions are stable
@@ -472,10 +468,9 @@ pub struct MarsContext {
 #[cfg(test)]
 impl MarsContext {
     /// Create a MarsContext for tests without any validation.
-    pub fn for_test(project_root: PathBuf, managed_root: PathBuf) -> Self {
+    pub fn for_test(project_root: PathBuf) -> Self {
         MarsContext {
             project_root,
-            managed_root,
             meridian_managed: meridian_managed_from_env(),
         }
     }

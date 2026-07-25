@@ -200,10 +200,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -259,10 +256,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -337,10 +331,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -396,10 +387,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -457,10 +445,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -707,7 +692,6 @@ fn planned_bump_entries_preserve_filters_and_renames() {
 #[test]
 fn execute_auto_inits_config_for_mutation() {
     let project_root = TempDir::new().unwrap();
-    let managed_root = project_root.path().join(".agents");
     let source = TempDir::new().unwrap();
     fs::create_dir_all(source.path().join("agents")).unwrap();
     fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
@@ -722,7 +706,7 @@ fn execute_auto_inits_config_for_mutation() {
         lossiness_mode: LossinessMode::Hidden,
     };
 
-    let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
+    let ctx = MarsContext::for_test(project_root.path().to_path_buf());
     let report = execute(&ctx, &request).unwrap();
     assert!(!report.applied.outcomes.is_empty());
     assert!(project_root.path().join("mars.toml").exists());
@@ -762,7 +746,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
         lossiness_mode: LossinessMode::Hidden,
     };
 
-    let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
+    let ctx = MarsContext::for_test(project_root.path().to_path_buf());
     let report = execute(&ctx, &request).unwrap();
     assert!(!report.applied.outcomes.is_empty());
 

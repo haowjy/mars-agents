@@ -32,20 +32,24 @@ pub fn write_fragment(
 }
 
 pub fn sync(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Assert {
-    mars()
+    let assertion = mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
-        .assert()
+        .assert();
+    assert_config_entry_consistency(project);
+    assertion
 }
 
 pub fn sync_force(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Assert {
-    mars()
+    let assertion = mars()
         .args([
             "sync",
             "--force",
             "--root",
             project.path().to_str().unwrap(),
         ])
-        .assert()
+        .assert();
+    assert_config_entry_consistency(project);
+    assertion
 }
 
 pub fn file_fragment_targets() -> [(&'static str, &'static str); 2] {
@@ -121,4 +125,107 @@ pub fn assert_hook_target_owner(
         }),
         "{target_root} output was attached to the wrong scoped hook owner"
     );
+}
+
+/// Cross-artifact oracle for the config-entry lane. A sync may leave a
+/// malformed user-owned config file untouched, so unreadable files are skipped;
+/// every readable record must agree with disk and every file-hook checksum must
+/// match its owned output.
+pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) {
+    let lock_path = project.child("mars.lock");
+    if !lock_path.exists() {
+        return;
+    }
+    let lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+
+    for (target, records) in &lock.config_entries {
+        for (key, record) in records {
+            if let Some(emitted) = &record.emitted_json {
+                let event = key
+                    .strip_prefix("hook:")
+                    .and_then(|rest| rest.split_once(':'))
+                    .map(|(event, _)| event)
+                    .expect("emitted config-entry record must be a hook");
+                let file = match target.as_str() {
+                    ".claude" => "settings.local.json",
+                    ".codex" | ".cursor" => "hooks.json",
+                    other => panic!("{other} cannot own merge-mode hook records"),
+                };
+                let path = project.child(target).child(file);
+                let Ok(raw) = fs::read_to_string(path.path()) else {
+                    panic!(
+                        "lock owns `{key}` but `{}` is absent",
+                        path.path().display()
+                    );
+                };
+                let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                    continue;
+                };
+                let expected: Vec<serde_json::Value> = serde_json::from_str(emitted).unwrap();
+                let actual = root["hooks"][event].as_array().unwrap_or_else(|| {
+                    panic!("lock owns `{key}` but hooks.{event} is absent on disk")
+                });
+                assert!(
+                    expected.iter().all(|entry| actual.contains(entry)),
+                    "lock owns `{key}` but its emitted entries do not exist on disk"
+                );
+            } else if let Some(name) = key.strip_prefix("mcp:") {
+                let file = match target.as_str() {
+                    ".claude" => ".mcp.json",
+                    ".codex" => "codex_mcp.json",
+                    ".cursor" => "mcp.json",
+                    ".opencode" => "opencode.json",
+                    _ => continue,
+                };
+                let path = project.child(target).child(file);
+                let Ok(raw) = fs::read_to_string(path.path()) else {
+                    panic!(
+                        "lock owns `{key}` but `{}` is absent",
+                        path.path().display()
+                    );
+                };
+                let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                    continue;
+                };
+                assert!(
+                    root["mcpServers"].get(name).is_some(),
+                    "lock owns `{key}` but mcpServers.{name} is absent on disk"
+                );
+            }
+            // A hook record without emitted_json is the explicit one-release
+            // legacy migration state and cannot be content-matched.
+        }
+    }
+
+    for item in lock
+        .items
+        .values()
+        .filter(|item| item.kind == mars_agents::lock::ItemKind::Hook)
+    {
+        for output in &item.outputs {
+            if output.target_root == ".mars"
+                || !(output.dest_path.as_str().starts_with("plugins/mars-")
+                    || output.dest_path.as_str().starts_with("extensions/mars-"))
+            {
+                continue;
+            }
+            let path = project
+                .child(&output.target_root)
+                .child(output.dest_path.as_str());
+            let bytes = fs::read(path.path()).unwrap_or_else(|_| {
+                panic!(
+                    "lock owns file hook `{}/{}` but it is absent",
+                    output.target_root, output.dest_path
+                )
+            });
+            assert_eq!(
+                mars_agents::hash::hash_bytes(&bytes),
+                output.installed_checksum.as_ref(),
+                "file-hook bytes disagree with lock checksum for `{}/{}`",
+                output.target_root,
+                output.dest_path
+            );
+        }
+    }
 }

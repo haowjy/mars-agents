@@ -5,6 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- `mars unlink` now removes only outputs and config entries recorded as owned
+  for that target; handwritten files remain in place, and the target directory
+  remains when it is not empty.
 - **Breaking:** remove unused public helpers, wrappers, re-exports, and unread
   fields from the library API.
 - `discover_installed` now scans only installed item identity and path instead of

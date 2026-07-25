@@ -131,7 +131,7 @@ targets = [".claude"]
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("from settings"));
+        .stdout(predicate::str::contains("unlinked `.claude`"));
 
     let config: Value =
         toml::from_str(&fs::read_to_string(project.child("mars.toml").path()).unwrap()).unwrap();
@@ -180,7 +180,7 @@ managed_root = ".agents"
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("removed managed target `.agents`"));
+        .stdout(predicate::str::contains("unlinked `.agents`"));
 
     let config: Value =
         toml::from_str(&fs::read_to_string(project.child("mars.toml").path()).unwrap()).unwrap();
@@ -190,6 +190,72 @@ managed_root = ".agents"
             .is_some_and(|settings| !settings.contains_key("managed_root"))
     );
     assert!(!project.child(".agents").exists());
+}
+
+#[test]
+fn unlink_removes_only_owned_outputs_and_preserves_unmanaged_siblings() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n")
+        .unwrap();
+
+    project
+        .child(".mars-src")
+        .child("agents")
+        .create_dir_all()
+        .unwrap();
+    project
+        .child(".mars-src")
+        .child("agents")
+        .child("owned.md")
+        .write_str("# Owned")
+        .unwrap();
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let unmanaged = project.child(".claude").child("agents").child("keep.md");
+    unmanaged.write_str("# Handwritten").unwrap();
+
+    mars()
+        .args([
+            "unlink",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "unlinked `.claude` (removed 1 managed output)",
+        ));
+
+    assert!(
+        !project
+            .child(".claude")
+            .child("agents")
+            .child("owned.md")
+            .exists()
+    );
+    assert_eq!(
+        fs::read_to_string(unmanaged.path()).unwrap(),
+        "# Handwritten"
+    );
+    assert!(project.child(".claude").exists());
 }
 
 #[test]

@@ -318,11 +318,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: source_name.into(),
-            origin: crate::types::SourceOrigin::Dependency(source_name.into()),
-            source_id: SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: dest_path.into(),
             source_hash,
@@ -404,11 +399,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -424,11 +414,6 @@ mod tests {
                     name: "plan__org_base".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_path.clone(),
                 dest_path: "skills/plan__org_base".into(),
                 source_hash: hash::compute_hash(&skill_path, ItemKind::Skill)
@@ -478,11 +463,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -532,11 +512,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -552,11 +527,6 @@ mod tests {
                     name: "planning__org_b".into(),
                 },
                 source_name: "source-b".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-b".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_b_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_b_path.clone(),
                 dest_path: "skills/planning__org_b".into(),
                 source_hash: hash::compute_hash(&skill_b_path, ItemKind::Skill)
@@ -574,11 +544,6 @@ mod tests {
                     name: "planning__org_c".into(),
                 },
                 source_name: "source-c".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-c".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_c_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_c_path.clone(),
                 dest_path: "skills/planning__org_c".into(),
                 source_hash: hash::compute_hash(&skill_c_path, ItemKind::Skill)

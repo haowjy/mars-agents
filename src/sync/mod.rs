@@ -27,7 +27,7 @@ use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::managed_cmd;
-use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
+use crate::types::{ContentHash, DestPath, MarsContext, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
@@ -277,11 +277,6 @@ pub(crate) fn build_target(
         target::build_with_collisions_and_diag(&resolved.graph, &resolved.loaded.effective, diag)?;
 
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-    let local_source_id = SourceId::Path {
-        canonical: dunce::canonicalize(&ctx.project_root)
-            .unwrap_or_else(|_| ctx.project_root.clone()),
-        subpath: None,
-    };
     let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
 
     for item in local_items {
@@ -366,8 +361,6 @@ pub(crate) fn build_target(
                     name: item.discovered.id.name.clone(),
                 },
                 source_name: local_source_name.clone(),
-                origin: SourceOrigin::LocalPackage,
-                source_id: local_source_id.clone(),
                 source_path,
                 dest_path,
                 source_hash,
@@ -418,8 +411,6 @@ pub(crate) fn build_target(
                             .into(),
                     },
                     source_name: local_source_name.clone(),
-                    origin: SourceOrigin::LocalPackage,
-                    source_id: local_source_id.clone(),
                     source_path: source_path.clone(),
                     dest_path,
                     source_hash: source_hash.clone(),

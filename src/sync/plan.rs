@@ -27,7 +27,6 @@ pub enum PlannedAction {
         dest_path: DestPath,
         source_name: SourceName,
         installed_checksum: Option<ContentHash>,
-        reason: &'static str,
     },
     /// Remove an orphaned item.
     Remove { locked: LockedItem },
@@ -54,7 +53,7 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
                 });
             }
 
-            DiffEntry::Update { target, locked: _ } => {
+            DiffEntry::Update { target } => {
                 actions.push(PlannedAction::Overwrite {
                     target: target.clone(),
                 });
@@ -66,15 +65,10 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
                     dest_path: target.dest_path.clone(),
                     source_name: target.source_name.clone(),
                     installed_checksum: Some(locked.installed_checksum.clone()),
-                    reason: "unchanged",
                 });
             }
 
-            DiffEntry::Conflict {
-                target,
-                locked: _,
-                local_hash: _,
-            } => {
+            DiffEntry::Conflict { target } => {
                 if !options.force {
                     diag.warn(
                         "conflict-overwrite",
@@ -97,11 +91,7 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
                 });
             }
 
-            DiffEntry::LocalModified {
-                target,
-                locked: _,
-                local_hash: _,
-            } => {
+            DiffEntry::LocalModified { target } => {
                 if options.force {
                     // --force: source wins even when only local changed
                     actions.push(PlannedAction::Overwrite {
@@ -160,11 +150,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test".into(),
-            origin: crate::types::SourceOrigin::Dependency("test".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: dest_path.into(),
             source_hash: hash::hash_bytes(b"test content").into(),
@@ -203,11 +188,6 @@ mod tests {
     fn make_locked(name: &str) -> LockedItem {
         make_locked_with_kind(name, ItemKind::Agent)
     }
-
-    fn make_skill_locked(name: &str) -> LockedItem {
-        make_locked_with_kind(name, ItemKind::Skill)
-    }
-
     fn default_options() -> SyncOptions {
         SyncOptions::default()
     }
@@ -251,7 +231,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::Update {
                 target: make_target("updated"),
-                locked: make_locked("updated"),
             }],
         };
 
@@ -271,13 +250,7 @@ mod tests {
 
         let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(
-            &plan.actions[0],
-            PlannedAction::Skip {
-                reason: "unchanged",
-                ..
-            }
-        ));
+        assert!(matches!(&plan.actions[0], PlannedAction::Skip { .. }));
     }
 
     #[test]
@@ -285,8 +258,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
-                locked: make_locked("conflicted"),
-                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -304,8 +275,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_skill_target("planning"),
-                locked: make_skill_locked("planning"),
-                local_hash: "sha256:local".into(),
             }],
         };
         let mut diag = DiagnosticCollector::new();
@@ -328,8 +297,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
-                locked: make_locked("conflicted"),
-                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -356,8 +323,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
-                locked: make_locked("modified"),
-                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -371,8 +336,6 @@ mod tests {
         let diff = SyncDiff {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
-                locked: make_locked("modified"),
-                local_hash: "sha256:local".into(),
             }],
         };
 
@@ -390,7 +353,6 @@ mod tests {
                 },
                 DiffEntry::Update {
                     target: make_target("updated"),
-                    locked: make_locked("updated"),
                 },
                 DiffEntry::Unchanged {
                     target: make_target("stable"),

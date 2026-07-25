@@ -1076,10 +1076,6 @@ fn validate_skill_refs_uses_rewritten_content() {
     fs::write(skill_path.join("SKILL.md"), "# New Skill\n").unwrap();
 
     let source_name = SourceName::from("base");
-    let source_id = SourceId::Path {
-        canonical: fixture.project_root().to_path_buf(),
-        subpath: None,
-    };
     let mut items = IndexMap::new();
     items.insert(
         DestPath::new("agents/coder.md").unwrap(),
@@ -1089,8 +1085,6 @@ fn validate_skill_refs_uses_rewritten_content() {
                 name: "coder".into(),
             },
             source_name: source_name.clone(),
-            origin: SourceOrigin::Dependency(source_name.clone()),
-            source_id: source_id.clone(),
             source_path,
             dest_path: DestPath::new("agents/coder.md").unwrap(),
             source_hash: ContentHash::from("sha256:source"),
@@ -1108,8 +1102,6 @@ fn validate_skill_refs_uses_rewritten_content() {
                 name: "new-skill".into(),
             },
             source_name: source_name.clone(),
-            origin: SourceOrigin::Dependency(source_name),
-            source_id,
             source_path: skill_path,
             dest_path: DestPath::new("skills/new-skill").unwrap(),
             source_hash: ContentHash::from("sha256:skill"),

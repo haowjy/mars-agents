@@ -11,9 +11,7 @@ use crate::hash;
 use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind, LockFile, LockIndex};
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
-use crate::types::{
-    ContentHash, DestPath, ItemName, RenameMap, SourceId, SourceName, SourceOrigin,
-};
+use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 
 /// What the `.mars/` canonical store should look like after sync.
 ///
@@ -29,8 +27,6 @@ pub struct TargetState {
 pub struct TargetItem {
     pub id: ItemId,
     pub source_name: SourceName,
-    pub origin: SourceOrigin,
-    pub source_id: SourceId,
     /// Path to content in fetched source tree.
     pub source_path: PathBuf,
     /// Relative path under `.mars/` (reflects rename if any).
@@ -76,10 +72,6 @@ pub fn build_with_collisions_and_diag(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
         )?;
-
-        let source_id = source_config
-            .map(|s| s.id.clone())
-            .unwrap_or_else(|| node.source_id.clone());
 
         let Some(filters) = graph
             .filters
@@ -132,8 +124,6 @@ pub fn build_with_collisions_and_diag(
                             name: hook_scoped_item_name(target_name, &parsed.def.name),
                         },
                         source_name: source_name.clone(),
-                        origin: SourceOrigin::Dependency(source_name.clone()),
-                        source_id: source_id.clone(),
                         source_path: hook_dir.clone(),
                         dest_path,
                         source_hash: source_hash.clone(),
@@ -181,8 +171,6 @@ pub fn build_with_collisions_and_diag(
                     name: dest_name,
                 },
                 source_name: source_name.clone(),
-                origin: SourceOrigin::Dependency(source_name.clone()),
-                source_id: source_id.clone(),
                 source_path: source_content_path,
                 dest_path,
                 source_hash,
@@ -559,6 +547,7 @@ mod tests {
     use crate::lock::LockFile;
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
+    use crate::types::SourceId;
     use indexmap::IndexMap;
     use std::fs;
     use tempfile::TempDir;

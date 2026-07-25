@@ -131,7 +131,6 @@ fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, 
             dest_path,
             source_name,
             installed_checksum,
-            reason: _,
         } => Ok(ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Skipped,
@@ -313,11 +312,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test-source".into(),
-            origin: crate::types::SourceOrigin::Dependency("test-source".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: format!("agents/{name}.md").into(),
             source_hash: hash::hash_bytes(content).into(),
@@ -333,11 +327,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test-source".into(),
-            origin: crate::types::SourceOrigin::Dependency("test-source".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_hash: crate::hash::compute_hash(&source_path, ItemKind::BootstrapDoc)
                 .unwrap()
                 .into(),
@@ -603,7 +592,6 @@ mod tests {
                 dest_path: "agents/stable.md".into(),
                 source_name: "base".into(),
                 installed_checksum: Some("sha256:stable".into()),
-                reason: "unchanged",
             }],
         };
 
@@ -669,11 +657,6 @@ mod tests {
                 name: "planning".into(),
             },
             source_name: "test".into(),
-            origin: crate::types::SourceOrigin::Dependency("test".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_skill.clone(),
-                subpath: None,
-            },
             source_path: source_skill,
             dest_path: "skills/planning".into(),
             source_hash: skill_hash.into(),
@@ -726,11 +709,6 @@ mod tests {
                 name: "flat-skill".into(),
             },
             source_name: "test".into(),
-            origin: crate::types::SourceOrigin::Dependency("test".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: flat_source.clone(),
-                subpath: None,
-            },
             source_path: flat_source,
             dest_path: "skills/flat-skill".into(),
             source_hash: source_hash.into(),

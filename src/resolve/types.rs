@@ -34,7 +34,6 @@ pub struct ResolvedNode {
     pub source_id: SourceId,
     pub rooted_ref: RootedSourceRef,
     pub resolved_ref: ResolvedRef,
-    pub latest_version: Option<Version>,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
@@ -84,8 +83,6 @@ pub struct PendingItem {
     pub required_by: String,
     /// True if from a local path dependency (skip version checks).
     pub is_local: bool,
-    /// Source spec for fetching if not already in registry.
-    pub spec: SourceSpec,
 }
 
 /// Result of checking whether an item was seen already.
@@ -193,10 +190,6 @@ impl VisitedSet {
         );
     }
 
-    /// Iterate all visited items for graph/output assembly.
-    pub fn iter(&self) -> impl Iterator<Item = (&(SourceName, ItemName), &ResolvedVersion)> {
-        self.index.iter()
-    }
 }
 
 /// Tracks resolved version per package and rejects divergent refs.

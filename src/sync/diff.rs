@@ -18,29 +18,18 @@ pub enum DiffEntry {
     /// New item not in lock or on disk.
     Add { target: TargetItem },
     /// Source changed, local unchanged → clean update.
-    Update {
-        target: TargetItem,
-        locked: LockedItem,
-    },
+    Update { target: TargetItem },
     /// Source unchanged, local unchanged → skip.
     Unchanged {
         target: TargetItem,
         locked: LockedItem,
     },
     /// Source changed AND local changed → needs merge.
-    Conflict {
-        target: TargetItem,
-        locked: LockedItem,
-        local_hash: ContentHash,
-    },
+    Conflict { target: TargetItem },
     /// In lock but not in target → should be removed.
     Orphan { locked: LockedItem },
     /// Local modification, source unchanged → keep local.
-    LocalModified {
-        target: TargetItem,
-        locked: LockedItem,
-        local_hash: ContentHash,
-    },
+    LocalModified { target: TargetItem },
 }
 
 /// Compute the diff between current disk state + lock and target state.
@@ -114,23 +103,18 @@ pub fn compute(
                     // Source changed, local unchanged → clean update
                     items.push(DiffEntry::Update {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
                     });
                 }
-                (false, Some(local_hash)) => {
+                (false, Some(_local_hash)) => {
                     // Local changed, source unchanged → keep local
                     items.push(DiffEntry::LocalModified {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
-                        local_hash: local_hash.clone(),
                     });
                 }
-                (true, Some(local_hash)) => {
+                (true, Some(_local_hash)) => {
                     // Both changed → conflict
                     items.push(DiffEntry::Conflict {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
-                        local_hash: local_hash.clone(),
                     });
                 }
             }
@@ -202,11 +186,6 @@ mod tests {
                 name: ItemName::from(name),
             },
             source_name: SourceName::from("test-source"),
-            origin: crate::types::SourceOrigin::Dependency(SourceName::from("test-source")),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: dest_path.to_string_lossy().to_string().into(),
             source_hash: ContentHash::from(source_hash),
@@ -731,11 +710,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: SourceName::from("test-source"),
-                origin: crate::types::SourceOrigin::Dependency(SourceName::from("test-source")),
-                source_id: crate::types::SourceId::Path {
-                    canonical: PathBuf::from("/tmp/source/agents/coder.md"),
-                    subpath: None,
-                },
                 source_path: PathBuf::from("/tmp/source/agents/coder.md"),
                 dest_path: "agents/coder.md".into(),
                 source_hash: source_hash.clone().into(),

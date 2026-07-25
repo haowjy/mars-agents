@@ -17,13 +17,6 @@ use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 use crate::types::managed_cmd;
 
-/// A directory that mars manages — materialized from .mars/.
-#[derive(Debug, Clone)]
-pub struct ManagedTarget {
-    /// Target directory path relative to project root (e.g. ".claude").
-    pub path: String,
-}
-
 /// A linked-target output recorded during sync for lock persistence.
 #[derive(Debug, Clone)]
 pub struct TargetSyncedOutput {

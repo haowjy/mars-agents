@@ -97,35 +97,6 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
         kind: LinkKind::GenericTarget,
     }
 }
-
-pub fn normalized_targets<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    let mut targets = Vec::new();
-    for link in links {
-        let target = normalize_link(link).target;
-        if seen.insert(target.clone()) {
-            targets.push(target);
-        }
-    }
-    targets
-}
-
-pub fn linked_harnesses<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut harnesses = Vec::new();
-
-    for link in links {
-        if let Some(harness) = normalize_link(link).harness {
-            let name = harness.as_str().to_string();
-            if seen.insert(name.clone()) {
-                harnesses.push(name);
-            }
-        }
-    }
-
-    harnesses
-}
-
 pub fn effective_links(
     targets: Option<&[String]>,
     managed_root: Option<&String>,
@@ -189,15 +160,6 @@ mod tests {
                 harness: None,
                 kind: LinkKind::GenericTarget,
             }
-        );
-    }
-
-    #[test]
-    fn extracts_known_harnesses_only() {
-        let links = [".codex", ".claude", ".agents", "foo/bar"];
-        assert_eq!(
-            linked_harnesses(links.iter().copied()),
-            vec!["codex".to_string(), "claude".to_string()]
         );
     }
 }

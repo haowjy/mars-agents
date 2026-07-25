@@ -101,7 +101,6 @@ fn make_graph_config(
         config_dependencies.insert(
             name.into(),
             EffectiveDependency {
-                name: name.into(),
                 id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
@@ -111,8 +110,6 @@ fn make_graph_config(
                 filter,
                 rename: crate::types::RenameMap::new(),
                 dialect: None,
-                is_overridden: false,
-                original_git: None,
             },
         );
     }
@@ -496,7 +493,10 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
             (*name).into(),
             ResolvedNode {
                 source_name: (*name).into(),
-                source_id: crate::types::SourceId::git(crate::types::SourceUrl::from(*url)),
+                source_id: crate::types::SourceId::git_with_subpath(
+                    crate::types::SourceUrl::from(*url),
+                    None,
+                ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
@@ -884,7 +884,6 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         dependencies: indexmap::IndexMap::from([(
             "base".into(),
             EffectiveDependency {
-                name: "base".into(),
                 id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
@@ -894,8 +893,6 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 filter: FilterMode::All,
                 rename: crate::types::RenameMap::new(),
                 dialect: Some(crate::dialect::Dialect::Claude),
-                is_overridden: false,
-                original_git: None,
             },
         )]),
         settings: Settings::default(),

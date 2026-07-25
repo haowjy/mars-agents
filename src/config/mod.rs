@@ -779,15 +779,12 @@ pub(crate) struct LoadedProjectConfig {
 /// A fully-resolved source with override tracking.
 #[derive(Debug, Clone)]
 pub struct EffectiveDependency {
-    pub name: SourceName,
     pub id: SourceId,
     pub spec: SourceSpec,
     pub subpath: Option<SourceSubpath>,
     pub filter: FilterMode,
     pub rename: RenameMap,
     pub dialect: Option<Dialect>,
-    pub is_overridden: bool,
-    pub original_git: Option<GitSpec>,
 }
 
 const CONFIG_FILE: &str = "mars.toml";
@@ -1039,14 +1036,10 @@ pub fn merge_with_root(
         let rename = entry.filter.rename.clone().unwrap_or_default();
 
         // Check if this source has a local override
-        let (spec, is_overridden, original_git) = if let Some(ov) = local.overrides.get(name) {
-            let original = match &base_spec {
-                SourceSpec::Git(git) => Some(git.clone()),
-                SourceSpec::Path(_) => None,
-            };
-            (SourceSpec::Path(ov.path.clone()), true, original)
+        let spec = if let Some(ov) = local.overrides.get(name) {
+            SourceSpec::Path(ov.path.clone())
         } else {
-            (base_spec, false, None)
+            base_spec
         };
         let subpath = entry.subpath.clone();
         let dialect = entry.dialect;
@@ -1055,15 +1048,12 @@ pub fn merge_with_root(
         dependencies.insert(
             name.clone(),
             EffectiveDependency {
-                name: name.clone(),
                 id,
                 spec,
                 subpath,
                 filter,
                 rename,
                 dialect,
-                is_overridden,
-                original_git,
             },
         );
     }
@@ -2276,8 +2266,6 @@ future_nested_key = true
         let effective = merge(config, local).unwrap();
         assert_eq!(effective.dependencies.len(), 1);
         let source = &effective.dependencies["base"];
-        assert!(!source.is_overridden);
-        assert!(source.original_git.is_none());
         match &source.spec {
             SourceSpec::Git(git) => {
                 assert_eq!(git.url, "https://github.com/org/base.git");
@@ -2323,16 +2311,10 @@ future_nested_key = true
         };
         let effective = merge(config, local).unwrap();
         let source = &effective.dependencies["base"];
-        assert!(source.is_overridden);
-
         match &source.spec {
             SourceSpec::Path(p) => assert_eq!(p, &PathBuf::from("/home/dev/local-base")),
             SourceSpec::Git(_) => panic!("expected Path override"),
         }
-
-        let orig = source.original_git.as_ref().unwrap();
-        assert_eq!(orig.url, "https://github.com/org/base.git");
-        assert_eq!(orig.version.as_deref(), Some("v1.0"));
     }
 
     #[test]
@@ -2379,7 +2361,6 @@ future_nested_key = true
 
         let (effective, _) = merge_with_root(config, local, &temp_root).unwrap();
         let source = &effective.dependencies["base"];
-        assert!(source.is_overridden);
         assert_eq!(
             source.subpath.as_ref().map(SourceSubpath::as_str),
             Some("plugins/foo")

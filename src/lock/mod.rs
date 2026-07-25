@@ -2336,7 +2336,7 @@ dest_path = "agents/coder.md"
             source_name.clone(),
             ResolvedNode {
                 source_name: source_name.clone(),
-                source_id: SourceId::git("https://example.com/base.git".into()),
+                source_id: SourceId::git_with_subpath("https://example.com/base.git".into(), None),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
                     package_root: PathBuf::from("/tmp/cache/base"),

@@ -328,15 +328,12 @@ fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
         map.insert(
             name.into(),
             EffectiveDependency {
-                name: name.into(),
                 id: source_id_for_spec(&spec, None),
                 spec,
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
                 dialect: None,
-                is_overridden: false,
-                original_git: None,
             },
         );
     }

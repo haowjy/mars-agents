@@ -37,7 +37,10 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
     let package = RegisteredPackage {
         node: ResolvedNode {
             source_name: "dep".into(),
-            source_id: SourceId::git(SourceUrl::from("https://example.com/dep.git")),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/dep.git"),
+                None,
+            ),
             rooted_ref: dummy_rooted_ref(),
             resolved_ref: dummy_ref("dep"),
             latest_version: None,
@@ -51,7 +54,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
     };
     let pending = PendingSource {
         name: "dep".into(),
-        source_id: SourceId::git(SourceUrl::from("https://example.com/dep.git")),
+        source_id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/dep.git"), None),
         spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
         subpath: None,
         constraint: VersionConstraint::Latest,
@@ -145,21 +148,17 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            name: "a".into(),
             id: source_id_for_spec(&a_spec, None),
             spec: a_spec,
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            name: "dep".into(),
             id: source_id_for_spec(&dep_spec, None),
             spec: dep_spec,
             subpath: None,
@@ -169,8 +168,6 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
             },
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -216,8 +213,7 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            name: "parent".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/parent.git")),
+            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {
@@ -226,8 +222,6 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
             },
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -288,8 +282,7 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            name: "parent".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/parent.git")),
+            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {
@@ -298,8 +291,6 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
             },
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -345,8 +336,7 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            name: "parent".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/parent.git")),
+            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {
@@ -355,8 +345,6 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
             },
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {

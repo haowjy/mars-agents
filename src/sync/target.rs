@@ -607,13 +607,12 @@ mod tests {
         let mut config_dependencies = IndexMap::new();
 
         for (name, tree, url, filter) in sources {
-            let url_str = url.map(|u| u.to_string());
             nodes.insert(
                 name.into(),
                 ResolvedNode {
                     source_name: name.into(),
                     source_id: if let Some(u) = url {
-                        SourceId::git(crate::types::SourceUrl::from(u))
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
@@ -650,9 +649,8 @@ mod tests {
             config_dependencies.insert(
                 name.into(),
                 EffectiveDependency {
-                    name: name.into(),
                     id: if let Some(u) = url {
-                        SourceId::git(crate::types::SourceUrl::from(u))
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
@@ -664,11 +662,6 @@ mod tests {
                     filter,
                     rename: RenameMap::new(),
                     dialect: None,
-                    is_overridden: false,
-                    original_git: url_str.map(|u| GitSpec {
-                        url: crate::types::SourceUrl::from(u),
-                        version: None,
-                    }),
                 },
             );
         }

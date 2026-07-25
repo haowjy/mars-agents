@@ -201,7 +201,6 @@ mod tests {
             dependencies.insert(
                 (*name).into(),
                 EffectiveDependency {
-                    name: (*name).into(),
                     id: SourceId::Path {
                         canonical: canonical.clone(),
                         subpath: None,
@@ -211,8 +210,6 @@ mod tests {
                     filter: FilterMode::All,
                     rename: crate::types::RenameMap::new(),
                     dialect: None,
-                    is_overridden: false,
-                    original_git: None,
                 },
             );
         }

@@ -19,6 +19,12 @@ pub(crate) struct ConfigEntryCompilation {
     pub removed_outputs: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigEntrySurface {
+    Mcp,
+    Hook,
+}
+
 pub(crate) fn file_hook_output_preserve_paths(
     lock: &crate::lock::LockFile,
 ) -> HashMap<String, std::collections::HashSet<String>> {
@@ -790,16 +796,22 @@ pub(crate) fn compile_config_entries(
             continue;
         };
         let target_dir = ctx.project_root.join(&target_root);
-        let (mcp_entries, hook_entries): (Vec<_>, Vec<_>) = entries
-            .into_iter()
-            .partition(|entry| matches!(entry, ConfigEntry::McpServer(_)));
-        for surface_entries in [mcp_entries, hook_entries] {
+        let mut mcp_entries = Vec::new();
+        let mut hook_entries = Vec::new();
+        for entry in entries {
+            match entry {
+                ConfigEntry::McpServer(_) => mcp_entries.push(entry),
+                ConfigEntry::Hook(_) => hook_entries.push(entry),
+            }
+        }
+        for (surface, surface_entries) in [
+            (ConfigEntrySurface::Mcp, mcp_entries),
+            (ConfigEntrySurface::Hook, hook_entries),
+        ] {
             if surface_entries.is_empty() {
                 continue;
             }
-            if matches!(surface_entries.first(), Some(ConfigEntry::Hook(_)))
-                && hook_sweep_failures.contains(&target_root)
-            {
+            if surface == ConfigEntrySurface::Hook && hook_sweep_failures.contains(&target_root) {
                 continue;
             }
             match adapter.write_config_entries(&surface_entries, &target_dir) {

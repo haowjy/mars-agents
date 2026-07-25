@@ -4,6 +4,21 @@
 //! only when the lock has an [`OutputRecord`](crate::lock::OutputRecord) for
 //! `(target_root, dest_path)`. `.mars`-only records do not imply ownership
 //! elsewhere.
+//!
+//! Merge-mode config entries use entry ownership rather than path ownership. A
+//! config entry may be removed only when the lock holds a
+//! [`ConfigEntryRecord`](crate::lock::ConfigEntryRecord) and its recorded
+//! `emitted_json` still matches the entry on disk. The target adapters enforce
+//! that structural match in `remove_owned_*_hooks`; content resemblance without
+//! a lock record never establishes ownership. The temporary issue #130
+//! old-lock bridge is narrower: a record without `emitted_json` authorizes only
+//! the legacy command-path cleanup associated with that recorded key.
+//!
+//! `compiler::config_entries::compile_config_entries` coordinates the other
+//! half of the contract: an unconfirmed or failed removal retains the prior
+//! `ConfigEntryRecord` and skips the replacement write for that hook surface.
+//! This preserves retry authority instead of silently replacing ownership
+//! evidence after a failed sweep.
 
 use std::path::Path;
 

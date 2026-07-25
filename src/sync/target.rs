@@ -626,7 +626,15 @@ mod tests {
             config_dependencies.insert(
                 name.into(),
                 EffectiveDependency {
-                    id: if let Some(u) = url {
+                    declared_source_id: if let Some(u) = url {
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
+                    } else {
+                        SourceId::Path {
+                            canonical: tree.path().to_path_buf(),
+                            subpath: None,
+                        }
+                    },
+                    source_id: if let Some(u) = url {
                         SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
                     } else {
                         SourceId::Path {

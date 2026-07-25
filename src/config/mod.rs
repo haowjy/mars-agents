@@ -776,10 +776,13 @@ pub(crate) struct LoadedProjectConfig {
     pub(crate) effective: EffectiveProjectConfig,
 }
 
-/// A fully-resolved source with override tracking.
+/// A dependency's declared configuration and effective source after local overrides.
 #[derive(Debug, Clone)]
 pub struct EffectiveDependency {
-    pub id: SourceId,
+    /// Identity from the dependency entry in `mars.toml`, before local overrides.
+    pub declared_source_id: SourceId,
+    /// Identity used to fetch and resolve the dependency.
+    pub source_id: SourceId,
     pub spec: SourceSpec,
     pub subpath: Option<SourceSubpath>,
     pub filter: FilterMode,
@@ -1035,20 +1038,23 @@ pub fn merge_with_root(
 
         let rename = entry.filter.rename.clone().unwrap_or_default();
 
+        let subpath = entry.subpath.clone();
+        let declared_source_id = source_id_for_spec(root, &base_spec, subpath.clone());
+
         // Check if this source has a local override
         let spec = if let Some(ov) = local.overrides.get(name) {
             SourceSpec::Path(ov.path.clone())
         } else {
             base_spec
         };
-        let subpath = entry.subpath.clone();
         let dialect = entry.dialect;
         let id = source_id_for_spec(root, &spec, subpath.clone());
 
         dependencies.insert(
             name.clone(),
             EffectiveDependency {
-                id,
+                declared_source_id,
+                source_id: id,
                 spec,
                 subpath,
                 filter,
@@ -2352,7 +2358,7 @@ future_nested_key = true
         );
         assert!(matches!(&source.spec, SourceSpec::Path(p) if p == &canonical_override));
         assert!(matches!(
-            &source.id,
+            &source.source_id,
             SourceId::Path {
                 canonical,
                 subpath: Some(sp)

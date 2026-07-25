@@ -154,7 +154,8 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            id: source_id_for_spec(&a_spec, None),
+            declared_source_id: source_id_for_spec(&a_spec, None),
+            source_id: source_id_for_spec(&a_spec, None),
             spec: a_spec,
             subpath: None,
             filter: FilterMode::All,
@@ -165,7 +166,8 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            id: source_id_for_spec(&dep_spec, None),
+            declared_source_id: source_id_for_spec(&dep_spec, None),
+            source_id: source_id_for_spec(&dep_spec, None),
             spec: dep_spec,
             subpath: None,
             filter: FilterMode::Include {
@@ -219,7 +221,14 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {
@@ -288,7 +297,14 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {
@@ -342,7 +358,14 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
     dependencies.insert(
         SourceName::from("parent"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/parent.git"), None),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/parent.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/parent.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Include {

@@ -235,7 +235,11 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/shared.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/shared.git"),
                 Some(subpath.clone()),
             ),
@@ -249,7 +253,11 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
     dependencies.insert(
         SourceName::from("b"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/shared.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/shared.git"),
                 Some(subpath.clone()),
             ),
@@ -315,7 +323,14 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/a.git"), None),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
@@ -326,7 +341,11 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/dep.git"),
+                Some(SourceSubpath::new("plugins/foo").unwrap()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/dep.git"),
                 Some(SourceSubpath::new("plugins/foo").unwrap()),
             ),
@@ -1117,7 +1136,11 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/repo.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/repo.git"),
                 Some(subpath.clone()),
             ),
@@ -1177,7 +1200,11 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     dependencies.insert(
         SourceName::from("dep-a"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/mono.git"),
+                Some(subpath_foo.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/mono.git"),
                 Some(subpath_foo.clone()),
             ),
@@ -1191,7 +1218,11 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     dependencies.insert(
         SourceName::from("dep-b"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/mono.git"),
+                Some(subpath_bar.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/mono.git"),
                 Some(subpath_bar.clone()),
             ),
@@ -1333,7 +1364,8 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     deps.insert(
         SourceName::from("dep-a"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
             spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
@@ -1344,7 +1376,8 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     deps.insert(
         SourceName::from("dep-b"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(canonical_url, None),
+            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            source_id: SourceId::git_with_subpath(canonical_url, None),
             spec: git_spec("https://example.com/org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
@@ -1402,7 +1435,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     deps.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                    "https://example.com/a.git",
+                )),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from(crate::source::canonical::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
@@ -1418,7 +1457,8 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     deps.insert(
         SourceName::from("shared"),
         EffectiveDependency {
-            id: SourceId::git_with_subpath(ssh_canonical, None),
+            declared_source_id: SourceId::git_with_subpath(ssh_canonical.clone(), None),
+            source_id: SourceId::git_with_subpath(ssh_canonical, None),
             spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
@@ -1797,7 +1837,8 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
         dependencies.insert(
             SourceName::from(a_name.clone()),
             EffectiveDependency {
-                id: source_id_for_spec(&a_spec, None),
+                declared_source_id: source_id_for_spec(&a_spec, None),
+                source_id: source_id_for_spec(&a_spec, None),
                 spec: a_spec,
                 subpath: None,
                 filter: FilterMode::All,
@@ -1810,7 +1851,8 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
         dependencies.insert(
             SourceName::from(b_name.clone()),
             EffectiveDependency {
-                id: source_id_for_spec(&b_spec, None),
+                declared_source_id: source_id_for_spec(&b_spec, None),
+                source_id: source_id_for_spec(&b_spec, None),
                 spec: b_spec,
                 subpath: None,
                 filter: FilterMode::All,

@@ -1186,7 +1186,7 @@ subpath = "plugins/foo"
         );
         // SourceId must embed the same subpath
         assert!(matches!(
-            &effective.dependencies["dep"].id,
+            &effective.dependencies["dep"].source_id,
             SourceId::Git { subpath: Some(sp), .. } if sp.as_str() == "plugins/foo"
         ));
     }

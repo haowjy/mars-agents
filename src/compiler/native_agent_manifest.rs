@@ -131,7 +131,7 @@ fn write_native_agent_manifest_file(
             message: format!("failed to serialize native agent manifest: {err}"),
         })
     })?;
-    crate::fs::atomic_write(&path, json.as_bytes())
+    crate::fs::atomic_write_if_changed(&path, json.as_bytes()).map(|_| ())
 }
 
 /// Write `.mars/native-agents.json` from the authoritative lock native-output set.

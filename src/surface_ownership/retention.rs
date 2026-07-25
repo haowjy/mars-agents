@@ -104,24 +104,17 @@ impl RemovalPlan {
         ) -> Result<(), String>,
         diag: &mut DiagnosticCollector,
     ) -> RetentionPlan {
+        let RemovalPlan {
+            per_pair,
+            stale_keys,
+        } = self;
         let mut outcomes = BTreeMap::new();
-        for ((target_root, surface), removal) in self.per_pair {
+        for ((target_root, surface), removal) in per_pair {
             let outcome = if removal.keys_to_remove.is_empty() {
                 RemovalOutcome::Confirmed
             } else {
                 match remove(RemovalToken::new(), &target_root, surface, &removal, diag) {
-                    Ok(()) => {
-                        if surface == Surface::Mcp {
-                            diag.info(
-                                "stale-config-entry",
-                                format!(
-                                    "removed stale config entries from `{target_root}`: {}",
-                                    removal.keys_to_remove.join(", ")
-                                ),
-                            );
-                        }
-                        RemovalOutcome::Confirmed
-                    }
+                    Ok(()) => RemovalOutcome::Confirmed,
                     Err(message) => {
                         diag.warn("config-entry-remove", message);
                         RemovalOutcome::Unconfirmed {
@@ -131,6 +124,23 @@ impl RemovalPlan {
                 }
             };
             outcomes.insert((target_root, surface), outcome);
+        }
+        // Preserve the pre-seam diagnostic: it reported the target's complete
+        // previous-minus-desired set after the MCP cleanup step, including a
+        // vacuous MCP cleanup for hook-only stale state.
+        for (target_root, keys) in stale_keys {
+            if !matches!(
+                outcomes.get(&(target_root.clone(), Surface::Mcp)),
+                Some(RemovalOutcome::Unconfirmed { .. })
+            ) {
+                diag.info(
+                    "stale-config-entry",
+                    format!(
+                        "removed stale config entries from `{target_root}`: {}",
+                        keys.join(", ")
+                    ),
+                );
+            }
         }
         RetentionPlan { outcomes }
     }

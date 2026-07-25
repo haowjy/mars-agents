@@ -6,14 +6,10 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::MarsError;
-
-pub use crate::fs::{
-    FLAT_SKILL_EXCLUDED_TOP_LEVEL, atomic_install_dir, atomic_install_dir_filtered, atomic_write,
-    remove_item,
-};
+use crate::fs::atomic_write;
 
 #[cfg(windows)]
-pub use crate::fs::clear_readonly;
+use crate::fs::clear_readonly;
 
 /// Result of cache directory publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

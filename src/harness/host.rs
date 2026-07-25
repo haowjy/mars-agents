@@ -107,14 +107,6 @@ impl CapabilitySession {
         self.installed.extend(harnesses);
     }
 
-    pub fn offline(&self) -> bool {
-        self.offline
-    }
-
-    pub fn executable_snapshot(&self) -> BTreeMap<HarnessId, ExecutableState> {
-        self.executable.clone()
-    }
-
     pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
         self.opencode.get_or_insert_with(|| {
             cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
@@ -416,15 +408,5 @@ mod tests {
     fn resolve_binary_path_returns_none_when_missing() {
         let resolver = FakeResolver::default();
         assert_eq!(resolve_binary_path("codex", &resolver), None);
-    }
-
-    #[test]
-    fn probe_refresh_skip_does_not_force_offline_mode() {
-        let options = CapabilityCollectionOptions {
-            offline: false,
-            probe_refresh: ProbeRefreshMode::Skip,
-        };
-        let session = CapabilitySession::collect_with_resolver(&options, &FakeResolver::default());
-        assert!(!session.offline());
     }
 }

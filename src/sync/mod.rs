@@ -30,8 +30,7 @@ use crate::types::managed_cmd;
 use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 
-// Re-export mutation types for public API compatibility.
-pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_config_mutation};
+pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
 
 /// Report from a completed sync operation.
 #[derive(Debug)]

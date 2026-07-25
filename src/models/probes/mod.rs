@@ -10,11 +10,9 @@ pub mod probe_refresh;
 
 pub use probe_refresh::ProbeRefreshMode;
 
-pub use cursor::{
-    CursorProbeResult, probe as probe_cursor, probe_with_timeout as probe_cursor_with_timeout,
-};
-pub use opencode::{OpenCodeProbeResult, probe, probe_with_timeout};
-pub use pi::{PiProbeResult, probe as probe_pi, probe_with_timeout as probe_pi_with_timeout};
+pub use cursor::CursorProbeResult;
+pub use opencode::OpenCodeProbeResult;
+pub use pi::PiProbeResult;
 
 /// Determine whether an OpenCode probe should be attempted.
 /// Returns false if offline or opencode is not installed.

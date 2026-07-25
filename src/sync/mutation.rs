@@ -44,16 +44,6 @@ pub struct DependencyUpsertChange {
     pub new_filter: FilterConfig,
 }
 
-/// Apply a config mutation to the in-memory config.
-///
-/// Public so that CLI commands can batch mutations before triggering sync.
-pub fn apply_config_mutation(
-    config: &mut Config,
-    mutation: &ConfigMutation,
-) -> Result<(), MarsError> {
-    apply_mutation(config, mutation).map(|_| ())
-}
-
 pub(crate) fn apply_mutation(
     config: &mut Config,
     mutation: &ConfigMutation,

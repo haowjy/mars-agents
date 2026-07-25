@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::fs::{atomic_install_dir, atomic_write};
 use crate::lock::{ItemId, ItemKind};
 use crate::platform::fs as fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
@@ -233,7 +234,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     dest.display()
                 ))
             })?;
-            fs_ops::atomic_install_dir(&target.source_path, doc_dest)?;
+            atomic_install_dir(&target.source_path, doc_dest)?;
             crate::hash::compute_hash(doc_dest, ItemKind::BootstrapDoc).map(ContentHash::from)
         }
         ItemKind::Skill | ItemKind::Hook => {
@@ -244,7 +245,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
                 )?;
             } else {
-                fs_ops::atomic_install_dir(&target.source_path, dest)?;
+                atomic_install_dir(&target.source_path, dest)?;
             }
             // Skills are verified by hashing the installed directory content.
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
@@ -254,7 +255,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
 
 /// Write bytes to `dest` and verify persisted bytes hash matches expected.
 fn write_file_and_verify(dest: &Path, content: &[u8]) -> Result<ContentHash, MarsError> {
-    fs_ops::atomic_write(dest, content)?;
+    atomic_write(dest, content)?;
     let expected = ContentHash::from(crate::hash::hash_bytes(content));
     let persisted = std::fs::read(dest)?;
     let actual = ContentHash::from(crate::hash::hash_bytes(&persisted));

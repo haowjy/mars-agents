@@ -190,7 +190,13 @@ fn force_adopts_file_fragment_and_records_exact_output() {
         let actual = mars_agents::hash::hash_bytes(
             &fs::read(project.child(target).child(destination).path()).unwrap(),
         );
-        assert_eq!(output.installed_checksum.as_ref(), actual);
+        assert_eq!(
+            output
+                .installed_checksum()
+                .expect("installed output")
+                .as_ref(),
+            actual
+        );
         assert!(
             !fs::read_to_string(project.child("mars.lock").path())
                 .unwrap()
@@ -292,14 +298,16 @@ fn failed_file_fragment_removal_retains_ownership_for_retry() {
             ),
             "retry tombstone must not resurrect canonical ownership"
         );
-        assert!(
-            lock.items
-                .values()
-                .flat_map(|item| &item.outputs)
-                .any(|output| output.target_root == target
-                    && output.dest_path.as_str() == destination),
-            "failed removal must retain ownership authority"
-        );
+        let retained = lock
+            .items
+            .values()
+            .flat_map(|item| &item.outputs)
+            .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
+            .expect("failed removal must retain ownership authority");
+        assert!(matches!(
+            retained.state,
+            mars_agents::lock::OutputState::PendingDeletion
+        ));
 
         let canonical = project
             .child(".mars/hooks")

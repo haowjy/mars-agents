@@ -1,6 +1,6 @@
 # src/lock/ — Target-Scoped Lock Outputs
 
-`mars.lock` is the ownership registry for managed content. Lock v2 stores one
+`mars.lock` is the ownership registry for managed content. Lock v3 stores one
 logical item with one or more output records. Every output record is scoped by
 the target root that received it.
 
@@ -8,13 +8,14 @@ the target root that received it.
 
 ### Output identity is `(target_root, dest_path)`
 
-`OutputRecord` has three fields that must be interpreted together:
+`OutputRecord` has a path identity and an explicit lifecycle claim:
 
 | Field | Meaning |
 |---|---|
 | `target_root` | Directory Mars materialized into, such as `.mars`, `.codex`, `.pi`, `.agents` |
 | `dest_path` | Path relative to that target root, such as `skills/planning` |
-| `installed_checksum` | Hash of the bytes installed at that exact output |
+| `state = "installed"` + `installed_checksum` | Mars asserts that these exact bytes are installed at the path |
+| `state = "pending-deletion"` | Mars asserts only authority to retry deletion; no checksum exists |
 
 The pair `(target_root, dest_path)` is the stable identity of an installed
 output. `dest_path` alone is not unique once a project has multiple targets.
@@ -26,13 +27,24 @@ therefore have multiple valid installed checksums:
 [[items."skill/planning".outputs]]
 target_root = ".mars"
 dest_path = "skills/planning"
+state = "installed"
 installed_checksum = "sha256:canonical..."
 
 [[items."skill/planning".outputs]]
 target_root = ".pi"
 dest_path = "skills/planning"
+state = "installed"
 installed_checksum = "sha256:pi-projected..."
 ```
+
+Pending deletion is deliberately part of the same type because it changes the
+meaning of an existing path-ownership record. The enum makes a checksum
+unavailable in that state, so disk-content consumers must handle the lifecycle.
+
+Interrupted-write recovery is not represented here. Publishing intent before
+materialization would add a second lock write, transaction ordering, and
+fault-injection recovery semantics. That is a separate pipeline transaction
+design rather than another meaning needed by the current ownership record.
 
 ### `LockIndex` is the read seam
 
@@ -76,7 +88,7 @@ Linked-target deletion, overwrite, and orphan cleanup use the same
 
 ```mermaid
 flowchart TD
-    LockFile["LockFile v2 schema"]
+    LockFile["LockFile v3 schema"]
     Item["LockedItemV2 logical item"]
     Outputs["OutputRecord[]"]
     Index["LockIndex"]
@@ -97,7 +109,7 @@ checksum applies to the target being inspected.
 
 ## Rationale
 
-The v2 schema already models per-target outputs. The bug class comes from
+The schema models per-target outputs. One bug class comes from
 flattening those outputs into a `dest_path -> output` map and letting duplicate
 paths overwrite each other. Sorting can make a later target win, so canonical
 diff may read a linked/native target checksum even when `.mars` is clean.

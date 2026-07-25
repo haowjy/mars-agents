@@ -1,0 +1,10 @@
+error[E0615]: attempted to take value of method `installed_checksum` on type `OutputRecord`
+ --> tests/ui/pending_deletion_checksum.rs:6:29
+  |
+6 |     let _checksum = pending.installed_checksum;
+  |                             ^^^^^^^^^^^^^^^^^^ method, not a field
+  |
+help: use parentheses to call the method
+  |
+6 |     let _checksum = pending.installed_checksum();
+  |                                               ++

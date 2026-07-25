@@ -69,8 +69,11 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             for output in &mut item_v2.outputs {
                 if &output.dest_path == dest_path_str {
                     let new_hash = hash::compute_hash(&disk_path, item_v2.kind)?;
-                    if new_hash != output.installed_checksum {
-                        output.installed_checksum = ContentHash::from(new_hash);
+                    if output
+                        .installed_checksum()
+                        .is_none_or(|checksum| new_hash != checksum.as_ref())
+                    {
+                        output.mark_installed(ContentHash::from(new_hash));
                         resolved_files.push(dest_path_str.to_string());
                     }
                     break 'outer;

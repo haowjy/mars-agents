@@ -230,6 +230,10 @@ fn assert_config_entry_consistency_with_diagnostics(
                 "target `{}` item `{}` was edited after Mars installed it",
                 output.target_root, output.dest_path
             ));
+            let mars_agents::lock::OutputState::Installed { installed_checksum } = &output.state
+            else {
+                continue;
+            };
             let metadata = match fs::symlink_metadata(path.path()) {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -243,9 +247,12 @@ fn assert_config_entry_consistency_with_diagnostics(
                     output.target_root, output.dest_path
                 ),
             };
-            if !metadata.file_type().is_file() {
-                continue;
-            }
+            assert!(
+                metadata.file_type().is_file(),
+                "installed file-hook record points to a non-file `{}/{}`",
+                output.target_root,
+                output.dest_path
+            );
             if output_divergence_was_reported {
                 continue;
             }
@@ -257,7 +264,7 @@ fn assert_config_entry_consistency_with_diagnostics(
             });
             assert_eq!(
                 mars_agents::hash::hash_bytes(&bytes),
-                output.installed_checksum.as_ref(),
+                installed_checksum.as_ref(),
                 "file-hook bytes disagree with lock checksum for `{}/{}`",
                 output.target_root,
                 output.dest_path

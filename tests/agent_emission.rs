@@ -222,6 +222,18 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
         lock.contains_output(".codex", "agents/coder.toml"),
         "failed native removal must leave retry authority"
     );
+    let retained = lock
+        .items
+        .values()
+        .flat_map(|item| &item.outputs)
+        .find(|output| {
+            output.target_root == ".codex" && output.dest_path.as_str() == "agents/coder.toml"
+        })
+        .expect("retry authority record");
+    assert!(matches!(
+        retained.state,
+        mars_agents::lock::OutputState::PendingDeletion
+    ));
     assert!(
         !lock.contains_output(".mars", "agents/coder.md"),
         "retry tombstone must not resurrect canonical ownership"

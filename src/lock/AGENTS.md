@@ -7,7 +7,7 @@ each output path.
 
 ## Mental Model
 
-Lock v2 separates a logical item from its materialized outputs:
+Lock v3 separates a logical item from its path-scoped lifecycle claims:
 
 ```text
 items."skill/planning"
@@ -15,7 +15,11 @@ items."skill/planning"
   outputs[]
     target_root = ".mars"  # canonical store output
     dest_path = "skills/planning"
-    installed_checksum     # bytes at that target output
+    state = installed      # checksum asserts installed bytes
+    installed_checksum
+
+After an unconfirmed removal, the output instead has
+`state = pending-deletion` and no checksum. It retains deletion authority only.
 ```
 
 The same `dest_path` may appear under multiple `target_root`s. Native targets
@@ -47,6 +51,6 @@ paths match.
 
 ## Entry Points
 
-- `mod.rs` — schema types, load/write, v1 promotion, lock build, `LockIndex`.
+- `mod.rs` — schema types, load/write, lock build, `LockIndex`.
 - `.context/CONTEXT.md` — target-scoped lookup contracts and rationale.
 - `../target_sync/.context/CONTEXT.md` — linked-target mutation ownership rules.

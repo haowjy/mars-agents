@@ -191,7 +191,7 @@ pub(crate) fn load_config(
         crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
     diag.extend(config_diagnostics);
 
-    // Load existing lock file, routing legacy promotion warnings through sync diagnostics.
+    // Load existing lock file, routing load diagnostics through sync diagnostics.
     let (old_lock, lock_diagnostics) = crate::lock::load_with_diagnostics(project_root)?;
     diag.extend(lock_diagnostics);
 

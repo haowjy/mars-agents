@@ -243,15 +243,13 @@ fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
 
 fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> LockFile {
     let mut lock = LockFile::empty();
-    let mut outputs: Vec<OutputRecord> = vec![OutputRecord {
-        target_root: ".mars".to_string(),
-        dest_path: dest.into(),
-        installed_checksum: checksum.into(),
-    }];
-    outputs.extend(targets.iter().map(|target| OutputRecord {
-        target_root: (*target).to_string(),
-        dest_path: dest.into(),
-        installed_checksum: checksum.into(),
+    let mut outputs: Vec<OutputRecord> = vec![OutputRecord::installed(
+        ".mars".to_string(),
+        dest.into(),
+        checksum.into(),
+    )];
+    outputs.extend(targets.iter().map(|target| {
+        OutputRecord::installed((*target).to_string(), dest.into(), checksum.into())
     }));
     lock.items.insert(
         "agent/coder".to_string(),
@@ -293,11 +291,11 @@ fn link_suppress_all_reconciles_selective_native_target() {
         .get_mut("agent/coder")
         .unwrap()
         .outputs
-        .push(OutputRecord {
-            target_root: ".codex".to_string(),
-            dest_path: "agents/coder.toml".into(),
-            installed_checksum: "sha256:coder-toml".into(),
-        });
+        .push(OutputRecord::installed(
+            ".codex".to_string(),
+            "agents/coder.toml".into(),
+            "sha256:coder-toml".into(),
+        ));
     let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
     let removed = reconcile_native_agent_surfaces_without_model_routing(
         &NativeAgentReconcileCtx {

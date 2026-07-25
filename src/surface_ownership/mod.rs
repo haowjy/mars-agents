@@ -5,6 +5,12 @@
 //! `(target_root, dest_path)`. `.mars`-only records do not imply ownership
 //! elsewhere.
 //!
+//! Path ownership has two explicit lifecycle claims. An installed record asserts
+//! that its checksum describes content at the path. A pending-deletion record
+//! asserts only authority to retry removal; it carries no checksum and must not
+//! be treated as evidence of installed bytes. Either claim authorizes deletion,
+//! but only installed records participate in content comparison.
+//!
 //! Merge-mode config entries use entry ownership rather than path ownership. A
 //! config entry may be removed only when the lock holds a
 //! [`ConfigEntryRecord`](crate::lock::ConfigEntryRecord) and its recorded
@@ -122,7 +128,7 @@ mod tests {
 
     fn lock_with_output(target_root: &str, dest_path: &str) -> LockFile {
         LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: IndexMap::from([(
                 "agent/coder".to_string(),
@@ -131,11 +137,11 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: target_root.to_string(),
-                        dest_path: dest_path.into(),
-                        installed_checksum: "sha256:inst".into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        target_root.to_string(),
+                        dest_path.into(),
+                        "sha256:inst".into(),
+                    )],
                 },
             )]),
             config_entries: Default::default(),

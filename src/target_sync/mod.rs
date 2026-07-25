@@ -415,7 +415,7 @@ fn disk_matches_recorded_or_desired(
         item.outputs.iter().any(|recorded| {
             recorded.target_root == target_name
                 && crate::target::dest_paths_equivalent(recorded.dest_path.as_str(), dest_rel)
-                && recorded.installed_checksum == actual
+                && recorded.installed_checksum() == Some(&actual)
         })
     })
 }
@@ -531,8 +531,10 @@ fn cleanup_orphans(
 
         let full_path = target_root.join(managed_path);
 
-        // Skip if the path doesn't exist (already removed or never synced to this target).
+        // An already-absent owned path confirms deletion just as surely as a
+        // successful remove. Publish that confirmation so the lock drops it.
         if !full_path.exists() && full_path.symlink_metadata().is_err() {
+            removed_dest_paths.push(managed_path.clone());
             continue;
         }
 
@@ -592,11 +594,11 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: target.to_string(),
-                        dest_path: (*dest).into(),
-                        installed_checksum: (*checksum).into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        target.to_string(),
+                        (*dest).into(),
+                        (*checksum).into(),
+                    )],
                 },
             );
         }
@@ -614,11 +616,11 @@ mod tests {
                     kind: ItemKind::Skill,
                     version: None,
                     source_checksum: "sha256:src".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: target.to_string(),
-                        dest_path: (*dest).into(),
-                        installed_checksum: (*checksum).into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        target.to_string(),
+                        (*dest).into(),
+                        (*checksum).into(),
+                    )],
                 },
             );
         }
@@ -1208,11 +1210,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/design-lead.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/design-lead.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 
@@ -1256,11 +1258,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 
@@ -1308,11 +1310,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 

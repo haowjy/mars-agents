@@ -1358,7 +1358,12 @@ fn lock_written_after_apply() {
     let item = &reloaded.items["agent/coder"];
     assert_eq!(item.kind, ItemKind::Agent);
     assert!(!item.source_checksum.is_empty());
-    assert!(!item.outputs[0].installed_checksum.is_empty());
+    assert!(
+        !item.outputs[0]
+            .installed_checksum()
+            .expect("installed output")
+            .is_empty()
+    );
 }
 
 #[test]

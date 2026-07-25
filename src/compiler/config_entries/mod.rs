@@ -904,7 +904,11 @@ fn write_file_hook_outputs(
             let diverged = previous.is_some_and(|previous| {
                 std::fs::read(&path)
                     .map(|bytes| crate::hash::hash_bytes(&bytes))
-                    .is_ok_and(|actual| actual != previous.installed_checksum.as_ref())
+                    .is_ok_and(|actual| {
+                        previous
+                            .installed_checksum()
+                            .is_none_or(|checksum| actual != checksum.as_ref())
+                    })
             });
             if diverged {
                 diag.warn(

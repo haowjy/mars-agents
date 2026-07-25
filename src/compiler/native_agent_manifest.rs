@@ -67,11 +67,14 @@ fn compiled_native_outputs_from_lock(lock: &crate::lock::LockFile) -> Vec<Compil
             if HarnessKind::from_target_dir(&output.target_root).is_none() {
                 continue;
             }
+            let Some(installed_checksum) = output.installed_checksum() else {
+                continue;
+            };
             records.push(CompiledNativeOutput {
                 owner_canonical_dest_path: owner_canonical_dest_path.clone(),
                 target_root: output.target_root.clone(),
                 dest_path: output.dest_path.to_string(),
-                installed_checksum: output.installed_checksum.clone(),
+                installed_checksum: installed_checksum.clone(),
             });
         }
     }
@@ -192,17 +195,17 @@ mod tests {
         native_targets: &[(&str, &str)],
     ) -> LockFile {
         let mut lock = LockFile::empty();
-        let mut outputs = vec![OutputRecord {
-            target_root: ".mars".to_string(),
-            dest_path: canonical_dest.into(),
-            installed_checksum: "sha256:src".into(),
-        }];
+        let mut outputs = vec![OutputRecord::installed(
+            ".mars".to_string(),
+            canonical_dest.into(),
+            "sha256:src".into(),
+        )];
         for (target_root, dest_path) in native_targets {
-            outputs.push(OutputRecord {
-                target_root: (*target_root).to_string(),
-                dest_path: (*dest_path).into(),
-                installed_checksum: "sha256:native".into(),
-            });
+            outputs.push(OutputRecord::installed(
+                (*target_root).to_string(),
+                (*dest_path).into(),
+                "sha256:native".into(),
+            ));
         }
         lock.items.insert(
             agent_key.to_string(),
@@ -238,16 +241,16 @@ mod tests {
                     version: None,
                     source_checksum: "sha256:src".into(),
                     outputs: vec![
-                        OutputRecord {
-                            target_root: ".mars".to_string(),
-                            dest_path: "agents/frontend-coder.md".into(),
-                            installed_checksum: "sha256:src".into(),
-                        },
-                        OutputRecord {
-                            target_root: HarnessKind::Claude.target_dir().to_string(),
-                            dest_path: "agents/frontend-coder.md".into(),
-                            installed_checksum: "sha256:native".into(),
-                        },
+                        OutputRecord::installed(
+                            ".mars".to_string(),
+                            "agents/frontend-coder.md".into(),
+                            "sha256:src".into(),
+                        ),
+                        OutputRecord::installed(
+                            HarnessKind::Claude.target_dir().to_string(),
+                            "agents/frontend-coder.md".into(),
+                            "sha256:native".into(),
+                        ),
                     ],
                 },
             );
@@ -352,16 +355,16 @@ mod tests {
                     version: None,
                     source_checksum: "sha256:src".into(),
                     outputs: vec![
-                        OutputRecord {
-                            target_root: ".mars".to_string(),
-                            dest_path: "agents/a-agent.md".into(),
-                            installed_checksum: "sha256:src".into(),
-                        },
-                        OutputRecord {
-                            target_root: HarnessKind::Claude.target_dir().to_string(),
-                            dest_path: "agents/a-agent.md".into(),
-                            installed_checksum: "sha256:native".into(),
-                        },
+                        OutputRecord::installed(
+                            ".mars".to_string(),
+                            "agents/a-agent.md".into(),
+                            "sha256:src".into(),
+                        ),
+                        OutputRecord::installed(
+                            HarnessKind::Claude.target_dir().to_string(),
+                            "agents/a-agent.md".into(),
+                            "sha256:native".into(),
+                        ),
                     ],
                 },
             );

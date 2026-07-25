@@ -18,29 +18,18 @@ pub enum DiffEntry {
     /// New item not in lock or on disk.
     Add { target: TargetItem },
     /// Source changed, local unchanged → clean update.
-    Update {
-        target: TargetItem,
-        locked: LockedItem,
-    },
+    Update { target: TargetItem },
     /// Source unchanged, local unchanged → skip.
     Unchanged {
         target: TargetItem,
         locked: LockedItem,
     },
     /// Source changed AND local changed → needs merge.
-    Conflict {
-        target: TargetItem,
-        locked: LockedItem,
-        local_hash: ContentHash,
-    },
+    Conflict { target: TargetItem },
     /// In lock but not in target → should be removed.
     Orphan { locked: LockedItem },
     /// Local modification, source unchanged → keep local.
-    LocalModified {
-        target: TargetItem,
-        locked: LockedItem,
-        local_hash: ContentHash,
-    },
+    LocalModified { target: TargetItem },
 }
 
 /// Compute the diff between current disk state + lock and target state.
@@ -114,23 +103,18 @@ pub fn compute(
                     // Source changed, local unchanged → clean update
                     items.push(DiffEntry::Update {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
                     });
                 }
-                (false, Some(local_hash)) => {
+                (false, Some(_local_hash)) => {
                     // Local changed, source unchanged → keep local
                     items.push(DiffEntry::LocalModified {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
-                        local_hash: local_hash.clone(),
                     });
                 }
-                (true, Some(local_hash)) => {
+                (true, Some(_local_hash)) => {
                     // Both changed → conflict
                     items.push(DiffEntry::Conflict {
                         target: target_item.clone(),
-                        locked: locked_item.clone(),
-                        local_hash: local_hash.clone(),
                     });
                 }
             }
@@ -202,11 +186,6 @@ mod tests {
                 name: ItemName::from(name),
             },
             source_name: SourceName::from("test-source"),
-            origin: crate::types::SourceOrigin::Dependency(SourceName::from("test-source")),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: dest_path.to_string_lossy().to_string().into(),
             source_hash: ContentHash::from(source_hash),
@@ -235,11 +214,11 @@ mod tests {
             kind,
             version: None,
             source_checksum: ContentHash::from(source_checksum),
-            outputs: vec![OutputRecord {
-                target_root: ".mars".to_string(),
-                dest_path: dest_path.into(),
-                installed_checksum: ContentHash::from(installed_checksum),
-            }],
+            outputs: vec![OutputRecord::installed(
+                ".mars".to_string(),
+                dest_path.into(),
+                ContentHash::from(installed_checksum),
+            )],
         };
         (key, item)
     }
@@ -292,7 +271,7 @@ mod tests {
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &hash, &hash);
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -331,7 +310,7 @@ mod tests {
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &old_hash, &old_hash);
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -370,7 +349,7 @@ mod tests {
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &original_hash, &original_hash);
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -409,7 +388,7 @@ mod tests {
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &original_hash, &original_hash);
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -435,7 +414,7 @@ mod tests {
         let (k, v) = make_v2_item("old-agent", ItemKind::Agent, "sha256:aaa", "sha256:aaa");
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -480,7 +459,7 @@ mod tests {
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &source_hash, &installed_hash);
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -548,7 +527,7 @@ mod tests {
         let (k, v) = make_v2_item("orphan", ItemKind::Agent, "sha256:xxx", "sha256:xxx");
         lock_items.insert(k, v);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -621,15 +600,15 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: source_hash.clone().into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: installed_hash.into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    installed_hash.into(),
+                )],
             },
         );
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -677,21 +656,21 @@ mod tests {
                 version: None,
                 source_checksum: canonical_hash.clone().into(),
                 outputs: vec![
-                    OutputRecord {
-                        target_root: ".mars".to_string(),
-                        dest_path: "agents/coder.md".into(),
-                        installed_checksum: canonical_hash.clone().into(),
-                    },
-                    OutputRecord {
-                        target_root: ".pi".to_string(),
-                        dest_path: "agents/coder.md".into(),
-                        installed_checksum: pi_hash.into(),
-                    },
+                    OutputRecord::installed(
+                        ".mars".to_string(),
+                        "agents/coder.md".into(),
+                        canonical_hash.clone().into(),
+                    ),
+                    OutputRecord::installed(
+                        ".pi".to_string(),
+                        "agents/coder.md".into(),
+                        pi_hash.into(),
+                    ),
                 ],
             },
         );
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -731,11 +710,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: SourceName::from("test-source"),
-                origin: crate::types::SourceOrigin::Dependency(SourceName::from("test-source")),
-                source_id: crate::types::SourceId::Path {
-                    canonical: PathBuf::from("/tmp/source/agents/coder.md"),
-                    subpath: None,
-                },
                 source_path: PathBuf::from("/tmp/source/agents/coder.md"),
                 dest_path: "agents/coder.md".into(),
                 source_hash: source_hash.clone().into(),
@@ -755,15 +729,15 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: source_hash.into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: old_installed_hash.clone().into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    old_installed_hash.clone().into(),
+                )],
             },
         );
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),
@@ -813,7 +787,7 @@ mod tests {
         );
         lock_items.insert(key, item);
         let lock = LockFile {
-            version: 2,
+            version: 3,
             dependencies: IndexMap::new(),
             items: lock_items,
             config_entries: std::collections::BTreeMap::new(),

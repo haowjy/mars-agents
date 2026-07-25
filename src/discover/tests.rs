@@ -515,59 +515,6 @@ fn convention_walk_finds_items_at_max_depth_and_skips_deeper_items() {
         PathBuf::from("a/b/c/d/agents/found.md")
     );
 }
-
-#[test]
-fn explicit_claude_subpath_with_claude_dialect_imports_real_claude_layout() {
-    use crate::config::SkillOverlay;
-    use crate::diagnostic::DiagnosticCollector;
-    use crate::dialect::Dialect;
-    use crate::resolve::apply_subpath;
-    use crate::staging::stage_rooted_source;
-    use crate::types::{RenameMap, SourceName, SourceSubpath};
-    use indexmap::IndexMap;
-
-    let checkout = TempDir::new().unwrap();
-    let claude_root = checkout.path().join(".claude");
-    fs::create_dir_all(claude_root.join("agents")).unwrap();
-    fs::create_dir_all(claude_root.join("skills/research")).unwrap();
-    fs::write(
-        claude_root.join("agents/reviewer.md"),
-        "---\ndescription: reviewer\n---\n# reviewer",
-    )
-    .unwrap();
-    fs::write(
-        claude_root.join("skills/research/SKILL.md"),
-        "---\ndescription: research\n---\n# research",
-    )
-    .unwrap();
-
-    let source_name = SourceName::new("foreign");
-    let subpath = SourceSubpath::new(".claude").unwrap();
-    let rooted = apply_subpath(&source_name, checkout.path(), Some(&subpath)).unwrap();
-    let staging = TempDir::new().unwrap();
-    let mut diag = DiagnosticCollector::new();
-    let staged = stage_rooted_source(
-        &source_name,
-        rooted,
-        Dialect::Claude,
-        &IndexMap::<String, SkillOverlay>::new(),
-        &RenameMap::new(),
-        staging.path(),
-        &mut diag,
-    )
-    .unwrap();
-
-    let items = discover_resolved_source(&staged.package_root, Some("foreign")).unwrap();
-
-    assert_eq!(items.len(), 2);
-    assert!(items.iter().any(|item| {
-        item.id.kind == ItemKind::Agent && item.source_path == Path::new("agents/reviewer.md")
-    }));
-    assert!(items.iter().any(|item| {
-        item.id.kind == ItemKind::Skill && item.source_path == Path::new("skills/research")
-    }));
-}
-
 #[test]
 fn fallback_walk_finds_nested_min_layer_and_skips_dot_dirs() {
     let dir = TempDir::new().unwrap();
@@ -795,30 +742,4 @@ fn fallback_manifest_declared_escape_is_rejected() {
 
     let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
     assert!(matches!(err, MarsError::ManifestDeclaredPathEscape { .. }));
-}
-
-#[test]
-fn discover_installed_reads_frontmatter() {
-    let dir = TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join("agents")).unwrap();
-    fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
-    fs::write(
-        dir.path().join("agents/coder.md"),
-        "---\nname: coder\ndescription: test\nskills: [planning]\n---\n# Coder\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("skills/planning/SKILL.md"),
-        "---\nname: planning\ndescription: test\n---\n# Planning\n",
-    )
-    .unwrap();
-
-    let state = discover_installed(dir.path()).unwrap();
-    assert_eq!(state.agents.len(), 1);
-    assert_eq!(state.skills.len(), 1);
-    assert_eq!(state.agents[0].skill_refs, vec!["planning"]);
-    assert_eq!(
-        state.skills[0].frontmatter_name.as_deref(),
-        Some("planning")
-    );
 }

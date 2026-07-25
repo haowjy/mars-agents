@@ -109,7 +109,7 @@ pub(crate) fn parse_pending_item_skill_deps(
     pending_item: &PendingItem,
     package: &RegisteredPackage,
 ) -> Result<Vec<ItemName>, MarsError> {
-    if pending_item.kind == ItemKind::BootstrapDoc {
+    if !matches!(pending_item.kind, ItemKind::Agent | ItemKind::Skill) {
         return Ok(Vec::new());
     }
 
@@ -127,10 +127,9 @@ pub(crate) fn discovered_item_markdown_path(
     item: &discover::DiscoveredItem,
 ) -> PathBuf {
     match item.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
-            package_root.join(&item.source_path)
-        }
+        ItemKind::Agent | ItemKind::McpServer => package_root.join(&item.source_path),
         ItemKind::BootstrapDoc => package_root.join(&item.source_path).join("BOOTSTRAP.md"),
+        ItemKind::Hook => package_root.join(&item.source_path).join("hook.toml"),
         ItemKind::Skill => {
             if item.source_path == Path::new(".") {
                 package_root.join("SKILL.md")
@@ -182,7 +181,6 @@ pub(crate) fn resolve_skill_ref(
         constraint,
         required_by,
         is_local: package.is_local,
-        spec: package.spec.clone(),
     })
 }
 

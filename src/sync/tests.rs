@@ -20,8 +20,6 @@ impl TestFixture {
     fn new() -> Self {
         let project_root = TempDir::new().unwrap();
         let managed_root = project_root.path().join(".agents");
-        // Create .mars/cache directories
-        fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
         TestFixture {
             project_root,
             managed_root,
@@ -93,7 +91,6 @@ fn make_graph_config(
                     commit: None,
                     tree_path: tree_path.clone(),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -103,8 +100,11 @@ fn make_graph_config(
         config_dependencies.insert(
             name.into(),
             EffectiveDependency {
-                name: name.into(),
-                id: crate::types::SourceId::Path {
+                declared_source_id: crate::types::SourceId::Path {
+                    canonical: tree_path.clone(),
+                    subpath: None,
+                },
+                source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
                 },
@@ -113,8 +113,6 @@ fn make_graph_config(
                 filter,
                 rename: crate::types::RenameMap::new(),
                 dialect: None,
-                is_overridden: false,
-                original_git: None,
             },
         );
     }
@@ -125,6 +123,7 @@ fn make_graph_config(
             order,
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         },
         EffectiveConfig {
             dependencies: config_dependencies,
@@ -156,13 +155,9 @@ fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Depen
     }
 }
 
-fn create_sync_plan(
-    sync_diff: &diff::SyncDiff,
-    options: &SyncOptions,
-    cache_bases_dir: &std::path::Path,
-) -> plan::SyncPlan {
+fn create_sync_plan(sync_diff: &diff::SyncDiff, options: &SyncOptions) -> plan::SyncPlan {
     let mut diag = DiagnosticCollector::new();
-    plan::create(sync_diff, options, cache_bases_dir, &mut diag)
+    plan::create(sync_diff, options, &mut diag)
 }
 
 #[test]
@@ -210,14 +205,12 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -269,14 +262,12 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -347,14 +338,12 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -406,14 +395,12 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -467,14 +454,12 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         graph,
         upgrades_available: 0,
     };
-    let ctx = MarsContext::for_test(
-        fixture.project_root().to_path_buf(),
-        fixture.managed_root().to_path_buf(),
-    );
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -502,7 +487,10 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
             (*name).into(),
             ResolvedNode {
                 source_name: (*name).into(),
-                source_id: crate::types::SourceId::git(crate::types::SourceUrl::from(*url)),
+                source_id: crate::types::SourceId::git_with_subpath(
+                    crate::types::SourceUrl::from(*url),
+                    None,
+                ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
@@ -514,7 +502,6 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from(format!("/tmp/{name}")),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -527,6 +514,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
         order,
         filters: std::collections::HashMap::new(),
         version_constraints: std::collections::HashMap::new(),
+        unreadable_hook_surfaces: std::collections::BTreeMap::new(),
     }
 }
 
@@ -542,6 +530,7 @@ fn validate_request_rejects_frozen_with_maximize() {
             frozen: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
@@ -561,6 +550,7 @@ fn validate_request_rejects_frozen_with_mutation() {
             frozen: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
@@ -715,8 +705,6 @@ fn planned_bump_entries_preserve_filters_and_renames() {
 #[test]
 fn execute_auto_inits_config_for_mutation() {
     let project_root = TempDir::new().unwrap();
-    let managed_root = project_root.path().join(".agents");
-    fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
     let source = TempDir::new().unwrap();
     fs::create_dir_all(source.path().join("agents")).unwrap();
     fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
@@ -728,10 +716,11 @@ fn execute_auto_inits_config_for_mutation() {
             entry: path_dependency_entry(source.path()),
         }),
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
-    let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
+    let ctx = MarsContext::for_test(project_root.path().to_path_buf());
     let report = execute(&ctx, &request).unwrap();
     assert!(!report.applied.outcomes.is_empty());
     assert!(project_root.path().join("mars.toml").exists());
@@ -744,7 +733,6 @@ fn execute_auto_inits_config_for_mutation() {
 fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
     let managed_root = project_root.path().join(".agents");
-    fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
     crate::config::save(
         project_root.path(),
         &Config {
@@ -769,10 +757,11 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
             dry_run: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
-    let ctx = MarsContext::for_test(project_root.path().to_path_buf(), managed_root.clone());
+    let ctx = MarsContext::for_test(project_root.path().to_path_buf());
     let report = execute(&ctx, &request).unwrap();
     assert!(!report.applied.outcomes.is_empty());
 
@@ -795,7 +784,9 @@ fn full_pipeline_fresh_sync() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Build target
-    let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, renames, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     assert!(renames.is_empty());
     assert_eq!(target.items.len(), 2);
 
@@ -810,16 +801,15 @@ fn full_pipeline_fresh_sync() {
     }
 
     // Create plan
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
+    let sync_plan = create_sync_plan(&sync_diff, &options);
     assert_eq!(sync_plan.actions.len(), 2);
     for action in &sync_plan.actions {
         assert!(matches!(action, plan::PlannedAction::Install { .. }));
     }
 
     // Execute plan
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     assert_eq!(result.outcomes.len(), 2);
 
     // Verify files were created
@@ -848,18 +838,21 @@ fn re_sync_no_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
     // Second sync with same content
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // All items should be Unchanged
@@ -870,7 +863,7 @@ fn re_sync_no_changes() {
         );
     }
 
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
     for action in &sync_plan2.actions {
         assert!(matches!(action, plan::PlannedAction::Skip { .. }));
     }
@@ -894,8 +887,11 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         dependencies: indexmap::IndexMap::from([(
             "base".into(),
             EffectiveDependency {
-                name: "base".into(),
-                id: crate::types::SourceId::Path {
+                declared_source_id: crate::types::SourceId::Path {
+                    canonical: tree_path.clone(),
+                    subpath: None,
+                },
+                source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
                 },
@@ -904,8 +900,6 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 filter: FilterMode::All,
                 rename: crate::types::RenameMap::new(),
                 dialect: Some(crate::dialect::Dialect::Claude),
-                is_overridden: false,
-                original_git: None,
             },
         )]),
         settings: Settings::default(),
@@ -920,13 +914,16 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 checkout_root: tree_path.clone(),
                 package_root: tree_path.clone(),
             },
-            cfg.dependencies["base"].dialect.unwrap(),
+            crate::staging::RootedStageOptions {
+                dialect: cfg.dependencies["base"].dialect.unwrap(),
+            },
             &cfg.skills,
             &cfg.dependencies["base"].rename,
             &staging_root,
             &mut diag,
         )
         .unwrap()
+        .rooted
     };
 
     let mut graph = {
@@ -935,15 +932,15 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         g
     };
 
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
 
     let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
-        let (target, _, _) = target::build_with_collisions(graph, cfg).unwrap();
+        let (target, _, _) =
+            target::build_with_collisions_and_diag(graph, cfg, &mut DiagnosticCollector::new())
+                .unwrap();
         let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
-        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-        let result =
-            apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+        let sync_plan = create_sync_plan(&sync_diff, &options);
+        let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
         let new_lock =
             crate::lock::build(graph, &result, lock, std::collections::BTreeMap::new()).unwrap();
         (sync_diff, sync_plan, new_lock)
@@ -1028,7 +1025,9 @@ fn validate_skill_refs_ignores_stale_installed_agent_content() {
     .unwrap();
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
 
     let warnings = validate::validate_skill_refs(&target);
 
@@ -1047,7 +1046,9 @@ fn validate_skill_refs_warns_for_missing_target_source_ref() {
     );
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
 
     let warnings = validate::validate_skill_refs(&target);
 
@@ -1079,10 +1080,6 @@ fn validate_skill_refs_uses_rewritten_content() {
     fs::write(skill_path.join("SKILL.md"), "# New Skill\n").unwrap();
 
     let source_name = SourceName::from("base");
-    let source_id = SourceId::Path {
-        canonical: fixture.project_root().to_path_buf(),
-        subpath: None,
-    };
     let mut items = IndexMap::new();
     items.insert(
         DestPath::new("agents/coder.md").unwrap(),
@@ -1092,8 +1089,6 @@ fn validate_skill_refs_uses_rewritten_content() {
                 name: "coder".into(),
             },
             source_name: source_name.clone(),
-            origin: SourceOrigin::Dependency(source_name.clone()),
-            source_id: source_id.clone(),
             source_path,
             dest_path: DestPath::new("agents/coder.md").unwrap(),
             source_hash: ContentHash::from("sha256:source"),
@@ -1111,8 +1106,6 @@ fn validate_skill_refs_uses_rewritten_content() {
                 name: "new-skill".into(),
             },
             source_name: source_name.clone(),
-            origin: SourceOrigin::Dependency(source_name),
-            source_id,
             source_path: skill_path,
             dest_path: DestPath::new("skills/new-skill").unwrap(),
             source_hash: ContentHash::from("sha256:skill"),
@@ -1138,13 +1131,14 @@ fn source_update_detects_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1153,7 +1147,9 @@ fn source_update_detects_changes() {
     fs::write(agents_dir.join("coder.md"), "# Version 2").unwrap();
 
     // Rebuild target with updated content
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should detect an Update
@@ -1172,13 +1168,14 @@ fn local_modification_preserved() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1190,7 +1187,9 @@ fn local_modification_preserved() {
     .unwrap();
 
     // Re-sync (source unchanged)
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should detect LocalModified
@@ -1201,7 +1200,7 @@ fn local_modification_preserved() {
     ));
 
     // Plan should KeepLocal
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
     assert!(matches!(
         &sync_plan2.actions[0],
         plan::PlannedAction::KeepLocal { .. }
@@ -1216,13 +1215,14 @@ fn force_overwrites_local_modifications() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1238,26 +1238,22 @@ fn force_overwrites_local_modifications() {
     fs::write(agents_dir.join("coder.md"), "# Upstream update").unwrap();
 
     // Re-sync with --force
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     let force_options = SyncOptions {
         force: true,
         ..SyncOptions::default()
     };
-    let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &force_options);
     assert!(matches!(
         &sync_plan2.actions[0],
         plan::PlannedAction::Overwrite { .. }
     ));
 
-    let result2 = apply::execute(
-        fixture.managed_root(),
-        &sync_plan2,
-        &force_options,
-        &cache_dir,
-    )
-    .unwrap();
+    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &force_options).unwrap();
     assert!(matches!(
         result2.outcomes[0].action,
         apply::ActionTaken::Updated
@@ -1279,13 +1275,14 @@ fn orphan_removed_when_source_drops_item() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync — install both
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1296,7 +1293,9 @@ fn orphan_removed_when_source_drops_item() {
     fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
 
     // Re-sync
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should have one Unchanged and one Orphan
@@ -1307,9 +1306,8 @@ fn orphan_removed_when_source_drops_item() {
         .count();
     assert_eq!(orphan_count, 1);
 
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
-    let result2 =
-        apply::execute(fixture.managed_root(), &sync_plan2, &options, &cache_dir).unwrap();
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
+    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &options).unwrap();
 
     // Reviewer should be removed
     assert!(!fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1331,22 +1329,22 @@ fn dry_run_produces_plan_without_changes() {
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
 
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let dry_options = SyncOptions {
         dry_run: true,
         ..SyncOptions::default()
     };
 
-    let sync_plan = create_sync_plan(&sync_diff, &dry_options, &cache_dir);
+    let sync_plan = create_sync_plan(&sync_diff, &dry_options);
     assert!(!sync_plan.actions.is_empty());
 
     // Execute in dry-run mode
-    let result =
-        apply::execute(fixture.managed_root(), &sync_plan, &dry_options, &cache_dir).unwrap();
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
     assert!(!result.outcomes.is_empty());
 
     // No files should have been created
@@ -1361,13 +1359,14 @@ fn lock_written_after_apply() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Full pipeline minus actual sync() (which needs real config files)
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
 
     let new_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
@@ -1381,7 +1380,12 @@ fn lock_written_after_apply() {
     let item = &reloaded.items["agent/coder"];
     assert_eq!(item.kind, ItemKind::Agent);
     assert!(!item.source_checksum.is_empty());
-    assert!(!item.outputs[0].installed_checksum.is_empty());
+    assert!(
+        !item.outputs[0]
+            .installed_checksum()
+            .expect("installed output")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1398,16 +1402,17 @@ fn two_sources_no_collision() {
         ],
     );
 
-    let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, renames, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     assert!(renames.is_empty());
     assert_eq!(target.items.len(), 2);
 
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
 
     assert!(fixture.managed_root().join("agents/coder.md").exists());
     assert!(fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1427,7 +1432,9 @@ fn pipeline_only_skills_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlySkills)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // Should only have the skill, not the agent
     assert_eq!(target.items.len(), 1);
     assert!(target.items.contains_key("skills/planning"));
@@ -1449,7 +1456,9 @@ fn pipeline_only_agents_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // Should have the agent + its transitive skill dep, but NOT standalone
     assert_eq!(target.items.len(), 2);
     assert!(target.items.contains_key("agents/coder.md"));
@@ -1465,7 +1474,9 @@ fn pipeline_only_agents_no_agents_source() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // No agents means nothing gets installed
     assert_eq!(target.items.len(), 0);
 }

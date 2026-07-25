@@ -27,30 +27,74 @@ use crate::types::{RenameMap, SourceName};
 pub(crate) use lift::lift_frontmatter_with_change;
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HookSurfaceState {
+    Readable,
+    Unreadable {
+        hook_names: std::collections::BTreeSet<String>,
+    },
+}
+
+pub(crate) struct StagedRootedSource {
+    pub rooted: RootedSourceRef,
+    pub hook_surface: HookSurfaceState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RootedStageOptions {
+    pub dialect: Dialect,
+}
+
 /// Stage a package tree and repoint `package_root` at the staged output.
 pub(crate) fn stage_rooted_source(
     source_name: &SourceName,
     rooted: RootedSourceRef,
-    dialect: Dialect,
+    options: RootedStageOptions,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
-) -> Result<RootedSourceRef, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, dialect);
+) -> Result<StagedRootedSource, MarsError> {
+    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
     stage_canonical_source(
         &rooted.package_root,
         &staged_package_root,
-        dialect,
+        options.dialect,
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
         diag,
     )?;
-    Ok(RootedSourceRef {
-        checkout_root: rooted.checkout_root,
-        package_root: staged_package_root,
+    let hook_surface = detect_unreadable_hook_surface(&staged_package_root)?;
+    Ok(StagedRootedSource {
+        rooted: RootedSourceRef {
+            checkout_root: rooted.checkout_root,
+            package_root: staged_package_root,
+        },
+        hook_surface,
     })
+}
+
+fn detect_unreadable_hook_surface(package_root: &Path) -> Result<HookSurfaceState, MarsError> {
+    let hook_dirs = crate::discover::discover_hook_directories(package_root)?;
+    let mut hook_names = std::collections::BTreeSet::new();
+    for hook_dir in hook_dirs {
+        let manifest = hook_dir.join("hook.toml");
+        let raw = fs::read_to_string(&manifest)?;
+        let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+            continue;
+        };
+        if !crate::compiler::hooks::uses_removed_schema(&value) {
+            continue;
+        }
+        if let Some(hook_name) = hook_dir.file_name().and_then(|name| name.to_str()) {
+            hook_names.insert(hook_name.to_owned());
+        }
+    }
+    if hook_names.is_empty() {
+        return Ok(HookSurfaceState::Readable);
+    }
+    Ok(HookSurfaceState::Unreadable { hook_names })
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.
@@ -101,7 +145,7 @@ pub(crate) fn stage_local_item(
     fs::create_dir_all(dest.parent().unwrap_or(&dest))?;
 
     match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
+        ItemKind::Agent | ItemKind::McpServer => {
             fs::create_dir_all(&dest)?;
             let dest_file =
                 dest.join(source_path.file_name().ok_or_else(|| MarsError::Source {
@@ -127,7 +171,7 @@ pub(crate) fn stage_local_item(
             )?;
             Ok(dest_file)
         }
-        ItemKind::Skill | ItemKind::BootstrapDoc => {
+        ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => {
             stage_canonical_source(
                 source_path,
                 &dest,

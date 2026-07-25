@@ -71,7 +71,11 @@ warning: source `base` collides with unmanaged path `agents/custom.md` — leavi
 
 The item is removed from the target state, so the unmanaged file is preserved. This protects user-created local agents and skills from being overwritten.
 
-During `mars repair` with a corrupt lock file, unmanaged collisions are handled more aggressively: the colliding path is removed and sync retries, since there's no lock to distinguish managed from unmanaged files.
+`mars repair` runs one forced pipeline pass; it has no special
+collision-removal retry loop. A corrupt lock is treated as empty in memory
+while its on-disk bytes are preserved until successful finalization. Recovery
+halts before compilation and materialization if removed-schema hook content is
+unreadable.
 
 ## Content Conflicts
 
@@ -121,4 +125,4 @@ If conflict markers are still present, `mars resolve` reports the file as still 
 
 ## Exit Codes
 
-`mars sync` and `mars resolve` exit with code 1 when unresolved conflicts remain. Use `mars list --status` to see which items are conflicted, or `mars doctor` to check for conflict markers.
+`mars resolve` exits with code 1 when unresolved conflicts remain. Use `mars list --status` to see which items are conflicted, or `mars doctor` to check for conflict markers.

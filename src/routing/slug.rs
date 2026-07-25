@@ -91,7 +91,6 @@ pub fn provider_match_tier(target_provider: &str, candidate_provider: &str) -> O
 pub struct SlugMatch {
     pub slug: String,
     pub provider: String,
-    pub model_id: String,
 }
 
 /// Find all slugs whose model_id matches `target_model_id`.
@@ -110,7 +109,6 @@ pub fn find_model_matches<'a>(
         .map(|parts| SlugMatch {
             slug: parts.full.to_string(),
             provider: parts.provider.to_string(),
-            model_id: parts.model_id.to_string(),
         })
         .collect()
 }
@@ -212,7 +210,6 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].slug, "openai/gpt-5.4-mini");
         assert_eq!(matches[0].provider, "openai");
-        assert_eq!(matches[0].model_id, "gpt-5.4-mini");
     }
 
     #[test]
@@ -222,7 +219,6 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].slug, "openai/gpt-5");
         assert_eq!(matches[0].provider, "openai");
-        assert_eq!(matches[0].model_id, "gpt-5");
     }
 
     #[test]

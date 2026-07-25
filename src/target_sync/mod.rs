@@ -11,18 +11,11 @@ use std::path::Path;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::LockFile;
-use crate::reconcile::fs_ops;
+use crate::platform::fs as fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 use crate::types::managed_cmd;
-
-/// A directory that mars manages — materialized from .mars/.
-#[derive(Debug, Clone)]
-pub struct ManagedTarget {
-    /// Target directory path relative to project root (e.g. ".claude").
-    pub path: String,
-}
 
 /// A linked-target output recorded during sync for lock persistence.
 #[derive(Debug, Clone)]
@@ -147,7 +140,22 @@ fn sync_one_target(
         if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
             continue;
         }
-        let dest_rel = outcome.dest_path.as_str();
+        let canonical_dest_rel = outcome.dest_path.as_str();
+        let hook_dest;
+        let dest_rel = if outcome.item_id.kind == crate::lock::ItemKind::Hook {
+            let Some((hook_target, target_dest)) =
+                crate::sync::target::hook_target_dest_path(&outcome.dest_path)
+            else {
+                continue;
+            };
+            if hook_target != target_name.trim_start_matches('.') {
+                continue;
+            }
+            hook_dest = target_dest;
+            hook_dest.as_str()
+        } else {
+            canonical_dest_rel
+        };
         if outcome.item_id.kind == crate::lock::ItemKind::Agent && !target_accepts_canonical_agents
         {
             if matches!(outcome.action, ActionTaken::Removed) {
@@ -181,30 +189,95 @@ fn sync_one_target(
             }
             ActionTaken::Skipped => {
                 expected_paths.insert(dest_rel.to_string());
-                let source = mars_dir.join(dest_rel);
+                let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
                 if source.exists() || source.symlink_metadata().is_ok() {
                     let should_refresh_native_skill = outcome.item_id.kind
                         == crate::lock::ItemKind::Skill
                         && native_skill_variant_key.is_some();
                     let dest_exists = surface_ownership::target_dest_exists(&dest);
-                    let wants_copy = force || !dest_exists || should_refresh_native_skill;
+                    let managed_dest_is_current_or_stale = dest_exists
+                        && old_lock.contains_output(target_name, dest_rel)
+                        && (should_refresh_native_skill
+                            || disk_matches_recorded_or_desired(
+                                &dest,
+                                outcome.item_id.kind,
+                                target_name,
+                                dest_rel,
+                                old_lock,
+                                outcome.installed_checksum.as_ref(),
+                            ));
+                    let wants_copy = force
+                        || !dest_exists
+                        || should_refresh_native_skill
+                        || managed_dest_is_current_or_stale;
                     if wants_copy {
-                        if should_copy_to_target(
-                            &dest,
-                            target_name,
-                            dest_rel,
-                            old_lock,
-                            force,
-                            collision_hint,
-                            diag,
-                        ) {
-                            let previous_target_hash = if should_refresh_native_skill && dest_exists
+                        if should_copy_to_target(&dest, target_name, dest_rel, ctx, diag) {
+                            if let Some(variant_key) = native_skill_variant_key.as_deref()
+                                && should_refresh_native_skill
                             {
-                                crate::hash::compute_hash(&dest, outcome.item_id.kind).ok()
-                            } else {
-                                None
-                            };
+                                crate::compiler::variants::validate_skill_variants(
+                                    &source,
+                                    outcome.item_id.name.as_str(),
+                                    diag,
+                                );
+                                let projection =
+                                    match crate::compiler::variants::prepare_native_skill_projection(
+                                        &source,
+                                        variant_key,
+                                        diag,
+                                        outcome.item_id.name.as_str(),
+                                    ) {
+                                        Ok(projection) => projection,
+                                        Err(e) => {
+                                            errors
+                                                .push(format!("failed to prepare {dest_rel}: {e}"));
+                                            continue;
+                                        }
+                                    };
+                                let target_projection_matches =
+                                    crate::compiler::variants::prepared_native_skill_projection_matches(
+                                        &dest,
+                                        &projection,
+                                    )
+                                    .unwrap_or(false);
+                                if target_projection_matches {
+                                    synced_outputs.push(TargetSyncedOutput {
+                                        dest_path: dest_rel.to_string(),
+                                        installed_checksum: projection.installed_checksum,
+                                    });
+                                    continue;
+                                }
+                                match crate::compiler::variants::project_prepared_skill_for_target(
+                                    &source,
+                                    &dest,
+                                    Some(&projection),
+                                ) {
+                                    Ok(wrote) => {
+                                        if wrote {
+                                            items_synced += 1;
+                                        }
+                                        synced_outputs.push(TargetSyncedOutput {
+                                            dest_path: dest_rel.to_string(),
+                                            installed_checksum: projection
+                                                .installed_checksum
+                                                .clone(),
+                                        });
+                                        if dest_exists {
+                                            diag.warn(
+                                                "target-native-projection-repaired",
+                                                format!(
+                                                    "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        errors.push(format!("failed to copy {dest_rel}: {e}"))
+                                    }
+                                }
+                                continue;
+                            }
                             match copy_item_to_target(
                                 &source,
                                 &dest,
@@ -221,70 +294,60 @@ fn sync_one_target(
                                         dest_rel,
                                         outcome.item_id.kind,
                                     );
-                                    if let Some(previous_target_hash) = previous_target_hash
-                                        && let Ok(current_target_hash) =
-                                            crate::hash::compute_hash(&dest, outcome.item_id.kind)
-                                        && previous_target_hash != current_target_hash
-                                    {
+                                }
+                                Ok(false) => {
+                                    // Byte-identical tracked content is still an installation
+                                    // outcome even though no bytes moved.
+                                    record_synced_output(
+                                        &mut synced_outputs,
+                                        &dest,
+                                        dest_rel,
+                                        outcome.item_id.kind,
+                                    );
+                                }
+                                Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
+                            }
+                        }
+                    } else if native_skill_variant_key.is_none() && dest_exists {
+                        if old_lock
+                            .installed_checksum_for_output(target_name, dest_rel)
+                            .is_none()
+                        {
+                            surface_ownership::warn_no_installed_claim_collision(
+                                target_name,
+                                dest_rel,
+                                collision_hint,
+                                diag,
+                            );
+                        } else if let Some(expected_checksum) = &outcome.installed_checksum {
+                            match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
+                                Ok(actual) => {
+                                    let actual = ContentHash::from(actual);
+                                    if &actual != expected_checksum {
                                         diag.warn(
-                                            "target-native-projection-repaired",
+                                            "target-divergent",
                                             format!(
-                                                "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
+                                                "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
+                                                dest_rel,
+                                                cmd1 = managed_cmd("mars sync --force"),
+                                                cmd2 = managed_cmd("mars repair"),
                                             ),
                                         );
                                     }
                                 }
-                                Ok(false) => {}
-                                Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
+                                Err(e) => errors
+                                    .push(format!("failed to verify {dest_rel} checksum: {e}")),
                             }
                         }
-                    } else if native_skill_variant_key.is_none()
-                        && old_lock.contains_output(target_name, dest_rel)
-                        && let Some(expected_checksum) = &outcome.installed_checksum
-                    {
-                        match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
-                            Ok(actual) => {
-                                let actual = ContentHash::from(actual);
-                                if &actual != expected_checksum {
-                                    diag.warn(
-                                        "target-divergent",
-                                        format!(
-                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
-                                            dest_rel,
-                                            cmd1 = managed_cmd("mars sync --force"),
-                                            cmd2 = managed_cmd("mars repair"),
-                                        ),
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                errors.push(format!("failed to verify {dest_rel} checksum: {e}"))
-                            }
-                        }
-                    } else if dest_exists && !old_lock.contains_output(target_name, dest_rel) {
-                        surface_ownership::warn_unmanaged_collision(
-                            target_name,
-                            dest_rel,
-                            collision_hint,
-                            diag,
-                        );
                     }
                 }
             }
             _ => {
                 expected_paths.insert(dest_rel.to_string());
-                let source = mars_dir.join(dest_rel);
+                let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
                 if (source.exists() || source.symlink_metadata().is_ok())
-                    && should_copy_to_target(
-                        &dest,
-                        target_name,
-                        dest_rel,
-                        old_lock,
-                        force,
-                        collision_hint,
-                        diag,
-                    )
+                    && should_copy_to_target(&dest, target_name, dest_rel, ctx, diag)
                 {
                     match copy_item_to_target(
                         &source,
@@ -303,7 +366,16 @@ fn sync_one_target(
                                 outcome.item_id.kind,
                             );
                         }
-                        Ok(false) => {}
+                        Ok(false) => {
+                            // Existing desired bytes and newly copied bytes have the same
+                            // ownership semantics.
+                            record_synced_output(
+                                &mut synced_outputs,
+                                &dest,
+                                dest_rel,
+                                outcome.item_id.kind,
+                            );
+                        }
                         Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                     }
                 }
@@ -340,34 +412,67 @@ fn should_copy_to_target(
     dest: &Path,
     target_name: &str,
     dest_rel: &str,
-    old_lock: &LockFile,
-    force: bool,
-    collision_hint: CollisionAdoptHint,
+    ctx: &TargetSyncContext<'_>,
     diag: &mut DiagnosticCollector,
 ) -> bool {
     let dest_exists = surface_ownership::target_dest_exists(dest);
-    match surface_ownership::copy_decision(old_lock, target_name, dest_rel, dest_exists, force) {
+    match surface_ownership::copy_decision(
+        ctx.old_lock,
+        target_name,
+        dest_rel,
+        dest_exists,
+        ctx.force,
+    ) {
         SurfaceCopyDecision::Proceed => {
-            if dest_exists && force && !old_lock.contains_output(target_name, dest_rel) {
-                surface_ownership::warn_unmanaged_adopted(
+            if dest_exists
+                && ctx.force
+                && ctx
+                    .old_lock
+                    .installed_checksum_for_output(target_name, dest_rel)
+                    .is_none()
+            {
+                surface_ownership::warn_no_installed_claim_adopted(
                     target_name,
                     dest_rel,
-                    collision_hint,
+                    ctx.collision_hint,
                     diag,
                 );
             }
             true
         }
-        SurfaceCopyDecision::SkipUnmanagedCollision => {
-            surface_ownership::warn_unmanaged_collision(
+        SurfaceCopyDecision::SkipWithoutInstalledClaim => {
+            surface_ownership::warn_no_installed_claim_collision(
                 target_name,
                 dest_rel,
-                collision_hint,
+                ctx.collision_hint,
                 diag,
             );
             false
         }
     }
+}
+
+fn disk_matches_recorded_or_desired(
+    dest: &Path,
+    kind: crate::lock::ItemKind,
+    target_name: &str,
+    dest_rel: &str,
+    old_lock: &LockFile,
+    desired_checksum: Option<&ContentHash>,
+) -> bool {
+    let Ok(actual) = crate::hash::compute_hash(dest, kind).map(ContentHash::from) else {
+        return false;
+    };
+    if desired_checksum.is_some_and(|desired| desired == &actual) {
+        return true;
+    }
+    old_lock.items.values().any(|item| {
+        item.outputs.iter().any(|recorded| {
+            recorded.target_root == target_name
+                && crate::target::dest_paths_equivalent(recorded.dest_path.as_str(), dest_rel)
+                && recorded.installed_checksum() == Some(&actual)
+        })
+    })
 }
 
 fn remove_target_path_if_managed(
@@ -409,7 +514,7 @@ fn record_synced_output(
 /// Copy an item (file or directory) from .mars/ to a target directory.
 ///
 /// Follows symlinks on the source side (D26 — targets get file copies, not symlinks).
-/// Uses atomic operations via the reconcile layer.
+/// Uses shared atomic file operations.
 ///
 /// Returns `true` when bytes were written to `dest`, `false` when existing content
 /// was already byte-identical and left untouched.
@@ -481,8 +586,10 @@ fn cleanup_orphans(
 
         let full_path = target_root.join(managed_path);
 
-        // Skip if the path doesn't exist (already removed or never synced to this target).
+        // An already-absent owned path confirms deletion just as surely as a
+        // successful remove. Publish that confirmation so the lock drops it.
         if !full_path.exists() && full_path.symlink_metadata().is_err() {
+            removed_dest_paths.push(managed_path.clone());
             continue;
         }
 
@@ -542,11 +649,11 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: target.to_string(),
-                        dest_path: (*dest).into(),
-                        installed_checksum: (*checksum).into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        target.to_string(),
+                        (*dest).into(),
+                        (*checksum).into(),
+                    )],
                 },
             );
         }
@@ -564,11 +671,11 @@ mod tests {
                     kind: ItemKind::Skill,
                     version: None,
                     source_checksum: "sha256:src".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: target.to_string(),
-                        dest_path: (*dest).into(),
-                        installed_checksum: (*checksum).into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        target.to_string(),
+                        (*dest).into(),
+                        (*checksum).into(),
+                    )],
                 },
             );
         }
@@ -1139,6 +1246,54 @@ mod tests {
     }
 
     #[test]
+    fn sync_skipped_pending_deletion_reports_missing_installed_claim() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# User replacement").unwrap();
+
+        let checksum = hash::hash_bytes(b"# Canonical");
+        let outcomes = vec![make_skipped_with_checksum("agents/coder.md", &checksum)];
+        let mut lock = lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:old")]);
+        lock.items.get_mut("agent/coder.md").unwrap().outputs[0].mark_pending_deletion();
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 0);
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/coder.md")).unwrap(),
+            "# User replacement"
+        );
+        let diagnostics = diag.drain();
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "target-unmanaged-collision"
+                    && diagnostic
+                        .message
+                        .contains("has no installed-content claim")
+            }),
+            "a pending-deletion record carries no installed-content authority"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "target-divergent")
+        );
+    }
+
+    #[test]
     fn sync_preserves_handwritten_collision_when_lock_only_tracks_mars() {
         let dir = TempDir::new().unwrap();
         let mars_dir = dir.path().join(".mars");
@@ -1158,11 +1313,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/design-lead.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/design-lead.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 
@@ -1206,11 +1361,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 
@@ -1258,11 +1413,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: "sha256:mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    "sha256:mars".into(),
+                )],
             },
         );
 
@@ -1379,6 +1534,55 @@ mod tests {
             "no-op sync must not rewrite native skill output"
         );
         assert_eq!(std::fs::read_to_string(&native_skill).unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_skipped_native_skill_does_not_construct_a_temporary_projection() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+        let skill_source = mars_dir.join("skills/planning");
+        std::fs::create_dir_all(skill_source.join("resources")).unwrap();
+        std::fs::write(skill_source.join("SKILL.md"), "# Planning").unwrap();
+        std::fs::write(skill_source.join("resources/reference.md"), "reference").unwrap();
+
+        let outcomes = vec![make_installed_skill_outcome("skills/planning", "planning")];
+        let mut diag = DiagnosticCollector::new();
+        sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes,
+            &target_sync_ctx(&LockFile::empty(), false),
+            &mut diag,
+        );
+
+        let skill_dir = target.join("skills/planning");
+        let checksum = hash::compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        let lock =
+            lock_with_skill_target_outputs(".claude", &[("skills/planning", checksum.as_str())]);
+        let skills_parent = target.join("skills");
+        std::fs::set_permissions(&skills_parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &[make_skipped_skill_outcome("skills/planning", "planning")],
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        std::fs::set_permissions(&skills_parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            results[0].errors.is_empty(),
+            "a no-op must not need a writable parent for a disposable projection: {:?}",
+            results[0].errors
+        );
+        assert_eq!(results[0].items_synced, 0);
     }
 
     #[test]

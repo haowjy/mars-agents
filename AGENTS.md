@@ -49,7 +49,9 @@ residue in the primary checkout is how drift starts.
 - **Mars never deletes files it didn't create.** Per-target lock ownership gates all removals.
 - **Atomic writes** — tmp+rename for config, lock, and installed files.
 - **Resolve first, then act** — zero mutations if any error during resolution.
-- **No builtin model aliases in the binary** — all come from packages or consumer config.
+- **Builtin model aliases are fallback-only** — `opus`, `sonnet`, `haiku`,
+  `codex`, `gpt`, and `gemini` appear only when packages and consumer config
+  both provide no aliases.
 - **Windows is first-class** — no POSIX-only assumptions.
 - **No VCS dependency** — walk to filesystem root via `Path::parent()`, not `.git`.
 

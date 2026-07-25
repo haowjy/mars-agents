@@ -154,20 +154,6 @@ fn passthrough_bare(model_id: &str) -> ResolvedRunnablePath {
         confidence: RunnableConfidence::Unknown,
     }
 }
-
-pub fn pi_harness_model_requires_probe_slug(
-    harness: &str,
-    selection_kind: &str,
-    model_id: &str,
-    resolved: &ResolvedRunnablePath,
-) -> bool {
-    harness.eq_ignore_ascii_case("pi")
-        && selection_kind.eq_ignore_ascii_case("fixed")
-        && !model_id.trim().is_empty()
-        && resolved.source == RunnablePathSource::Passthrough
-        && !resolved.harness_model_id.contains('/')
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -326,16 +312,5 @@ mod tests {
         assert_ne!(resolved.harness_model_id, "openai/gpt-5.4-mini");
         assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
         assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
-    }
-
-    #[test]
-    fn pi_fixed_without_probe_slug_is_detected() {
-        let resolved = passthrough_bare("gpt-5.4-mini");
-        assert!(pi_harness_model_requires_probe_slug(
-            "pi",
-            "fixed",
-            "gpt-5.4-mini",
-            &resolved
-        ));
     }
 }

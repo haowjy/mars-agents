@@ -7,7 +7,7 @@ each output path.
 
 ## Mental Model
 
-Lock v2 separates a logical item from its materialized outputs:
+Lock v3 separates a logical item from its path-scoped lifecycle claims:
 
 ```text
 items."skill/planning"
@@ -15,7 +15,11 @@ items."skill/planning"
   outputs[]
     target_root = ".mars"  # canonical store output
     dest_path = "skills/planning"
-    installed_checksum     # bytes at that target output
+    state = installed      # checksum asserts installed bytes
+    installed_checksum
+
+After an unconfirmed removal, the output instead has
+`state = pending-deletion` and no checksum. It retains deletion authority only.
 ```
 
 The same `dest_path` may appear under multiple `target_root`s. Native targets
@@ -33,8 +37,12 @@ paths match.
 - **Unscoped `dest_path` views are broad views only.** Use them for listing,
   diagnostics, or legacy compatibility, not for deciding whether a concrete
   target path is owned or unchanged.
+- **V2 promotion is the only legacy lifecycle inference seam.** Matching regular
+  files and directory manifests become installed. Absent, mismatched, symlinked,
+  unreadable, or unsupported paths become pending deletion. Delete the promotion
+  after the release following lock v3, together with the #130 legacy-hook sweeps.
 - **Do not change the lock schema for lookup fixes.** `LockIndex` is the
-  ephemeral seam for efficient read shapes over the persisted v2 schema.
+  ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash
   canonical form; lookup normalization preserves Windows compatibility.
 
@@ -47,6 +55,6 @@ paths match.
 
 ## Entry Points
 
-- `mod.rs` — schema types, load/write, v1 promotion, lock build, `LockIndex`.
+- `mod.rs` — schema types, load/write, lock build, `LockIndex`.
 - `.context/CONTEXT.md` — target-scoped lookup contracts and rationale.
 - `../target_sync/.context/CONTEXT.md` — linked-target mutation ownership rules.

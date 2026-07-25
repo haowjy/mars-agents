@@ -14,20 +14,6 @@ macro_rules! string_newtype {
         #[serde(transparent)]
         pub struct $name(String);
 
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Self {
-                Self(value.into())
-            }
-
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-
-            pub fn into_inner(self) -> String {
-                self.0
-            }
-        }
-
         impl From<String> for $name {
             fn from(value: String) -> Self {
                 Self(value)
@@ -104,6 +90,20 @@ string_newtype!(SourceUrl);
 string_newtype!(CommitHash);
 string_newtype!(ContentHash);
 
+macro_rules! impl_as_str {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl $name {
+                pub fn as_str(&self) -> &str {
+                    &self.0
+                }
+            }
+        )+
+    };
+}
+
+impl_as_str!(SourceName, ItemName, SourceUrl, ContentHash);
+
 /// Shared path normalization result for relative path coordinates.
 enum NormalizeError {
     Empty,
@@ -171,11 +171,6 @@ impl SourceSubpath {
     pub fn as_path(&self) -> &Path {
         Path::new(&self.0)
     }
-
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     /// Join this relative subpath under `base`, rejecting traversal attempts.
     pub fn join_under(&self, base: &Path) -> Result<PathBuf, SourceSubpathError> {
         let mut joined = base.to_path_buf();
@@ -257,8 +252,6 @@ pub enum DestPathError {
     Absolute { input: String },
     #[error("destination path cannot escape target root: {input:?}")]
     Escaping { input: String },
-    #[error("cannot convert path to DestPath: {reason}")]
-    ConversionFailed { reason: String },
 }
 
 fn is_windows_absolute(path: &str) -> bool {
@@ -373,12 +366,6 @@ impl DestPath {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Consume and return the inner string.
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     /// Resolve to a native filesystem path under the given root.
     pub fn resolve(&self, root: &Path) -> PathBuf {
         let mut result = root.to_path_buf();
@@ -414,40 +401,6 @@ impl DestPath {
                 }
             }
         }
-    }
-
-    /// Create from a host-relative path by stripping a root prefix.
-    /// Used for CLI commands that accept filesystem paths.
-    pub fn from_host_relative(path: &Path, root: &Path) -> Result<Self, DestPathError> {
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| DestPathError::ConversionFailed {
-                reason: format!("path {:?} is not under root {:?}", path, root),
-            })?;
-
-        let mut segments = Vec::new();
-        for component in relative.components() {
-            match component {
-                Component::Normal(seg) => segments.push(seg.to_string_lossy().into_owned()),
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    return Err(DestPathError::Escaping {
-                        input: path.to_string_lossy().into_owned(),
-                    });
-                }
-                Component::RootDir | Component::Prefix(_) => {
-                    return Err(DestPathError::Absolute {
-                        input: path.to_string_lossy().into_owned(),
-                    });
-                }
-            }
-        }
-
-        if segments.is_empty() {
-            return Err(DestPathError::Empty);
-        }
-
-        Self::new(segments.join("/"))
     }
 }
 
@@ -500,15 +453,11 @@ impl<'de> Deserialize<'de> for DestPath {
     }
 }
 
-/// Resolved context for a mars command — project root + managed output root.
-///
-/// Named fields prevent argument-order bugs that plague `(project_root, managed_root)` pairs.
+/// Resolved context for a mars command.
 #[derive(Debug, Clone)]
 pub struct MarsContext {
     /// Project root containing mars.toml and mars.lock.
     pub project_root: PathBuf,
-    /// Managed output directory (legacy/explicit target, e.g. /project/.claude).
-    pub managed_root: PathBuf,
     /// Whether mars is running under Meridian management.
     ///
     /// Captured at context construction time so compilation decisions are stable
@@ -519,10 +468,9 @@ pub struct MarsContext {
 #[cfg(test)]
 impl MarsContext {
     /// Create a MarsContext for tests without any validation.
-    pub fn for_test(project_root: PathBuf, managed_root: PathBuf) -> Self {
+    pub fn for_test(project_root: PathBuf) -> Self {
         MarsContext {
             project_root,
-            managed_root,
             meridian_managed: meridian_managed_from_env(),
         }
     }
@@ -559,18 +507,9 @@ pub enum SourceId {
 }
 
 impl SourceId {
-    pub fn git(url: SourceUrl) -> Self {
-        Self::Git { url, subpath: None }
-    }
-
     pub fn git_with_subpath(url: SourceUrl, subpath: Option<SourceSubpath>) -> Self {
         Self::Git { url, subpath }
     }
-
-    pub fn path(base: &Path, relative_or_absolute: &Path) -> std::io::Result<Self> {
-        Self::path_with_subpath(base, relative_or_absolute, None)
-    }
-
     pub fn path_with_subpath(
         base: &Path,
         relative_or_absolute: &Path,
@@ -629,25 +568,8 @@ impl RenameMap {
         }
         self.0.push(RenameRule { from, to });
     }
-
-    pub fn push(&mut self, rule: RenameRule) {
-        self.insert(rule.from, rule.to);
-    }
-
     pub fn get(&self, from: &str) -> Option<&ItemName> {
         self.0.iter().find(|r| r.from == from).map(|r| &r.to)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &RenameRule> {
-        self.0.iter()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
     }
 }
 
@@ -968,7 +890,6 @@ mod tests {
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: None,
             commit: None,
-            tree_hash: None,
         };
         let json = serde_json::to_string(&source).unwrap();
         assert!(json.contains("\"subpath\":\"plugins/foo\""));
@@ -1002,7 +923,6 @@ commit = "deadbeef"
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: Some("v1.0.0".to_string()),
             commit: Some(CommitHash::from("abc123")),
-            tree_hash: None,
         };
         #[derive(Serialize)]
         struct Wrapper {
@@ -1035,7 +955,6 @@ url = "https://github.com/org/base.git"
                     subpath: Some(SourceSubpath::new(r"plugins\foo").unwrap()),
                     version: Some("v1.2.3".to_string()),
                     commit: Some(CommitHash::from("abc123")),
-                    tree_hash: None,
                 },
             )]),
             items: indexmap::IndexMap::new(),
@@ -1215,7 +1134,6 @@ subpath = "plugins\\foo"
                     subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                     version: Some("v1.2.3".to_string()),
                     commit: Some(CommitHash::from("deadbeef")),
-                    tree_hash: None,
                 },
             )]),
             items: indexmap::IndexMap::new(),
@@ -1268,7 +1186,7 @@ subpath = "plugins/foo"
         );
         // SourceId must embed the same subpath
         assert!(matches!(
-            &effective.dependencies["dep"].id,
+            &effective.dependencies["dep"].source_id,
             SourceId::Git { subpath: Some(sp), .. } if sp.as_str() == "plugins/foo"
         ));
     }

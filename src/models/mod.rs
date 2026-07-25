@@ -422,13 +422,6 @@ pub fn is_mars_offline() -> bool {
         Err(_) => false,
     }
 }
-
-pub fn resolve_refresh_mode(no_refresh_flag: bool) -> RefreshMode {
-    resolve_models_refresh_control(false, no_refresh_flag)
-        .expect("refresh and no-refresh are mutually exclusive")
-        .catalog_mode
-}
-
 /// Catalog + harness probe refresh intent from CLI flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelsRefreshControl {
@@ -947,33 +940,6 @@ pub fn auto_resolve(
         .first()
         .map(|model| model.id.clone())
 }
-
-/// Resolve an input like `opus-4-6` by matching it against alias filter candidates.
-///
-/// Algorithm:
-/// 1. Build a glob pattern `*{input}*` from the user input
-/// 2. For each auto-resolve alias, run its filters against the cache
-/// 3. From those candidates, keep models matching the glob
-/// 4. Collect union across aliases, deduplicated by model ID
-/// 5. Sort by newest release_date, then shortest ID
-/// 6. Return the best candidate
-pub fn resolve_with_alias_prefix(
-    input: &str,
-    aliases: &IndexMap<String, ModelAlias>,
-    cache: &ModelsCache,
-) -> Option<ResolvedAlias> {
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
-    resolve_with_alias_prefix_with_probe(
-        input,
-        aliases,
-        cache,
-        opencode_probe.as_ref(),
-        None,
-        cursor_probe.as_ref(),
-    )
-}
-
 pub fn resolve_with_alias_prefix_with_probe(
     input: &str,
     aliases: &IndexMap<String, ModelAlias>,
@@ -1407,27 +1373,6 @@ pub fn merge_model_config(
 
     merged
 }
-
-/// Resolve all aliases to concrete model IDs + harnesses.
-///
-/// Harness detection is encapsulated — callers don't pass installed harnesses.
-pub fn resolve_all(
-    aliases: &IndexMap<String, ModelAlias>,
-    cache: &ModelsCache,
-    diag: &mut DiagnosticCollector,
-) -> IndexMap<String, ResolvedAlias> {
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
-    resolve_all_with_probe(
-        aliases,
-        cache,
-        diag,
-        opencode_probe.as_ref(),
-        None,
-        cursor_probe.as_ref(),
-    )
-}
-
 /// Resolve aliases without any harness detection or probe/auth checks.
 ///
 /// This is intended for static list views where only alias -> model/provider
@@ -1514,27 +1459,6 @@ pub fn resolve_all_with_probe(
 
     resolved
 }
-
-/// Resolve a single alias and emit diagnostics only for that alias.
-pub fn resolve_one(
-    name: &str,
-    aliases: &IndexMap<String, ModelAlias>,
-    cache: &ModelsCache,
-    diag: &mut DiagnosticCollector,
-) -> Option<ResolvedAlias> {
-    let opencode_probe = probes::opencode_cache::read_cached_probe_result_usable();
-    let cursor_probe = probes::cursor_cache::read_cached_probe_result_usable();
-    resolve_one_with_probe(
-        name,
-        aliases,
-        cache,
-        diag,
-        opencode_probe.as_ref(),
-        None,
-        cursor_probe.as_ref(),
-    )
-}
-
 pub fn resolve_one_with_probe(
     name: &str,
     aliases: &IndexMap<String, ModelAlias>,
@@ -2199,142 +2123,6 @@ mod tests {
             },
         }
     }
-
-    #[test]
-    fn resolve_with_alias_prefix_basic() {
-        let aliases = builtin_aliases();
-        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
-
-        let resolved = resolve_with_alias_prefix("opus-4-6", &aliases, &cache).unwrap();
-        assert_eq!(resolved.name, "opus-4-6");
-        assert_eq!(resolved.model_id, "claude-opus-4-6");
-        assert_eq!(resolved.provider, "anthropic");
-        assert_eq!(
-            resolved.harness_candidates,
-            vec!["claude", "codex", "pi", "cursor", "opencode"]
-        );
-
-        let installed = harness::detect_installed_harnesses();
-        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-            model_id: "claude-opus-4-6",
-            provider_for_order: Some("anthropic"),
-            provider_constraint: None,
-            settings_provider_order: None,
-            settings_harness_order: None,
-            config_default_harness: None,
-            installed_harnesses: &installed,
-            linked_harnesses: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
-            catalog_model_slugs: None,
-        });
-        let (expected_harness, expected_source) = if installed.contains(&trace.harness) {
-            (Some(trace.harness), HarnessSource::AutoDetected)
-        } else {
-            (None, HarnessSource::Unavailable)
-        };
-        assert_eq!(resolved.harness, expected_harness);
-        assert_eq!(resolved.harness_source, expected_source);
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_no_candidates() {
-        let aliases = builtin_aliases();
-        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
-
-        let resolved = resolve_with_alias_prefix("opus-9-9", &aliases, &cache);
-        assert!(resolved.is_none());
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_picks_newest() {
-        let aliases = builtin_aliases();
-        let cache = make_cache(vec![
-            ("claude-opus-4-6-20250101", "Anthropic", Some("2025-01-01")),
-            ("claude-opus-4-6-20260101", "Anthropic", Some("2026-01-01")),
-        ]);
-
-        let resolved = resolve_with_alias_prefix("opus-4-6", &aliases, &cache).unwrap();
-        assert_eq!(resolved.model_id, "claude-opus-4-6-20260101");
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_lexical_id_tiebreaker_when_date_and_length_equal() {
-        let aliases = builtin_aliases();
-        let cache = make_cache(vec![
-            ("claude-opus-4-b", "Anthropic", Some("2026-02-05")),
-            ("claude-opus-4-a", "Anthropic", Some("2026-02-05")),
-        ]);
-
-        let resolved = resolve_with_alias_prefix("opus-4-", &aliases, &cache).unwrap();
-        assert_eq!(resolved.model_id, "claude-opus-4-a");
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_pinned_base_inherits_defaults() {
-        let mut aliases = IndexMap::new();
-        let mut alias = pinned_alias(Some("claude"), "claude-opus-4-6");
-        alias.default_effort = Some("high".to_string());
-        alias.autocompact = Some(42);
-        aliases.insert("opus".to_string(), alias);
-        let cache = make_cache(vec![("claude-opus-4-7", "Anthropic", Some("2026-04-16"))]);
-
-        let resolved = resolve_with_alias_prefix("opus-4-7", &aliases, &cache).unwrap();
-        assert_eq!(resolved.model_id, "claude-opus-4-7");
-        assert_eq!(resolved.default_effort.as_deref(), Some("high"));
-        assert_eq!(resolved.autocompact, Some(42));
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_auto_base_does_not_inherit_defaults() {
-        let mut aliases = IndexMap::new();
-        let mut alias = auto_alias("anthropic", &["claude-opus-*"], &[]);
-        alias.default_effort = Some("high".to_string());
-        alias.autocompact = Some(42);
-        aliases.insert("opus".to_string(), alias);
-        let cache = make_cache(vec![("claude-opus-4-7", "Anthropic", Some("2026-04-16"))]);
-
-        let resolved = resolve_with_alias_prefix("opus-4-7", &aliases, &cache).unwrap();
-        assert_eq!(resolved.model_id, "claude-opus-4-7");
-        assert_eq!(resolved.default_effort, None);
-        assert_eq!(resolved.autocompact, None);
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_exact_name_matches() {
-        // When the input equals an alias name, this function still finds matches
-        // via glob *opus*. The caller (run_resolve) handles exact alias lookup
-        // before calling this function, so this path is only reached for
-        // non-alias inputs in practice.
-        let aliases = builtin_aliases();
-        let cache = make_cache(vec![("claude-opus-4-6", "Anthropic", Some("2026-02-05"))]);
-
-        let resolved = resolve_with_alias_prefix("opus", &aliases, &cache);
-        assert!(resolved.is_some());
-        assert_eq!(resolved.unwrap().model_id, "claude-opus-4-6");
-    }
-
-    #[test]
-    fn resolve_with_alias_prefix_multiple_aliases_union() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "g".to_string(),
-            auto_alias("openai", &["gpt-2026-08*"], &[]),
-        );
-        aliases.insert(
-            "gpt".to_string(),
-            auto_alias("openai", &["gpt-2026-03*"], &[]),
-        );
-        let cache = make_cache(vec![
-            ("gpt-2026-03-01", "OpenAI", Some("2026-03-01")),
-            ("gpt-2026-08-07", "OpenAI", Some("2026-08-07")),
-        ]);
-
-        let resolved = resolve_with_alias_prefix("gpt-2026", &aliases, &cache).unwrap();
-        assert_eq!(resolved.model_id, "gpt-2026-08-07");
-    }
-
     #[test]
     fn merge_empty_returns_builtins() {
         let mut diag = DiagnosticCollector::new();
@@ -2648,228 +2436,6 @@ mod tests {
         );
         assert!(diag.drain().is_empty());
     }
-
-    #[test]
-    fn merge_dep_conflicts_are_non_blocking() {
-        let dep1 = ResolvedDepModels {
-            source_name: "pkg-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("a"), "model-a"));
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "pkg-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("b"), "model-b"));
-                m.insert("extra".to_string(), pinned_alias(Some("b"), "model-extra"));
-                m
-            },
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
-
-        assert!(!merged.contains_key("opus"));
-        assert_eq!(
-            merged.get("custom").unwrap().spec,
-            ModelSpec::Pinned {
-                model: "model-a".to_string(),
-                provider: None
-            }
-        );
-        assert_eq!(
-            merged.get("extra").unwrap().spec,
-            ModelSpec::Pinned {
-                model: "model-extra".to_string(),
-                provider: None
-            }
-        );
-        assert_eq!(diag.drain().len(), 1);
-    }
-
-    // -- resolve_all tests --
-
-    #[test]
-    fn resolve_all_pinned() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "fast".to_string(),
-            pinned_alias(Some("claude"), "claude-haiku-4-5"),
-        );
-
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("fast").unwrap();
-        assert_eq!(entry.model_id, "claude-haiku-4-5");
-        assert_eq!(entry.provider, "anthropic");
-    }
-
-    #[test]
-    fn resolve_all_copies_alias_defaults() {
-        let mut aliases = IndexMap::new();
-        let mut alias = pinned_alias(Some("claude"), "claude-haiku-4-5");
-        alias.default_effort = Some("medium".to_string());
-        alias.autocompact = Some(30);
-        aliases.insert("fast".to_string(), alias);
-
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("fast").unwrap();
-        assert_eq!(entry.default_effort.as_deref(), Some("medium"));
-        assert_eq!(entry.autocompact, Some(30));
-    }
-
-    #[test]
-    fn resolve_all_pinned_with_provider() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "fast".to_string(),
-            ModelAlias {
-                harness: None,
-                description: None,
-                prompting: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "gpt-5.3-codex".to_string(),
-                    provider: Some("openai".to_string()),
-                },
-            },
-        );
-
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("fast").unwrap();
-        assert_eq!(entry.model_id, "gpt-5.3-codex");
-        assert_eq!(entry.provider, "openai");
-        assert_eq!(
-            entry.harness_candidates,
-            vec!["codex", "claude", "pi", "cursor", "opencode"]
-        );
-    }
-
-    #[test]
-    fn resolve_all_unavailable_harness_still_included() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus".to_string(),
-            ModelAlias {
-                harness: Some("missing-harness-xyz".to_string()),
-                description: None,
-                prompting: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::Pinned {
-                    model: "claude-opus-4-6".to_string(),
-                    provider: None,
-                },
-            },
-        );
-
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("opus").unwrap();
-        assert_eq!(entry.model_id, "claude-opus-4-6");
-        assert_eq!(entry.provider, "anthropic");
-        assert_eq!(entry.harness.as_deref(), Some("missing-harness-xyz"));
-        assert_eq!(entry.harness_source, HarnessSource::Unavailable);
-    }
-
-    #[test]
-    fn resolve_all_empty_cache_omits_unresolvable() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus".to_string(),
-            ModelAlias {
-                harness: Some("claude".to_string()),
-                description: None,
-                prompting: None,
-                default_effort: None,
-                autocompact: None,
-                autocompact_pct: None,
-                spec: ModelSpec::AutoResolve {
-                    provider: Some("Anthropic".to_string()),
-                    match_patterns: vec!["claude-opus-*".to_string()],
-                    exclude_patterns: vec![],
-                },
-            },
-        );
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        // No cache → auto-resolve can't match → alias omitted from results
-        assert!(!resolved.contains_key("opus"));
-    }
-
-    #[test]
-    fn resolve_all_pinned_with_match_uses_model_field() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus".to_string(),
-            pinned_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
-        );
-        let cache = make_cache(vec![
-            ("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
-            ("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
-        ]);
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        assert_eq!(resolved.get("opus").unwrap().model_id, "claude-opus-4-6");
-        assert!(diag.drain().is_empty());
-    }
-
-    #[test]
-    fn resolve_one_scopes_diagnostics_to_requested_alias() {
-        let mut aliases = IndexMap::new();
-        aliases.insert(
-            "opus".to_string(),
-            pinned_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
-        );
-        aliases.insert(
-            "sonnet".to_string(),
-            pinned_match_alias("claude-sonnet-4-5", "Anthropic", &["claude-sonnet-*"], &[]),
-        );
-        let cache = make_cache(vec![
-            ("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
-            ("claude-sonnet-4-7", "Anthropic", Some("2026-04-16")),
-        ]);
-
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_one("opus", &aliases, &cache, &mut diag).unwrap();
-        assert_eq!(resolved.name, "opus");
-        assert!(diag.drain().is_empty());
-    }
-
     fn make_resolved_alias(name: &str) -> ResolvedAlias {
         ResolvedAlias {
             name: name.to_string(),
@@ -3625,40 +3191,6 @@ autocompact = 4294967296
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("out of u32 range"));
     }
-
-    #[test]
-    fn both_autocompact_fields_round_trip() {
-        let toml_str = r#"
-[models.opus]
-model = "claude-opus-4-6"
-autocompact = 50000
-autocompact_pct = 80
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.autocompact, Some(50000u32));
-        assert_eq!(alias.autocompact_pct, Some(80u8));
-
-        // Verify both propagate through resolve_all
-        let mut aliases = IndexMap::new();
-        aliases.insert("opus".to_string(), alias.clone());
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-        let mut diag = DiagnosticCollector::new();
-        let resolved = resolve_all(&aliases, &cache, &mut diag);
-        let entry = resolved.get("opus").unwrap();
-        assert_eq!(entry.autocompact, Some(50000u32));
-        assert_eq!(entry.autocompact_pct, Some(80u8));
-    }
-
     #[test]
     fn model_alias_both_model_and_match_is_hybrid_pinned() {
         let toml_str = r#"
@@ -4204,15 +3736,6 @@ harness = "claude"
         assert_eq!(outcome, RefreshOutcome::Offline);
         assert_eq!(mock.hits(), 0);
     }
-
-    #[test]
-    #[serial]
-    fn ensure_fresh_16_offline_env_zero_is_not_offline() {
-        let _offline = EnvVarGuard::set("MARS_OFFLINE", "0");
-        assert!(!is_mars_offline());
-        assert_eq!(resolve_refresh_mode(false), RefreshMode::Auto);
-    }
-
     #[test]
     fn resolve_models_refresh_control_defaults_to_auto_background() {
         let control = resolve_models_refresh_control(false, false).unwrap();
@@ -4247,15 +3770,6 @@ harness = "claude"
     fn resolve_models_refresh_control_rejects_both_flags() {
         assert!(resolve_models_refresh_control(true, true).is_err());
     }
-
-    #[test]
-    #[serial]
-    fn ensure_fresh_17_offline_env_truthy_is_offline() {
-        let _offline = EnvVarGuard::set("MARS_OFFLINE", " TRUE ");
-        assert!(is_mars_offline());
-        assert_eq!(resolve_refresh_mode(false), RefreshMode::Auto);
-    }
-
     #[test]
     #[serial]
     fn ensure_fresh_18_force_ignores_offline_env() {

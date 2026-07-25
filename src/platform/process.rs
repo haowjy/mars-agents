@@ -100,31 +100,6 @@ pub fn display_command(args: &[&str]) -> String {
     }
 }
 
-/// Run a git command and return the raw `Output`, allowing caller to handle exit codes.
-///
-/// Unlike `run_git`, this does not treat non-zero exit codes as errors.
-/// Use this for commands like `git merge-file` where positive exit codes have meaning.
-pub fn run_git_raw(
-    args: &[&str],
-    cwd: &Path,
-    context: &str,
-) -> Result<std::process::Output, MarsError> {
-    let command_display = display_command(args);
-    let mut command = Command::new("git");
-    remove_git_local_env(&mut command);
-    command
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .map_err(|e| MarsError::GitCli {
-            command: command_display,
-            message: format!(
-                "{context} (cwd: {}): failed to execute git: {e}",
-                cwd.display()
-            ),
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -219,22 +194,5 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("HEAD;echo shell-injected"));
         assert!(!message.contains("shell-injected\n"));
-    }
-
-    #[test]
-    fn run_git_raw_execute_failure_returns_structured_error() {
-        let missing = std::env::temp_dir().join("mars-run-git-raw-missing-cwd");
-        let result = run_git_raw(&["status"], &missing, "raw test");
-
-        let err = result.expect_err("missing cwd should fail before git runs");
-        match err {
-            MarsError::GitCli { command, message } => {
-                assert_eq!(command, "git status");
-                assert!(message.contains("raw test"));
-                assert!(message.contains("cwd:"));
-                assert!(message.contains(&missing.display().to_string()));
-            }
-            other => panic!("expected GitCli error, got {other:?}"),
-        }
     }
 }

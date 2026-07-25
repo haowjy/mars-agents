@@ -188,7 +188,6 @@ mod tests {
                 commit: None,
                 tree_path: canonical,
             },
-            latest_version: None,
             manifest: with_models.then(|| manifest_with_models(name)),
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }
@@ -201,8 +200,11 @@ mod tests {
             dependencies.insert(
                 (*name).into(),
                 EffectiveDependency {
-                    name: (*name).into(),
-                    id: SourceId::Path {
+                    declared_source_id: SourceId::Path {
+                        canonical: canonical.clone(),
+                        subpath: None,
+                    },
+                    source_id: SourceId::Path {
                         canonical: canonical.clone(),
                         subpath: None,
                     },
@@ -211,8 +213,6 @@ mod tests {
                     filter: FilterMode::All,
                     rename: crate::types::RenameMap::new(),
                     dialect: None,
-                    is_overridden: false,
-                    original_git: None,
                 },
             );
         }
@@ -238,6 +238,7 @@ mod tests {
             order: vec!["a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         // Direct siblings follow consumer declaration order, not graph insertion order.
         let config = effective_config_with_decl_order(&["b", "a"]);
@@ -258,6 +259,7 @@ mod tests {
             order: vec!["d".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -278,6 +280,7 @@ mod tests {
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -296,6 +299,7 @@ mod tests {
             order: vec!["d".into(), "a".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         // D is declared after A, but topological ordering must still emit D first.
         let config = effective_config_with_decl_order(&["a", "d"]);
@@ -317,6 +321,7 @@ mod tests {
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 

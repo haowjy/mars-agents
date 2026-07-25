@@ -14,7 +14,7 @@ The managed root's parent directory is the project root (where `mars.toml` and `
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `sync`: unresolved conflicts present; `check`: validation errors found |
+| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
 | `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 
@@ -297,25 +297,25 @@ mars link <target> [--force]
 
 | Flag | Description |
 |---|---|
-| `--force` | Adopt untracked collisions in the linked target (overwrite + record in lock) |
+| `--force` | Adopt collisions without an installed-content claim (overwrite + record in lock) |
 
 **Behavior:**
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
-- If a path in the target exists on disk but is not tracked for that `target_root`, Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record ownership (`target-unmanaged-adopted`)
+- If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
 mars link .cursor            # Copy skills/MCP into .cursor
-mars link .claude --force    # Adopt untracked collisions in .claude/
+mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
 
 ---
 
 ## `mars unlink`
 
-Remove a managed target directory.
+Stop managing a target and remove Mars-owned content from it.
 
 ```bash
 mars unlink <target>
@@ -323,7 +323,8 @@ mars unlink <target>
 
 **Behavior:**
 - Removes `<target>` from `mars.toml [settings] targets` (and `managed_root` if it matches)
-- Deletes the target directory if it was managed
+- Removes only outputs and config entries owned by the target's lock records
+- Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
 - Reports if the target was not managed (no-op)
 
 ```bash
@@ -497,7 +498,11 @@ Rebuild managed state from config + dependencies.
 mars repair
 ```
 
-Runs a forced sync that overwrites everything. If the lock file is corrupt, resets it to empty and rebuilds from scratch. Handles unmanaged collisions during corrupt-lock recovery by removing colliding paths and retrying (bounded to 1024 retries).
+Runs one forced sync. If the lock file is corrupt, repair treats it as empty in
+memory and rebuilds from config plus dependencies. The corrupt on-disk bytes
+are replaced only when the full pipeline finalizes successfully. If recovery
+encounters unreadable removed-schema hooks, it halts before materialization
+and leaves the corrupt lock untouched.
 
 ---
 

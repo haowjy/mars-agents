@@ -15,10 +15,10 @@ create_plan()      ← diff + plan
     ↓
 apply_plan()       ← persist config, write to .mars/ canonical store
     ↓
-dual_surface_compile()  ← emit native harness artifacts (.claude/agents/, etc.)
-config_entries_compile() ← MCP servers, hooks
+sync_targets()     ← copy canonical content to managed target directories
     ↓
-sync_targets()     ← copy to managed target directories
+config_entries_compile() ← emit MCP servers and bindings for installed hooks
+dual_surface_compile()   ← emit native harness artifacts (.claude/agents/, etc.)
     ↓
 finalize()         ← write lock, build report
 ```
@@ -41,7 +41,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
-- `hooks/` — native hook item discovery, per-target schema validation, and ordering
+- `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
 - `visibility/` — D1/D10 propagation rules
 
@@ -125,8 +125,14 @@ Discovers MCP server items, validates env refs, detects collisions.
 
 ## Hooks Compilation (`hooks/`)
 
-Discovers hook items, validates native events against target adapter allowlists,
-and orders bindings. Targets without declarative command hooks are rejected.
+Fragment-manifest discovery, validation, and loading. Discovers `hook.toml` items,
+validates merge-mode event keys against per-target allowlists, unwraps copy-paste
+wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
+fragment text, and returns structured `HookFragment` or substituted file content.
+Placement and lock recording are handled by `config_entries/`.
+Dependency hook discovery is contextualized by
+`hooks::discover_resolved_hook_items` in both target construction and config
+preflight; callers must not expose derived staging paths in schema errors.
 
 ## Variants (`variants/`)
 
@@ -168,6 +174,10 @@ let outputs = compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &mars_ag
 ## Linked-target writes
 
 Native reconcile and dual-surface compile gate deletes and copies through `surface_ownership` (same rules as `target_sync`). See `src/target_sync/.context/CONTEXT.md`.
+File-mode hook emission also reserves its exact `OutputRecord` against the
+post-sync ownership lock before writing. Lock finalization retains every prior
+linked output unless its removal was positively confirmed, so failed filesystem
+removals remain retryable.
 
 ## See Also
 

@@ -59,7 +59,6 @@ pub struct ModelAvailability {
 pub enum RunnablePathSource {
     CachedProbe,
     ProviderMatch,
-    Synthesized,
     Passthrough,
 }
 
@@ -68,7 +67,6 @@ impl RunnablePathSource {
         match self {
             Self::CachedProbe => "cached-probe",
             Self::ProviderMatch => "provider-match",
-            Self::Synthesized => "synthesized",
             Self::Passthrough => "passthrough",
         }
     }
@@ -97,24 +95,6 @@ pub struct ResolvedRunnablePath {
     pub source: RunnablePathSource,
     pub confidence: RunnableConfidence,
 }
-
-pub fn resolve_runnable_path(
-    model_id: &str,
-    provider: &str,
-    target_harness: &str,
-    probe_result: Option<&OpenCodeProbeResult>,
-) -> ResolvedRunnablePath {
-    super::harness_model::resolve_harness_model(super::harness_model::HarnessModelInput {
-        harness: target_harness,
-        model_id,
-        provider_constraint: None,
-        provider_for_order: (!provider.trim().is_empty()).then_some(provider),
-        settings_provider_order: None,
-        opencode_probe: probe_result,
-        pi_probe: None,
-    })
-}
-
 /// Classify availability for a model through a specific harness.
 pub fn classify_for_harness(
     harness: &str,
@@ -947,36 +927,6 @@ mod tests {
         assert_eq!(result.source, AvailabilitySource::OpenCodeProbeUnknown);
         assert!(result.runnable_paths.is_empty());
     }
-
-    #[test]
-    fn test_resolve_runnable_path_prefers_cached_probe_slug() {
-        let probe = OpenCodeProbeResult {
-            model_slugs: vec!["openai/gpt-5.4".to_string()],
-            model_probe_success: true,
-            error: None,
-        };
-
-        let resolved = resolve_runnable_path("gpt-5.4", "OpenAI", "opencode", Some(&probe));
-        assert_eq!(resolved.harness_model_id, "openai/gpt-5.4");
-        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
-        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
-    }
-
-    #[test]
-    fn test_resolve_runnable_path_falls_back_to_passthrough_without_slug_match() {
-        let probe = OpenCodeProbeResult {
-            model_slugs: vec!["openrouter/anthropic/claude-sonnet-4-7".to_string()],
-            model_probe_success: true,
-            error: None,
-        };
-
-        let resolved =
-            resolve_runnable_path("claude-opus-4-7", "Anthropic", "opencode", Some(&probe));
-        assert_eq!(resolved.harness_model_id, "claude-opus-4-7");
-        assert_eq!(resolved.source, RunnablePathSource::Passthrough);
-        assert_eq!(resolved.confidence, RunnableConfidence::Unknown);
-    }
-
     #[test]
     fn test_classify_opencode_unknown_when_probe_fails() {
         let probe = OpenCodeProbeResult {

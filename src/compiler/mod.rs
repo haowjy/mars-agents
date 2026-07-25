@@ -9,7 +9,6 @@ pub mod agent_copy;
 /// Agent-profile schema parser, routing prepass, and per-target lowering.
 pub mod agents;
 pub mod config_entries;
-pub mod context;
 /// Typed native harness descriptor table shared by compiler lowering lanes.
 pub(crate) mod harness_descriptor;
 pub mod hooks;
@@ -32,9 +31,11 @@ pub mod variants;
 pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
-pub use native_agents::selective_native_orphan_preserve_paths;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, materialize_native_agents_after_link,
+};
+pub use native_agents::{
+    native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,
 };
 
 use crate::config::AgentEmission;
@@ -67,7 +68,12 @@ pub fn compile(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_hooks(ctx, &planned.targeted.resolved, diag)?;
+    config_entries::preflight_config_entries(
+        ctx,
+        &planned.targeted.resolved,
+        request.options.force,
+        diag,
+    )?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;
@@ -106,29 +112,37 @@ pub fn compile(
         });
     let mars_agents = native_agents::scan_mars_agents(&mars_dir, diag);
 
-    // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation.
-    let config_entry_records =
-        config_entries::compile_config_entries(ctx, &applied, request.options.dry_run, diag);
-
-    // Phase 6: copy from canonical store to managed target directories.
+    // Phase 6: install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
-    synced.config_entries = config_entry_records;
-
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;
+    let mut ownership_lock = crate::lock::ownership_lock_for_native_emission(
+        old_lock,
+        outcomes,
+        &synced.target_outcomes,
+    );
+
+    // Post-target-sync MCP and hook config-entry compilation. Merge-mode hook
+    // bindings are emitted only after their directories are installed.
+    let config_entry_compilation = config_entries::compile_config_entries(
+        ctx,
+        &synced.applied,
+        &mut ownership_lock,
+        request.options.dry_run,
+        request.options.force,
+        diag,
+    );
+    synced.config_entries = config_entry_compilation.records;
+    synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
+    synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
+
     let loaded = &synced.applied.planned.targeted.resolved.loaded;
     // Per-agent overlays merged from mars.toml + mars.local.toml (loaded.effective is
     // EffectiveConfig, which does not carry the overlay map).
     let agent_overlays = crate::config::merged_agent_overlays(&loaded.config.agents, &loaded.local);
-    let ownership_lock;
     let native_ownership_lock = if request.options.dry_run {
         old_lock
     } else {
-        ownership_lock = crate::lock::ownership_lock_for_native_emission(
-            old_lock,
-            outcomes,
-            &synced.target_outcomes,
-        );
         &ownership_lock
     };
     let fanout_agents = loaded.effective.settings.meridian_fanout_agents();

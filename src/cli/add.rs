@@ -103,6 +103,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 entry,
             }),
             options: SyncOptions::default(),
+            recovery: Default::default(),
             lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
         };
 
@@ -113,7 +114,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         }
 
         output::print_sync_report(&report, json, true);
-        return if report.has_conflicts() { Ok(1) } else { Ok(0) };
+        return Ok(0);
     }
 
     // Multi-source: send one batch mutation through sync pipeline.
@@ -121,6 +122,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
@@ -131,7 +133,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
     }
 
     output::print_sync_report(&report, json, true);
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }
 
 /// Build FilterConfig from CLI args.

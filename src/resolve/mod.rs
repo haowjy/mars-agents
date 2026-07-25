@@ -214,7 +214,8 @@ pub fn resolve(
             };
             reqs.push(PendingSource {
                 name: name.clone(),
-                source_id: source.id.clone(),
+                declared_source_id: source.declared_source_id.clone(),
+                source_id: source.source_id.clone(),
                 spec: source.spec.clone(),
                 subpath: source.subpath.clone(),
                 constraint,
@@ -226,10 +227,14 @@ pub fn resolve(
     };
 
     // Version overrides carried across restarts:
-    // package → (correct ref, correct rooted, latest_version metadata).
+    // package → (correct ref, correct rooted package).
     let mut version_overrides: HashMap<
         SourceName,
-        (ResolvedRef, RootedSourceRef, Option<semver::Version>),
+        (
+            ResolvedRef,
+            RootedSourceRef,
+            crate::staging::HookSurfaceState,
+        ),
     > = HashMap::new();
     // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
@@ -265,7 +270,7 @@ pub fn resolve(
         match bottom_up_result {
             Err(MarsError::ResolutionRestartNeeded { package }) => {
                 // Read the override info before discarding ctx.
-                let Some((pkg_name, new_ref, new_rooted, latest_version)) =
+                let Some((pkg_name, new_ref, new_rooted, hook_surface)) =
                     ctx.take_pending_restart()
                 else {
                     return Err(MarsError::Internal(format!(
@@ -291,7 +296,7 @@ pub fn resolve(
                     }));
                 }
                 history.push(new_ref.clone());
-                version_overrides.insert(pkg_name, (new_ref, new_rooted, latest_version));
+                version_overrides.insert(pkg_name, (new_ref, new_rooted, hook_surface));
                 // Discard ctx and retry with updated overrides.
                 continue;
             }

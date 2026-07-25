@@ -21,10 +21,6 @@ pub struct RoutingEvidence<'a> {
 }
 
 impl<'a> RoutingEvidence<'a> {
-    pub fn routing_input(&self) -> RoutingInput<'_> {
-        self.routing_input_with_config_default_harness(self.config_default_harness)
-    }
-
     pub fn routing_input_with_config_default_harness(
         &'a self,
         config_default_harness: Option<&'a str>,

@@ -1,4 +1,4 @@
-//! `mars adopt <path>` — move unmanaged target content into `.mars-src/`, then sync.
+//! `mars adopt <path>` — validate, move target content into `.mars-src/`, then sync.
 
 use std::path::{Path, PathBuf};
 
@@ -82,15 +82,47 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         return print_dry_run(&plan, json);
     }
 
+    // Resolve and validate the existing project before moving user content.
+    // The adopted item is not discoverable from `.mars-src` until after the
+    // move, so the real sync still follows; rollback protects every error from
+    // that second execution.
+    let preflight = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: None,
+        options: SyncOptions {
+            dry_run: true,
+            ..SyncOptions::default()
+        },
+        recovery: Default::default(),
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
+    };
+    crate::sync::execute(ctx, &preflight)?;
+
     move_item(&plan.source_abs, &plan.dest_abs)?;
 
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
-    let report = crate::sync::execute(ctx, &request)?;
+    let report = match crate::sync::execute(ctx, &request) {
+        Ok(report) => report,
+        Err(sync_error) => {
+            return match restore_item(&plan.dest_abs, &plan.source_abs) {
+                Ok(()) => Err(sync_error),
+                Err(restore_error) => Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "adoption sync failed ({sync_error}); restoring `{}` also failed \
+                         ({restore_error}); your content remains at `{}`",
+                        plan.source_abs.display(),
+                        plan.dest_abs.display()
+                    ),
+                }),
+            };
+        }
+    };
 
     if json {
         output::print_json(&AdoptJson {
@@ -112,7 +144,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         output::print_sync_report(&report, false, true);
     }
 
-    Ok(if report.has_conflicts() { 1 } else { 0 })
+    Ok(0)
 }
 
 fn resolve_cli_path(path: &Path) -> Result<PathBuf, MarsError> {
@@ -267,6 +299,22 @@ fn move_item(source: &Path, dest: &Path) -> Result<(), MarsError> {
         }),
         Err(err) => Err(err.into()),
     }
+}
+
+fn restore_item(source: &Path, dest: &Path) -> Result<(), MarsError> {
+    if dest.symlink_metadata().is_ok() {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "refusing to overwrite content created at original path `{}`",
+                dest.display()
+            ),
+        });
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(source, dest)?;
+    Ok(())
 }
 
 fn kind_name(kind: ItemKind) -> &'static str {

@@ -16,15 +16,6 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
         harness: link.harness.map(|harness| harness.to_string()),
     }
 }
-
-pub fn normalized_targets<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    crate::config::targets::normalized_targets(links)
-}
-
-pub fn linked_harnesses<'a>(links: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    crate::config::targets::linked_harnesses(links)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,15 +64,6 @@ mod tests {
                 target: ".foo".to_string(),
                 harness: None,
             }
-        );
-    }
-
-    #[test]
-    fn extracts_linked_harnesses_from_legacy_target_paths() {
-        let targets = [".codex", ".claude", ".agents", "foo"];
-        assert_eq!(
-            linked_harnesses(targets.iter().copied()),
-            vec!["codex".to_string(), "claude".to_string()]
         );
     }
 }

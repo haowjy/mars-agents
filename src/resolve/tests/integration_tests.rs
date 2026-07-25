@@ -120,6 +120,64 @@ fn two_sources_no_deps() {
 }
 
 #[test]
+fn transitive_override_does_not_collapse_conflicting_declared_identities() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let replacement = dir.path().join("replacement");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&replacement).unwrap();
+
+    let manifest_with_shared = |name: &str, relative_path: &str| Manifest {
+        package: PackageInfo {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+        },
+        dependencies: IndexMap::from([(
+            "shared".to_string(),
+            ManifestDep {
+                url: None,
+                path: Some(relative_path.into()),
+                subpath: None,
+                version: None,
+                filter: crate::config::FilterConfig::default(),
+            },
+        )]),
+        models: IndexMap::new(),
+    };
+
+    let mut provider = MockProvider::new();
+    provider.add_source(
+        "a",
+        tree_a.clone(),
+        Some(manifest_with_shared("a", "../shared-a")),
+    );
+    provider.add_source(
+        "b",
+        tree_b.clone(),
+        Some(manifest_with_shared("b", "../shared-b")),
+    );
+    provider.add_source("shared", replacement.clone(), None);
+
+    let config = make_config(vec![
+        ("a", SourceSpec::Path(tree_a)),
+        ("b", SourceSpec::Path(tree_b)),
+    ]);
+    let options = default_options()
+        .with_source_overrides(IndexMap::from([(SourceName::from("shared"), replacement)]));
+
+    let error = resolve(&config, &provider, None, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("conflicting identities") && error.contains("shared"),
+        "override must not erase conflicting declared provenance: {error}"
+    );
+}
+
+#[test]
 fn source_with_transitive_dep() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
@@ -177,8 +235,11 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            name: "a".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/shared.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/shared.git"),
                 Some(subpath.clone()),
             ),
@@ -187,15 +248,16 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     dependencies.insert(
         SourceName::from("b"),
         EffectiveDependency {
-            name: "b".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/shared.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/shared.git"),
                 Some(subpath.clone()),
             ),
@@ -204,8 +266,6 @@ fn duplicate_source_identity_detects_same_url_and_subpath() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -263,22 +323,29 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            name: "a".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            name: "dep".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/dep.git"),
+                Some(SourceSubpath::new("plugins/foo").unwrap()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/dep.git"),
                 Some(SourceSubpath::new("plugins/foo").unwrap()),
             ),
@@ -287,8 +354,6 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -722,7 +787,6 @@ fn normal_mode_falls_back_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
-            tree_hash: None,
         },
     );
 
@@ -768,7 +832,6 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
-            tree_hash: None,
         },
     );
 
@@ -819,7 +882,6 @@ fn path_source_resolves_without_version() {
     assert_eq!(graph.nodes.len(), 1);
     let node = &graph.nodes["local"];
     assert!(node.resolved_ref.version.is_none());
-    assert!(node.latest_version.is_none());
 }
 
 #[test]
@@ -869,10 +931,9 @@ fn alphabetical_order_linear_chain() {
         "c".into(),
         ResolvedNode {
             source_name: "c".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/c")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into()],
         },
@@ -881,10 +942,9 @@ fn alphabetical_order_linear_chain() {
         "b".into(),
         ResolvedNode {
             source_name: "b".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/b")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["a".into()],
         },
@@ -893,10 +953,9 @@ fn alphabetical_order_linear_chain() {
         "a".into(),
         ResolvedNode {
             source_name: "a".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/a")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -914,10 +973,9 @@ fn alphabetical_order_ignores_dependency_shape() {
         "a".into(),
         ResolvedNode {
             source_name: "a".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/a")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into(), "c".into()],
         },
@@ -926,10 +984,9 @@ fn alphabetical_order_ignores_dependency_shape() {
         "b".into(),
         ResolvedNode {
             source_name: "b".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/b")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["d".into()],
         },
@@ -938,10 +995,9 @@ fn alphabetical_order_ignores_dependency_shape() {
         "c".into(),
         ResolvedNode {
             source_name: "c".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/c")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["d".into()],
         },
@@ -950,10 +1006,9 @@ fn alphabetical_order_ignores_dependency_shape() {
         "d".into(),
         ResolvedNode {
             source_name: "d".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/d")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/d"), None),
             resolved_ref: dummy_ref("d"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -970,10 +1025,9 @@ fn alphabetical_order_no_deps() {
         "a".into(),
         ResolvedNode {
             source_name: "a".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/a")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -982,10 +1036,9 @@ fn alphabetical_order_no_deps() {
         "b".into(),
         ResolvedNode {
             source_name: "b".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/b")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -1004,10 +1057,9 @@ fn alphabetical_order_is_stable_for_cycles() {
         "a".into(),
         ResolvedNode {
             source_name: "a".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/a")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into()],
         },
@@ -1016,10 +1068,9 @@ fn alphabetical_order_is_stable_for_cycles() {
         "b".into(),
         ResolvedNode {
             source_name: "b".into(),
-            source_id: SourceId::git(SourceUrl::from("example.com/b")),
+            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["a".into()],
         },
@@ -1085,8 +1136,11 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     dependencies.insert(
         SourceName::from("dep"),
         EffectiveDependency {
-            name: "dep".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/repo.git"),
+                Some(subpath.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/repo.git"),
                 Some(subpath.clone()),
             ),
@@ -1095,8 +1149,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -1148,8 +1200,11 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     dependencies.insert(
         SourceName::from("dep-a"),
         EffectiveDependency {
-            name: "dep-a".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/mono.git"),
+                Some(subpath_foo.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/mono.git"),
                 Some(subpath_foo.clone()),
             ),
@@ -1158,15 +1213,16 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     dependencies.insert(
         SourceName::from("dep-b"),
         EffectiveDependency {
-            name: "dep-b".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/mono.git"),
+                Some(subpath_bar.clone()),
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from("https://example.com/mono.git"),
                 Some(subpath_bar.clone()),
             ),
@@ -1175,8 +1231,6 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -1310,29 +1364,25 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     deps.insert(
         SourceName::from("dep-a"),
         EffectiveDependency {
-            name: "dep-a".into(),
-            id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
             spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     deps.insert(
         SourceName::from("dep-b"),
         EffectiveDependency {
-            name: "dep-b".into(),
-            id: SourceId::git_with_subpath(canonical_url, None),
+            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
+            source_id: SourceId::git_with_subpath(canonical_url, None),
             spec: git_spec("https://example.com/org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -1385,8 +1435,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     deps.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            name: "a".into(),
-            id: SourceId::git_with_subpath(
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                    "https://example.com/a.git",
+                )),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
                 SourceUrl::from(crate::source::canonical::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
@@ -1397,22 +1452,18 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     deps.insert(
         SourceName::from("shared"),
         EffectiveDependency {
-            name: "shared".into(),
-            id: SourceId::git_with_subpath(ssh_canonical, None),
+            declared_source_id: SourceId::git_with_subpath(ssh_canonical.clone(), None),
+            source_id: SourceId::git_with_subpath(ssh_canonical, None),
             spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::All,
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {
@@ -1743,7 +1794,6 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(locked_commit.into()),
-            tree_hash: None,
         },
     );
 
@@ -1787,15 +1837,13 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
         dependencies.insert(
             SourceName::from(a_name.clone()),
             EffectiveDependency {
-                name: a_name.clone().into(),
-                id: source_id_for_spec(&a_spec, None),
+                declared_source_id: source_id_for_spec(&a_spec, None),
+                source_id: source_id_for_spec(&a_spec, None),
                 spec: a_spec,
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
                 dialect: None,
-                is_overridden: false,
-                original_git: None,
             },
         );
 
@@ -1803,15 +1851,13 @@ fn monotonic_restart_converges_for_more_than_32_packages() {
         dependencies.insert(
             SourceName::from(b_name.clone()),
             EffectiveDependency {
-                name: b_name.clone().into(),
-                id: source_id_for_spec(&b_spec, None),
+                declared_source_id: source_id_for_spec(&b_spec, None),
+                source_id: source_id_for_spec(&b_spec, None),
                 spec: b_spec,
                 subpath: None,
                 filter: FilterMode::All,
                 rename: RenameMap::new(),
                 dialect: None,
-                is_overridden: false,
-                original_git: None,
             },
         );
     }
@@ -1875,11 +1921,6 @@ fn restart_override_preserves_latest_version_metadata() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let shared = graph.nodes.get("shared").expect("shared should resolve");
     assert_eq!(shared.resolved_ref.version, Some(Version::new(1, 2, 0)));
-    assert_eq!(
-        shared.latest_version,
-        Some(Version::new(2, 0, 0)),
-        "latest_version should survive override-based restart"
-    );
     assert!(
         provider.fetch_count("shared") > 1,
         "shared should be re-resolved at least once to exercise override path"

@@ -15,11 +15,11 @@ use crate::types::ItemKind;
 /// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
+        ItemKind::Agent | ItemKind::McpServer => {
             let content = fs::read(path)?;
             Ok(hash_bytes(&content))
         }
-        ItemKind::Skill | ItemKind::BootstrapDoc => compute_dir_hash(path),
+        ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => compute_dir_hash(path),
     }
 }
 
@@ -47,13 +47,18 @@ pub fn hash_bytes(content: &[u8]) -> String {
 /// 3. Sorting lexicographically by path
 /// 4. Concatenating "path:hash\n" strings
 /// 5. SHA-256 of the concatenated result
-fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
+pub(crate) fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
     compute_dir_hash_filtered(dir, &[])
 }
 
 fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<String, MarsError> {
     let mut entries: Vec<(String, String)> = Vec::new();
     collect_file_hashes(dir, dir, &mut entries, excluded_top_level)?;
+    Ok(hash_file_manifest(entries))
+}
+
+/// Hash `(relative path, file hash)` entries using the directory-hash format.
+pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut manifest = String::new();
@@ -64,7 +69,7 @@ fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<
         manifest.push('\n');
     }
 
-    Ok(hash_bytes(manifest.as_bytes()))
+    hash_bytes(manifest.as_bytes())
 }
 
 /// Recursively collect (relative_path, hash) pairs for all files in a directory.

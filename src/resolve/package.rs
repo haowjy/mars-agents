@@ -23,6 +23,9 @@ use super::version::resolve_single_source;
 #[derive(Debug, Clone)]
 pub(crate) struct PendingSource {
     pub(crate) name: SourceName,
+    /// Identity declared by the requesting manifest, before any local override.
+    pub(crate) declared_source_id: SourceId,
+    /// Effective identity fetched for this run (possibly a local override).
     pub(crate) source_id: SourceId,
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
@@ -43,9 +46,9 @@ pub(crate) enum PackageResolutionState {
 #[derive(Debug, Clone)]
 pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
+    pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
     pub(crate) constraint: VersionConstraint,
-    pub(crate) spec: SourceSpec,
     pub(crate) is_local: bool,
 }
 
@@ -97,12 +100,12 @@ pub(crate) fn resolve_package_bottom_up(
     }
 
     if let Some(existing_package) = ctx.registry().get(&pending_src.name)
-        && existing_package.node.source_id != pending_src.source_id
+        && existing_package.declared_source_id != pending_src.declared_source_id
     {
         return Err(ResolutionError::SourceIdentityMismatch {
             name: pending_src.name.to_string(),
-            existing: existing_package.node.source_id.to_string(),
-            incoming: pending_src.source_id.to_string(),
+            existing: existing_package.declared_source_id.to_string(),
+            incoming: pending_src.declared_source_id.to_string(),
         }
         .into());
     }
@@ -155,7 +158,7 @@ pub(crate) fn resolve_package_bottom_up(
             };
 
             if !skip {
-                let (new_ref, latest_version) = resolve_single_source(
+                let new_ref = resolve_single_source(
                     pending_src,
                     provider,
                     locked,
@@ -178,7 +181,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let new_rooted = stage_rooted_package(
+                    let staged = stage_rooted_package(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
@@ -188,8 +191,8 @@ pub(crate) fn resolve_package_bottom_up(
                     ctx.set_pending_restart(
                         pending_src.name.clone(),
                         new_ref,
-                        new_rooted,
-                        latest_version,
+                        staged.rooted,
+                        staged.hook_surface,
                     );
                     return Err(MarsError::ResolutionRestartNeeded {
                         package: pending_src.name.to_string(),
@@ -243,14 +246,14 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let (resolved_ref, latest_version, rooted_ref) =
-        if let Some((override_ref, override_rooted, override_latest_version)) =
-            ctx.version_override(&pending_src.name).cloned()
+    let (resolved_ref, rooted_ref, hook_surface) =
+        if let Some((override_ref, override_rooted, hook_surface)) =
+            ctx.version_override(&pending_src.name)
         {
-            // Use pre-computed ref and latest-version metadata from prior pass.
-            (override_ref, override_latest_version, override_rooted)
+            // Use the pre-computed ref from the prior pass.
+            (override_ref, override_rooted, hook_surface)
         } else {
-            let (ref_, latest) = resolve_single_source(
+            let ref_ = resolve_single_source(
                 pending_src,
                 provider,
                 locked,
@@ -263,13 +266,14 @@ pub(crate) fn resolve_package_bottom_up(
                 &ref_.tree_path,
                 pending_src.subpath.as_ref(),
             )?;
-            let rooted =
+            let staged =
                 stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
-            (ref_, latest, rooted)
+            (ref_, staged.rooted, staged.hook_surface)
         };
+    ctx.set_hook_surface(&pending_src.name, hook_surface);
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
-        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest)?;
+        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
     let deps = manifest_requests
         .iter()
         .map(|request| request.name.clone())
@@ -292,13 +296,12 @@ pub(crate) fn resolve_package_bottom_up(
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
                 resolved_ref,
-                latest_version,
                 manifest,
                 deps,
             },
+            declared_source_id: pending_src.declared_source_id.clone(),
             items,
             constraint: pending_src.constraint.clone(),
-            spec: pending_src.spec.clone(),
             is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
         },
     );
@@ -382,9 +385,12 @@ fn stage_rooted_package(
     effective_config: &EffectiveConfig,
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
-) -> Result<super::types::RootedSourceRef, MarsError> {
+) -> Result<staging::StagedRootedSource, MarsError> {
     let Some(staging_root) = options.staging_root.as_deref() else {
-        return Ok(rooted);
+        return Ok(staging::StagedRootedSource {
+            rooted,
+            hook_surface: staging::HookSurfaceState::Readable,
+        });
     };
 
     let dep = effective_config.dependencies.get(source_name);
@@ -393,7 +399,7 @@ fn stage_rooted_package(
     staging::stage_rooted_source(
         source_name,
         rooted,
-        dialect,
+        staging::RootedStageOptions { dialect },
         &effective_config.skills,
         &renames,
         staging_root,
@@ -467,7 +473,6 @@ pub(crate) fn seed_items_for_request(
             constraint: pending_src.constraint.clone(),
             required_by: pending_src.required_by.clone(),
             is_local: package.is_local,
-            spec: pending_src.spec.clone(),
         })
         .collect()
 }
@@ -476,6 +481,7 @@ pub(crate) fn collect_manifest_requests(
     pending_src: &PendingSource,
     package_root: &Path,
     manifest: &Option<Manifest>,
+    options: &ResolveOptions,
 ) -> Result<Vec<PendingSource>, MarsError> {
     let mut requests = Vec::new();
     let Some(manifest_data) = manifest else {
@@ -486,7 +492,7 @@ pub(crate) fn collect_manifest_requests(
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
 
-        let (dep_spec_resolved, dep_constraint) = match (&dep_spec.url, &dep_spec.path) {
+        let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
             (Some(url), None) => (
                 SourceSpec::Git(GitSpec {
                     url: url.clone(),
@@ -517,12 +523,20 @@ pub(crate) fn collect_manifest_requests(
                 .into());
             }
         };
-
-        let dep_source_id =
+        let declared_source_id =
+            source_id_for_pending_spec(package_root, &declared_spec, dep_subpath.clone());
+        let (dep_spec_resolved, dep_constraint) =
+            if let Some(path) = options.source_overrides.get(&dep_name_typed) {
+                (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
+            } else {
+                (declared_spec, declared_constraint)
+            };
+        let effective_source_id =
             source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
         requests.push(PendingSource {
             name: dep_name_typed,
-            source_id: dep_source_id,
+            declared_source_id,
+            source_id: effective_source_id,
             spec: dep_spec_resolved,
             subpath: dep_subpath,
             constraint: dep_constraint,

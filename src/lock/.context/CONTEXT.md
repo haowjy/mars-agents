@@ -1,6 +1,6 @@
 # src/lock/ — Target-Scoped Lock Outputs
 
-`mars.lock` is the ownership registry for managed content. Lock v2 stores one
+`mars.lock` is the ownership registry for managed content. Lock v3 stores one
 logical item with one or more output records. Every output record is scoped by
 the target root that received it.
 
@@ -8,13 +8,14 @@ the target root that received it.
 
 ### Output identity is `(target_root, dest_path)`
 
-`OutputRecord` has three fields that must be interpreted together:
+`OutputRecord` has a path identity and an explicit lifecycle claim:
 
 | Field | Meaning |
 |---|---|
 | `target_root` | Directory Mars materialized into, such as `.mars`, `.codex`, `.pi`, `.agents` |
 | `dest_path` | Path relative to that target root, such as `skills/planning` |
-| `installed_checksum` | Hash of the bytes installed at that exact output |
+| `state = "installed"` + `installed_checksum` | Mars asserts that these exact bytes are installed at the path |
+| `state = "pending-deletion"` | Mars asserts only authority to retry deletion; no checksum exists |
 
 The pair `(target_root, dest_path)` is the stable identity of an installed
 output. `dest_path` alone is not unique once a project has multiple targets.
@@ -26,13 +27,32 @@ therefore have multiple valid installed checksums:
 [[items."skill/planning".outputs]]
 target_root = ".mars"
 dest_path = "skills/planning"
+state = "installed"
 installed_checksum = "sha256:canonical..."
 
 [[items."skill/planning".outputs]]
 target_root = ".pi"
 dest_path = "skills/planning"
+state = "installed"
 installed_checksum = "sha256:pi-projected..."
 ```
+
+Pending deletion is deliberately part of the same type because it changes the
+meaning of an existing path-ownership record. The enum makes a checksum
+unavailable in that state, so disk-content consumers must handle the lifecycle.
+
+For one release, loading a v2 lock crosses its untyped output records into this
+model. The promotion consults disk at that boundary only: a regular file with a
+matching checksum becomes installed; an absent, non-file, unreadable, or
+mismatched path becomes pending deletion. This preserves retry authority without
+asserting ghost content and leaves legacy config-entry records available to the
+#130 hook sweep. Delete the v2 promotion after the release following lock v3,
+alongside that sweep.
+
+Interrupted-write recovery is not represented here. Publishing intent before
+materialization would add a second lock write, transaction ordering, and
+fault-injection recovery semantics. That is a separate pipeline transaction
+design rather than another meaning needed by the current ownership record.
 
 ### `LockIndex` is the read seam
 
@@ -42,7 +62,8 @@ views over that schema:
 | Method | Use |
 |---|---|
 | `find_output(target_root, dest_path)` | Diff, mutation, collision, and carry-forward checks for one concrete target |
-| `contains_output(target_root, dest_path)` | Ownership checks for one concrete target |
+| `contains_installed_output(target_root, dest_path)` | Checks that require an installed-content claim, including collision and overwrite decisions |
+| `contains_output(target_root, dest_path)` | Checks where either installed or pending-deletion authority is sufficient, chiefly deletion |
 | `find_by_dest_path(dest_path)` | Broad/legacy lookup where target root is intentionally irrelevant |
 | `contains_dest_path(dest_path)` | Broad/legacy existence check |
 
@@ -76,7 +97,7 @@ Linked-target deletion, overwrite, and orphan cleanup use the same
 
 ```mermaid
 flowchart TD
-    LockFile["LockFile v2 schema"]
+    LockFile["LockFile v3 schema"]
     Item["LockedItemV2 logical item"]
     Outputs["OutputRecord[]"]
     Index["LockIndex"]
@@ -86,7 +107,7 @@ flowchart TD
 
     LockFile --> Item --> Outputs --> Index
     Index -->|find_output .mars + dest| Canonical
-    Index -->|contains_output target + dest| TargetSync
+    Index -->|contains_installed_output target + dest| TargetSync
     Index -->|contains_output target + dest| CLI
 ```
 
@@ -97,7 +118,7 @@ checksum applies to the target being inspected.
 
 ## Rationale
 
-The v2 schema already models per-target outputs. The bug class comes from
+The schema models per-target outputs. One bug class comes from
 flattening those outputs into a `dest_path -> output` map and letting duplicate
 paths overwrite each other. Sorting can make a later target win, so canonical
 diff may read a linked/native target checksum even when `.mars` is clean.
@@ -111,4 +132,3 @@ compatibility while making the read model match the schema model.
 - Use the configured target name when checking a linked/native target.
 - Use `canonical_flat_items()` for `.mars`-only orphan scans.
 - Use `flat_items_for_target(target_root)` for target-scoped listing.
-- Use `flat_items()` only when the caller deliberately wants every output.

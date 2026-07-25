@@ -327,6 +327,53 @@ fn adopt_moves_skill_into_mars_src_and_syncs_targets() {
 }
 
 #[test]
+fn adopt_preserves_original_when_dependency_resolution_fails() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(
+            r#"
+[settings]
+targets = [".claude"]
+
+[dependencies.missing]
+path = "./does-not-exist"
+"#,
+        )
+        .unwrap();
+
+    project
+        .child(".claude")
+        .child("agents")
+        .create_dir_all()
+        .unwrap();
+    let original = project.child(".claude").child("agents").child("local.md");
+    original.write_str("# Local").unwrap();
+
+    mars()
+        .args([
+            "adopt",
+            original.path().to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to resolve path"));
+
+    assert_eq!(fs::read_to_string(original.path()).unwrap(), "# Local");
+    assert!(
+        !project
+            .child(".mars-src")
+            .child("agents")
+            .child("local.md")
+            .exists()
+    );
+}
+
+#[test]
 fn sync_reads_mars_src_local_items_without_package_section() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");

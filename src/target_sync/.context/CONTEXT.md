@@ -8,14 +8,17 @@ are shared with native reconcile (`src/compiler/mod.rs`) and `mars link`.
 
 ### Per-target lock ownership
 
-Lock v2 `OutputRecord` entries carry `target_root` + `dest_path`. Mars may delete,
-remove-on-`Removed`, or overwrite a path in a linked target **only** when the
-previous lock contains a matching record for that exact pair.
+Lock v3 `OutputRecord` entries carry `target_root` + `dest_path` plus an explicit
+lifecycle state. Mars may delete or remove-on-`Removed` only when the previous
+lock contains a matching record for that exact pair. Overwriting an existing path
+without `--force` additionally requires that record to be `Installed`.
 
 **Invariant:** A path tracked only under `.mars` does **not** authorize mutation
 under `.cursor`, `.claude`, or any other target root.
 
-Use `LockFile::contains_output(target_root, dest_path)` at mutation sites.
+Use `LockFile::contains_output(target_root, dest_path)` for deletion authority and
+`LockFile::installed_checksum_for_output(target_root, dest_path)` for replacement
+authority.
 Orphan cleanup scopes to `output_dest_paths_for_target(target_root)` — never
 `all_output_dest_paths()` joined against every target.
 
@@ -25,16 +28,17 @@ Orphan cleanup scopes to `output_dest_paths_for_target(target_root)` — never
 |---|---|
 | `may_delete(old_lock, target_root, dest_path)` | Orphan cleanup, Removed deletes, native reconcile deletes |
 | `copy_decision(...)` | Copy/install when dest already exists |
-| `warn_unmanaged_collision(...)` | Preserve untracked collision; hint correct `--force` command |
-| `warn_unmanaged_adopted(...)` | `--force` took ownership; lock will record the target output |
+| `warn_no_installed_claim_collision(...)` | Preserve a collision without an installed claim; hint correct `--force` command |
+| `warn_no_installed_claim_adopted(...)` | `--force` adopted the path; lock will record an installed target output |
 
 `CollisionAdoptHint` selects the diagnostic hint:
 - `SyncForce` → suggests `mars sync --force`
 - `LinkForce` → suggests `mars link <target> --force`
 
-### Unmanaged collision semantics
+### Copy/install collision semantics
 
-When dest exists on disk but the lock has no `(target_root, dest_path)` record:
+When dest exists on disk but the lock has no installed-content claim for
+`(target_root, dest_path)` (either no record or `PendingDeletion`):
 
 | Command | Default | `--force` |
 |---|---|---|
@@ -54,8 +58,8 @@ state). Do not use bare `dest_path` iterators for linked-target ownership checks
 
 | Code | Meaning |
 |---|---|
-| `target-unmanaged-collision` | Untracked existing file preserved; run suggested `--force` to adopt |
-| `target-unmanaged-adopted` | `--force` adopted an untracked collision; lock updated |
+| `target-unmanaged-collision` | Existing path without an installed claim preserved; run suggested `--force` to adopt |
+| `target-unmanaged-adopted` | `--force` adopted a path without an installed claim; lock updated |
 
 ## Consumers
 

@@ -4,6 +4,82 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `mars.lock` version 3 distinguishes installed outputs from
+  pending-deletion ownership records. Version 2 locks are promoted for one release
+  so legacy hook cleanup can run; version 1 locks must be removed and regenerated.
+- **Breaking:** `mars unlink` now removes only outputs and config entries recorded
+  as owned for that target; handwritten files remain in place, and the target
+  directory remains when it is not empty.
+- Leave byte-identical native agents, native skill projections, `mars.lock`, and
+  `.mars/native-agents.json` untouched during a no-op sync, preserving mtimes
+  and avoiding redundant durable writes.
+- **Breaking:** remove unused public helpers, wrappers, re-exports, and unread
+  fields from the library API.
+- `discover_installed` now scans only installed item identity and path instead of
+  parsing every installed agent and skill frontmatter document.
+- `mars doctor` conflict detection now matches `mars list --status` and `mars resolve`.
+- Stop creating the unused `.mars/cache/bases` directory during sync.
+- **Breaking:** hooks now author per-target native JSON fragments instead of
+  `events`/`matcher`/`[action]`; Mars installs whole hook directories and
+  substitutes `${MARS_HOOK_DIR}` with portable path separators. The old schema
+  is rejected as an error.
+- The v0.11.0 command-path cleanup joins the #130 one-release sweep deletion
+  ledger.
+- Hook discovery now consistently treats only package-root `hooks/` as the
+  hook convention root.
+- Same-name hook collisions are scoped per target.
+
+### Added
+- Cursor native hook fragments emit flat entries under a Mars-owned version 1
+  wrapper with strict validation against its 21 camelCase events.
+- OpenCode and Pi hooks place substituted TypeScript file fragments at
+  `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
+
+### Fixed
+- Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
+  hook source; the lock is now rebuilt in memory and replaced only after a
+  complete repair.
+- Let `upgrade`, `override`, and `remove` recover projects whose resolved
+  packages still contain the removed hook schema. When legacy sources remain,
+  recovery persists only the requested config intent and exits 2 before
+  materialization with blocker guidance; `repair` likewise halts without
+  writing. A fully readable post-mutation graph converges in the same command.
+  Normal sync, including `sync --force`, continues to reject the old schema.
+- Apply local overrides to transitive dependencies, allowing a broken
+  transitive package to be replaced without first declaring it directly.
+- Reject conflicting same-name transitive source declarations even when a
+  project override supplies one effective replacement path.
+- Preserve installed-content authority for matching skill and hook directories
+  when promoting version 2 locks.
+- Reject version 2 directory outputs containing symlinks or special entries
+  before promotion can grant installed-content authority.
+- Repair linked native skill projections when the destination is a symlink,
+  a non-directory, or has structural differences such as extra empty directories.
+- Describe pending-deletion copy collisions as paths without installed-content
+  claims instead of incorrectly calling them untracked or divergent.
+- Preflight `mars adopt` before moving user content, and restore the original
+  path if the subsequent sync fails.
+- Report stale config entries as removed only when removal was confirmed for
+  that entry's MCP or hook surface.
+- Record exact emitted hook config and remove only structural matches, preserving
+  hand edits and reporting them as config divergence.
+- Preserve untracked and hand-edited linked-target files; require `--force` to
+  adopt collisions.
+- Preserve ownership and suppress replacement after a failed removal so a later
+  sync retries the removal.
+- Treat pending-deletion records as deletion authority only, preserving content
+  at a reintroduced path unless `--force` explicitly adopts it.
+- Allow OpenCode file hooks to sync without validating an unrelated
+  `opencode.json`.
+- Make transitive hook precedence use deterministic longest-path depth, avoiding
+  hook config churn across identical syncs.
+- Reject malformed merge config before writing hook files instead of replacing
+  user config.
+- Skip MCP discovery for dependency filters that cannot emit MCP config.
+- Report removed hook schemas from filtered transitive packages with source
+  name and version instead of leaking internal staging paths.
+
 ## [0.11.0] - 2026-07-24
 
 ### Changed

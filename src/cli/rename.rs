@@ -46,6 +46,7 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             to: args.to.clone(),
         }),
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
@@ -57,5 +58,5 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 
     output::print_sync_report(&report, json, true);
 
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }

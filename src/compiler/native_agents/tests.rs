@@ -96,7 +96,7 @@ fn test_router<'a>(
 ) -> NativeModelRoutingRuntime<'a> {
     let settings = crate::config::Settings::default();
     let routing_settings = ResolvedRoutingSettings::from_settings(&settings);
-    let session = CapabilitySession::collect_with_resolver_without_auth(
+    let session = CapabilitySession::collect_with_resolver(
         &CapabilityCollectionOptions {
             offline: true,
             probe_refresh: crate::models::probes::ProbeRefreshMode::Skip,
@@ -243,15 +243,13 @@ fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
 
 fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> LockFile {
     let mut lock = LockFile::empty();
-    let mut outputs: Vec<OutputRecord> = vec![OutputRecord {
-        target_root: ".mars".to_string(),
-        dest_path: dest.into(),
-        installed_checksum: checksum.into(),
-    }];
-    outputs.extend(targets.iter().map(|target| OutputRecord {
-        target_root: (*target).to_string(),
-        dest_path: dest.into(),
-        installed_checksum: checksum.into(),
+    let mut outputs: Vec<OutputRecord> = vec![OutputRecord::installed(
+        ".mars".to_string(),
+        dest.into(),
+        checksum.into(),
+    )];
+    outputs.extend(targets.iter().map(|target| {
+        OutputRecord::installed((*target).to_string(), dest.into(), checksum.into())
     }));
     lock.items.insert(
         "agent/coder".to_string(),
@@ -293,11 +291,11 @@ fn link_suppress_all_reconciles_selective_native_target() {
         .get_mut("agent/coder")
         .unwrap()
         .outputs
-        .push(OutputRecord {
-            target_root: ".codex".to_string(),
-            dest_path: "agents/coder.toml".into(),
-            installed_checksum: "sha256:coder-toml".into(),
-        });
+        .push(OutputRecord::installed(
+            ".codex".to_string(),
+            "agents/coder.toml".into(),
+            "sha256:coder-toml".into(),
+        ));
     let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
     let removed = reconcile_native_agent_surfaces_without_model_routing(
         &NativeAgentReconcileCtx {
@@ -741,6 +739,66 @@ fn compile_emit_all_with_overlays(
         &mut router,
         &mut diag,
     )
+}
+
+#[test]
+fn pending_deletion_does_not_authorize_native_agent_overwrite() {
+    let dir = TempDir::new().unwrap();
+    let native_path = dir.path().join(".claude/agents/coder.md");
+    std::fs::create_dir_all(native_path.parent().unwrap()).unwrap();
+    std::fs::write(&native_path, "# User replacement\n").unwrap();
+
+    let agent = parse_mars_agent("---\nname: coder\n---\n# Mars agent\n", "coder");
+    let mut lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:old");
+    lock.items
+        .get_mut("agent/coder")
+        .unwrap()
+        .outputs
+        .iter_mut()
+        .find(|output| output.target_root == ".claude")
+        .unwrap()
+        .mark_pending_deletion();
+
+    let models_cache = empty_models_cache();
+    let aliases = IndexMap::new();
+    let mut router = test_router(&aliases, &models_cache);
+    let mut diag = DiagnosticCollector::new();
+    let records = compile_native_agents(
+        &NativeAgentCompileCtx {
+            project_root: dir.path(),
+            old_lock: &lock,
+            harness_scope: None,
+            configured_emit_harnesses: &[HarnessKind::Claude],
+            options: NativeAgentSurfaceCompileOptions {
+                force: false,
+                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                dry_run: false,
+            },
+            fanout_agents: &[],
+        },
+        &AgentSurfacePolicy::EmitAll,
+        &[agent],
+        &mut router,
+        &mut diag,
+    );
+
+    assert!(records.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(native_path).unwrap(),
+        "# User replacement\n"
+    );
+    let diagnostics = diag.drain();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "target-unmanaged-collision")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "native-agent-projection-repaired"),
+        "a tombstone has no installed claim to diverge from"
+    );
 }
 
 #[test]

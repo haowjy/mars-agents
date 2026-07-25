@@ -1,13 +1,11 @@
 // qa-validated: harness-order-settings-audit
 
-use std::collections::HashSet;
-use std::path::PathBuf;
-
 use crate::harness::host::{
     ExecutableResolver, ExecutableState, PathExecutableResolver,
-    native_harness_authenticated as host_native_authed, resolve_binary_path,
+    native_harness_authenticated as host_native_authed,
 };
-use crate::harness::registry::{self, HarnessId};
+use crate::harness::registry;
+use std::collections::HashSet;
 
 pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "cursor", "opencode"];
 
@@ -25,11 +23,6 @@ pub fn detect_installed_harnesses() -> HashSet<String> {
         .map(|id| id.as_str().to_string())
         .collect()
 }
-
-pub fn is_valid_harness(name: &str) -> bool {
-    registry::is_known(name)
-}
-
 pub fn normalize_harness_name(name: &str) -> Option<String> {
     registry::normalize_name(name)
 }
@@ -44,12 +37,6 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
 pub fn native_harness_authenticated(harness: &str) -> bool {
     host_native_authed(harness)
 }
-
-pub fn resolve_command(command: &str) -> PathBuf {
-    let resolver = PathExecutableResolver;
-    resolve_binary_path(command, &resolver).unwrap_or_else(|| PathBuf::from(command))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HarnessOrderFailure {
     Empty,
@@ -91,11 +78,6 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
         failure: None,
     }
 }
-
-pub fn parse_harness_id(name: &str) -> Option<HarnessId> {
-    registry::parse(name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,13 +107,5 @@ mod tests {
             candidates,
             vec!["claude", "codex", "pi", "cursor", "opencode"]
         );
-    }
-
-    #[test]
-    fn valid_harness_validation_rejects_gemini() {
-        assert!(is_valid_harness("claude"));
-        assert!(is_valid_harness("OpenCode"));
-        assert!(!is_valid_harness("gemini"));
-        assert!(!is_valid_harness("unknown"));
     }
 }

@@ -1,6 +1,6 @@
 # src/discover/ — Source Item Discovery
 
-Discovers package-provided agents, skills, and bootstrap docs before resolve/sync installs them.
+Discovers package-provided agents, skills, hooks, and bootstrap docs before resolve/sync installs them.
 
 ## Contract
 
@@ -11,6 +11,11 @@ Discovery is convention-based. A single bounded recursive walk starts at the roo
 - `bootstrap/` for child directories containing `BOOTSTRAP.md`
 
 The same walk is used for packages with `mars.toml`, packages without `mars.toml`, and local `.mars-src/` roots.
+
+Hooks are the exception to the layered walk: only direct children of the
+package-root `hooks/` directory are discovered. The compiler and general item
+discovery share that directory enumerator, so a hook cannot be listed and then
+fail resolution because a second scanner searched a different root.
 
 After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
 

@@ -3327,24 +3327,6 @@ description = "Old alias"
         assert_eq!(rows[0].matched_aliases, vec!["opus"]);
         assert_eq!(rows[1].matched_aliases, vec!["opus"]);
     }
-
-    #[test]
-    fn resolve_pinned_with_match_uses_model_field() {
-        let mut merged = IndexMap::new();
-        merged.insert(
-            "opus".to_string(),
-            pinned_with_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
-        );
-        let models_cache = cache(vec![
-            cached_model("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
-            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
-        ]);
-        let mut diag = DiagnosticCollector::new();
-        let resolved = models::resolve_one("opus", &merged, &models_cache, &mut diag).unwrap();
-        assert_eq!(resolved.model_id, "claude-opus-4-6");
-        assert!(diag.drain().is_empty());
-    }
-
     fn passthrough_trace(
         match_evidence: crate::routing::MatchEvidence,
     ) -> crate::routing::RoutingTrace {

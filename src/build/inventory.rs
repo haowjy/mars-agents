@@ -332,16 +332,16 @@ mod tests {
                 version: None,
                 source_checksum: "sha256:src".into(),
                 outputs: vec![
-                    OutputRecord {
-                        target_root: ".mars".to_string(),
-                        dest_path: canonical_dest.into(),
-                        installed_checksum: "sha256:mars".into(),
-                    },
-                    OutputRecord {
-                        target_root: harness.target_dir().to_string(),
-                        dest_path: native_dest.into(),
-                        installed_checksum: "sha256:native".into(),
-                    },
+                    OutputRecord::installed(
+                        ".mars".to_string(),
+                        canonical_dest.into(),
+                        "sha256:mars".into(),
+                    ),
+                    OutputRecord::installed(
+                        harness.target_dir().to_string(),
+                        native_dest.into(),
+                        "sha256:native".into(),
+                    ),
                 ],
             },
         );

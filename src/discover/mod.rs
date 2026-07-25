@@ -31,6 +31,7 @@ const PLUGIN_MANIFESTS: &[&str] = &[
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
 const AGENTS_DIR_NAME: &str = "agents";
 const SKILLS_DIR_NAME: &str = "skills";
+const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
 const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
@@ -100,6 +101,7 @@ fn discover_convention_items(
     let mut scratch = Vec::new();
     let mut visited_agents = HashSet::new();
     let mut visited_skills = HashSet::new();
+    let mut visited_hooks = HashSet::new();
     let mut visited_bootstrap = HashSet::new();
     let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
 
@@ -117,6 +119,10 @@ fn discover_convention_items(
             }
             Some(SKILLS_DIR_NAME) => {
                 scan_skill_dir(package_root, &base_rel, &mut scratch, &mut visited_skills)?;
+                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
+            }
+            Some(HOOKS_DIR_NAME) => {
+                scan_hook_dir(package_root, &base_rel, &mut scratch, &mut visited_hooks)?;
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(BOOTSTRAP_DIR_NAME) => {
@@ -212,6 +218,70 @@ fn scan_skill_dir(
     }
 
     Ok(())
+}
+
+fn scan_hook_dir(
+    package_root: &Path,
+    relative_root: &Path,
+    items: &mut Vec<DiscoveredItem>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), MarsError> {
+    if relative_root != Path::new(HOOKS_DIR_NAME) {
+        return Ok(());
+    }
+    for path in discover_hook_directories(package_root)? {
+        let rel = relative_to(package_root, &path)?;
+        if !visited.insert(rel.clone()) {
+            continue;
+        }
+        let dir_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if dir_name.starts_with('.') {
+            continue;
+        }
+        let raw = std::fs::read_to_string(path.join("hook.toml"))?;
+        let name = toml::from_str::<toml::Value>(&raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| dir_name.to_string());
+        items.push(DiscoveredItem {
+            id: ItemId {
+                kind: ItemKind::Hook,
+                name: ItemName::from(name),
+            },
+            source_path: rel,
+        });
+    }
+    Ok(())
+}
+
+/// Return package-root hook directories in stable order.
+///
+/// Hooks are deliberately a package-root-only convention. Unlike agents and
+/// skills, nested `hooks/` containers are not independent package layers.
+pub(crate) fn discover_hook_directories(package_root: &Path) -> Result<Vec<PathBuf>, MarsError> {
+    let hooks_dir = package_root.join(HOOKS_DIR_NAME);
+    if !hooks_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    Ok(read_dir_paths_sorted(&hooks_dir)?
+        .into_iter()
+        .filter(|path| {
+            path.is_dir()
+                && path.join("hook.toml").is_file()
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with('.'))
+        })
+        .collect())
 }
 
 fn scan_agent_dir(
@@ -669,18 +739,12 @@ fn sort_items(items: &mut [DiscoveredItem]) {
     });
 }
 
-/// An installed item with parsed frontmatter metadata.
+/// An installed item's identity and path.
 #[derive(Debug, Clone)]
 pub struct InstalledItem {
     pub id: ItemId,
     /// Disk path (absolute) to the installed file/dir.
     pub path: PathBuf,
-    /// Parsed frontmatter name (may differ from filename).
-    pub frontmatter_name: Option<String>,
-    /// Parsed frontmatter description.
-    pub description: Option<String>,
-    /// Skills referenced in frontmatter (agents only).
-    pub skill_refs: Vec<String>,
 }
 
 /// Result of scanning an installed managed root.
@@ -700,55 +764,18 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
     scan_agent_dir(root, Path::new("agents"), &mut scratch, &mut visited)?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
-        let (frontmatter_name, description, skill_refs) = parse_installed_frontmatter(&path);
-        agents.push(InstalledItem {
-            id: item.id,
-            path,
-            frontmatter_name,
-            description,
-            skill_refs,
-        });
+        agents.push(InstalledItem { id: item.id, path });
     }
 
     scan_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
-        let skill_md = if item.source_path == Path::new(".") {
-            root.join("SKILL.md")
-        } else {
-            path.join("SKILL.md")
-        };
-        let (frontmatter_name, description, _) = parse_installed_frontmatter(&skill_md);
-        skills.push(InstalledItem {
-            id: item.id,
-            path,
-            frontmatter_name,
-            description,
-            skill_refs: Vec::new(),
-        });
+        skills.push(InstalledItem { id: item.id, path });
     }
 
     sort_installed(&mut agents);
     sort_installed(&mut skills);
     Ok(InstalledState { agents, skills })
-}
-
-fn parse_installed_frontmatter(path: &Path) -> (Option<String>, Option<String>, Vec<String>) {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return (None, None, Vec::new()),
-    };
-    match crate::frontmatter::parse(&content) {
-        Ok(fm) => {
-            let name = fm.name().map(str::to_owned);
-            let description = fm
-                .get("description")
-                .and_then(|value| value.as_str())
-                .map(str::to_owned);
-            (name, description, fm.skills())
-        }
-        Err(_) => (None, None, Vec::new()),
-    }
 }
 
 fn sort_installed(items: &mut [InstalledItem]) {

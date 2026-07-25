@@ -27,17 +27,15 @@ use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::managed_cmd;
-use crate::types::{ContentHash, DestPath, MarsContext, SourceId, SourceName, SourceOrigin};
+use crate::types::{ContentHash, DestPath, MarsContext, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 
-// Re-export mutation types for public API compatibility.
-pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_config_mutation};
+pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
 
 /// Report from a completed sync operation.
 #[derive(Debug)]
 pub struct SyncReport {
     pub applied: ApplyResult,
-    pub pruned: Vec<apply::ActionOutcome>,
     pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     pub upgrades_available: usize,
@@ -52,16 +50,27 @@ pub struct SyncReport {
     /// Native harness agent outputs removed this run, as `(target_root, dest_path)`.
     /// Surfaced so SuppressAll / selective prunes are not reported as "up to date".
     pub native_removed: Vec<(String, String)>,
+    /// Present when a recovery command persisted intent but stopped before
+    /// materialization because at least one hook surface was unreadable.
+    pub recovery_halt: Option<RecoveryHalt>,
 }
 
-impl SyncReport {
-    /// Whether the sync produced any unresolved conflicts.
-    pub fn has_conflicts(&self) -> bool {
-        self.applied
-            .outcomes
-            .iter()
-            .any(|o| matches!(o.action, apply::ActionTaken::Conflicted))
-    }
+/// A source package preventing a recovery command from entering the compiler.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryBlocker {
+    pub package: String,
+    pub version: String,
+    pub hook_names: Vec<String>,
+    pub guidance: String,
+    pub suggested_command: String,
+}
+
+/// Successful intent persistence that still requires recovery work.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryHalt {
+    pub persisted: Vec<String>,
+    pub blockers: Vec<RecoveryBlocker>,
+    pub next_step: String,
 }
 
 /// What a CLI command requests from the sync pipeline.
@@ -73,9 +82,34 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
+    /// Whether a recovery command may persist intent and halt when resolution
+    /// finds a hook surface the compiler cannot read.
+    pub recovery: RecoveryPolicy,
     /// Whether lossiness warnings are included in the returned report.
     /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
     pub lossiness_mode: LossinessMode,
+}
+
+/// Schema handling policy for content encountered during sync resolution.
+///
+/// Strict is the safe default: only commands whose purpose is to recover a
+/// locked-out graph may opt into deferring materialization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecoveryPolicy {
+    #[default]
+    Strict,
+    DeferOnUnreadable,
+    /// Defer on unreadable sources and rebuild a corrupt lock in memory.
+    ///
+    /// The corrupt file remains untouched unless the full pipeline reaches
+    /// finalization and replaces it with a rebuilt lock.
+    Repair,
+}
+
+impl RecoveryPolicy {
+    fn defers_on_unreadable(self) -> bool {
+        matches!(self, Self::DeferOnUnreadable | Self::Repair)
+    }
 }
 
 /// Resolution behavior for the resolver stage.
@@ -139,6 +173,8 @@ pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
+    pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
+    pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
 }
@@ -150,7 +186,108 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
+    let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
+    if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
+        persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
+        let recovery_halt = build_recovery_halt(&ir.resolved, unreadable_hook_surfaces, request);
+        return Ok(SyncReport {
+            applied: ApplyResult {
+                outcomes: Vec::new(),
+            },
+            diagnostics: diag.drain(),
+            dependency_changes: ir.resolved.loaded.dependency_changes,
+            upgrades_available: ir.resolved.upgrades_available,
+            target_outcomes: Vec::new(),
+            dry_run: request.options.dry_run,
+            native_emitted: Vec::new(),
+            native_removed: Vec::new(),
+            recovery_halt: Some(recovery_halt),
+        });
+    }
     crate::compiler::compile(ctx, ir, request, &mut diag)
+}
+
+fn build_recovery_halt(
+    resolved: &ResolvedState,
+    unreadable_hook_surfaces: &BTreeMap<SourceName, std::collections::BTreeSet<String>>,
+    request: &SyncRequest,
+) -> RecoveryHalt {
+    let persisted = persisted_intent_descriptions(resolved, request);
+    let blockers = unreadable_hook_surfaces
+        .iter()
+        .map(|(source_name, hook_names)| {
+            let node = resolved
+                .graph
+                .nodes
+                .get(source_name)
+                .expect("unreadable surface belongs to a resolved node");
+            let version = node
+                .resolved_ref
+                .version
+                .as_ref()
+                .map(ToString::to_string)
+                .or_else(|| node.resolved_ref.version_tag.clone())
+                .or_else(|| {
+                    node.manifest
+                        .as_ref()
+                        .map(|manifest| manifest.package.version.clone())
+                })
+                .or_else(|| node.resolved_ref.commit.as_ref().map(ToString::to_string))
+                .unwrap_or_else(|| "path".to_string());
+            let parents: Vec<_> = resolved
+                .graph
+                .nodes
+                .values()
+                .filter(|candidate| candidate.deps.contains(source_name))
+                .map(|candidate| candidate.source_name.to_string())
+                .collect();
+            let (guidance, suggested_command) = match &request.mutation {
+                Some(ConfigMutation::RemoveDependency { name })
+                    if name == source_name && !parents.is_empty() =>
+                {
+                    (
+                        format!(
+                            "removed direct dependency `{name}`, but `{source_name}` is still required by {} and remains legacy; override it",
+                            parents.join(", ")
+                        ),
+                        format!("mars override {source_name} --path <path>"),
+                    )
+                }
+                None if matches!(request.resolution, ResolutionMode::Maximize { .. }) => (
+                    format!(
+                        "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
+                    ),
+                    format!(
+                        "mars override {source_name} --path <path> or mars remove {source_name}"
+                    ),
+                ),
+                None if request.options.force => (
+                    format!(
+                        "cannot repair while `{source_name}@{version}` uses the removed hook schema; upgrade, override, or remove it"
+                    ),
+                    format!("mars upgrade {source_name}"),
+                ),
+                _ => (
+                    format!(
+                        "`{source_name}@{version}` still uses the removed hook schema; upgrade, override, or remove it"
+                    ),
+                    format!("mars upgrade {source_name}"),
+                ),
+            };
+            RecoveryBlocker {
+                package: source_name.to_string(),
+                version,
+                hook_names: hook_names.iter().cloned().collect(),
+                guidance,
+                suggested_command,
+            }
+        })
+        .collect();
+    RecoveryHalt {
+        persisted,
+        blockers,
+        next_step: format!("then run `{}`", managed_cmd("mars sync")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,8 +338,20 @@ pub(crate) fn load_config(
         crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
     diag.extend(config_diagnostics);
 
-    // Load existing lock file, routing legacy promotion warnings through sync diagnostics.
-    let (old_lock, lock_diagnostics) = crate::lock::load_with_diagnostics(project_root)?;
+    // Load existing lock file, routing load diagnostics through sync diagnostics.
+    let (old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
+        Ok(loaded) => loaded,
+        Err(MarsError::Lock(crate::error::LockError::Corrupt { message }))
+            if request.recovery == RecoveryPolicy::Repair =>
+        {
+            diag.warn(
+                "corrupt-lock-rebuild",
+                format!("{message}; lock is corrupt, rebuilding from mars.toml + dependencies"),
+            );
+            (LockFile::empty(), Vec::new())
+        }
+        Err(err) => return Err(err),
+    };
     diag.extend(lock_diagnostics);
 
     Ok(LoadedConfig {
@@ -226,8 +375,22 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
+    let source_overrides = loaded
+        .local
+        .overrides
+        .iter()
+        .map(|(name, entry)| {
+            let path = if entry.path.is_absolute() {
+                entry.path.clone()
+            } else {
+                ctx.project_root.join(&entry.path)
+            };
+            (name.clone(), path)
+        })
+        .collect();
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
-        .with_staging_root(ctx.project_root.join(".mars/staging"));
+        .with_staging_root(ctx.project_root.join(".mars/staging"))
+        .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -235,6 +398,24 @@ pub(crate) fn resolve_graph(
         &resolve_options,
         diag,
     )?;
+    if let Some(ConfigMutation::SetOverride { source_name, .. }) = &request.mutation
+        && !graph.nodes.contains_key(source_name)
+    {
+        return Err(MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!("dependency `{source_name}` not found in the resolved project graph"),
+        });
+    }
+    for override_name in loaded.local.overrides.keys() {
+        if !graph.nodes.contains_key(override_name) {
+            diag.warn(
+                "override-missing-dep",
+                format!(
+                    "override `{override_name}` references a dependency not in the resolved project graph"
+                ),
+            );
+        }
+    }
     let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
         0
     } else {
@@ -287,14 +468,15 @@ pub(crate) fn build_target(
         target::build_with_collisions_and_diag(&resolved.graph, &resolved.loaded.effective, diag)?;
 
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-    let local_source_id = SourceId::Path {
-        canonical: dunce::canonicalize(&ctx.project_root)
-            .unwrap_or_else(|_| ctx.project_root.clone()),
-        subpath: None,
-    };
     let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
 
     for item in local_items {
+        // Hook config and materialization are both discovered from project-root
+        // `hooks/`; treating `.mars-src` hook directories as ordinary canonical
+        // items would bypass per-target identity.
+        if item.discovered.id.kind == ItemKind::Hook {
+            continue;
+        }
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(
@@ -349,7 +531,7 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
-        if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+        if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
         {
             diag.warn(
@@ -370,8 +552,6 @@ pub(crate) fn build_target(
                     name: item.discovered.id.name.clone(),
                 },
                 source_name: local_source_name.clone(),
-                origin: SourceOrigin::LocalPackage,
-                source_id: local_source_id.clone(),
                 source_path,
                 dest_path,
                 source_hash,
@@ -379,6 +559,57 @@ pub(crate) fn build_target(
                 rewritten_content: None,
             },
         );
+    }
+
+    // Project-root hooks are authored outside `.mars-src`; materialize each whole
+    // directory into the canonical store so target sync can use normal item ownership.
+    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0)? {
+        let source_path = hook.hook_dir.clone();
+        let source_hash = ContentHash::from(hash::compute_hash(&source_path, ItemKind::Hook)?);
+        for target_name in hook.def.targets.keys().filter(|target| {
+            resolved
+                .loaded
+                .effective
+                .settings
+                .managed_targets()
+                .contains(target)
+        }) {
+            let dest_path = target::hook_canonical_dest_path(target_name, &hook.def.name);
+            if let Some(existing) = target_state.items.shift_remove(&dest_path)
+                && existing.source_hash != source_hash
+            {
+                diag.warn(
+                    "local-shadow",
+                    format!(
+                        "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
+                        hook.def.name, existing.source_name
+                    ),
+                );
+            }
+            let disk_path = dest_path.resolve(managed_root);
+            if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
+                && disk_path.symlink_metadata().is_ok()
+            {
+                diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
+                continue;
+            }
+            target_state.items.insert(
+                dest_path.clone(),
+                TargetItem {
+                    id: ItemId {
+                        kind: ItemKind::Hook,
+                        name: format!("{}@{}", hook.def.name, target_name.trim_start_matches('.'))
+                            .into(),
+                    },
+                    source_name: local_source_name.clone(),
+                    source_path: source_path.clone(),
+                    dest_path,
+                    source_hash: source_hash.clone(),
+                    is_flat_skill: false,
+                    rewritten_content: None,
+                },
+            );
+        }
     }
 
     // Prevent managed installs from overwriting unmanaged files.
@@ -450,7 +681,6 @@ pub(crate) fn create_plan(
     // Diff against .mars/ canonical store.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
-    let cache_bases_dir = mars_dir.join("cache").join("bases");
 
     // Compute diff.
     let sync_diff = diff::compute(
@@ -477,7 +707,7 @@ pub(crate) fn create_plan(
     }
 
     // Create plan.
-    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir, diag);
+    let sync_plan = plan::create(&sync_diff, &request.options, diag);
 
     Ok(PlannedState {
         targeted,
@@ -509,44 +739,92 @@ pub(crate) fn apply_plan(
 ) -> Result<AppliedState, MarsError> {
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
-    let cache_bases_dir = mars_dir.join("cache").join("bases");
-
-    let has_bump_version_changes =
-        has_version_changes(&planned.targeted.resolved.loaded.dependency_changes)
-            && matches!(
-                request.resolution,
-                ResolutionMode::Maximize { bump: true, .. }
-            );
-    let has_mutation = request.mutation.is_some() || has_bump_version_changes;
 
     // Persist config/local only after validation gate and before apply.
-    if has_mutation && !request.options.dry_run {
-        match &request.mutation {
-            Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
-                crate::config::save_local(project_root, &planned.targeted.resolved.loaded.local)?;
-            }
-            Some(
-                ConfigMutation::UpsertDependency { .. }
-                | ConfigMutation::BatchUpsert(..)
-                | ConfigMutation::RemoveDependency { .. }
-                | ConfigMutation::SetRename { .. },
-            ) => {
-                crate::config::save(project_root, &planned.targeted.resolved.loaded.config)?;
-            }
-            None => {
-                if has_bump_version_changes {
-                    crate::config::save(project_root, &planned.targeted.resolved.loaded.config)?;
-                }
-            }
-        }
-    }
+    persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 
     // Apply plan to .mars/ canonical store (D25).
     // Content is written to .mars/agents/ and .mars/skills/, then
     // sync_targets() copies to all managed target directories.
-    let applied = apply::execute(&mars_dir, &planned.plan, &request.options, &cache_bases_dir)?;
+    let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
+}
+
+fn has_bump_version_changes(loaded: &LoadedConfig, request: &SyncRequest) -> bool {
+    has_version_changes(&loaded.dependency_changes)
+        && matches!(
+            request.resolution,
+            ResolutionMode::Maximize { bump: true, .. }
+        )
+}
+
+/// Persist only the user's pending intent mutation. This is shared by the
+/// normal apply phase and the recovery halt at the reader/compiler boundary.
+fn persist_pending_config_mutation(
+    ctx: &MarsContext,
+    loaded: &LoadedConfig,
+    request: &SyncRequest,
+) -> Result<(), MarsError> {
+    if request.options.dry_run {
+        return Ok(());
+    }
+    let bump_changed = has_bump_version_changes(loaded, request);
+    match &request.mutation {
+        Some(ConfigMutation::SetOverride { .. }) => {
+            crate::config::save_local(&ctx.project_root, &loaded.local)?;
+        }
+        Some(
+            ConfigMutation::UpsertDependency { .. }
+            | ConfigMutation::BatchUpsert(..)
+            | ConfigMutation::RemoveDependency { .. }
+            | ConfigMutation::SetRename { .. },
+        ) => {
+            crate::config::save(&ctx.project_root, &loaded.config)?;
+        }
+        None if bump_changed => {
+            crate::config::save(&ctx.project_root, &loaded.config)?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+fn persisted_intent_descriptions(resolved: &ResolvedState, request: &SyncRequest) -> Vec<String> {
+    let dry_prefix = if request.options.dry_run {
+        "would persist"
+    } else {
+        "persisted"
+    };
+    match &request.mutation {
+        Some(ConfigMutation::SetOverride {
+            source_name,
+            local_path,
+        }) => vec![format!(
+            "{dry_prefix} override for `{source_name}` to `{}` in mars.local.toml",
+            local_path.display()
+        )],
+        Some(ConfigMutation::RemoveDependency { name }) => {
+            vec![format!(
+                "{dry_prefix} removal of direct dependency `{name}` in mars.toml"
+            )]
+        }
+        Some(_) => vec![format!("{dry_prefix} config mutation")],
+        None if has_bump_version_changes(&resolved.loaded, request) => resolved
+            .loaded
+            .dependency_changes
+            .iter()
+            .filter(|change| change.old_version != change.new_version)
+            .map(|change| {
+                format!(
+                    "{dry_prefix} bumped constraint for `{}` to `{}` in mars.toml",
+                    change.name,
+                    change.new_version.as_deref().unwrap_or("latest")
+                )
+            })
+            .collect(),
+        None => vec!["nothing persisted".to_string()],
+    }
 }
 
 /// Phase 6: Sync managed targets from .mars/ canonical store.
@@ -566,6 +844,8 @@ pub(crate) fn sync_targets(
             applied,
             target_outcomes: Vec::new(),
             config_entries: BTreeMap::new(),
+            config_entry_outputs: Vec::new(),
+            removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
             removed_native_outputs: Vec::new(),
         };
@@ -583,20 +863,26 @@ pub(crate) fn sync_targets(
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;
-    let orphan_preserve_paths;
-    let (target_outcomes_source, orphan_preserve) = match &agent_surface_policy {
+    let target_outcomes_source = match &agent_surface_policy {
         crate::compiler::AgentSurfacePolicy::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
-            (&filtered_outcomes, None)
+            &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(spec) => {
-            orphan_preserve_paths =
-                crate::compiler::selective_native_orphan_preserve_paths(old_lock, spec);
+        crate::compiler::AgentSurfacePolicy::EmitSelective(_) => {
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
-            (&filtered_outcomes, Some(&orphan_preserve_paths))
+            &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => (&applied.applied.outcomes, None),
+        crate::compiler::AgentSurfacePolicy::EmitAll => &applied.applied.outcomes,
     };
+    let mut orphan_preserve_paths =
+        crate::compiler::config_entries::file_hook_output_preserve_paths(old_lock);
+    for (target, paths) in crate::compiler::native_agent_orphan_preserve_paths(old_lock, &targets) {
+        orphan_preserve_paths
+            .entry(target)
+            .or_default()
+            .extend(paths);
+    }
+    let orphan_preserve = (!orphan_preserve_paths.is_empty()).then_some(&orphan_preserve_paths);
 
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock,
@@ -617,6 +903,8 @@ pub(crate) fn sync_targets(
         applied,
         target_outcomes,
         config_entries: BTreeMap::new(),
+        config_entry_outputs: Vec::new(),
+        removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),
     }
@@ -660,9 +948,37 @@ pub(crate) fn finalize(
             state.config_entries,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
+        let mut confirmed_output_removals: Vec<(String, String)> = state
+            .target_outcomes
+            .iter()
+            .flat_map(|outcome| {
+                outcome
+                    .removed_dest_paths
+                    .iter()
+                    .map(|dest_path| (outcome.target.clone(), dest_path.clone()))
+            })
+            .collect();
+        confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
+        confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
+        crate::lock::apply_removed_native_outputs(
+            &mut new_lock,
+            &state.removed_config_entry_outputs,
+        );
+        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs)?;
         crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
-        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
+        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
+        confirmed_output_removals.extend(retry_tombstone_removals(
+            project_root,
+            old_lock,
+            &new_lock,
+            diag,
+        ));
+        crate::lock::retain_unremoved_noncanonical_outputs(
+            &mut new_lock,
+            old_lock,
+            &confirmed_output_removals,
+        );
         if let Some(warning) =
             crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {
@@ -740,7 +1056,6 @@ pub(crate) fn finalize(
 
     Ok(SyncReport {
         applied: state.applied.applied,
-        pruned: Vec::new(),
         diagnostics,
         dependency_changes,
         upgrades_available,
@@ -748,7 +1063,72 @@ pub(crate) fn finalize(
         dry_run: request.options.dry_run,
         native_emitted,
         native_removed,
+        recovery_halt: None,
     })
+}
+
+fn retry_tombstone_removals(
+    project_root: &Path,
+    old_lock: &crate::lock::LockFile,
+    current_lock: &crate::lock::LockFile,
+    diag: &mut DiagnosticCollector,
+) -> Vec<(String, String)> {
+    let mut removed = Vec::new();
+    for item in old_lock.items.values().filter(|item| {
+        !item
+            .outputs
+            .iter()
+            .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
+    }) {
+        for output in &item.outputs {
+            let current_pass_owns_output = current_lock.items.values().any(|current_item| {
+                current_item.outputs.iter().any(|current_output| {
+                    current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT
+                }) && current_item.outputs.iter().any(|current_output| {
+                    current_output.target_root == output.target_root
+                        && crate::target::dest_paths_equivalent(
+                            current_output.dest_path.as_str(),
+                            output.dest_path.as_str(),
+                        )
+                })
+            });
+            if output.target_root == crate::lock::CANONICAL_TARGET_ROOT || current_pass_owns_output
+            {
+                continue;
+            }
+
+            let path = project_root
+                .join(&output.target_root)
+                .join(output.dest_path.as_str());
+            let result = if matches!(item.kind, ItemKind::Agent)
+                || (matches!(item.kind, ItemKind::Hook)
+                    && !output.dest_path.as_str().starts_with("hooks/"))
+            {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error.into()),
+                }
+            } else {
+                crate::platform::fs::safe_remove(&path)
+            };
+
+            match result {
+                Ok(()) => removed.push((
+                    output.target_root.clone(),
+                    output.dest_path.as_str().to_string(),
+                )),
+                Err(error) => diag.warn(
+                    "tombstone-remove",
+                    format!(
+                        "could not remove tombstoned output `{}`: {error}",
+                        path.display()
+                    ),
+                ),
+            }
+        }
+    }
+    removed
 }
 
 fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {

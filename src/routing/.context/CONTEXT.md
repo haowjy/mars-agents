@@ -11,10 +11,12 @@ Both `mars models` (resolve/list) and `mars build launch-bundle` call it —
 this is what makes their routing outputs consistent. A second evaluator anywhere
 would break the parity invariant.
 
-`evaluate_fixed_harness()` evaluates one specific harness without fallback.
-Used when the caller has already committed to a fixed harness choice
+`evaluate_fixed_harness_with_auth_and_probes()` evaluates one specific harness
+without fallback, using the caller's probe resolver and authentication check.
+It is used when the caller has already committed to a fixed harness choice
 (CLI `--harness`, profile `harness:`, alias `harness:`). It returns a single
-`CandidateAssessment` — the caller decides what to do with a failed fixed selection.
+`CandidateAssessment` — the caller decides what to do with a failed fixed
+selection.
 
 **The evaluator never errors** — `evaluate_candidates()` always returns a `RoutingTrace`.
 Acceptance decisions belong to callers via `accept_route()` / `accept_assessment()`.
@@ -208,7 +210,12 @@ let pi_probe = PiProbeResult { compatible: true, ..PiProbeResult::default() };
 **Build a fixed-selection trace:**
 
 ```rust
-let assessment = evaluate_fixed_harness(&input, "codex");
+let assessment = evaluate_fixed_harness_with_auth_and_probes(
+    &input,
+    "codex",
+    probe_resolver,
+    auth_check,
+);
 let trace = trace_for_fixed_harness(RouteSource::Cli, "codex", assessment, diagnostics);
 ```
 

@@ -322,6 +322,255 @@ fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
 }
 
 #[test]
+fn sync_promotes_matching_v2_linked_skill_as_installed() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: toml::Value =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["version"] = toml::Value::Integer(2);
+    for (_, item) in lock["items"].as_table_mut().unwrap().iter_mut() {
+        for output in item["outputs"].as_array_mut().unwrap() {
+            output.as_table_mut().unwrap().remove("state");
+        }
+    }
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+
+    let promoted = mars_agents::lock::load(project.path()).unwrap();
+    let linked = promoted.items["skill/planning"]
+        .outputs
+        .iter()
+        .find(|output| {
+            output.target_root == ".claude" && output.dest_path.as_str() == "skills/planning"
+        })
+        .expect("linked skill output should remain recorded");
+    assert!(
+        matches!(
+            linked.state,
+            mars_agents::lock::OutputState::Installed { .. }
+        ),
+        "matching linked skill must retain overwrite authority after v2 promotion"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_does_not_adopt_v2_linked_skill_with_nested_file_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    fs::write(
+        source.join("skills/planning/reference.md"),
+        "# Managed reference",
+    )
+    .unwrap();
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let linked_reference = project.child(".claude/skills/planning/reference.md");
+    let external_reference = dir.child("external-reference.md");
+    external_reference.write_str("# Managed reference").unwrap();
+    fs::remove_file(linked_reference.path()).unwrap();
+    symlink(external_reference.path(), linked_reference.path()).unwrap();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: toml::Value =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["version"] = toml::Value::Integer(2);
+    for (_, item) in lock["items"].as_table_mut().unwrap().iter_mut() {
+        for output in item["outputs"].as_array_mut().unwrap() {
+            output.as_table_mut().unwrap().remove("state");
+        }
+    }
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("has no installed-content claim"));
+
+    assert!(
+        linked_reference
+            .path()
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "v2 promotion must not grant authority to replace a nested symlink"
+    );
+    let promoted = mars_agents::lock::load(project.path()).unwrap();
+    let linked = promoted.items["skill/planning"]
+        .outputs
+        .iter()
+        .find(|output| {
+            output.target_root == ".claude" && output.dest_path.as_str() == "skills/planning"
+        })
+        .unwrap();
+    assert!(matches!(
+        linked.state,
+        mars_agents::lock::OutputState::PendingDeletion
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_replaces_symlinked_native_skill_projection() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_skill = project.path().join(".claude/skills/planning");
+    let external_skill = dir.path().join("external-planning");
+    fs::rename(&native_skill, &external_skill).unwrap();
+    std::os::unix::fs::symlink(&external_skill, &native_skill).unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        !fs::symlink_metadata(&native_skill)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "managed copied projection must replace user-controlled indirection"
+    );
+    assert!(native_skill.is_dir());
+}
+
+#[test]
+fn sync_removes_extra_empty_directory_from_native_skill_projection() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let unexpected = project
+        .path()
+        .join(".claude/skills/planning/unexpected-empty");
+    fs::create_dir(&unexpected).unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        !unexpected.exists(),
+        "complete projection structure must be restored, including empty directories"
+    );
+}
+
+#[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
@@ -924,6 +1173,179 @@ path = "{}"
     assert!(
         !opencode_native.contains("tools:"),
         "native opencode artifact should not include canonical tool lists"
+    );
+}
+
+#[test]
+fn sync_noop_leaves_native_agent_output_mtime_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_agent = project.child(".codex/agents/explorer.toml");
+    let before = fs::metadata(native_agent.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    let after = fs::metadata(native_agent.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "no-op sync must not rewrite byte-identical native agent output"
+    );
+}
+
+#[test]
+fn sync_detects_and_repairs_diverged_native_agent_output() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_agent = project.child(".codex/agents/explorer.toml");
+    let expected = fs::read(native_agent.path()).unwrap();
+    fs::write(native_agent.path(), "user edit").unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: repaired diverged native agent: .codex/agents/explorer.toml",
+        ));
+
+    assert_eq!(fs::read(native_agent.path()).unwrap(), expected);
+}
+
+#[test]
+fn sync_noop_leaves_lock_and_native_manifest_mtimes_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let lock = project.child("mars.lock");
+    let manifest = project.child(".mars/native-agents.json");
+    let lock_before = fs::metadata(lock.path()).unwrap().modified().unwrap();
+    let manifest_before = fs::metadata(manifest.path()).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    assert_eq!(
+        lock_before,
+        fs::metadata(lock.path()).unwrap().modified().unwrap(),
+        "no-op sync must not rewrite mars.lock"
+    );
+    assert_eq!(
+        manifest_before,
+        fs::metadata(manifest.path()).unwrap().modified().unwrap(),
+        "no-op sync must not rewrite the native agent manifest"
     );
 }
 

@@ -14,17 +14,17 @@ use crate::types::{
 
 /// The complete lock file — ownership registry for all managed items.
 ///
-/// Schema version 2: items are keyed by logical identity ("kind/name"), and each item
+/// Schema version 3: items are keyed by logical identity ("kind/name"), and each item
 /// carries a list of per-output records (one per target root materialization).
 ///
 /// TOML format, deterministically ordered (sorted keys) for clean git diffs.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {
-    /// Schema version. Current version is 2.
+    /// Schema version. Current version is 3.
     pub version: u32,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, LockedSource>,
-    /// V2: logical items keyed by "kind/name" identity string.
+    /// Logical items keyed by "kind/name" identity string.
     #[serde(default)]
     pub items: IndexMap<String, LockedItemV2>,
     /// Config entries installed by mars sync, keyed by target root and entry key.
@@ -35,14 +35,12 @@ pub struct LockFile {
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
-/// Custom `Deserialize` for `LockFile`: delegates to the v2 wire type.
-///
-/// For reading v1 lock files, always go through [`load()`] which handles
-/// the v1→v2 promotion. Direct deserialization via `toml::from_str::<LockFile>`
-/// only supports v2 format.
+/// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
+/// Version validation is performed by [`load`]; direct deserialization expects the
+/// current schema shape.
 impl<'de> serde::Deserialize<'de> for LockFile {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let wire = LockFileV2Wire::deserialize(deserializer)?;
+        let wire = LockFileWire::deserialize(deserializer)?;
         Ok(LockFile {
             version: wire.version,
             dependencies: wire.dependencies,
@@ -74,13 +72,14 @@ impl LockFile {
                 if crate::target::dest_paths_equivalent(
                     output.dest_path.as_str(),
                     dest_path.as_str(),
-                ) {
+                ) && let Some(installed_checksum) = output.installed_checksum()
+                {
                     return Some(LockedItem {
                         source: item_v2.source.clone(),
                         kind: item_v2.kind,
                         version: item_v2.version.clone(),
                         source_checksum: item_v2.source_checksum.clone(),
-                        installed_checksum: output.installed_checksum.clone(),
+                        installed_checksum: installed_checksum.clone(),
                         dest_path: output.dest_path.clone(),
                     });
                 }
@@ -125,6 +124,26 @@ impl LockFile {
         })
     }
 
+    /// The installed checksum claimed for `dest_path` under `target_root`.
+    ///
+    /// Pending-deletion records intentionally return `None`: they authorize a
+    /// removal retry, but do not authorize treating whatever is currently at
+    /// the path as Mars-installed content.
+    pub(crate) fn installed_checksum_for_output(
+        &self,
+        target_root: &str,
+        dest_path: &str,
+    ) -> Option<&ContentHash> {
+        self.items.values().find_map(|item| {
+            item.outputs.iter().find_map(|output| {
+                (output.target_root == target_root
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
+                .then(|| output.installed_checksum())
+                .flatten()
+            })
+        })
+    }
+
     /// Flat view of canonical `.mars` outputs only.
     pub fn canonical_flat_items(&self) -> Vec<(DestPath, LockedItem)> {
         self.flat_items_for_target(CANONICAL_TARGET_ROOT)
@@ -139,6 +158,7 @@ impl LockFile {
                     if output.target_root != target_root {
                         return None;
                     }
+                    let installed_checksum = output.installed_checksum()?;
                     Some((
                         output.dest_path.clone(),
                         LockedItem {
@@ -146,34 +166,10 @@ impl LockFile {
                             kind: item_v2.kind,
                             version: item_v2.version.clone(),
                             source_checksum: item_v2.source_checksum.clone(),
-                            installed_checksum: output.installed_checksum.clone(),
+                            installed_checksum: installed_checksum.clone(),
                             dest_path: output.dest_path.clone(),
                         },
                     ))
-                })
-            })
-            .collect()
-    }
-
-    /// Flat view of all items as owned `(dest_path, LockedItem)` pairs.
-    ///
-    /// Used by diff, orphan scan, and CLI commands that need a per-output view.
-    pub fn flat_items(&self) -> Vec<(DestPath, LockedItem)> {
-        self.items
-            .values()
-            .flat_map(|item_v2| {
-                item_v2.outputs.iter().map(|output| {
-                    (
-                        output.dest_path.clone(),
-                        LockedItem {
-                            source: item_v2.source.clone(),
-                            kind: item_v2.kind,
-                            version: item_v2.version.clone(),
-                            source_checksum: item_v2.source_checksum.clone(),
-                            installed_checksum: output.installed_checksum.clone(),
-                            dest_path: output.dest_path.clone(),
-                        },
-                    )
                 })
             })
             .collect()
@@ -187,20 +183,14 @@ impl LockFile {
 pub struct LockIndex<'a> {
     lock: &'a LockFile,
     by_output: HashMap<(String, String), (&'a str, usize)>,
-    by_dest_path: HashMap<String, (&'a str, usize)>,
 }
 
 impl<'a> LockIndex<'a> {
     pub fn new(lock: &'a LockFile) -> Self {
         let mut by_output = HashMap::new();
-        let mut by_dest_path = HashMap::new();
-
         for (key, item) in &lock.items {
             for (idx, output) in item.outputs.iter().enumerate() {
                 let normalized_dest = normalize_dest_path(output.dest_path.as_str());
-                by_dest_path
-                    .entry(normalized_dest.clone())
-                    .or_insert((key.as_str(), idx));
                 by_output.insert(
                     (output.target_root.clone(), normalized_dest),
                     (key.as_str(), idx),
@@ -208,19 +198,7 @@ impl<'a> LockIndex<'a> {
             }
         }
 
-        Self {
-            lock,
-            by_output,
-            by_dest_path,
-        }
-    }
-
-    /// Look up a locked item by output dest_path, returning a flat [`LockedItem`] view.
-    pub fn find_by_dest_path(&self, dest_path: &DestPath) -> Option<LockedItem> {
-        let (item_key, output_idx) = *self
-            .by_dest_path
-            .get(&normalize_dest_path(dest_path.as_str()))?;
-        self.locked_item_for(item_key, output_idx)
+        Self { lock, by_output }
     }
 
     /// Look up a locked output by target root + dest_path, returning a flat [`LockedItem`] view.
@@ -254,23 +232,28 @@ impl<'a> LockIndex<'a> {
         ))
     }
 
+    /// Whether an installed (not pending-deletion) output is recorded for this path.
+    pub(crate) fn contains_installed_output(
+        &self,
+        target_root: &str,
+        dest_path: &DestPath,
+    ) -> bool {
+        self.item_for_output(target_root, dest_path)
+            .is_some_and(|(_, _, output)| output.installed_checksum().is_some())
+    }
+
     fn locked_item_for(&self, item_key: &str, output_idx: usize) -> Option<LockedItem> {
         let item_v2 = self.lock.items.get(item_key)?;
         let output = item_v2.outputs.get(output_idx)?;
+        let installed_checksum = output.installed_checksum()?;
         Some(LockedItem {
             source: item_v2.source.clone(),
             kind: item_v2.kind,
             version: item_v2.version.clone(),
             source_checksum: item_v2.source_checksum.clone(),
-            installed_checksum: output.installed_checksum.clone(),
+            installed_checksum: installed_checksum.clone(),
             dest_path: output.dest_path.clone(),
         })
-    }
-
-    /// Check if any output record has the given dest_path.
-    pub fn contains_dest_path(&self, dest_path: &DestPath) -> bool {
-        self.by_dest_path
-            .contains_key(&normalize_dest_path(dest_path.as_str()))
     }
 }
 
@@ -295,10 +278,6 @@ pub struct LockedSource {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitHash>,
-    /// Reserved for future content verification of fetched source trees.
-    /// TODO: populate during fetch/build once deterministic tree hashing is implemented.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree_hash: Option<String>,
 }
 
 /// V2 locked item: one logical item with per-output records.
@@ -316,21 +295,74 @@ pub struct LockedItemV2 {
     pub outputs: Vec<OutputRecord>,
 }
 
-/// A single materialized output of a logical item.
+/// A single path owned by Mars, with its lifecycle claim made explicit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputRecord {
     /// Target root this output belongs to (e.g., ".mars", ".claude").
     pub target_root: String,
     /// Relative path under the target root (e.g., "agents/coder.md").
     pub dest_path: DestPath,
-    /// Checksum of the installed content at this output location.
-    pub installed_checksum: ContentHash,
+    /// What authority this record currently asserts for the path.
+    #[serde(flatten)]
+    pub state: OutputState,
+}
+
+/// The lifecycle claim carried by an [`OutputRecord`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum OutputState {
+    /// Mars confirms its installed bytes are present at the path.
+    Installed { installed_checksum: ContentHash },
+    /// Removal was not confirmed; retain path ownership solely to retry deletion.
+    PendingDeletion,
+}
+
+impl OutputRecord {
+    pub fn installed(
+        target_root: String,
+        dest_path: DestPath,
+        installed_checksum: ContentHash,
+    ) -> Self {
+        Self {
+            target_root,
+            dest_path,
+            state: OutputState::Installed { installed_checksum },
+        }
+    }
+
+    pub fn pending_deletion(
+        target_root: impl Into<String>,
+        dest_path: impl Into<DestPath>,
+    ) -> Self {
+        Self {
+            target_root: target_root.into(),
+            dest_path: dest_path.into(),
+            state: OutputState::PendingDeletion,
+        }
+    }
+
+    pub fn installed_checksum(&self) -> Option<&ContentHash> {
+        match &self.state {
+            OutputState::Installed { installed_checksum } => Some(installed_checksum),
+            OutputState::PendingDeletion => None,
+        }
+    }
+
+    pub fn mark_installed(&mut self, installed_checksum: ContentHash) {
+        self.state = OutputState::Installed { installed_checksum };
+    }
+
+    pub fn mark_pending_deletion(&mut self) {
+        self.state = OutputState::PendingDeletion;
+    }
 }
 
 /// Ownership record for one target-native config entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
-    pub source: String,
+    /// Canonical JSON for the exact post-substitution hook entry array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_json: Option<String>,
 }
 
 /// Flat view of a single installed item — used by diff, plan, and apply stages.
@@ -354,33 +386,56 @@ pub use crate::types::{ItemId, ItemKind};
 
 const LOCK_FILE: &str = "mars.lock";
 /// Current lock file schema version.
-const LOCK_VERSION: u32 = 2;
+const LOCK_VERSION: u32 = 3;
 /// Canonical materialization root for `.mars/` apply outcomes.
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
 // ---------------------------------------------------------------------------
-// V1 wire type — used only for reading legacy lock files.
+// Persisted wire formats.
 // ---------------------------------------------------------------------------
 
-/// V1 wire format for reading legacy lock files.
+/// Current wire format for Deserialize (mirrors `LockFile` but derives `Deserialize`).
 #[derive(Deserialize)]
-struct LockFileV1 {
-    #[allow(dead_code)]
-    version: u32,
-    #[serde(default)]
-    dependencies: IndexMap<SourceName, LockedSource>,
-    #[serde(default)]
-    items: IndexMap<DestPath, LockedItem>,
-}
-
-/// V2 wire format for Deserialize (mirrors `LockFile` but derives `Deserialize`).
-#[derive(Deserialize)]
-struct LockFileV2Wire {
+struct LockFileWire {
     version: u32,
     #[serde(default)]
     dependencies: IndexMap<SourceName, LockedSource>,
     #[serde(default)]
     items: IndexMap<String, LockedItemV2>,
+    #[serde(default)]
+    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    #[serde(default)]
+    dependency_model_aliases: IndexMap<String, ModelAlias>,
+}
+
+/// Version 2 output records did not distinguish installed content from retry tombstones.
+#[derive(Deserialize)]
+struct OutputRecordV2 {
+    target_root: String,
+    dest_path: DestPath,
+    installed_checksum: ContentHash,
+}
+
+#[derive(Deserialize)]
+struct LockedItemV2Wire {
+    source: SourceName,
+    kind: ItemKind,
+    #[serde(default)]
+    version: Option<String>,
+    source_checksum: ContentHash,
+    outputs: Vec<OutputRecordV2>,
+}
+
+/// One-release v2 wire format. Delete this promotion after the release following
+/// lock v3, alongside the #130 legacy-hook sweeps that depend on these records.
+#[derive(Deserialize)]
+struct LockFileV2Wire {
+    #[allow(dead_code)]
+    version: u32,
+    #[serde(default)]
+    dependencies: IndexMap<SourceName, LockedSource>,
+    #[serde(default)]
+    items: IndexMap<String, LockedItemV2Wire>,
     #[serde(default)]
     config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     #[serde(default)]
@@ -393,9 +448,9 @@ struct LockFileV2Wire {
 
 /// Load the lock file from the given root directory.
 ///
-/// Returns an empty LockFile (v2) if the file is absent.
-/// V1 lock files are transparently promoted to the v2 in-memory shape (D19):
-/// the lock is only written as v2 after a successful sync.
+/// Returns an empty current-version lock if the file is absent.
+/// Version 2 is promoted in memory for one release; other older schemas fail
+/// with actionable re-sync guidance.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
     let (lock, _) = load_with_diagnostics(root)?;
     Ok(lock)
@@ -442,8 +497,9 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 
 /// Load the lock file and return any diagnostics produced while reading it.
 ///
-/// This preserves legacy v1→v2 in-memory promotion while routing promotion
-/// warnings through the normal diagnostic flow for sync callers.
+/// Version 2 locks are promoted in memory so one-release cleanup bridges can
+/// inspect their ownership records. Other version and schema failures are
+/// returned as actionable lock errors.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
@@ -457,50 +513,159 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
     let value: toml::Value = toml::from_str(&content).map_err(|e| LockError::Corrupt {
         message: format!("failed to parse {}: {e}", path.display()),
     })?;
-
-    match value.clone().try_into::<LockFileV2Wire>() {
-        Ok(wire) if wire.version >= 2 => Ok((
-            LockFile {
-                version: wire.version,
-                dependencies: wire.dependencies,
-                items: wire.items,
-                config_entries: wire.config_entries,
-                dependency_model_aliases: wire.dependency_model_aliases,
-            },
-            Vec::new(),
-        )),
-        v2_result => {
-            // V1 → V2 promotion (D19): map each DestPath key to a logical identity.
-            let wire: LockFileV1 = value.clone().try_into().map_err(|v1_error| {
-                let parse_error = match v2_result {
-                    Ok(wire) => format!("unsupported lock version {}", wire.version),
-                    Err(v2_error) => {
-                        format!("v2 parse failed: {v2_error}; v1 parse failed: {v1_error}")
-                    }
-                };
-                LockError::Corrupt {
-                    message: format!("failed to parse {}: {parse_error}", path.display()),
-                }
+    let version = value
+        .get("version")
+        .and_then(toml::Value::as_integer)
+        .ok_or_else(|| LockError::Corrupt {
+            message: format!("{} has no integer lock version", path.display()),
+        })?;
+    match version {
+        3 => {
+            let wire: LockFileWire = value.try_into().map_err(|error| LockError::Corrupt {
+                message: format!(
+                    "failed to parse {} lock version {LOCK_VERSION}: {error}",
+                    path.display()
+                ),
             })?;
-            let (items, diagnostics) = promote_v1_items(wire.items);
             Ok((
                 LockFile {
-                    version: LOCK_VERSION,
+                    version: wire.version,
                     dependencies: wire.dependencies,
-                    items,
-                    config_entries: BTreeMap::new(),
-                    dependency_model_aliases: IndexMap::new(),
+                    items: wire.items,
+                    config_entries: wire.config_entries,
+                    dependency_model_aliases: wire.dependency_model_aliases,
                 },
-                diagnostics,
+                Vec::new(),
             ))
         }
+        2 => {
+            let wire: LockFileV2Wire =
+                value.try_into().map_err(|error| LockError::Corrupt {
+                    message: format!("failed to parse {} lock version 2: {error}", path.display()),
+                })?;
+            Ok((promote_v2_lock(root, wire), Vec::new()))
+        }
+        older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
+            message: format!(
+                "{} uses unsupported lock version {older}; remove it and run `{}` (only version 2 can be promoted to version {LOCK_VERSION})",
+                path.display(),
+                crate::types::managed_cmd("mars sync")
+            ),
+        }
+        .into()),
+        newer => Err(LockError::Corrupt {
+            message: format!(
+                "{} uses unsupported lock version {newer}; this Mars supports version {LOCK_VERSION}",
+                path.display()
+            ),
+        }
+        .into()),
     }
 }
 
-/// Write the lock file atomically to the given root directory (always v2 format).
+/// Cross the untyped v2 output boundary exactly once.
+///
+/// A v2 checksum could describe either installed content or a retry tombstone left
+/// after failed removal. The output's actual disk shape selects the canonical file
+/// or directory hash. Only matching regular content is promoted as installed;
+/// every other path retains deletion authority without asserting ghost content.
+fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
+    let items = wire
+        .items
+        .into_iter()
+        .map(|(key, item)| {
+            let outputs = item
+                .outputs
+                .into_iter()
+                .map(|output| {
+                    let path = root
+                        .join(&output.target_root)
+                        .join(output.dest_path.as_str());
+                    let matches_disk = v2_output_checksum(&path)
+                        .is_some_and(|checksum| checksum == output.installed_checksum.as_ref());
+                    if matches_disk {
+                        OutputRecord::installed(
+                            output.target_root,
+                            output.dest_path,
+                            output.installed_checksum,
+                        )
+                    } else {
+                        OutputRecord::pending_deletion(output.target_root, output.dest_path)
+                    }
+                })
+                .collect();
+            (
+                key,
+                LockedItemV2 {
+                    source: item.source,
+                    kind: item.kind,
+                    version: item.version,
+                    source_checksum: item.source_checksum,
+                    outputs,
+                },
+            )
+        })
+        .collect();
+
+    LockFile {
+        version: LOCK_VERSION,
+        dependencies: wire.dependencies,
+        items,
+        config_entries: wire.config_entries,
+        dependency_model_aliases: wire.dependency_model_aliases,
+    }
+}
+
+fn v2_output_checksum(path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return None;
+    }
+    if file_type.is_file() {
+        return std::fs::read(path)
+            .ok()
+            .map(|bytes| crate::hash::hash_bytes(&bytes));
+    }
+    if file_type.is_dir() {
+        if !has_only_regular_file_entries(path) {
+            return None;
+        }
+        return crate::hash::compute_dir_hash(path).ok();
+    }
+    None
+}
+
+/// Validate a directory without following links or opening entry contents.
+fn has_only_regular_file_entries(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            return false;
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            if !has_only_regular_file_entries(&path) {
+                return false;
+            }
+        } else if !file_type.is_file() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Write the lock file atomically to the given root directory (always current format).
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let path = root.join(LOCK_FILE);
     let mut normalized = lock.clone();
+    normalized.version = LOCK_VERSION;
     normalized.dependencies.sort_keys();
     normalized.items.sort_keys();
     normalized.dependency_model_aliases.sort_keys();
@@ -508,58 +673,7 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())
-}
-
-/// Convert v1 `IndexMap<DestPath, LockedItem>` to v2 `IndexMap<String, LockedItemV2>`.
-///
-/// Each v1 entry becomes one `LockedItemV2` with exactly one `OutputRecord`
-/// using `target_root = ".mars"` (the only output root in v1).
-///
-/// Key collision: two v1 entries with different dest_paths but the same basename
-/// (e.g. `hooks/pre-commit/hook.sh` and `hooks/pre-push/hook.sh` both name "hook")
-/// would map to the same key and silently drop one. When a collision is detected,
-/// we warn and fall back to the raw dest_path string as a disambiguated key.
-fn promote_v1_items(
-    v1_items: IndexMap<DestPath, LockedItem>,
-) -> (IndexMap<String, LockedItemV2>, Vec<Diagnostic>) {
-    let mut result: IndexMap<String, LockedItemV2> = IndexMap::new();
-    let mut diagnostics = Vec::new();
-
-    for (dest_path, item) in v1_items {
-        let key = format!("{}/{}", item.kind, dest_path.item_name(item.kind));
-        let item_v2 = LockedItemV2 {
-            source: item.source,
-            kind: item.kind,
-            version: item.version,
-            source_checksum: item.source_checksum,
-            outputs: vec![OutputRecord {
-                target_root: ".mars".to_string(),
-                dest_path: item.dest_path,
-                installed_checksum: item.installed_checksum,
-            }],
-        };
-
-        if result.contains_key(&key) {
-            // Two v1 entries share the same basename — use the full dest_path as a
-            // disambiguated key so neither entry is silently dropped.
-            let fallback_key = format!("{}/{}", item_v2.kind, dest_path.as_str());
-            diagnostics.push(Diagnostic {
-                level: crate::diagnostic::DiagnosticLevel::Warning,
-                code: "lock-promotion-collision",
-                message: format!(
-                    "v1→v2 promotion: key collision on `{key}`; using dest_path key `{fallback_key}`"
-                ),
-                context: None,
-                category: None,
-            });
-            result.insert(fallback_key, item_v2);
-        } else {
-            result.insert(key, item_v2);
-        }
-    }
-
-    (result, diagnostics)
+    crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -585,10 +699,7 @@ pub fn build(
 
     for outcome in &applied.outcomes {
         match outcome.action {
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 let installed =
                     outcome
                         .installed_checksum
@@ -642,8 +753,7 @@ pub fn build(
                     if let Some(old_item) = old_lock.items.get(&item_key) {
                         items.insert(item_key, old_item.clone());
                     } else {
-                        // Fall back: search old lock by dest_path (handles v1→v2 migrations
-                        // where item_key may not match yet)
+                        // Fall back: search old lock by dest_path when the logical item key differs
                         if let Some((_, old_item, old_output)) = old_lock_index
                             .item_for_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
                         {
@@ -659,11 +769,14 @@ pub fn build(
                                 source_checksum: old_item.source_checksum.clone(),
                                 outputs: outputs_with_carried_non_canonical(
                                     Some(old_item),
-                                    OutputRecord {
-                                        target_root: CANONICAL_TARGET_ROOT.to_string(),
-                                        dest_path: old_output.dest_path.clone(),
-                                        installed_checksum: old_output.installed_checksum.clone(),
-                                    },
+                                    OutputRecord::installed(
+                                        CANONICAL_TARGET_ROOT.to_string(),
+                                        old_output.dest_path.clone(),
+                                        old_output
+                                            .installed_checksum()
+                                            .expect("canonical output is installed")
+                                            .clone(),
+                                    ),
                                 ),
                             });
                         }
@@ -691,19 +804,19 @@ pub fn build(
                         source_checksum: old_item.source_checksum.clone(),
                         outputs: outputs_with_carried_non_canonical(
                             Some(old_item),
-                            OutputRecord {
-                                target_root: CANONICAL_TARGET_ROOT.to_string(),
-                                dest_path: old_output.dest_path.clone(),
-                                installed_checksum: old_output.installed_checksum.clone(),
-                            },
+                            OutputRecord::installed(
+                                CANONICAL_TARGET_ROOT.to_string(),
+                                old_output.dest_path.clone(),
+                                old_output
+                                    .installed_checksum()
+                                    .expect("canonical output is installed")
+                                    .clone(),
+                            ),
                         ),
                     });
                 }
             }
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 let dest_path = outcome.dest_path.clone();
                 if dest_path.as_str().is_empty() {
                     continue;
@@ -741,11 +854,11 @@ pub fn build(
                 });
                 let outputs = outputs_with_carried_non_canonical(
                     old_item,
-                    OutputRecord {
-                        target_root: CANONICAL_TARGET_ROOT.to_string(),
+                    OutputRecord::installed(
+                        CANONICAL_TARGET_ROOT.to_string(),
                         dest_path,
                         installed_checksum,
-                    },
+                    ),
                 );
                 items.insert(
                     key,
@@ -773,7 +886,6 @@ pub fn build(
                 subpath: None,
                 version: None,
                 commit: None,
-                tree_hash: None,
             },
         );
     }
@@ -792,7 +904,7 @@ pub fn build(
             .into());
         }
         for output in &item.outputs {
-            if checksum_is_empty(&output.installed_checksum) {
+            if output.installed_checksum().is_some_and(checksum_is_empty) {
                 return Err(LockError::Corrupt {
                     message: format!("empty installed_checksum for {}", output.dest_path),
                 }
@@ -892,11 +1004,11 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
-                        outputs: vec![OutputRecord {
-                            target_root: CANONICAL_TARGET_ROOT.to_string(),
-                            dest_path: flat.dest_path,
-                            installed_checksum: flat.installed_checksum,
-                        }],
+                        outputs: vec![OutputRecord::installed(
+                            CANONICAL_TARGET_ROOT.to_string(),
+                            flat.dest_path,
+                            flat.installed_checksum,
+                        )],
                     });
                 }
             }
@@ -913,18 +1025,15 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
-                        outputs: vec![OutputRecord {
-                            target_root: CANONICAL_TARGET_ROOT.to_string(),
-                            dest_path: flat.dest_path,
-                            installed_checksum: flat.installed_checksum,
-                        }],
+                        outputs: vec![OutputRecord::installed(
+                            CANONICAL_TARGET_ROOT.to_string(),
+                            flat.dest_path,
+                            flat.installed_checksum,
+                        )],
                     });
                 }
             }
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 if outcome.dest_path.as_str().is_empty() {
                     continue;
                 }
@@ -962,11 +1071,11 @@ pub fn apply_apply_outcomes_to_lock(
                 let old_key = old_entry.map(|(old_key, _)| old_key.to_string());
                 let outputs = outputs_with_carried_non_canonical(
                     old_entry.map(|(_, old_item)| old_item),
-                    OutputRecord {
-                        target_root: CANONICAL_TARGET_ROOT.to_string(),
-                        dest_path: outcome.dest_path.clone(),
-                        installed_checksum: installed_checksum.clone(),
-                    },
+                    OutputRecord::installed(
+                        CANONICAL_TARGET_ROOT.to_string(),
+                        outcome.dest_path.clone(),
+                        installed_checksum.clone(),
+                    ),
                 );
                 if let Some(old_key) = old_key
                     && old_key != key
@@ -1027,7 +1136,7 @@ pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutpu
             if output.target_root == out.target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), &out.dest_path)
             {
-                return output.installed_checksum != out.installed_checksum;
+                return output.installed_checksum() != Some(&out.installed_checksum);
             }
         }
     }
@@ -1042,15 +1151,86 @@ pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, Str
 }
 
 /// Record native harness outputs produced by dual-surface compile.
-pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNativeOutput]) {
+pub fn apply_compiled_native_outputs(
+    lock: &mut LockFile,
+    records: &[CompiledNativeOutput],
+) -> Result<(), LockError> {
     for record in records {
-        upsert_native_output_on_owner(
+        if !upsert_native_output_on_owner(
             lock,
             &record.owner_canonical_dest_path,
             &record.target_root,
             &record.dest_path,
             &record.installed_checksum,
-        );
+        ) {
+            return Err(LockError::Corrupt {
+                message: format!(
+                    "native output `{}/{}` has no canonical owner `{}`",
+                    record.target_root, record.dest_path, record.owner_canonical_dest_path
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Preserve unresolved noncanonical removal authority as a retry tombstone.
+///
+/// A rebuilt lock omits canonical items removed from the source graph. Their
+/// linked-target artifacts can outlive that removal when filesystem deletion
+/// fails, so the unresolved linked outputs must remain owned until removal
+/// succeeds.
+pub fn retain_unremoved_noncanonical_outputs(
+    lock: &mut LockFile,
+    old_lock: &LockFile,
+    removed: &[(String, String)],
+) {
+    for (old_key, old_item) in &old_lock.items {
+        let unresolved: Vec<_> = old_item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root != CANONICAL_TARGET_ROOT)
+            .filter(|output| {
+                !removed.iter().any(|(target_root, dest_path)| {
+                    output.target_root == *target_root
+                        && crate::target::dest_paths_equivalent(
+                            output.dest_path.as_str(),
+                            dest_path,
+                        )
+                })
+            })
+            .filter(|output| !lock.contains_output(&output.target_root, output.dest_path.as_str()))
+            .map(|output| {
+                OutputRecord::pending_deletion(output.target_root.clone(), output.dest_path.clone())
+            })
+            .collect();
+        if unresolved.is_empty() {
+            continue;
+        }
+
+        let item = lock
+            .items
+            .entry(old_key.clone())
+            .or_insert_with(|| LockedItemV2 {
+                source: old_item.source.clone(),
+                kind: old_item.kind,
+                version: old_item.version.clone(),
+                source_checksum: old_item.source_checksum.clone(),
+                // A retry tombstone may carry only unresolved noncanonical outputs.
+                // It must never resurrect an old canonical output: only the current
+                // apply pass can grant canonical ownership and deletion authority.
+                outputs: Vec::new(),
+            });
+        item.outputs.extend(unresolved);
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        item.outputs.dedup_by(|a, b| {
+            a.target_root == b.target_root
+                && crate::target::dest_paths_equivalent(a.dest_path.as_str(), b.dest_path.as_str())
+        });
     }
 }
 
@@ -1061,10 +1241,28 @@ fn upsert_target_output(
     installed_checksum: &ContentHash,
 ) {
     let dest = DestPath::from(dest_path);
+    let scoped_hook_owner = dest_path.strip_prefix("hooks/").map(|hook_name| {
+        format!(
+            "hooks/{}/{}",
+            target_root.trim_start_matches('.'),
+            hook_name
+        )
+    });
     for item in lock.items.values_mut() {
-        if !item.outputs.iter().any(|output| {
-            crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
-        }) {
+        let owns_output = if item.kind == ItemKind::Hook {
+            item.outputs.iter().any(|output| {
+                scoped_hook_owner.as_deref().is_some_and(|owner| {
+                    output.target_root == CANONICAL_TARGET_ROOT
+                        && crate::target::dest_paths_equivalent(output.dest_path.as_str(), owner)
+                })
+            })
+        } else {
+            item.outputs.iter().any(|output| {
+                (output.target_root == target_root || output.target_root == CANONICAL_TARGET_ROOT)
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
+            })
+        };
+        if !owns_output {
             continue;
         }
 
@@ -1072,15 +1270,15 @@ fn upsert_target_output(
             output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
         }) {
-            output.installed_checksum = installed_checksum.clone();
+            output.mark_installed(installed_checksum.clone());
             return;
         }
 
-        item.outputs.push(OutputRecord {
-            target_root: target_root.to_string(),
-            dest_path: dest,
-            installed_checksum: installed_checksum.clone(),
-        });
+        item.outputs.push(OutputRecord::installed(
+            target_root.to_string(),
+            dest,
+            installed_checksum.clone(),
+        ));
         item.outputs.sort_by(|a, b| {
             a.target_root
                 .cmp(&b.target_root)
@@ -1096,7 +1294,7 @@ fn upsert_native_output_on_owner(
     target_root: &str,
     native_dest_path: &str,
     installed_checksum: &ContentHash,
-) {
+) -> bool {
     let native_dest = DestPath::from(native_dest_path);
     for item in lock.items.values_mut() {
         let owns_canonical = item.outputs.iter().any(|output| {
@@ -1114,22 +1312,23 @@ fn upsert_native_output_on_owner(
             output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), native_dest_path)
         }) {
-            output.installed_checksum = installed_checksum.clone();
-            return;
+            output.mark_installed(installed_checksum.clone());
+            return true;
         }
 
-        item.outputs.push(OutputRecord {
-            target_root: target_root.to_string(),
-            dest_path: native_dest,
-            installed_checksum: installed_checksum.clone(),
-        });
+        item.outputs.push(OutputRecord::installed(
+            target_root.to_string(),
+            native_dest,
+            installed_checksum.clone(),
+        ));
         item.outputs.sort_by(|a, b| {
             a.target_root
                 .cmp(&b.target_root)
                 .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
         });
-        return;
+        return true;
     }
+    false
 }
 
 fn remove_target_output(lock: &mut LockFile, target_root: &str, dest_path: &str) {
@@ -1166,7 +1365,6 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
         subpath,
         version: node.resolved_ref.version_tag.clone(),
         commit: node.resolved_ref.commit.clone(),
-        tree_hash: None,
     }
 }
 
@@ -1201,7 +1399,6 @@ mod tests {
                 subpath: None,
                 version: Some("v1.0.0".into()),
                 commit: Some("abc123".into()),
-                tree_hash: Some("def456".into()),
             },
         );
 
@@ -1213,11 +1410,11 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:aaa".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/coder.md".into(),
-                    installed_checksum: "sha256:bbb".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/coder.md".into(),
+                    "sha256:bbb".into(),
+                )],
             },
         );
         items.insert(
@@ -1227,11 +1424,11 @@ mod tests {
                 kind: ItemKind::Skill,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:ccc".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "skills/review".into(),
-                    installed_checksum: "sha256:ddd".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "skills/review".into(),
+                    "sha256:ddd".into(),
+                )],
             },
         );
 
@@ -1245,82 +1442,227 @@ mod tests {
     }
 
     #[test]
-    fn parse_v1_lock_file_promoted_to_v2() {
-        let toml_str = r#"
-version = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0.0"
-commit = "abc123"
-tree_hash = "def456"
-
-[items."agents/coder.md"]
-source = "base"
-kind = "agent"
-version = "v1.0.0"
-source_checksum = "sha256:aaa"
-installed_checksum = "sha256:bbb"
-dest_path = "agents/coder.md"
-"#;
-        // Load via the full load() path (promotion happens there).
+    fn v1_lock_version_has_actionable_error() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
-        let lock = load(dir.path()).unwrap();
+        std::fs::write(dir.path().join("mars.lock"), "version = 1\n").unwrap();
 
-        // Promoted to v2 in memory.
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert_eq!(lock.dependencies.len(), 1);
-        assert_eq!(lock.items.len(), 1);
+        let error = load(dir.path()).unwrap_err().to_string();
 
-        // V2 key is "kind/name".
-        let item = &lock.items["agent/coder"];
-        assert_eq!(item.source, "base");
-        assert_eq!(item.kind, ItemKind::Agent);
-        assert_eq!(item.source_checksum, "sha256:aaa");
-        assert_eq!(item.outputs.len(), 1);
-        assert_eq!(item.outputs[0].installed_checksum, "sha256:bbb");
-        assert_eq!(item.outputs[0].dest_path.as_str(), "agents/coder.md");
-        assert_eq!(item.outputs[0].target_root, ".mars");
+        assert!(error.contains("unsupported lock version 1"));
+        assert!(error.contains("only version 2 can be promoted"));
+        assert!(error.contains(&format!(
+            "remove it and run `{}`",
+            crate::types::managed_cmd("mars sync")
+        )));
     }
 
     #[test]
-    fn parse_v2_lock_file() {
-        let toml_str = r#"
+    fn v2_output_matching_regular_file_promotes_to_installed() {
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join(".mars/agents/coder.md");
+        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        std::fs::write(&output, "managed").unwrap();
+        let checksum = crate::hash::hash_bytes(b"managed");
+        std::fs::write(
+            dir.path().join("mars.lock"),
+            format!(
+                r#"
 version = 2
 
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0.0"
-commit = "abc123"
-
 [items."agent/coder"]
-source = "base"
+source = "_self"
 kind = "agent"
-version = "v1.0.0"
-source_checksum = "sha256:aaa"
+source_checksum = "{checksum}"
 
 [[items."agent/coder".outputs]]
 target_root = ".mars"
 dest_path = "agents/coder.md"
-installed_checksum = "sha256:bbb"
-"#;
+installed_checksum = "{checksum}"
+"#
+            ),
+        )
+        .unwrap();
+
+        let lock = load(dir.path()).unwrap();
+        let output = &lock.items["agent/coder"].outputs[0];
+
+        assert_eq!(lock.version, LOCK_VERSION);
+        assert!(matches!(output.state, OutputState::Installed { .. }));
+    }
+
+    #[test]
+    fn v2_output_absent_on_disk_promotes_to_pending_deletion() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
+        std::fs::write(
+            dir.path().join("mars.lock"),
+            r#"
+version = 2
+
+[items."hook/audit"]
+source = "_self"
+kind = "hook"
+source_checksum = "sha256:source"
+
+[[items."hook/audit".outputs]]
+target_root = ".opencode"
+dest_path = "plugins/mars-audit.ts"
+installed_checksum = "sha256:old"
+"#,
+        )
+        .unwrap();
+
         let lock = load(dir.path()).unwrap();
 
-        assert_eq!(lock.version, 2);
-        assert_eq!(lock.items.len(), 1);
+        assert!(matches!(
+            lock.items["hook/audit"].outputs[0].state,
+            OutputState::PendingDeletion
+        ));
+    }
 
-        let item = &lock.items["agent/coder"];
-        assert_eq!(item.source_checksum, "sha256:aaa");
-        assert_eq!(item.outputs[0].installed_checksum, "sha256:bbb");
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_dangling_symlink_has_no_checksum() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        symlink("missing.md", output.join("reference.md")).unwrap();
+
+        assert_eq!(v2_output_checksum(&output), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_directory_symlink_has_no_checksum() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        let external = dir.path().join("external");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::create_dir(&external).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        std::fs::write(external.join("reference.md"), "# Reference").unwrap();
+        symlink(&external, output.join("references")).unwrap();
+
+        assert_eq!(v2_output_checksum(&output), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_fifo_returns_without_opening_it() {
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(output.join("events"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let started = std::time::Instant::now();
+        assert_eq!(v2_output_checksum(&output), None);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "shape validation must not open and block on the FIFO"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_promotion_classifies_outputs_by_disk_shape_and_checksum() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let outputs = root.join(".mars/outputs");
+        std::fs::create_dir_all(&outputs).unwrap();
+
+        std::fs::write(outputs.join("file-match"), "managed").unwrap();
+        std::fs::write(outputs.join("file-mismatch"), "changed").unwrap();
+        std::fs::create_dir(outputs.join("dir-match")).unwrap();
+        std::fs::write(outputs.join("dir-match/SKILL.md"), "# Managed").unwrap();
+        std::fs::create_dir(outputs.join("dir-mismatch")).unwrap();
+        std::fs::write(outputs.join("dir-mismatch/SKILL.md"), "# Changed").unwrap();
+        std::fs::write(outputs.join("symlink-target"), "managed").unwrap();
+        symlink("symlink-target", outputs.join("symlink")).unwrap();
+        std::fs::write(outputs.join("unreadable"), "managed").unwrap();
+        std::fs::set_permissions(
+            outputs.join("unreadable"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+
+        let file_checksum = crate::hash::hash_bytes(b"managed");
+        let directory_checksum =
+            crate::hash::compute_hash(&outputs.join("dir-match"), ItemKind::Skill).unwrap();
+        let cases = [
+            ("file-match", &file_checksum),
+            ("file-mismatch", &file_checksum),
+            ("dir-match", &directory_checksum),
+            ("dir-mismatch", &directory_checksum),
+            ("absent", &file_checksum),
+            ("symlink", &file_checksum),
+            ("unreadable", &file_checksum),
+        ];
+        let mut lock = String::from("version = 2\n");
+        for (name, checksum) in cases {
+            lock.push_str(&format!(
+                r#"
+[items."agent/{name}"]
+source = "_self"
+kind = "agent"
+source_checksum = "{checksum}"
+
+[[items."agent/{name}".outputs]]
+target_root = ".mars"
+dest_path = "outputs/{name}"
+installed_checksum = "{checksum}"
+"#
+            ));
+        }
+        std::fs::write(root.join("mars.lock"), lock).unwrap();
+
+        let promoted = load(root).unwrap();
+        std::fs::set_permissions(
+            outputs.join("unreadable"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+
+        for name in ["file-match", "dir-match"] {
+            assert!(
+                matches!(
+                    promoted.items[&format!("agent/{name}")].outputs[0].state,
+                    OutputState::Installed { .. }
+                ),
+                "{name} should retain installed-content authority"
+            );
+        }
+        for name in [
+            "file-mismatch",
+            "dir-mismatch",
+            "absent",
+            "symlink",
+            "unreadable",
+        ] {
+            assert!(
+                matches!(
+                    promoted.items[&format!("agent/{name}")].outputs[0].state,
+                    OutputState::PendingDeletion
+                ),
+                "{name} should retain deletion authority only"
+            );
+        }
     }
 
     #[test]
     fn load_for_runtime_aliases_rejects_legacy_v2_without_dependency_alias_authority() {
         let toml_str = r#"
-version = 2
+version = 3
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -1335,6 +1677,7 @@ source_checksum = "sha256:aaa"
 [[items."agent/coder".outputs]]
 target_root = ".mars"
 dest_path = "agents/coder.md"
+state = "installed"
 installed_checksum = "sha256:bbb"
 "#;
         let dir = TempDir::new().unwrap();
@@ -1349,7 +1692,7 @@ installed_checksum = "sha256:bbb"
     #[test]
     fn load_for_runtime_aliases_allows_missing_dependency_aliases_when_no_dependencies() {
         let toml_str = r#"
-version = 2
+version = 3
 
 [items."agent/coder"]
 source = "_self"
@@ -1359,6 +1702,7 @@ source_checksum = "sha256:aaa"
 [[items."agent/coder".outputs]]
 target_root = ".mars"
 dest_path = "agents/coder.md"
+state = "installed"
 installed_checksum = "sha256:bbb"
 "#;
         let dir = TempDir::new().unwrap();
@@ -1385,9 +1729,7 @@ installed_checksum = "sha256:bbb"
             ".claude".to_string(),
             BTreeMap::from([(
                 "mcp:context7".to_string(),
-                ConfigEntryRecord {
-                    source: "base".to_string(),
-                },
+                ConfigEntryRecord { emitted_json: None },
             )]),
         );
 
@@ -1397,8 +1739,8 @@ installed_checksum = "sha256:bbb"
 
         assert_eq!(lock, reloaded);
         assert_eq!(
-            reloaded.config_entries[".claude"]["mcp:context7"].source,
-            "base"
+            reloaded.config_entries[".claude"]["mcp:context7"].emitted_json,
+            None
         );
     }
 
@@ -1434,7 +1776,7 @@ installed_checksum = "sha256:bbb"
     #[test]
     fn write_sorts_dependency_model_aliases_keys() {
         let toml_str = r#"
-version = 2
+version = 3
 
 [dependency_model_aliases.zeta]
 model = "openai/gpt-z"
@@ -1488,15 +1830,25 @@ model = "openai/gpt-a"
     fn dual_checksums_present() {
         let lock = sample_lock();
         let item = &lock.items["agent/coder"];
-        assert_ne!(item.source_checksum, item.outputs[0].installed_checksum);
+        assert_ne!(
+            &item.source_checksum,
+            item.outputs[0]
+                .installed_checksum()
+                .expect("installed output")
+        );
         assert!(item.source_checksum.starts_with("sha256:"));
-        assert!(item.outputs[0].installed_checksum.starts_with("sha256:"));
+        assert!(
+            item.outputs[0]
+                .installed_checksum()
+                .expect("installed output")
+                .starts_with("sha256:")
+        );
     }
 
     #[test]
     fn path_source_in_lock() {
         let toml_str = r#"
-version = 2
+version = 3
 
 [dependencies.local]
 path = "/home/dev/agents"
@@ -1509,6 +1861,7 @@ source_checksum = "sha256:111"
 [[items."agent/helper".outputs]]
 target_root = ".mars"
 dest_path = "agents/helper.md"
+state = "installed"
 installed_checksum = "sha256:222"
 "#;
         let dir = TempDir::new().unwrap();
@@ -1527,11 +1880,11 @@ installed_checksum = "sha256:222"
             kind: ItemKind::Skill,
             version: None,
             source_checksum: "sha256:aaa".into(),
-            outputs: vec![OutputRecord {
-                target_root: ".mars".to_string(),
-                dest_path: "skills/review".into(),
-                installed_checksum: "sha256:bbb".into(),
-            }],
+            outputs: vec![OutputRecord::installed(
+                ".mars".to_string(),
+                "skills/review".into(),
+                "sha256:bbb".into(),
+            )],
         };
         let serialized = toml::to_string(&item).unwrap();
         assert!(serialized.contains("kind = \"skill\""));
@@ -1582,47 +1935,17 @@ installed_checksum = "sha256:222"
     }
 
     #[test]
-    fn lock_index_find_by_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        let index = LockIndex::new(&lock);
-
-        let found = index
-            .find_by_dest_path(&DestPath::from("agents/coder.md"))
-            .unwrap();
-        assert_eq!(found.source, "base");
-        assert_eq!(found.kind, ItemKind::Agent);
-        assert_eq!(found.source_checksum, "sha256:aaa");
-        assert_eq!(found.installed_checksum, "sha256:bbb");
-        assert_eq!(found.dest_path.as_str(), "agents/coder.md");
-
-        assert!(
-            index
-                .find_by_dest_path(&DestPath::from("agents/missing.md"))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn lock_index_contains_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        let index = LockIndex::new(&lock);
-
-        assert!(index.contains_dest_path(&DestPath::from("agents/coder.md")));
-        assert!(!index.contains_dest_path(&DestPath::from("agents/nobody.md")));
-    }
-
-    #[test]
     fn lock_index_target_scoped_lookup_distinguishes_same_dest_path() {
         let mut lock = sample_lock();
         lock.items
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".pi".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:pi".into(),
-            });
+            .push(OutputRecord::installed(
+                ".pi".to_string(),
+                "agents/coder.md".into(),
+                "sha256:pi".into(),
+            ));
 
         let index = LockIndex::new(&lock);
         let dest = DestPath::from("agents/coder.md");
@@ -1648,11 +1971,11 @@ installed_checksum = "sha256:222"
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".cursor".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:cursor".into(),
-            });
+            .push(OutputRecord::installed(
+                ".cursor".to_string(),
+                "agents/coder.md".into(),
+                "sha256:cursor".into(),
+            ));
 
         let mars_paths = lock.output_dest_paths_for_target(".mars");
         assert!(mars_paths.contains("agents/coder.md"));
@@ -1674,11 +1997,11 @@ installed_checksum = "sha256:222"
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".cursor".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:cursor".into(),
-            });
+            .push(OutputRecord::installed(
+                ".cursor".to_string(),
+                "agents/coder.md".into(),
+                "sha256:cursor".into(),
+            ));
         assert!(lock.contains_output(".cursor", "agents/coder.md"));
         assert!(!lock.contains_output(".cursor", "agents/missing.md"));
     }
@@ -1694,7 +2017,8 @@ installed_checksum = "sha256:222"
                 dest_path: "agents/coder.toml".to_string(),
                 installed_checksum: "sha256:codex".into(),
             }],
-        );
+        )
+        .unwrap();
         assert!(lock.contains_output(".codex", "agents/coder.toml"));
         assert!(lock.contains_output(".mars", "agents/coder.md"));
     }
@@ -1709,11 +2033,11 @@ installed_checksum = "sha256:222"
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:alias-src".into(),
-                outputs: vec![OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/on-disk-stem.md".into(),
-                    installed_checksum: "sha256:alias-mars".into(),
-                }],
+                outputs: vec![OutputRecord::installed(
+                    ".mars".to_string(),
+                    "agents/on-disk-stem.md".into(),
+                    "sha256:alias-mars".into(),
+                )],
             },
         );
         apply_compiled_native_outputs(
@@ -1724,7 +2048,8 @@ installed_checksum = "sha256:222"
                 dest_path: "agents/alias-name.md".to_string(),
                 installed_checksum: "sha256:claude-native".into(),
             }],
-        );
+        )
+        .unwrap();
         assert!(lock.contains_output(".claude", "agents/alias-name.md"));
     }
 
@@ -1736,17 +2061,18 @@ installed_checksum = "sha256:222"
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".claude".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:claude-old".into(),
-            });
+            .push(OutputRecord::installed(
+                ".claude".to_string(),
+                "agents/coder.md".into(),
+                "sha256:claude-old".into(),
+            ));
 
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -1783,13 +2109,19 @@ installed_checksum = "sha256:222"
             .iter()
             .find(|o| o.target_root == ".mars")
             .unwrap();
-        assert_eq!(mars.installed_checksum, "sha256:new-mars");
+        assert_eq!(
+            mars.installed_checksum().expect("installed output"),
+            "sha256:new-mars"
+        );
         let claude = item
             .outputs
             .iter()
             .find(|o| o.target_root == ".claude")
             .unwrap();
-        assert_eq!(claude.installed_checksum, "sha256:claude-old");
+        assert_eq!(
+            claude.installed_checksum().expect("installed output"),
+            "sha256:claude-old"
+        );
     }
 
     #[test]
@@ -1806,16 +2138,16 @@ installed_checksum = "sha256:222"
                         version: None,
                         source_checksum: "sha256:coder-src".into(),
                         outputs: vec![
-                            OutputRecord {
-                                target_root: ".mars".to_string(),
-                                dest_path: "agents/coder.md".into(),
-                                installed_checksum: "sha256:coder-mars".into(),
-                            },
-                            OutputRecord {
-                                target_root: ".claude".to_string(),
-                                dest_path: "agents/coder.md".into(),
-                                installed_checksum: "sha256:coder-claude".into(),
-                            },
+                            OutputRecord::installed(
+                                ".mars".to_string(),
+                                "agents/coder.md".into(),
+                                "sha256:coder-mars".into(),
+                            ),
+                            OutputRecord::installed(
+                                ".claude".to_string(),
+                                "agents/coder.md".into(),
+                                "sha256:coder-claude".into(),
+                            ),
                         ],
                     },
                 ),
@@ -1827,16 +2159,16 @@ installed_checksum = "sha256:222"
                         version: None,
                         source_checksum: "sha256:review-src".into(),
                         outputs: vec![
-                            OutputRecord {
-                                target_root: ".mars".to_string(),
-                                dest_path: "skills/review".into(),
-                                installed_checksum: "sha256:review-mars".into(),
-                            },
-                            OutputRecord {
-                                target_root: ".codex".to_string(),
-                                dest_path: "skills/review/SKILL.md".into(),
-                                installed_checksum: "sha256:review-codex".into(),
-                            },
+                            OutputRecord::installed(
+                                ".mars".to_string(),
+                                "skills/review".into(),
+                                "sha256:review-mars".into(),
+                            ),
+                            OutputRecord::installed(
+                                ".codex".to_string(),
+                                "skills/review/SKILL.md".into(),
+                                "sha256:review-codex".into(),
+                            ),
                         ],
                     },
                 ),
@@ -1849,6 +2181,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![
@@ -1907,16 +2240,16 @@ installed_checksum = "sha256:222"
                     version: None,
                     source_checksum: "sha256:old-src".into(),
                     outputs: vec![
-                        OutputRecord {
-                            target_root: ".mars".to_string(),
-                            dest_path: "agents/coder.md".into(),
-                            installed_checksum: "sha256:old-mars".into(),
-                        },
-                        OutputRecord {
-                            target_root: ".claude".to_string(),
-                            dest_path: "agents/coder.md".into(),
-                            installed_checksum: "sha256:old-claude".into(),
-                        },
+                        OutputRecord::installed(
+                            ".mars".to_string(),
+                            "agents/coder.md".into(),
+                            "sha256:old-mars".into(),
+                        ),
+                        OutputRecord::installed(
+                            ".claude".to_string(),
+                            "agents/coder.md".into(),
+                            "sha256:old-claude".into(),
+                        ),
                     ],
                 },
             )]),
@@ -1928,6 +2261,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -1961,7 +2295,10 @@ installed_checksum = "sha256:222"
             .iter()
             .find(|o| o.target_root == ".claude")
             .unwrap();
-        assert_eq!(claude.installed_checksum, "sha256:old-claude");
+        assert_eq!(
+            claude.installed_checksum().expect("installed output"),
+            "sha256:old-claude"
+        );
     }
 
     #[test]
@@ -1977,16 +2314,16 @@ installed_checksum = "sha256:222"
                     version: None,
                     source_checksum: "sha256:old-src".into(),
                     outputs: vec![
-                        OutputRecord {
-                            target_root: ".mars".to_string(),
-                            dest_path: "agents/coder.md".into(),
-                            installed_checksum: "sha256:old-mars".into(),
-                        },
-                        OutputRecord {
-                            target_root: ".claude".to_string(),
-                            dest_path: "agents/coder.md".into(),
-                            installed_checksum: "sha256:old-claude".into(),
-                        },
+                        OutputRecord::installed(
+                            ".mars".to_string(),
+                            "agents/coder.md".into(),
+                            "sha256:old-mars".into(),
+                        ),
+                        OutputRecord::installed(
+                            ".claude".to_string(),
+                            "agents/coder.md".into(),
+                            "sha256:old-claude".into(),
+                        ),
                     ],
                 },
             )]),
@@ -2026,11 +2363,11 @@ installed_checksum = "sha256:222"
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".claude".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:claude".into(),
-            });
+            .push(OutputRecord::installed(
+                ".claude".to_string(),
+                "agents/coder.md".into(),
+                "sha256:claude".into(),
+            ));
 
         let mut lock = old_lock.clone();
         apply_apply_outcomes_to_lock(
@@ -2058,13 +2395,19 @@ installed_checksum = "sha256:222"
             .iter()
             .find(|o| o.target_root == ".mars")
             .unwrap();
-        assert_eq!(mars.installed_checksum, "sha256:new-mars");
+        assert_eq!(
+            mars.installed_checksum().expect("installed output"),
+            "sha256:new-mars"
+        );
         let claude = item
             .outputs
             .iter()
             .find(|o| o.target_root == ".claude")
             .unwrap();
-        assert_eq!(claude.installed_checksum, "sha256:claude");
+        assert_eq!(
+            claude.installed_checksum().expect("installed output"),
+            "sha256:claude"
+        );
     }
 
     #[test]
@@ -2163,11 +2506,11 @@ installed_checksum = "sha256:222"
             .get_mut("agent/coder")
             .unwrap()
             .outputs
-            .push(OutputRecord {
-                target_root: ".cursor".to_string(),
-                dest_path: "agents/coder.md".into(),
-                installed_checksum: "sha256:cursor".into(),
-            });
+            .push(OutputRecord::installed(
+                ".cursor".to_string(),
+                "agents/coder.md".into(),
+                "sha256:cursor".into(),
+            ));
 
         let canonical = lock.canonical_flat_items();
         assert_eq!(canonical.len(), 2);
@@ -2185,44 +2528,6 @@ installed_checksum = "sha256:222"
         let cursor = lock.flat_items_for_target(".cursor");
         assert_eq!(cursor.len(), 1);
         assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
-    }
-
-    #[test]
-    fn flat_items_yields_all_outputs() {
-        let lock = sample_lock();
-        let flat = lock.flat_items();
-        assert_eq!(flat.len(), 2);
-        let paths: Vec<&str> = flat.iter().map(|(dp, _)| dp.as_str()).collect();
-        assert!(paths.contains(&"agents/coder.md"));
-        assert!(paths.contains(&"skills/review"));
-    }
-
-    #[test]
-    fn v1_lock_no_spurious_reinstall() {
-        // V1 lock loaded → promoted to v2 → find_by_dest_path works for diff.
-        let v1_toml = r#"
-version = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[items."agents/coder.md"]
-source = "base"
-kind = "agent"
-source_checksum = "sha256:src"
-installed_checksum = "sha256:inst"
-dest_path = "agents/coder.md"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), v1_toml).unwrap();
-        let lock = load(dir.path()).unwrap();
-
-        // Promoted items should still be findable by dest_path.
-        let found = lock.find_by_dest_path(&DestPath::from("agents/coder.md"));
-        assert!(found.is_some());
-        let item = found.unwrap();
-        assert_eq!(item.source_checksum, "sha256:src");
-        assert_eq!(item.installed_checksum, "sha256:inst");
     }
 
     #[test]
@@ -2252,7 +2557,6 @@ dest_path = "agents/coder.md"
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2276,7 +2580,6 @@ dest_path = "agents/coder.md"
                     commit: None,
                     tree_path: PathBuf::from("/tmp/cache/local"),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2287,6 +2590,7 @@ dest_path = "agents/coder.md"
             order: vec![git_name.clone(), path_name.clone()],
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
 
@@ -2299,7 +2603,6 @@ dest_path = "agents/coder.md"
                 subpath: None,
                 version: Some("v0.0.1".into()),
                 commit: Some("deadbeef".into()),
-                tree_hash: None,
             },
         );
         let old_lock = LockFile {
@@ -2352,7 +2655,7 @@ dest_path = "agents/coder.md"
             source_name.clone(),
             ResolvedNode {
                 source_name: source_name.clone(),
-                source_id: SourceId::git("https://example.com/base.git".into()),
+                source_id: SourceId::git_with_subpath("https://example.com/base.git".into(), None),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
                     package_root: PathBuf::from("/tmp/cache/base"),
@@ -2364,7 +2667,6 @@ dest_path = "agents/coder.md"
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec![],
             },
@@ -2375,6 +2677,7 @@ dest_path = "agents/coder.md"
             order: vec![source_name.clone()],
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
         let new_lock = build(
@@ -2397,6 +2700,7 @@ dest_path = "agents/coder.md"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
         let old_lock = LockFile {
@@ -2409,7 +2713,6 @@ dest_path = "agents/coder.md"
                     subpath: None,
                     version: None,
                     commit: None,
-                    tree_hash: None,
                 },
             )]),
             items: IndexMap::from([(
@@ -2419,11 +2722,11 @@ dest_path = "agents/coder.md"
                     kind: ItemKind::Skill,
                     version: None,
                     source_checksum: "sha256:self".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: ".mars".to_string(),
-                        dest_path: DestPath::from("skills/local-skill"),
-                        installed_checksum: "sha256:self".into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        ".mars".to_string(),
+                        DestPath::from("skills/local-skill"),
+                        "sha256:self".into(),
+                    )],
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
@@ -2460,7 +2763,12 @@ dest_path = "agents/coder.md"
         assert_eq!(item.source, local_source_name);
         assert_eq!(item.kind, ItemKind::Skill);
         assert_eq!(item.source_checksum, "sha256:self");
-        assert_eq!(item.outputs[0].installed_checksum, "sha256:self");
+        assert_eq!(
+            item.outputs[0]
+                .installed_checksum()
+                .expect("installed output"),
+            "sha256:self"
+        );
     }
 
     #[test]
@@ -2470,6 +2778,7 @@ dest_path = "agents/coder.md"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let old_lock = LockFile::empty();
         let applied = ApplyResult {
@@ -2499,103 +2808,13 @@ dest_path = "agents/coder.md"
     }
 
     #[test]
-    fn promote_v1_collision_both_survive() {
-        // Two v1 items with different full dest_paths but the same basename
-        // (e.g. "hook" from two different subdirectories) must both survive promotion.
-        // Without collision handling the second would silently overwrite the first.
-        let mut v1_items: IndexMap<DestPath, LockedItem> = IndexMap::new();
-
-        v1_items.insert(
-            DestPath::from("hooks/pre-commit/hook.sh"),
-            LockedItem {
-                source: "base".into(),
-                kind: ItemKind::Hook,
-                version: None,
-                source_checksum: "sha256:aaa".into(),
-                installed_checksum: "sha256:bbb".into(),
-                dest_path: DestPath::from("hooks/pre-commit/hook.sh"),
-            },
-        );
-        v1_items.insert(
-            DestPath::from("hooks/pre-push/hook.sh"),
-            LockedItem {
-                source: "base".into(),
-                kind: ItemKind::Hook,
-                version: None,
-                source_checksum: "sha256:ccc".into(),
-                installed_checksum: "sha256:ddd".into(),
-                dest_path: DestPath::from("hooks/pre-push/hook.sh"),
-            },
-        );
-
-        let (promoted, diagnostics) = promote_v1_items(v1_items);
-
-        // Both entries must be present — neither was silently dropped.
-        assert_eq!(promoted.len(), 2, "both items should survive promotion");
-        assert_eq!(diagnostics.len(), 1);
-
-        // The first item gets the canonical key; the second gets the fallback dest_path key.
-        let checksums: std::collections::HashSet<String> = promoted
-            .values()
-            .map(|v| v.source_checksum.as_ref().to_string())
-            .collect();
-        assert!(
-            checksums.contains("sha256:aaa"),
-            "pre-commit hook must be present"
-        );
-        assert!(
-            checksums.contains("sha256:ccc"),
-            "pre-push hook must be present"
-        );
-    }
-
-    #[test]
-    fn load_with_diagnostics_reports_v1_promotion_collision() {
-        let v1_toml = r#"
-version = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[items."hooks/pre-commit/hook.sh"]
-source = "base"
-kind = "hook"
-source_checksum = "sha256:aaa"
-installed_checksum = "sha256:bbb"
-dest_path = "hooks/pre-commit/hook.sh"
-
-[items."hooks/pre-push/hook.sh"]
-source = "base"
-kind = "hook"
-source_checksum = "sha256:ccc"
-installed_checksum = "sha256:ddd"
-dest_path = "hooks/pre-push/hook.sh"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), v1_toml).unwrap();
-
-        let (lock, diagnostics) = load_with_diagnostics(dir.path()).unwrap();
-
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert_eq!(lock.items.len(), 2);
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = &diagnostics[0];
-        assert_eq!(
-            diagnostic.level,
-            crate::diagnostic::DiagnosticLevel::Warning
-        );
-        assert_eq!(diagnostic.code, "lock-promotion-collision");
-        assert!(diagnostic.message.contains("key collision"));
-        assert!(diagnostic.message.contains("hook/hooks/pre-push/hook.sh"));
-    }
-
-    #[test]
     fn build_rejects_empty_checksums_from_carried_items() {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let old_lock = LockFile {
             version: LOCK_VERSION,
@@ -2607,11 +2826,11 @@ dest_path = "hooks/pre-push/hook.sh"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "".into(),
-                    outputs: vec![OutputRecord {
-                        target_root: ".mars".to_string(),
-                        dest_path: DestPath::from("agents/coder.md"),
-                        installed_checksum: "sha256:installed".into(),
-                    }],
+                    outputs: vec![OutputRecord::installed(
+                        ".mars".to_string(),
+                        DestPath::from("agents/coder.md"),
+                        "sha256:installed".into(),
+                    )],
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
@@ -2640,5 +2859,19 @@ dest_path = "hooks/pre-push/hook.sh"
         .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("empty source_checksum"));
+    }
+}
+
+#[cfg(test)]
+mod output_lifecycle_contract_tests {
+    use super::{OutputRecord, OutputState};
+
+    #[test]
+    fn pending_deletion_record_carries_no_checksum() {
+        let record = OutputRecord::pending_deletion(".opencode", "plugins/mars-audit.ts");
+
+        assert!(matches!(record.state, OutputState::PendingDeletion));
+        let encoded = toml::to_string(&record).expect("pending record serializes");
+        assert!(!encoded.contains("installed_checksum"));
     }
 }

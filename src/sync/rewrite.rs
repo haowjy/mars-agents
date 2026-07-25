@@ -318,11 +318,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: source_name.into(),
-            origin: crate::types::SourceOrigin::Dependency(source_name.into()),
-            source_id: SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: dest_path.into(),
             source_hash,
@@ -356,7 +351,6 @@ mod tests {
                     commit: None,
                     tree_path: root.to_path_buf(),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: deps.into_iter().map(SourceName::from).collect(),
             },
@@ -366,6 +360,7 @@ mod tests {
             order: vec![source_name.into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         }
     }
 
@@ -404,11 +399,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -424,11 +414,6 @@ mod tests {
                     name: "plan__org_base".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_path.clone(),
                 dest_path: "skills/plan__org_base".into(),
                 source_hash: hash::compute_hash(&skill_path, ItemKind::Skill)
@@ -450,6 +435,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -478,11 +464,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -502,6 +483,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -532,11 +514,6 @@ mod tests {
                     name: "coder".into(),
                 },
                 source_name: "source-a".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-a".into()),
-                source_id: SourceId::Path {
-                    canonical: agent_path.clone(),
-                    subpath: None,
-                },
                 source_path: agent_path.clone(),
                 dest_path: "agents/coder.md".into(),
                 source_hash: hash::hash_bytes(fs::read(&agent_path).unwrap().as_slice()).into(),
@@ -552,11 +529,6 @@ mod tests {
                     name: "planning__org_b".into(),
                 },
                 source_name: "source-b".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-b".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_b_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_b_path.clone(),
                 dest_path: "skills/planning__org_b".into(),
                 source_hash: hash::compute_hash(&skill_b_path, ItemKind::Skill)
@@ -574,11 +546,6 @@ mod tests {
                     name: "planning__org_c".into(),
                 },
                 source_name: "source-c".into(),
-                origin: crate::types::SourceOrigin::Dependency("source-c".into()),
-                source_id: SourceId::Path {
-                    canonical: skill_c_path.clone(),
-                    subpath: None,
-                },
                 source_path: skill_c_path.clone(),
                 dest_path: "skills/planning__org_c".into(),
                 source_hash: hash::compute_hash(&skill_c_path, ItemKind::Skill)
@@ -623,7 +590,6 @@ mod tests {
                     commit: None,
                     tree_path: dir.path().to_path_buf(),
                 },
-                latest_version: None,
                 manifest: None,
                 deps: vec!["source-b".into()],
             },
@@ -633,6 +599,7 @@ mod tests {
             order: vec!["source-a".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -715,6 +682,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -800,6 +768,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -883,6 +852,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(
@@ -967,6 +937,7 @@ mod tests {
             order: vec!["source-a".into(), "source-b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(
@@ -1051,6 +1022,7 @@ mod tests {
             order: vec!["source-a".into(), "source-b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(

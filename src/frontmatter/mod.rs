@@ -21,10 +21,6 @@ pub struct SkillsSpec {
 }
 
 impl SkillsSpec {
-    pub fn is_empty(&self) -> bool {
-        self.load.is_empty() && self.available.is_empty()
-    }
-
     pub fn all(&self) -> Vec<String> {
         self.load
             .iter()
@@ -129,18 +125,6 @@ impl Frontmatter {
             },
             None => SkillsSpec::default(),
         }
-    }
-
-    /// Replace the `skills` list.
-    pub fn set_skills(&mut self, skills: Vec<String>) {
-        let key = yaml_key("skills");
-        if skills.is_empty() {
-            self.yaml.remove(&key);
-            return;
-        }
-
-        let sequence = skills.into_iter().map(Value::String).collect();
-        self.yaml.insert(key, Value::Sequence(sequence));
     }
 
     /// Read the `name` field if present.

@@ -166,7 +166,6 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         installed: usize,
         updated: usize,
         removed: usize,
-        conflicts: usize,
         kept: usize,
         skipped: usize,
         native_emitted: usize,
@@ -174,12 +173,13 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recovery_halt: Option<crate::sync::RecoveryHalt>,
     }
 
     let mut installed = 0;
     let mut updated = 0;
     let mut removed = 0;
-    let mut conflicts = 0;
     let mut kept = 0;
     let mut skipped = 0;
 
@@ -187,17 +187,9 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         match outcome.action {
             ActionTaken::Installed => installed += 1,
             ActionTaken::Updated => updated += 1,
-            ActionTaken::Merged => updated += 1,
-            ActionTaken::Conflicted => conflicts += 1,
             ActionTaken::Removed => removed += 1,
             ActionTaken::Kept => kept += 1,
             ActionTaken::Skipped => skipped += 1,
-        }
-    }
-
-    for outcome in &report.pruned {
-        if matches!(outcome.action, ActionTaken::Removed) {
-            removed += 1;
         }
     }
 
@@ -213,12 +205,11 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         .collect();
 
     serde_json::to_value(JsonReport {
-        ok: conflicts == 0,
+        ok: report.recovery_halt.is_none(),
         dry_run: report.dry_run,
         installed,
         updated,
         removed,
-        conflicts,
         kept,
         skipped,
         native_emitted: report.native_emitted.len(),
@@ -226,17 +217,43 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
+        recovery_halt: report.recovery_halt.clone(),
     })
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
+    if let Some(halt) = &report.recovery_halt {
+        let mut stderr = StandardStream::stderr(color_choice());
+        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+        let _ = writeln!(stderr, "  recovery halted before materialization");
+        let _ = stderr.reset();
+        for persisted in &halt.persisted {
+            let _ = writeln!(stderr, "  {persisted}");
+        }
+        for blocker in &halt.blockers {
+            let _ = writeln!(
+                stderr,
+                "  blocked by {}@{} (hooks: {})",
+                blocker.package,
+                blocker.version,
+                blocker.hook_names.join(", ")
+            );
+            let _ = writeln!(stderr, "  {}", blocker.guidance);
+            let _ = writeln!(stderr, "  suggested: `{}`", blocker.suggested_command);
+        }
+        let _ = writeln!(stderr, "  {}", halt.next_step);
+        for diagnostic in &report.diagnostics {
+            let _ = writeln!(stderr, "  {diagnostic}");
+        }
+        return;
+    }
+
     let mut stdout = StandardStream::stdout(color_choice());
 
     let mut installed = 0usize;
     let mut updated = 0usize;
     let mut removed = 0usize;
-    let mut conflicts = 0usize;
     let mut kept = 0usize;
 
     // Print per-item actions
@@ -246,13 +263,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
                 installed += 1;
                 print_action_line(&mut stdout, "+", Color::Green, outcome);
             }
-            ActionTaken::Updated | ActionTaken::Merged => {
+            ActionTaken::Updated => {
                 updated += 1;
                 print_action_line(&mut stdout, "~", Color::Yellow, outcome);
-            }
-            ActionTaken::Conflicted => {
-                conflicts += 1;
-                print_action_line(&mut stdout, "!", Color::Red, outcome);
             }
             ActionTaken::Removed => {
                 removed += 1;
@@ -262,13 +275,6 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
                 kept += 1;
             }
             ActionTaken::Skipped => {}
-        }
-    }
-
-    for outcome in &report.pruned {
-        if matches!(outcome.action, ActionTaken::Removed) {
-            removed += 1;
-            print_action_line(&mut stdout, "-", Color::Red, outcome);
         }
     }
 
@@ -322,20 +328,10 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
-    if conflicts > 0 {
-        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
-        let _ = writeln!(
-            stdout,
-            "  conflicts   {conflicts} files (run `{cmd}` after fixing)",
-            cmd = managed_cmd("mars resolve"),
-        );
-        let _ = stdout.reset();
-    }
 
     if installed == 0
         && updated == 0
         && removed == 0
-        && conflicts == 0
         && kept == 0
         && native_emitted == 0
         && native_removed == 0

@@ -29,6 +29,32 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 - **Normal**: lock-preferred latest-compatible
 - **Maximize**: upgrade to newest versions, optionally bump constraints
 
+### Recovery Policy
+
+`SyncRequest.recovery` is strict by default and independent of `--force`.
+Upgrade, override, remove, and repair opt into `DeferOnUnreadable` when
+staging finds an unreadable removed-schema hook surface.
+
+**Halt gate.** The gate sits between `reader::read` and `compiler::compile`
+in `sync::execute`. `unreadable_hook_surfaces` on `ResolvedGraph` has
+exactly one consumer: the gate. When `recovery == DeferOnUnreadable` and
+the unreadable set is non-empty, the gate persists pending intent mutations
+(mars.toml / mars.local.toml, skipped under `--dry-run`), attaches a
+`RecoveryHalt` to the `SyncReport`, and returns without entering the
+compiler. Strict sync ignores the recorded set and enters the compiler,
+which reports the contextualized schema error.
+
+**Invariant:** the sync pipeline assumes the staged tree is total desired
+intent. No "frozen" or "exception" category exists in diff, plan, target,
+or lock stages. When anything is unreadable the only writes are the user's
+own intent files, which are not derived from package content.
+
+**Corrupt-lock repair.** Repair treats a corrupt lock as empty in memory
+under the sync flock acquired in `load_config`. The on-disk corrupt bytes
+are preserved until a successful full run finalizes via atomic tmp+rename.
+A corrupt lock is evidence, not garbage -- replacing it before the pipeline
+succeeds would destroy diagnostic information if the run fails.
+
 ### Key Operations
 
 | Function | Responsibility |

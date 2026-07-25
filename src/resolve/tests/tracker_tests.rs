@@ -1,5 +1,4 @@
 use super::*;
-use crate::config::GitSpec;
 use crate::lock::ItemKind;
 use crate::resolve::compat::CompatibilityResult;
 use semver::Version;
@@ -56,10 +55,6 @@ fn visited_set_same_version() {
 
     let result = visited.check_version(&package, &item, &constraint);
     assert!(matches!(result, VersionCheckResult::SameVersion));
-
-    let entries: Vec<_> = visited.iter().collect();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].0, &(package, item));
 }
 
 #[test]
@@ -144,10 +139,6 @@ fn pending_item(is_local: bool) -> PendingItem {
         constraint: semver_constraint("^1.0"),
         required_by: "mars.toml".to_string(),
         is_local,
-        spec: SourceSpec::Git(GitSpec {
-            url: SourceUrl::from("https://example.com/alpha.git"),
-            version: Some("v1.0.0".to_string()),
-        }),
     }
 }
 
@@ -428,28 +419,4 @@ fn package_versions_local_conflict_bypassed() {
             .is_ok(),
         "local package conflicts must be bypassed",
     );
-}
-
-#[test]
-fn pending_item_scaffolding_fields_roundtrip() {
-    let pending = PendingItem {
-        package: SourceName::from("alpha"),
-        item: ItemName::from("coder"),
-        kind: ItemKind::Agent,
-        constraint: VersionConstraint::Latest,
-        required_by: "mars.toml".to_string(),
-        is_local: false,
-        spec: SourceSpec::Git(GitSpec {
-            url: SourceUrl::from("https://example.com/alpha.git"),
-            version: Some("v1.2.3".to_string()),
-        }),
-    };
-
-    assert_eq!(pending.package, "alpha");
-    assert_eq!(pending.item, "coder");
-    assert_eq!(pending.kind, ItemKind::Agent);
-    assert!(matches!(pending.constraint, VersionConstraint::Latest));
-    assert_eq!(pending.required_by, "mars.toml");
-    assert!(!pending.is_local);
-    assert!(matches!(pending.spec, SourceSpec::Git(_)));
 }

@@ -11,9 +11,7 @@ use crate::hash;
 use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind, LockFile, LockIndex};
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
-use crate::types::{
-    ContentHash, DestPath, ItemName, RenameMap, SourceId, SourceName, SourceOrigin,
-};
+use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 
 /// What the `.mars/` canonical store should look like after sync.
 ///
@@ -29,8 +27,6 @@ pub struct TargetState {
 pub struct TargetItem {
     pub id: ItemId,
     pub source_name: SourceName,
-    pub origin: SourceOrigin,
-    pub source_id: SourceId,
     /// Path to content in fetched source tree.
     pub source_path: PathBuf,
     /// Relative path under `.mars/` (reflects rename if any).
@@ -59,20 +55,6 @@ pub struct CollisionRename {
     pub source_name: SourceName,
     pub kind: ItemKind,
 }
-
-/// Build target state with collision detection integrated.
-///
-/// This is the main entry point — it builds the target, applies explicit
-/// rename mappings, and auto-renames cross-source agent/skill destination
-/// collisions.
-pub fn build_with_collisions(
-    graph: &ResolvedGraph,
-    config: &EffectiveConfig,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
-    let mut diag = DiagnosticCollector::new();
-    build_with_collisions_and_diag(graph, config, &mut diag)
-}
-
 pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
@@ -80,6 +62,7 @@ pub fn build_with_collisions_and_diag(
 ) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
     let mut explicit_skill_renames = Vec::new();
+    let managed_targets: HashSet<String> = config.settings.managed_targets().into_iter().collect();
 
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
@@ -89,10 +72,6 @@ pub fn build_with_collisions_and_diag(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
         )?;
-
-        let source_id = source_config
-            .map(|s| s.id.clone())
-            .unwrap_or_else(|| node.source_id.clone());
 
         let Some(filters) = graph
             .filters
@@ -111,8 +90,45 @@ pub fn build_with_collisions_and_diag(
             .unwrap_or_default();
 
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
+        let parsed_hooks =
+            crate::compiler::hooks::discover_resolved_hook_items(node, source_name, 1, 0)?;
 
         for item in filtered {
+            if item.id.kind == ItemKind::Hook {
+                let hook_dir = node.rooted_ref.package_root.join(&item.source_path);
+                if !hook_is_exported(&hook_dir) {
+                    continue;
+                }
+                let parsed = parsed_hooks
+                    .iter()
+                    .find(|hook| hook.hook_dir == hook_dir)
+                    .ok_or_else(|| MarsError::Source {
+                        source_name: source_name.to_string(),
+                        message: format!("failed to resolve hook at `{}`", hook_dir.display()),
+                    })?;
+                let source_hash = ContentHash::from(hash::compute_hash(&hook_dir, ItemKind::Hook)?);
+                for target_name in parsed
+                    .def
+                    .targets
+                    .keys()
+                    .filter(|target| managed_targets.contains(*target))
+                {
+                    let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
+                    collected_items.push(TargetItem {
+                        id: ItemId {
+                            kind: ItemKind::Hook,
+                            name: hook_scoped_item_name(target_name, &parsed.def.name),
+                        },
+                        source_name: source_name.clone(),
+                        source_path: hook_dir.clone(),
+                        dest_path,
+                        source_hash: source_hash.clone(),
+                        is_flat_skill: false,
+                        rewritten_content: None,
+                    });
+                }
+                continue;
+            }
             let is_flat_skill =
                 item.id.kind == ItemKind::Skill && item.source_path == Path::new(".");
             let source_content_path = node.rooted_ref.package_root.join(&item.source_path);
@@ -151,8 +167,6 @@ pub fn build_with_collisions_and_diag(
                     name: dest_name,
                 },
                 source_name: source_name.clone(),
-                origin: SourceOrigin::Dependency(source_name.clone()),
-                source_id: source_id.clone(),
                 source_path: source_content_path,
                 dest_path,
                 source_hash,
@@ -187,6 +201,43 @@ pub fn build_with_collisions_and_diag(
         explicit_skill_renames,
         collision_renames,
     ))
+}
+
+/// Canonical hook directories are target-scoped so providers with the same
+/// name can independently serve different harnesses.
+pub fn hook_canonical_dest_path(target_name: &str, hook_name: &str) -> DestPath {
+    DestPath::new(format!(
+        "hooks/{}/{}",
+        target_name.trim_start_matches('.'),
+        hook_name
+    ))
+    .expect("validated target and hook names form a safe canonical path")
+}
+
+fn hook_scoped_item_name(target_name: &str, hook_name: &str) -> ItemName {
+    format!("{}@{}", hook_name, target_name.trim_start_matches('.')).into()
+}
+
+/// Map a target-scoped canonical hook path to its native target destination.
+pub fn hook_target_dest_path(canonical: &DestPath) -> Option<(&str, String)> {
+    let mut parts = canonical.as_str().split('/');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("hooks"), Some(target), Some(name), None) => Some((target, format!("hooks/{name}"))),
+        _ => None,
+    }
+}
+
+fn hook_is_exported(hook_dir: &Path) -> bool {
+    std::fs::read_to_string(hook_dir.join("hook.toml"))
+        .ok()
+        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("visibility")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|visibility| visibility == "exported")
 }
 
 fn rename_destination_collisions(
@@ -301,7 +352,7 @@ pub fn check_unmanaged_collisions(
     let lock_index = LockIndex::new(lock);
 
     for (dest_key, target_item) in &target.items {
-        if lock_index.contains_output(CANONICAL_TARGET_ROOT, dest_key) {
+        if lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, dest_key) {
             continue;
         }
 
@@ -492,6 +543,7 @@ mod tests {
     use crate::lock::LockFile;
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
+    use crate::types::SourceId;
     use indexmap::IndexMap;
     use std::fs;
     use tempfile::TempDir;
@@ -526,13 +578,12 @@ mod tests {
         let mut config_dependencies = IndexMap::new();
 
         for (name, tree, url, filter) in sources {
-            let url_str = url.map(|u| u.to_string());
             nodes.insert(
                 name.into(),
                 ResolvedNode {
                     source_name: name.into(),
                     source_id: if let Some(u) = url {
-                        SourceId::git(crate::types::SourceUrl::from(u))
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
@@ -550,7 +601,6 @@ mod tests {
                         commit: None,
                         tree_path: tree.path().to_path_buf(),
                     },
-                    latest_version: None,
                     manifest: None,
                     deps: vec![],
                 },
@@ -569,9 +619,16 @@ mod tests {
             config_dependencies.insert(
                 name.into(),
                 EffectiveDependency {
-                    name: name.into(),
-                    id: if let Some(u) = url {
-                        SourceId::git(crate::types::SourceUrl::from(u))
+                    declared_source_id: if let Some(u) = url {
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
+                    } else {
+                        SourceId::Path {
+                            canonical: tree.path().to_path_buf(),
+                            subpath: None,
+                        }
+                    },
+                    source_id: if let Some(u) = url {
+                        SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
                     } else {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
@@ -583,11 +640,6 @@ mod tests {
                     filter,
                     rename: RenameMap::new(),
                     dialect: None,
-                    is_overridden: false,
-                    original_git: url_str.map(|u| GitSpec {
-                        url: crate::types::SourceUrl::from(u),
-                        version: None,
-                    }),
                 },
             );
         }
@@ -597,6 +649,7 @@ mod tests {
             order,
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,
@@ -618,7 +671,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -668,7 +723,9 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "agents/new-name.md".into());
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
@@ -728,7 +785,8 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "../escape.md".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
         assert!(matches!(err, MarsError::Source { .. }));
     }
 
@@ -792,7 +850,8 @@ mod tests {
         ]);
 
         let (target, explicit_renames, collision_renames) =
-            build_with_collisions(&graph, &config).unwrap();
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert!(explicit_renames.is_empty());
         assert_eq!(collision_renames.len(), 2);
@@ -821,7 +880,9 @@ mod tests {
             ("source-c", &tree3, None, FilterMode::All),
         ]);
 
-        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, _, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert_eq!(collision_renames.len(), 3);
         assert!(target.items.contains_key("agents/coder__source-a.md"));
@@ -846,7 +907,9 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "agents/source-a-coder.md".into());
 
-        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, _, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert!(collision_renames.is_empty());
         assert!(target.items.contains_key("agents/source-a-coder.md"));
@@ -873,7 +936,8 @@ mod tests {
             .rename
             .insert("agents/reviewer.md".into(), "agents/coder.md".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -890,7 +954,8 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "skills/planning".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -948,7 +1013,9 @@ mod tests {
             ),
         ]);
 
-        let (target, renames, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert!(collision_renames.is_empty());
         assert_eq!(target.items.len(), 2);
@@ -973,7 +1040,9 @@ mod tests {
             },
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2); // coder + planning
         assert!(target.items.contains_key("agents/coder.md"));
@@ -993,7 +1062,9 @@ mod tests {
             FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1026,7 +1097,9 @@ mod tests {
             ],
         );
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 3);
         assert!(target.items.contains_key("skills/skill-a"));
@@ -1041,7 +1114,9 @@ mod tests {
 
         let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
@@ -1058,7 +1133,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1085,7 +1162,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1110,7 +1189,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1136,7 +1217,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 

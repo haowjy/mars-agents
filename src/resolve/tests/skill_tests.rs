@@ -49,15 +49,19 @@ fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
     dependencies.insert(
         SourceName::from("a"),
         EffectiveDependency {
-            name: "a".into(),
-            id: SourceId::git(SourceUrl::from("https://example.com/a.git")),
+            declared_source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
+            source_id: SourceId::git_with_subpath(
+                SourceUrl::from("https://example.com/a.git"),
+                None,
+            ),
             spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
             subpath: None,
             filter: FilterMode::Exclude(vec!["forbidden".into()]),
             rename: RenameMap::new(),
             dialect: None,
-            is_overridden: false,
-            original_git: None,
         },
     );
     let config = EffectiveConfig {

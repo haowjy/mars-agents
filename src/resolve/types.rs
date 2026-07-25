@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
-use semver::{Version, VersionReq};
+use semver::VersionReq;
 
 use super::compat::CompatibilityResult;
-use crate::config::{FilterMode, Manifest, SourceSpec};
+use crate::config::{FilterMode, Manifest};
 use crate::error::ResolutionError;
 use crate::lock::ItemKind;
 use crate::source::ResolvedRef;
@@ -25,6 +25,12 @@ pub struct ResolvedGraph {
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
     /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    /// Hook surfaces that cannot be compiled because they use a removed schema.
+    ///
+    /// This is classified during staging and consumed only by the recovery halt
+    /// gate at the reader/compiler boundary.
+    pub unreadable_hook_surfaces:
+        std::collections::BTreeMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
 /// A single node in the resolved graph.
@@ -34,7 +40,6 @@ pub struct ResolvedNode {
     pub source_id: SourceId,
     pub rooted_ref: RootedSourceRef,
     pub resolved_ref: ResolvedRef,
-    pub latest_version: Option<Version>,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
     /// Source names this depends on.
@@ -84,8 +89,6 @@ pub struct PendingItem {
     pub required_by: String,
     /// True if from a local path dependency (skip version checks).
     pub is_local: bool,
-    /// Source spec for fetching if not already in registry.
-    pub spec: SourceSpec,
 }
 
 /// Result of checking whether an item was seen already.
@@ -192,11 +195,6 @@ impl VisitedSet {
             },
         );
     }
-
-    /// Iterate all visited items for graph/output assembly.
-    pub fn iter(&self) -> impl Iterator<Item = (&(SourceName, ItemName), &ResolvedVersion)> {
-        self.index.iter()
-    }
 }
 
 /// Tracks resolved version per package and rejects divergent refs.
@@ -302,6 +300,8 @@ pub struct ResolveOptions {
     pub mode: ResolveMode,
     /// Per-project directory for dependency-scoped canonical source staging.
     pub staging_root: Option<std::path::PathBuf>,
+    /// Local source substitutions, including names first introduced transitively.
+    pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
 }
 
 impl Default for ResolveOptions {
@@ -309,6 +309,7 @@ impl Default for ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
         }
     }
 }
@@ -329,6 +330,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
         }
     }
 
@@ -336,6 +338,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Frozen,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
         }
     }
 
@@ -346,11 +349,20 @@ impl ResolveOptions {
                 bump_direct_constraints,
             },
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
         }
     }
 
     pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
         self.staging_root = Some(staging_root);
+        self
+    }
+
+    pub(crate) fn with_source_overrides(
+        mut self,
+        source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
+    ) -> Self {
+        self.source_overrides = source_overrides;
         self
     }
 

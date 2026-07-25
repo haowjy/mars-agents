@@ -49,9 +49,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
         // Check for conflict markers
         if item.kind == crate::lock::ItemKind::Agent
-            && let Ok(content) = std::fs::read_to_string(&disk_path)
-            && content.contains("<<<<<<<")
-            && content.contains(">>>>>>>")
+            && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
             errors.push(format!("{dest_path_str} has unresolved conflict markers"));
         }
@@ -315,17 +313,17 @@ mod tests {
     ) -> (String, crate::lock::LockedItemV2) {
         let expected_hash = crate::hash::hash_bytes(expected_content.as_bytes());
         let key = format!("agent/{name}");
-        let mut outputs = vec![crate::lock::OutputRecord {
-            target_root: ".mars".to_string(),
-            dest_path: dest_path.into(),
-            installed_checksum: expected_hash.clone().into(),
-        }];
+        let mut outputs = vec![crate::lock::OutputRecord::installed(
+            ".mars".to_string(),
+            dest_path.into(),
+            expected_hash.clone().into(),
+        )];
         for target in extra_targets {
-            outputs.push(crate::lock::OutputRecord {
-                target_root: (*target).to_string(),
-                dest_path: dest_path.into(),
-                installed_checksum: expected_hash.clone().into(),
-            });
+            outputs.push(crate::lock::OutputRecord::installed(
+                (*target).to_string(),
+                dest_path.into(),
+                expected_hash.clone().into(),
+            ));
         }
         let item = crate::lock::LockedItemV2 {
             source: "test-source".into(),

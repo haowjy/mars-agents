@@ -32,7 +32,10 @@ cli → sync → compiler → target adapters
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
 - `resolve/` resolves dependency graph with semver constraints; runs `staging::stage_rooted_package` after `apply_subpath` when `staging_root` is set
 - `staging/` lifts foreign-dialect frontmatter → canonical before discover/hash, in both resolve (dependencies) and sync (local items)
-- `discover/` owns source item discovery: a bounded convention walk over non-hidden package layers; see `src/discover/.context/CONTEXT.md`
+- `discover/` owns source item discovery: a bounded convention walk over non-hidden
+  package layers for agents, skills, and bootstrap docs; whole hook directories
+  are discovered only under the package-root `hooks/`; see
+  `src/discover/.context/CONTEXT.md`
 - `dialect/` resolves inbound lift dialect per rooted package (explicit `dialect` key > foreign-container path inference > default — Claude for deps, MarsNative for local); inference does not make hidden containers discovery roots
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
@@ -45,7 +48,7 @@ cli → sync → compiler → target adapters
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
 - `build/` launch bundle construction (serializable artifact for harness runtime)
-- `reconcile/` shared atomic fs operations + state-based reconciliation
+- `platform::fs` is the canonical layer for durable writes, copies, replacements, comparisons, and removals
 
 ## What Changes Together
 

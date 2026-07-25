@@ -634,7 +634,7 @@ Review code changes."#;
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
     fs::write(
         project_root.join("mars.lock"),
-        r#"version = 2
+        r#"version = 3
 
 [dependencies.base]
 url = "https://github.com/org/base.git"

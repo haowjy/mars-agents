@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::types::ItemKind;
 
 /// Top-level source entries excluded when installing flat skill repositories.
 pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
@@ -37,6 +36,24 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
     }
     tmp.persist(dest).map_err(|e| e.error)?;
     Ok(())
+}
+
+/// Atomically write a regular file unless its bytes are already identical.
+///
+/// Returns `true` when a write occurred. Symlinks and non-regular destinations
+/// are always replaced rather than treated as managed output.
+pub fn atomic_write_if_changed(dest: &Path, content: &[u8]) -> Result<bool, MarsError> {
+    let unchanged = dest
+        .symlink_metadata()
+        .ok()
+        .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .and_then(|_| fs::read(dest).ok())
+        .is_some_and(|existing| existing == content);
+    if unchanged {
+        return Ok(false);
+    }
+    atomic_write(dest, content)?;
+    Ok(true)
 }
 
 /// Atomic directory install: copy source tree to a temp dir in the same
@@ -136,17 +153,6 @@ fn is_excluded_top_level(path: &Path, excluded_top_level: &[&str]) -> bool {
     excluded_top_level.iter().any(|excluded| first == *excluded)
 }
 
-/// Remove a file or directory (skills are dirs; agents/hooks/mcp/bootstrap are files).
-pub fn remove_item(path: &Path, kind: ItemKind) -> Result<(), MarsError> {
-    match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            fs::remove_file(path)?
-        }
-        ItemKind::Skill => fs::remove_dir_all(path)?,
-    }
-    Ok(())
-}
-
 #[cfg(windows)]
 #[allow(clippy::permissions_set_readonly_false)]
 pub fn clear_readonly(path: &Path) -> std::io::Result<()> {
@@ -175,17 +181,6 @@ impl FileLock {
         let file = Self::open_lock_file(lock_path)?;
         platform::lock_exclusive(&file)?;
         Ok(FileLock { _fd: file })
-    }
-
-    /// Try to acquire the lock without blocking.
-    /// Returns `Ok(Some(lock))` if acquired, `Ok(None)` if already held by another process.
-    pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, MarsError> {
-        let file = Self::open_lock_file(lock_path)?;
-        match platform::try_lock_exclusive(&file) {
-            Ok(true) => Ok(Some(FileLock { _fd: file })),
-            Ok(false) => Ok(None),
-            Err(err) => Err(err.into()),
-        }
     }
 
     /// Open (or create) the lock file, creating parent dirs if needed.
@@ -217,21 +212,6 @@ mod platform {
             Ok(())
         }
     }
-
-    pub fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
-        // SAFETY: the file descriptor is valid while `file` is alive.
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if ret != 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::WouldBlock {
-                Ok(false)
-            } else {
-                Err(err)
-            }
-        } else {
-            Ok(true)
-        }
-    }
 }
 
 #[cfg(windows)]
@@ -240,11 +220,7 @@ mod platform {
     use std::os::windows::io::AsRawHandle;
 
     use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Storage::FileSystem::{
-        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
-    };
-
-    const ERROR_LOCK_VIOLATION: i32 = 33;
+    use windows_sys::Win32::Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LockFileEx};
 
     pub fn lock_exclusive(file: &fs::File) -> std::io::Result<()> {
         let handle = file.as_raw_handle() as HANDLE;
@@ -258,34 +234,6 @@ mod platform {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(())
-        }
-    }
-
-    pub fn try_lock_exclusive(file: &fs::File) -> std::io::Result<bool> {
-        let handle = file.as_raw_handle() as HANDLE;
-        // SAFETY: zero-initialized OVERLAPPED is accepted by LockFileEx for
-        // whole-file locks at offset 0.
-        let mut overlapped = unsafe { std::mem::zeroed() };
-        // SAFETY: handle is valid while `file` is alive and `overlapped` outlives the call.
-        let ret = unsafe {
-            LockFileEx(
-                handle,
-                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-                0,
-                !0,
-                !0,
-                &mut overlapped,
-            )
-        };
-        if ret == 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(ERROR_LOCK_VIOLATION) {
-                Ok(false)
-            } else {
-                Err(err)
-            }
-        } else {
-            Ok(true)
         }
     }
 }
@@ -438,30 +386,6 @@ mod tests {
     }
 
     #[test]
-    fn remove_item_removes_file() {
-        let dir = TempDir::new().unwrap();
-        let file = dir.path().join("agent.md");
-        fs::write(&file, "agent content").unwrap();
-
-        remove_item(&file, ItemKind::Agent).unwrap();
-
-        assert!(!file.exists());
-    }
-
-    #[test]
-    fn remove_item_removes_directory() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("my-skill");
-        fs::create_dir_all(skill_dir.join("sub")).unwrap();
-        fs::write(skill_dir.join("main.md"), "skill").unwrap();
-        fs::write(skill_dir.join("sub").join("helper.md"), "helper").unwrap();
-
-        remove_item(&skill_dir, ItemKind::Skill).unwrap();
-
-        assert!(!skill_dir.exists());
-    }
-
-    #[test]
     fn file_lock_acquire_returns_lock() {
         let dir = TempDir::new().unwrap();
         let lock_path = dir.path().join("test.lock");
@@ -469,20 +393,6 @@ mod tests {
         let lock = FileLock::acquire(&lock_path).unwrap();
         assert!(lock_path.exists());
         drop(lock);
-    }
-
-    #[test]
-    fn file_lock_released_on_drop() {
-        let dir = TempDir::new().unwrap();
-        let lock_path = dir.path().join("test.lock");
-
-        {
-            let _lock = FileLock::acquire(&lock_path).unwrap();
-            // Lock held here
-        }
-        // Lock dropped — should be acquirable again
-        let lock2 = FileLock::try_acquire(&lock_path).unwrap();
-        assert!(lock2.is_some());
     }
 
     #[test]

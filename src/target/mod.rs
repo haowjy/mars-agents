@@ -18,11 +18,13 @@ pub mod pi;
 
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
-
 use crate::error::MarsError;
 use crate::lock::ItemKind;
+#[doc(hidden)]
+pub use crate::surface_ownership::retention::ConfigWrite;
+use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
 use crate::types::DestPath;
+use indexmap::IndexMap;
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
@@ -40,6 +42,13 @@ pub enum ConfigEntry {
 
 impl ConfigEntry {
     /// Stable identity key for this entry (used by stale-cleanup logic).
+    pub(crate) fn surface(&self) -> Surface {
+        match self {
+            Self::McpServer(_) => Surface::Mcp,
+            Self::Hook(_) => Surface::Hook,
+        }
+    }
+
     pub fn key(&self) -> String {
         match self {
             ConfigEntry::McpServer(e) => format!("mcp:{}", e.name),
@@ -64,20 +73,22 @@ pub struct McpServerEntry {
     pub env: IndexMap<String, String>,
 }
 
-/// A hook binding entry ready to be written into a target config file.
+/// A native fragment contribution ready to be merged into a target config.
 #[derive(Debug, Clone)]
 pub struct HookEntry {
-    /// Hook name (for identification — two hooks with the same name from
-    /// different packages are both executed; hooks are additive).
+    /// Hook name, retained as ownership provenance.
     pub name: String,
     /// Native event name for this target.
     pub native_event: String,
-    /// Optional harness-native matcher, passed through unchanged.
-    pub matcher: Option<String>,
-    /// Script path to execute, relative to the target directory.
-    pub script_path: String,
-    /// Explicit ordering hint (lower = earlier).
-    pub order: i32,
+    /// Opaque native entries, in author-declared order.
+    pub entries: Vec<serde_json::Value>,
+}
+
+/// How a target consumes hook fragments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookFragmentMode {
+    MergeJson,
+    File,
 }
 
 /// Per-target compilation adapter.
@@ -101,6 +112,16 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Documented native command-hook events, or `None` when this target has
     /// no declarative command-hook mechanism.
     fn known_hook_events(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Native fragment placement mechanism declared by this adapter.
+    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
+        None
+    }
+
+    /// Relative destination for an opaque file-mode fragment.
+    fn hook_file_dest_path(&self, _name: &str) -> Option<PathBuf> {
         None
     }
 
@@ -131,10 +152,27 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Default: no-op — targets that don't use a config file leave this as-is.
     fn write_config_entries(
         &self,
-        _entries: &[ConfigEntry],
-        _target_dir: &Path,
+        write: ConfigWrite<'_>,
+        project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let (_target_dir, _entries) = write.into_parts(project_root);
         Ok(Vec::new())
+    }
+
+    /// Config files mutated by MCP entries.
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Config files mutated by merge-mode hook entries.
+    fn hook_config_file_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// One-release legacy hook files touched only when old lock records lack
+    /// structural emission data.
+    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
+        &[]
     }
 
     /// Emit target-specific pre-write diagnostics (e.g., lossiness warnings).
@@ -148,16 +186,134 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) {
     }
 
+    /// Remove hook entries recorded in the previous lock by structural equality.
+    fn remove_owned_hook_entries(
+        &self,
+        operation: RemovalOperation<'_>,
+        project_root: &Path,
+        _diag: &mut crate::diagnostic::DiagnosticCollector,
+    ) -> RemovalReport {
+        let (_, _) = operation.into_parts(project_root);
+        RemovalReport::confirmed()
+    }
+
     /// Remove stale config entries from this target's config file.
     ///
     /// `entry_keys` are the `ConfigEntry::key` values to remove.
     /// Default: no-op.
     fn remove_config_entries(
         &self,
-        _entry_keys: &[String],
-        _target_dir: &Path,
-    ) -> Result<(), MarsError> {
-        Ok(())
+        operation: RemovalOperation<'_>,
+        project_root: &Path,
+    ) -> RemovalReport {
+        let (_, _) = operation.into_parts(project_root);
+        RemovalReport::confirmed()
+    }
+}
+
+pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsError> {
+    let raw = std::fs::read_to_string(path)?;
+    serde_json::from_str(&raw).map_err(|error| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{} is not valid JSON: {error}", path.display()),
+        })
+    })
+}
+
+pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let root = parse_json_file(path)?;
+    let object = root.as_object().ok_or_else(|| {
+        MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{} is not a JSON object", path.display()),
+        })
+    })?;
+    if object
+        .get("mcpServers")
+        .is_some_and(|value| !value.is_object())
+    {
+        return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{}: mcpServers is not an object", path.display()),
+        }));
+    }
+    if let Some(hooks) = object.get("hooks") {
+        let hooks = hooks.as_object().ok_or_else(|| {
+            MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks is not an object", path.display()),
+            })
+        })?;
+        if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks.{event} is not an array", path.display()),
+            }));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JsonEventArrayUpdate {
+    pub changed: bool,
+    pub missing: usize,
+}
+
+pub(crate) fn append_json_event_entries(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    entries: &[serde_json::Value],
+    path: &Path,
+) -> Result<JsonEventArrayUpdate, MarsError> {
+    if entries.is_empty() {
+        return Ok(JsonEventArrayUpdate {
+            changed: false,
+            missing: 0,
+        });
+    }
+    let event_entries = hooks
+        .entry(event.to_string())
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| {
+            MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks.{event} is not an array", path.display()),
+            })
+        })?;
+    event_entries.extend(entries.iter().cloned());
+    Ok(JsonEventArrayUpdate {
+        changed: true,
+        missing: 0,
+    })
+}
+
+pub(crate) fn remove_json_event_entries(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    expected: &[serde_json::Value],
+) -> JsonEventArrayUpdate {
+    let Some(current) = hooks
+        .get_mut(event)
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return JsonEventArrayUpdate {
+            changed: false,
+            missing: expected.len(),
+        };
+    };
+    let mut removed = 0;
+    for entry in expected {
+        if let Some(index) = current.iter().position(|candidate| candidate == entry) {
+            current.remove(index);
+            removed += 1;
+        }
+    }
+    if removed > 0 && current.is_empty() {
+        hooks.remove(event);
+    }
+    JsonEventArrayUpdate {
+        changed: removed > 0,
+        missing: expected.len() - removed,
     }
 }
 
@@ -195,31 +351,11 @@ impl TargetRegistry {
             .find(|a| a.name() == name)
             .map(|a| a.as_ref())
     }
-
-    /// Iterate over all registered adapters.
-    pub fn iter(&self) -> impl Iterator<Item = &dyn TargetAdapter> {
-        self.adapters.iter().map(|a| a.as_ref())
-    }
 }
 
 impl Default for TargetRegistry {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Build a platform-appropriate command string for executing a hook script.
-pub fn hook_command(script_path: &str) -> String {
-    hook_command_for_platform(script_path, cfg!(windows))
-}
-
-fn hook_command_for_platform(script_path: &str, windows: bool) -> String {
-    if windows {
-        // Use double quotes for Windows cmd.exe compatibility.
-        format!("bash \"{}\"", script_path.replace('\\', "/"))
-    } else {
-        // POSIX: single quotes with proper escaping.
-        format!("bash '{}'", script_path.replace('\'', "'\\''"))
     }
 }
 
@@ -275,20 +411,20 @@ mod tests {
     #[test]
     fn registry_contains_all_builtin_adapters() {
         let registry = TargetRegistry::new();
-        let names: Vec<&str> = registry.iter().map(|a| a.name()).collect();
-        assert!(names.contains(&".agents"));
-        assert!(names.contains(&".claude"));
-        assert!(names.contains(&".codex"));
-        assert!(names.contains(&".opencode"));
-        assert!(names.contains(&".pi"));
-        assert!(names.contains(&".cursor"));
-    }
 
-    #[test]
-    fn registry_get_returns_adapter_by_name() {
-        let registry = TargetRegistry::new();
-        let adapter = registry.get(".agents").unwrap();
-        assert_eq!(adapter.name(), ".agents");
+        for name in [
+            ".agents",
+            ".claude",
+            ".codex",
+            ".opencode",
+            ".pi",
+            ".cursor",
+        ] {
+            let adapter = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("built-in target adapter `{name}` is not registered"));
+            assert_eq!(adapter.name(), name);
+        }
     }
 
     #[test]
@@ -328,8 +464,16 @@ mod tests {
         assert!(claude.contains(&"SessionEnd"));
         assert_eq!(codex.len(), 10);
         assert!(!codex.contains(&"SessionEnd"));
+        let cursor = registry
+            .get(".cursor")
+            .unwrap()
+            .known_hook_events()
+            .unwrap();
+        assert_eq!(cursor.len(), 21);
+        assert!(cursor.contains(&"beforeShellExecution"));
+        assert!(cursor.contains(&"sessionStart"));
 
-        for target in [".cursor", ".opencode", ".pi"] {
+        for target in [".opencode", ".pi"] {
             assert!(registry.get(target).unwrap().known_hook_events().is_none());
         }
     }
@@ -350,22 +494,6 @@ mod tests {
             .default_dest_path(ItemKind::Skill, "planning")
             .unwrap();
         assert_eq!(path.as_str(), "skills/planning");
-    }
-
-    #[test]
-    fn hook_command_posix_uses_single_quotes() {
-        assert_eq!(
-            hook_command_for_platform("/hooks/audit/run.sh", false),
-            "bash '/hooks/audit/run.sh'"
-        );
-    }
-
-    #[test]
-    fn hook_command_windows_uses_double_quotes_and_normalizes_backslashes() {
-        assert_eq!(
-            hook_command_for_platform(r"C:\hooks\audit\run.sh", true),
-            "bash \"C:/hooks/audit/run.sh\""
-        );
     }
 
     #[test]

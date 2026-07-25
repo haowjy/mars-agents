@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::fs::{atomic_install_dir, atomic_write};
 use crate::lock::{ItemId, ItemKind};
-use crate::reconcile::fs_ops;
+use crate::platform::fs as fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;
@@ -33,8 +34,6 @@ pub struct ActionOutcome {
 pub enum ActionTaken {
     Installed,
     Updated,
-    Merged,
-    Conflicted,
     Removed,
     Skipped,
     Kept,
@@ -45,7 +44,6 @@ pub enum ActionTaken {
 /// For each action:
 /// - Install: copy source content to dest (atomic_write or atomic_install_dir)
 /// - Overwrite: replace existing with new source content
-/// - Merge: three-way merge using base from cache
 /// - Remove: delete file/dir from disk
 /// - Skip/KeepLocal: record as no-op
 ///
@@ -56,7 +54,6 @@ pub fn execute(
     root: &Path,
     plan: &SyncPlan,
     options: &SyncOptions,
-    cache_bases_dir: &Path,
 ) -> Result<ApplyResult, MarsError> {
     let mut outcomes = Vec::new();
 
@@ -65,7 +62,7 @@ pub fn execute(
             // Dry run: compute the outcome without touching disk
             dry_run_action(action)
         } else {
-            execute_action(root, action, cache_bases_dir)?
+            execute_action(root, action)?
         };
         outcomes.push(outcome);
     }
@@ -74,20 +71,13 @@ pub fn execute(
 }
 
 /// Execute a single action, writing to disk.
-fn execute_action(
-    root: &Path,
-    action: &PlannedAction,
-    cache_bases_dir: &Path,
-) -> Result<ActionOutcome, MarsError> {
+fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, MarsError> {
     match action {
         PlannedAction::Install { target } => {
             let dest = target.dest_path.resolve(root);
 
             // Read source content and install
             let installed_checksum = install_item(target, &dest)?;
-
-            // Writes base for future three-way merge support — currently unused by plan stage.
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
 
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
@@ -105,63 +95,9 @@ fn execute_action(
             // Install (overwrite) source content
             let installed_checksum = install_item(target, &dest)?;
 
-            // Writes base for future three-way merge support — currently unused by plan stage.
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
-
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
                 action: ActionTaken::Updated,
-                dest_path: target.dest_path.clone(),
-                source_name: target.source_name.clone(),
-                source_checksum: Some(target.source_hash.clone()),
-                installed_checksum: Some(installed_checksum),
-            })
-        }
-
-        // Reserved — unreachable from current plan stage. See PlannedAction::Merge.
-        PlannedAction::Merge {
-            target,
-            base_content,
-            local_path,
-        } => {
-            let dest = target.dest_path.resolve(root);
-            let full_local_path = root.join(local_path);
-
-            // Read source (theirs) content
-            let theirs_content = read_target_content_for_merge(target)?;
-
-            // Read local content
-            let local_content = read_item_content(&full_local_path, target.id.kind)?;
-
-            // Perform three-way merge
-            let labels = crate::merge::MergeLabels {
-                base: "base (last sync)".into(),
-                local: "local".into(),
-                theirs: format!("{}@{}", target.source_name, "upstream"),
-            };
-
-            let merge_result = crate::merge::merge_content(
-                base_content,
-                &local_content,
-                &theirs_content,
-                &labels,
-            )?;
-
-            // Write merged content and verify persisted bytes before recording checksum.
-            let installed_checksum = write_file_and_verify(&dest, &merge_result.content)?;
-
-            // Cache the merged content as new base
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
-
-            let action_taken = if merge_result.has_conflicts {
-                ActionTaken::Conflicted
-            } else {
-                ActionTaken::Merged
-            };
-
-            Ok(ActionOutcome {
-                item_id: target.id.clone(),
-                action: action_taken,
                 dest_path: target.dest_path.clone(),
                 source_name: target.source_name.clone(),
                 source_checksum: Some(target.source_hash.clone()),
@@ -195,7 +131,6 @@ fn execute_action(
             dest_path,
             source_name,
             installed_checksum,
-            reason: _,
         } => Ok(ActionOutcome {
             item_id: item_id.clone(),
             action: ActionTaken::Skipped,
@@ -234,14 +169,6 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
         PlannedAction::Overwrite { target } => ActionOutcome {
             item_id: target.id.clone(),
             action: ActionTaken::Updated,
-            dest_path: target.dest_path.clone(),
-            source_name: target.source_name.clone(),
-            source_checksum: Some(target.source_hash.clone()),
-            installed_checksum: None,
-        },
-        PlannedAction::Merge { target, .. } => ActionOutcome {
-            item_id: target.id.clone(),
-            action: ActionTaken::Merged,
             dest_path: target.dest_path.clone(),
             source_name: target.source_name.clone(),
             source_checksum: Some(target.source_hash.clone()),
@@ -295,7 +222,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
 /// Returns the installed checksum (hash of what was written to disk).
 fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
+        ItemKind::Agent | ItemKind::McpServer => {
             let content = content_to_install(target)?;
             write_file_and_verify(dest, &content)
         }
@@ -306,10 +233,10 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     dest.display()
                 ))
             })?;
-            fs_ops::atomic_install_dir(&target.source_path, doc_dest)?;
+            atomic_install_dir(&target.source_path, doc_dest)?;
             crate::hash::compute_hash(doc_dest, ItemKind::BootstrapDoc).map(ContentHash::from)
         }
-        ItemKind::Skill => {
+        ItemKind::Skill | ItemKind::Hook => {
             if target.is_flat_skill {
                 crate::fs::atomic_install_dir_filtered(
                     &target.source_path,
@@ -317,7 +244,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
                 )?;
             } else {
-                fs_ops::atomic_install_dir(&target.source_path, dest)?;
+                atomic_install_dir(&target.source_path, dest)?;
             }
             // Skills are verified by hashing the installed directory content.
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
@@ -327,7 +254,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
 
 /// Write bytes to `dest` and verify persisted bytes hash matches expected.
 fn write_file_and_verify(dest: &Path, content: &[u8]) -> Result<ContentHash, MarsError> {
-    fs_ops::atomic_write_file(dest, content)?;
+    atomic_write(dest, content)?;
     let expected = ContentHash::from(crate::hash::hash_bytes(content));
     let persisted = std::fs::read(dest)?;
     let actual = ContentHash::from(crate::hash::hash_bytes(&persisted));
@@ -350,112 +277,6 @@ fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
     } else {
         Ok(std::fs::read(&target.source_path)?)
     }
-}
-
-/// Read source content for merge operations.
-fn read_target_content_for_merge(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
-    match target.id.kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            content_to_install(target)
-        }
-        ItemKind::Skill => read_item_content(&target.source_path, target.id.kind),
-    }
-}
-
-/// Read content from an item (file for agents, concatenated for skills).
-/// For merge purposes, we only support file-level merge (agents).
-/// Skills that need merging would require per-file merge, which is complex.
-/// For now, read the primary file content.
-fn read_item_content(path: &Path, kind: ItemKind) -> Result<Vec<u8>, MarsError> {
-    match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => Ok(std::fs::read(path)?),
-        ItemKind::BootstrapDoc => Ok(std::fs::read(path.join("BOOTSTRAP.md"))?),
-        ItemKind::Skill => {
-            // For skills (directories), read the SKILL.md as the merge target
-            let skill_md = path.join("SKILL.md");
-            if skill_md.exists() {
-                Ok(std::fs::read(&skill_md)?)
-            } else {
-                Ok(Vec::new())
-            }
-        }
-    }
-}
-
-/// Cache base content for future three-way merges.
-///
-/// Content-addressed by installed checksum. Written after every install/overwrite.
-/// Missing cache = degrade to two-way diff (more conflict markers), not crash.
-fn cache_base_content(
-    cache_bases_dir: &Path,
-    installed_checksum: &ContentHash,
-    dest: &Path,
-    kind: ItemKind,
-) -> Result<(), MarsError> {
-    std::fs::create_dir_all(cache_bases_dir)?;
-    // Replace colon with underscore for Windows filename compatibility.
-    let safe_filename = installed_checksum.as_ref().replace(':', "_");
-    let cache_path = cache_bases_dir.join(&safe_filename);
-
-    // Only cache if not already present (content-addressed = immutable)
-    if cache_path.exists() {
-        return Ok(());
-    }
-
-    match kind {
-        ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer => {
-            let content = std::fs::read(dest)?;
-            fs_ops::atomic_write_file(&cache_path, &content)?;
-        }
-        ItemKind::BootstrapDoc => {
-            let content = std::fs::read(dest)?;
-            fs_ops::atomic_write_file(&cache_path, &content)?;
-        }
-        ItemKind::Skill => {
-            // For skills, cache the SKILL.md content (the merge-relevant part)
-            let skill_md = dest.join("SKILL.md");
-            if skill_md.exists() {
-                let content = std::fs::read(&skill_md)?;
-                fs_ops::atomic_write_file(&cache_path, &content)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Prune orphans: items in old lock but not in new target.
-///
-/// This is handled by the Remove action in the plan, but exposed
-/// separately for the sync pipeline if needed.
-pub fn prune_orphans(
-    root: &Path,
-    lock: &crate::lock::LockFile,
-    target: &crate::sync::target::TargetState,
-) -> Result<Vec<ActionOutcome>, MarsError> {
-    let mut outcomes = Vec::new();
-
-    for (dest_path_str, locked_item) in lock.canonical_flat_items() {
-        if !target.items.contains_key(&dest_path_str) {
-            let dest = removal_path(root, &dest_path_str, locked_item.kind);
-            if dest.exists() {
-                fs_ops::safe_remove(&dest)?;
-            }
-            outcomes.push(ActionOutcome {
-                item_id: ItemId {
-                    kind: locked_item.kind,
-                    name: ItemName::from(dest_path_str.item_name(locked_item.kind)),
-                },
-                action: ActionTaken::Removed,
-                dest_path: dest_path_str,
-                source_name: locked_item.source,
-                source_checksum: None,
-                installed_checksum: None,
-            });
-        }
-    }
-
-    Ok(outcomes)
 }
 
 fn removal_path(root: &Path, dest_path: &DestPath, kind: ItemKind) -> std::path::PathBuf {
@@ -491,11 +312,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test-source".into(),
-            origin: crate::types::SourceOrigin::Dependency("test-source".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_path,
             dest_path: format!("agents/{name}.md").into(),
             source_hash: hash::hash_bytes(content).into(),
@@ -511,11 +327,6 @@ mod tests {
                 name: name.into(),
             },
             source_name: "test-source".into(),
-            origin: crate::types::SourceOrigin::Dependency("test-source".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_path.clone(),
-                subpath: None,
-            },
             source_hash: crate::hash::compute_hash(&source_path, ItemKind::BootstrapDoc)
                 .unwrap()
                 .into(),
@@ -540,8 +351,6 @@ mod tests {
     fn install_creates_new_file() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let content = b"# new agent content";
         let source_path = setup_source_agent(source_dir.path(), "coder", content);
@@ -555,7 +364,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert_eq!(result.outcomes.len(), 1);
 
         let outcome = &result.outcomes[0];
@@ -574,40 +383,12 @@ mod tests {
         assert!(outcome.installed_checksum.is_some());
     }
 
-    #[test]
-    fn install_caches_base_content() {
-        let root = TempDir::new().unwrap();
-        let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
-
-        let content = b"# cached content";
-        let source_path = setup_source_agent(source_dir.path(), "coder", content);
-        let target = make_agent_target("coder", source_path, content);
-
-        let plan = SyncPlan {
-            actions: vec![PlannedAction::Install { target }],
-        };
-
-        let options = SyncOptions::default();
-
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
-        let installed_checksum = result.outcomes[0].installed_checksum.as_ref().unwrap();
-
-        // Verify base content was cached
-        let cached = bases_dir.join(installed_checksum.as_ref().replace(':', "_"));
-        assert!(cached.exists(), "base content should be cached");
-        assert_eq!(fs::read(&cached).unwrap(), content);
-    }
-
     // === Overwrite tests ===
 
     #[test]
     fn overwrite_replaces_existing_file() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create existing file
         let agents_dir = root.path().join("agents");
@@ -624,7 +405,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Updated));
 
         let installed = fs::read(root.path().join("agents/coder.md")).unwrap();
@@ -635,8 +416,6 @@ mod tests {
     fn install_bootstrap_doc_directory_to_canonical_file_path() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = source_dir.path().join("bootstrap/global-auth");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# auth").unwrap();
@@ -647,7 +426,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
 
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
         assert_eq!(
@@ -661,8 +440,6 @@ mod tests {
     #[test]
     fn remove_deletes_file() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create file to remove
         let agents_dir = root.path().join("agents");
@@ -684,7 +461,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("agents/orphan.md").exists());
     }
@@ -692,8 +469,6 @@ mod tests {
     #[test]
     fn remove_skill_directory() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create skill directory
         let skill_dir = root.path().join("skills/old-skill");
@@ -715,7 +490,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("skills/old-skill").exists());
     }
@@ -723,8 +498,6 @@ mod tests {
     #[test]
     fn remove_bootstrap_doc_removes_container_directory() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = root.path().join("bootstrap/global-auth");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# auth").unwrap();
@@ -743,7 +516,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.exists());
     }
@@ -751,8 +524,6 @@ mod tests {
     #[test]
     fn remove_degenerate_bootstrap_doc_path_removes_exact_file_only() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = root.path().join("bootstrap");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# root").unwrap();
@@ -772,7 +543,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.join("BOOTSTRAP.md").exists());
         assert!(bootstrap_dir.join("keep.md").exists());
@@ -784,8 +555,6 @@ mod tests {
     fn dry_run_does_not_modify_files() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let content = b"# new agent";
         let source_path = setup_source_agent(source_dir.path(), "coder", content);
@@ -800,7 +569,7 @@ mod tests {
             ..SyncOptions::default()
         };
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert_eq!(result.outcomes.len(), 1);
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
@@ -813,8 +582,6 @@ mod tests {
     #[test]
     fn skip_produces_skipped_outcome() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let plan = SyncPlan {
             actions: vec![PlannedAction::Skip {
@@ -825,13 +592,12 @@ mod tests {
                 dest_path: "agents/stable.md".into(),
                 source_name: "base".into(),
                 installed_checksum: Some("sha256:stable".into()),
-                reason: "unchanged",
             }],
         };
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Skipped));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -847,8 +613,6 @@ mod tests {
     #[test]
     fn keep_local_produces_kept_outcome() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let plan = SyncPlan {
             actions: vec![PlannedAction::KeepLocal {
@@ -863,7 +627,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Kept));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -878,8 +642,6 @@ mod tests {
     fn install_skill_directory() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create source skill directory
         let source_skill = source_dir.path().join("skills/planning");
@@ -895,11 +657,6 @@ mod tests {
                 name: "planning".into(),
             },
             source_name: "test".into(),
-            origin: crate::types::SourceOrigin::Dependency("test".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: source_skill.clone(),
-                subpath: None,
-            },
             source_path: source_skill,
             dest_path: "skills/planning".into(),
             source_hash: skill_hash.into(),
@@ -913,7 +670,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
         let installed_dir = root.path().join("skills/planning");
@@ -930,8 +687,6 @@ mod tests {
     fn install_flat_skill_excludes_repo_metadata() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let flat_source = source_dir.path().join("flat-skill");
         fs::create_dir_all(flat_source.join(".git")).unwrap();
@@ -954,11 +709,6 @@ mod tests {
                 name: "flat-skill".into(),
             },
             source_name: "test".into(),
-            origin: crate::types::SourceOrigin::Dependency("test".into()),
-            source_id: crate::types::SourceId::Path {
-                canonical: flat_source.clone(),
-                subpath: None,
-            },
             source_path: flat_source,
             dest_path: "skills/flat-skill".into(),
             source_hash: source_hash.into(),
@@ -972,7 +722,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        execute(root.path(), &plan, &options).unwrap();
 
         let installed = root.path().join("skills/flat-skill");
         assert!(installed.join("SKILL.md").exists());
@@ -980,51 +730,6 @@ mod tests {
         assert!(!installed.join(".git").exists());
         assert!(!installed.join("mars.toml").exists());
         assert!(!installed.join(".gitignore").exists());
-    }
-
-    // === Prune orphans tests ===
-
-    #[test]
-    fn prune_removes_orphaned_items() {
-        let root = TempDir::new().unwrap();
-
-        // Create orphaned file
-        let agents_dir = root.path().join("agents");
-        fs::create_dir_all(&agents_dir).unwrap();
-        fs::write(agents_dir.join("old.md"), b"# orphan").unwrap();
-
-        let mut lock_items = indexmap::IndexMap::new();
-        lock_items.insert(
-            "agent/old".to_string(),
-            crate::lock::LockedItemV2 {
-                source: "old-source".into(),
-                kind: ItemKind::Agent,
-                version: None,
-                source_checksum: "sha256:aaa".into(),
-                outputs: vec![crate::lock::OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/old.md".into(),
-                    installed_checksum: "sha256:bbb".into(),
-                }],
-            },
-        );
-        let lock = crate::lock::LockFile {
-            version: 2,
-            dependencies: indexmap::IndexMap::new(),
-            items: lock_items,
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: indexmap::IndexMap::new(),
-        };
-
-        // Empty target = orphan should be pruned
-        let target = crate::sync::target::TargetState {
-            items: indexmap::IndexMap::new(),
-        };
-
-        let outcomes = prune_orphans(root.path(), &lock, &target).unwrap();
-        assert_eq!(outcomes.len(), 1);
-        assert!(matches!(outcomes[0].action, ActionTaken::Removed));
-        assert!(!root.path().join("agents/old.md").exists());
     }
 
     // === DestPath::item_name tests ===

@@ -1344,7 +1344,7 @@ fn models_runtime_alias_commands_reject_legacy_lock_missing_dependency_alias_aut
     let (temp, project_root) = setup_project(&server);
     fs::write(
         project_root.join("mars.lock"),
-        r#"version = 2
+        r#"version = 3
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -1386,7 +1386,7 @@ commit = "abc123"
 fn models_runtime_alias_commands_allow_legacy_lock_without_dependencies() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
-    fs::write(project_root.join("mars.lock"), "version = 2\n")
+    fs::write(project_root.join("mars.lock"), "version = 3\n")
         .expect("failed to write no-dependency legacy lock fixture");
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 

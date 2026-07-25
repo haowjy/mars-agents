@@ -32,7 +32,6 @@ impl fmt::Display for HarnessId {
 pub enum HarnessClass {
     Native { provider: &'static str },
     ProbeBacked,
-    UniversalPassthrough,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,17 +140,6 @@ pub fn normalize_name(name: &str) -> Option<String> {
     parse(name).map(|id| id.as_str().to_string())
 }
 
-pub fn default_target_for_name(name: &str) -> Option<&'static str> {
-    parse(name).map(|id| id.default_target())
-}
-
-pub fn native_provider_for(id: HarnessId) -> Option<&'static str> {
-    match descriptor(id).class {
-        HarnessClass::Native { provider } => Some(provider),
-        HarnessClass::ProbeBacked | HarnessClass::UniversalPassthrough => None,
-    }
-}
-
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     let normalized = provider.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -179,13 +167,6 @@ fn derive_provider_candidate_order(native_harness: Option<HarnessId>) -> Vec<Har
         }
         None => DEFAULT_HARNESS_ORDER.to_vec(),
     }
-}
-
-pub fn is_known_provider(provider: &str) -> bool {
-    matches!(
-        provider.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "openai" | "google" | "meta" | "mistral" | "deepseek" | "cohere"
-    )
 }
 
 #[cfg(test)]

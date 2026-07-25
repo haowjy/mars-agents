@@ -7,7 +7,7 @@ Model aliases, catalog caching, auto-resolve against models.dev API, and depende
 ```
 [mars.toml] [deps] → merge_model_config() → merged aliases
      ↓                                          ↓
-models-cache.json ← fetch_models()        resolve_all() → ResolvedAlias
+models-cache.json ← fetch_models()   resolve_all_with_probe() → ResolvedAlias
      ↓                                          ↓
 auto_resolve() ← AutoResolve spec          harness detection
 ```
@@ -21,11 +21,9 @@ auto_resolve() ← AutoResolve spec          harness detection
 
 consumer > deps (declaration order, first-dep wins) > builtins
 
-Builtins exist for bare convenience (opus, sonnet, haiku, codex, gpt, gemini) — packages layer descriptions on top.
-
-### No Builtins Invariant
-
-The mars binary ships zero hardcoded model aliases. All aliases come from packages (via `[models]` in their `mars.toml`) or consumer config. Builtins are a minimal fallback layer for out-of-box usability.
+Builtins exist for bare convenience (opus, sonnet, haiku, codex, gpt, gemini).
+They are used only when both dependency and consumer alias sets are empty;
+any configured alias set suppresses the builtin set rather than layering over it.
 
 ## Catalog Lifecycle
 
@@ -81,7 +79,7 @@ Do not conflate env offline with flag-driven skip when debugging missing probe d
 
 ## Alias Prefix Resolution
 
-`resolve_with_alias_prefix()` handles inputs like `opus-4-6` by:
+`resolve_with_alias_prefix_with_probe()` handles inputs like `opus-4-6` by:
 1. Finding the longest matching base alias (e.g., `opus`)
 2. Building glob pattern `*{input}*`
 3. Matching against all alias filter candidates
@@ -103,7 +101,9 @@ Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
 **Test without real API:**
 ```rust
 let cache = ModelsCache { models: vec![...], fetched_at: None };
-let resolved = resolve_all(&aliases, &cache, &mut diag);
+let resolved = resolve_all_with_probe(
+    &aliases, &cache, &mut diag, opencode_probe, pi_probe, cursor_probe,
+);
 ```
 
 **Inject probe results:**

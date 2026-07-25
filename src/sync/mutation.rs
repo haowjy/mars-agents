@@ -25,8 +25,6 @@ pub enum ConfigMutation {
         source_name: SourceName,
         local_path: PathBuf,
     },
-    /// Remove an override from mars.local.toml.
-    ClearOverride { source_name: SourceName },
     /// Set or update a rename mapping for one managed item.
     SetRename {
         source_name: SourceName,
@@ -44,16 +42,6 @@ pub struct DependencyUpsertChange {
     pub new_version: Option<String>,
     pub old_filter: Option<FilterConfig>,
     pub new_filter: FilterConfig,
-}
-
-/// Apply a config mutation to the in-memory config.
-///
-/// Public so that CLI commands can batch mutations before triggering sync.
-pub fn apply_config_mutation(
-    config: &mut Config,
-    mutation: &ConfigMutation,
-) -> Result<(), MarsError> {
-    apply_mutation(config, mutation).map(|_| ())
 }
 
 pub(crate) fn apply_mutation(
@@ -81,15 +69,7 @@ pub(crate) fn apply_mutation(
             config.dependencies.shift_remove(name);
             Ok(Vec::new())
         }
-        ConfigMutation::SetOverride { source_name, .. } => {
-            if !config.dependencies.contains_key(source_name) {
-                return Err(MarsError::Source {
-                    source_name: source_name.to_string(),
-                    message: format!("dependency `{source_name}` not found in mars.toml"),
-                });
-            }
-            Ok(Vec::new())
-        }
+        ConfigMutation::SetOverride { .. } => Ok(Vec::new()),
         ConfigMutation::SetRename {
             source_name,
             from,
@@ -107,7 +87,6 @@ pub(crate) fn apply_mutation(
             rename_map.insert(ItemName::from(from.as_str()), ItemName::from(to.as_str()));
             Ok(Vec::new())
         }
-        ConfigMutation::ClearOverride { .. } => Ok(Vec::new()),
     }
 }
 
@@ -123,9 +102,6 @@ pub(crate) fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMut
                     path: local_path.clone(),
                 },
             );
-        }
-        ConfigMutation::ClearOverride { source_name } => {
-            local.overrides.shift_remove(source_name);
         }
         ConfigMutation::UpsertDependency { .. }
         | ConfigMutation::BatchUpsert(..)

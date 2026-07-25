@@ -15,7 +15,7 @@ pub enum Dialect {
 }
 ```
 
-Five variants mirroring `harness::registry::HarnessId` (Claude, Codex, OpenCode, Cursor, Pi) **minus Pi**, plus `MarsNative` for already-canonical mars-authored sources. Dialect depends downward on `HarnessId` only; `compiler::agents::HarnessKind` bridges via `to_dialect` / `from_dialect` (issue #118 resolved).
+Five variants mirroring `harness::registry::HarnessId` (Claude, Codex, OpenCode, Cursor, Pi) **minus Pi**, plus `MarsNative` for already-canonical mars-authored sources. Dialect depends downward on `HarnessId` only.
 
 ## Resolution
 
@@ -40,7 +40,8 @@ For **local project items**. Same three-step chain as `resolve`, but default is 
 - `from_harness_id(HarnessId) -> Option<Dialect>` — returns `None` for `HarnessId::Pi` (no corresponding inbound dialect).
 - `to_harness_id(self) -> Option<HarnessId>` — returns `None` for `Dialect::MarsNative` (no foreign harness equivalent).
 
-Compiler callers use `HarnessKind::to_dialect` / `HarnessKind::from_dialect`, which delegate through `HarnessId`.
+Callers convert directly through `Dialect::from_harness_id` and
+`Dialect::to_harness_id`.
 
 ## Tests
 

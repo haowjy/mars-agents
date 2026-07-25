@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-write_config_entries() → MCP/hook config files
+write_config_entries(WritePermit, …) → MCP/hook config files
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -32,15 +32,23 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `name()` | Target root name (e.g., `.claude`) |
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
-| `write_config_entries(entries, target_dir)` | MCP/hook config file writes |
-| `known_hook_events()` | Native command-hook allowlist, or `None` when unsupported |
-| `remove_config_entries(keys, target_dir)` | Stale config cleanup |
+| `write_config_entries(permit, entries, target_dir)` | MCP/hook config file writes |
+| `known_hook_events()` | Native merge-fragment event allowlist, or `None` when unsupported |
+| `hook_fragment_mode()` | Declares `MergeJson` or `File` fragment placement |
+| `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
+| `mcp_config_file_names()` | Config files mutated by MCP entries |
+| `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
+| `legacy_hook_config_file_names()` | One-release legacy hook files for old lock records |
+| `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
+| `remove_config_entries(token, keys, target_dir)` | Stale config cleanup by key |
 
 ## Config Entries
 
 Two entry types flow through adapters:
 - `McpServerEntry` — name, command, args, env (symbolic variable names)
-- `HookEntry` — name, native_event, optional matcher, script_path, order
+- `HookEntry` — hook name, native event name, and an opaque `Vec<Value>` of entries (post-substitution); structural removal matches these exact entries by JSON equality
+
+The permit and removal token are sealed proofs issued by `surface_ownership::retention`; adapter removals cannot bypass outcome recording, and config writes cannot bypass suppression.
 
 Adapters translate env variable names to target interpolation syntax (e.g., `${VAR}` for Claude).
 
@@ -49,12 +57,6 @@ Adapters translate env variable names to target interpolation syntax (e.g., `${V
 `validate_agent_filename()` runs on every platform to ensure generated packages are portable. Rejects:
 - Windows invalid chars: `:`, `*`, `?`, `<`, `>`, `|`, `"`, `/`, `\`
 - Reserved device names: `CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`
-
-## Hook Command Generation
-
-`hook_command()` produces platform-appropriate command strings:
-- POSIX: `bash '/path/to/script.sh'` (single quotes with escaping)
-- Windows: `bash "C:/path/to/script.sh"` (double quotes, normalized slashes)
 
 ## Patterns
 

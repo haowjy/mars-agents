@@ -35,6 +35,14 @@ Convergence is guaranteed — versions only move upward toward the lock-preferre
 
 All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
 
+`ResolveOptions.source_overrides` applies project-local path overrides by source
+name to both direct and manifest-discovered transitive dependencies. Declared
+source identity remains separate from the effective override identity, so an
+override cannot collapse conflicting same-name declarations. Staging records
+removed-schema package hooks in `ResolvedGraph.unreadable_hook_surfaces`. The
+sync recovery gate is its only consumer; downstream compilation has no
+unreadable-content exception.
+
 ## Key Traits
 
 | Trait | Role |

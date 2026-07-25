@@ -47,18 +47,6 @@ impl CachedCursorProbeOutcome {
         }
     }
 }
-
-/// Return the cached cursor probe result, if one exists, is usable, and is fresh.
-///
-/// This helper is read-only and never triggers a probe refresh.
-pub fn read_cached_probe_result() -> Option<CursorProbeResult> {
-    let entry = read_cache_tolerant()?;
-    if !is_fresh(&entry) || !is_usable(&entry) {
-        return None;
-    }
-    entry.result
-}
-
 /// Return the cached cursor probe result if usable, even when stale.
 ///
 /// This helper is read-only and never triggers a probe refresh.

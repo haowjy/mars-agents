@@ -68,8 +68,6 @@ pub enum DiagnosticCategory {
     Lossiness,
     /// Schema validation and structural checks.
     Validation,
-    /// Configuration file issues.
-    Config,
 }
 
 /// Collects diagnostics during pipeline execution.

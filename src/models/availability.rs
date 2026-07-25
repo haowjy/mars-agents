@@ -59,7 +59,6 @@ pub struct ModelAvailability {
 pub enum RunnablePathSource {
     CachedProbe,
     ProviderMatch,
-    Synthesized,
     Passthrough,
 }
 
@@ -68,7 +67,6 @@ impl RunnablePathSource {
         match self {
             Self::CachedProbe => "cached-probe",
             Self::ProviderMatch => "provider-match",
-            Self::Synthesized => "synthesized",
             Self::Passthrough => "passthrough",
         }
     }

@@ -175,7 +175,6 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
         DiagnosticCategory::Compatibility => "compatibility",
         DiagnosticCategory::Lossiness => "lossiness",
         DiagnosticCategory::Validation => "validation",
-        DiagnosticCategory::Config => "config",
     }
 }
 

@@ -722,7 +722,6 @@ fn normal_mode_falls_back_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
-            tree_hash: None,
         },
     );
 
@@ -768,7 +767,6 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
-            tree_hash: None,
         },
     );
 
@@ -1743,7 +1741,6 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(locked_commit.into()),
-            tree_hash: None,
         },
     );
 

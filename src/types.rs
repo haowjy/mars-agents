@@ -968,7 +968,6 @@ mod tests {
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: None,
             commit: None,
-            tree_hash: None,
         };
         let json = serde_json::to_string(&source).unwrap();
         assert!(json.contains("\"subpath\":\"plugins/foo\""));
@@ -1002,7 +1001,6 @@ commit = "deadbeef"
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: Some("v1.0.0".to_string()),
             commit: Some(CommitHash::from("abc123")),
-            tree_hash: None,
         };
         #[derive(Serialize)]
         struct Wrapper {
@@ -1035,7 +1033,6 @@ url = "https://github.com/org/base.git"
                     subpath: Some(SourceSubpath::new(r"plugins\foo").unwrap()),
                     version: Some("v1.2.3".to_string()),
                     commit: Some(CommitHash::from("abc123")),
-                    tree_hash: None,
                 },
             )]),
             items: indexmap::IndexMap::new(),
@@ -1215,7 +1212,6 @@ subpath = "plugins\\foo"
                     subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                     version: Some("v1.2.3".to_string()),
                     commit: Some(CommitHash::from("deadbeef")),
-                    tree_hash: None,
                 },
             )]),
             items: indexmap::IndexMap::new(),

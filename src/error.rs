@@ -98,13 +98,6 @@ pub enum ResolutionError {
     SourceNotFound { name: String },
 }
 
-/// Validation errors
-#[derive(Debug, thiserror::Error)]
-pub enum ValidationError {
-    #[error("unresolvable skill references found")]
-    UnresolvableRefs,
-}
-
 /// Top-level error type aggregating all module errors
 #[derive(Debug, thiserror::Error)]
 pub enum MarsError {
@@ -183,15 +176,8 @@ pub enum MarsError {
         package_root: PathBuf,
     },
 
-    /// Sync refused to overwrite a file/directory not tracked in mars.lock.
-    #[error("source error: {source_name}: refusing to overwrite unmanaged path `{}`", path.display())]
-    UnmanagedCollision { source_name: String, path: PathBuf },
-
     #[error("resolution failed: {0}")]
     Resolution(#[from] ResolutionError),
-
-    #[error("merge conflict in {path}")]
-    Conflict { path: String },
 
     #[error("{item} is provided by both `{source_a}` and `{source_b}`")]
     Collision {
@@ -199,9 +185,6 @@ pub enum MarsError {
         source_a: String,
         source_b: String,
     },
-
-    #[error("validation: {0}")]
-    Validation(#[from] ValidationError),
 
     #[error("invalid request: {message}")]
     InvalidRequest { message: String },
@@ -274,18 +257,15 @@ pub enum MarsError {
 impl MarsError {
     /// Map error variants to CLI exit codes.
     ///
-    /// - 1: sync completed with unresolved conflicts
     /// - 2: resolution/validation/config error
     /// - 3: source, I/O, HTTP, or git CLI error
     pub fn exit_code(&self) -> i32 {
         match self {
-            MarsError::Conflict { .. } => 1,
             MarsError::Link { .. }
             | MarsError::Config(_)
             | MarsError::Lock(_)
             | MarsError::Resolution(_)
             | MarsError::Collision { .. }
-            | MarsError::Validation(_)
             | MarsError::InvalidRequest { .. }
             | MarsError::FrozenViolation { .. }
             | MarsError::LinkedHarnessExhausted { .. }
@@ -298,7 +278,6 @@ impl MarsError {
             | MarsError::DiscoveryCollision { .. }
             | MarsError::ManifestDeclaredPathEscape { .. }
             | MarsError::ManifestDeclaredPathMissing { .. }
-            | MarsError::UnmanagedCollision { .. }
             | MarsError::ModelCacheUnavailable { .. }
             | MarsError::Io { .. }
             | MarsError::Http { .. }
@@ -331,12 +310,6 @@ mod tests {
     fn mars_error_exit_codes_match_spec() {
         let cases = vec![
             (
-                MarsError::Conflict {
-                    path: "agents/reviewer.md".to_string(),
-                },
-                1,
-            ),
-            (
                 MarsError::Config(ConfigError::Invalid {
                     message: "bad config".to_string(),
                 }),
@@ -362,7 +335,6 @@ mod tests {
                 },
                 2,
             ),
-            (MarsError::Validation(ValidationError::UnresolvableRefs), 2),
             (
                 MarsError::InvalidRequest {
                     message: "bad flag combination".to_string(),
@@ -443,13 +415,6 @@ mod tests {
                     source_name: "origin".to_string(),
                     manifest_path: "./missing".to_string(),
                     package_root: PathBuf::from("/tmp/root"),
-                },
-                3,
-            ),
-            (
-                MarsError::UnmanagedCollision {
-                    source_name: "origin".to_string(),
-                    path: PathBuf::from("agents/coder.md"),
                 },
                 3,
             ),

@@ -96,7 +96,7 @@ fn test_router<'a>(
 ) -> NativeModelRoutingRuntime<'a> {
     let settings = crate::config::Settings::default();
     let routing_settings = ResolvedRoutingSettings::from_settings(&settings);
-    let session = CapabilitySession::collect_with_resolver_without_auth(
+    let session = CapabilitySession::collect_with_resolver(
         &CapabilityCollectionOptions {
             offline: true,
             probe_refresh: crate::models::probes::ProbeRefreshMode::Skip,

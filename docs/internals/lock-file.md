@@ -70,7 +70,6 @@ Resolved provenance for each source. Built from the resolved dependency graph, n
 | `path` | string | Path source | Canonical local path |
 | `version` | string | Tagged git source | Resolved version tag (e.g., `v1.2.0`) |
 | `commit` | string | Git source | Resolved commit hash |
-| `tree_hash` | string | *(reserved)* | Future: deterministic tree hash for verification |
 
 ### `[items."<kind/name>"]`
 

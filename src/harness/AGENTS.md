@@ -6,7 +6,7 @@ Canonical harness vocabulary (`registry`) and one-shot environment collection (`
 
 ```
 registry.rs  →  HarnessId, descriptors, provider orders (pure data, no I/O)
-host.rs      →  PATH + auth + probe caches  →  CapabilitySnapshot (clone, share)
+host.rs      →  PATH + probe caches  →  CapabilitySnapshot (clone, share)
 ```
 
 **Registry owns identity.** Valid harness names, native provider affinity, and evaluation order live only in `registry`. Other modules call `parse()` / `is_known()` — they do not maintain parallel harness lists.

@@ -130,7 +130,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         cache: &'a ModelsCache,
         routing_settings: ResolvedRoutingSettings,
     ) -> Self {
-        let session = CapabilitySession::collect_without_auth(&CapabilityCollectionOptions {
+        let session = CapabilitySession::collect(&CapabilityCollectionOptions {
             offline: crate::models::is_mars_offline(),
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         });

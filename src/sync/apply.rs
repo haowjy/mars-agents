@@ -279,40 +279,6 @@ fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
     }
 }
 
-/// Prune orphans: items in old lock but not in new target.
-///
-/// This is handled by the Remove action in the plan, but exposed
-/// separately for the sync pipeline if needed.
-pub fn prune_orphans(
-    root: &Path,
-    lock: &crate::lock::LockFile,
-    target: &crate::sync::target::TargetState,
-) -> Result<Vec<ActionOutcome>, MarsError> {
-    let mut outcomes = Vec::new();
-
-    for (dest_path_str, locked_item) in lock.canonical_flat_items() {
-        if !target.items.contains_key(&dest_path_str) {
-            let dest = removal_path(root, &dest_path_str, locked_item.kind);
-            if dest.exists() {
-                fs_ops::safe_remove(&dest)?;
-            }
-            outcomes.push(ActionOutcome {
-                item_id: ItemId {
-                    kind: locked_item.kind,
-                    name: ItemName::from(dest_path_str.item_name(locked_item.kind)),
-                },
-                action: ActionTaken::Removed,
-                dest_path: dest_path_str,
-                source_name: locked_item.source,
-                source_checksum: None,
-                installed_checksum: None,
-            });
-        }
-    }
-
-    Ok(outcomes)
-}
-
 fn removal_path(root: &Path, dest_path: &DestPath, kind: ItemKind) -> std::path::PathBuf {
     let dest = dest_path.resolve(root);
     if kind == ItemKind::BootstrapDoc {
@@ -785,51 +751,6 @@ mod tests {
         assert!(!installed.join(".git").exists());
         assert!(!installed.join("mars.toml").exists());
         assert!(!installed.join(".gitignore").exists());
-    }
-
-    // === Prune orphans tests ===
-
-    #[test]
-    fn prune_removes_orphaned_items() {
-        let root = TempDir::new().unwrap();
-
-        // Create orphaned file
-        let agents_dir = root.path().join("agents");
-        fs::create_dir_all(&agents_dir).unwrap();
-        fs::write(agents_dir.join("old.md"), b"# orphan").unwrap();
-
-        let mut lock_items = indexmap::IndexMap::new();
-        lock_items.insert(
-            "agent/old".to_string(),
-            crate::lock::LockedItemV2 {
-                source: "old-source".into(),
-                kind: ItemKind::Agent,
-                version: None,
-                source_checksum: "sha256:aaa".into(),
-                outputs: vec![crate::lock::OutputRecord {
-                    target_root: ".mars".to_string(),
-                    dest_path: "agents/old.md".into(),
-                    installed_checksum: "sha256:bbb".into(),
-                }],
-            },
-        );
-        let lock = crate::lock::LockFile {
-            version: 2,
-            dependencies: indexmap::IndexMap::new(),
-            items: lock_items,
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: indexmap::IndexMap::new(),
-        };
-
-        // Empty target = orphan should be pruned
-        let target = crate::sync::target::TargetState {
-            items: indexmap::IndexMap::new(),
-        };
-
-        let outcomes = prune_orphans(root.path(), &lock, &target).unwrap();
-        assert_eq!(outcomes.len(), 1);
-        assert!(matches!(outcomes[0].action, ActionTaken::Removed));
-        assert!(!root.path().join("agents/old.md").exists());
     }
 
     // === DestPath::item_name tests ===

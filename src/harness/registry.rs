@@ -32,7 +32,6 @@ impl fmt::Display for HarnessId {
 pub enum HarnessClass {
     Native { provider: &'static str },
     ProbeBacked,
-    UniversalPassthrough,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +147,7 @@ pub fn default_target_for_name(name: &str) -> Option<&'static str> {
 pub fn native_provider_for(id: HarnessId) -> Option<&'static str> {
     match descriptor(id).class {
         HarnessClass::Native { provider } => Some(provider),
-        HarnessClass::ProbeBacked | HarnessClass::UniversalPassthrough => None,
+        HarnessClass::ProbeBacked => None,
     }
 }
 

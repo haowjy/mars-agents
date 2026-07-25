@@ -9,7 +9,6 @@ pub mod agent_copy;
 /// Agent-profile schema parser, routing prepass, and per-target lowering.
 pub mod agents;
 pub mod config_entries;
-pub mod context;
 /// Typed native harness descriptor table shared by compiler lowering lanes.
 pub(crate) mod harness_descriptor;
 pub mod hooks;

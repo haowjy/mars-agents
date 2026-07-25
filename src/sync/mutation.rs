@@ -25,8 +25,6 @@ pub enum ConfigMutation {
         source_name: SourceName,
         local_path: PathBuf,
     },
-    /// Remove an override from mars.local.toml.
-    ClearOverride { source_name: SourceName },
     /// Set or update a rename mapping for one managed item.
     SetRename {
         source_name: SourceName,
@@ -107,7 +105,6 @@ pub(crate) fn apply_mutation(
             rename_map.insert(ItemName::from(from.as_str()), ItemName::from(to.as_str()));
             Ok(Vec::new())
         }
-        ConfigMutation::ClearOverride { .. } => Ok(Vec::new()),
     }
 }
 
@@ -123,9 +120,6 @@ pub(crate) fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMut
                     path: local_path.clone(),
                 },
             );
-        }
-        ConfigMutation::ClearOverride { source_name } => {
-            local.overrides.shift_remove(source_name);
         }
         ConfigMutation::UpsertDependency { .. }
         | ConfigMutation::BatchUpsert(..)

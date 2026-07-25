@@ -31,7 +31,6 @@ impl Default for CapabilityCollectionOptions {
 #[derive(Debug, Clone)]
 pub struct CapabilitySnapshot {
     pub executable: BTreeMap<HarnessId, ExecutableState>,
-    pub auth: BTreeMap<HarnessId, AuthState>,
     pub opencode: CachedProbeOutcome,
     pub pi: CachedPiProbeOutcome,
     pub cursor: CachedCursorProbeOutcome,
@@ -51,12 +50,11 @@ impl CapabilitySnapshot {
 
 /// Command-scoped lazy capability session.
 ///
-/// Executable/auth checks are collected immediately. Harness probe checks are
+/// Executable checks are collected immediately. Harness probe checks are
 /// loaded lazily on first use per harness and memoized for the command.
 #[derive(Debug, Clone)]
 pub struct CapabilitySession {
     executable: BTreeMap<HarnessId, ExecutableState>,
-    auth: BTreeMap<HarnessId, AuthState>,
     installed: HashSet<String>,
     offline: bool,
     probe_refresh: ProbeRefreshMode,
@@ -70,43 +68,15 @@ impl CapabilitySession {
         Self::collect_with_resolver(options, &PathExecutableResolver)
     }
 
-    pub(crate) fn collect_without_auth(options: &CapabilityCollectionOptions) -> Self {
-        Self::collect_with_resolver_without_auth(options, &PathExecutableResolver)
-    }
-
     pub fn collect_with_resolver(
         options: &CapabilityCollectionOptions,
         resolver: &dyn ExecutableResolver,
     ) -> Self {
-        Self::collect_with_resolver_inner(options, resolver, true)
-    }
-
-    pub(crate) fn collect_with_resolver_without_auth(
-        options: &CapabilityCollectionOptions,
-        resolver: &dyn ExecutableResolver,
-    ) -> Self {
-        Self::collect_with_resolver_inner(options, resolver, false)
-    }
-
-    fn collect_with_resolver_inner(
-        options: &CapabilityCollectionOptions,
-        resolver: &dyn ExecutableResolver,
-        collect_auth: bool,
-    ) -> Self {
         let mut executable = BTreeMap::new();
-        let mut auth = BTreeMap::new();
 
         for descriptor in registry::descriptors() {
             let state = resolver.resolve(descriptor.binary);
-            executable.insert(descriptor.id, state.clone());
-            let auth_state = if collect_auth {
-                native_auth_state(descriptor.id, &state, resolver, auth_probe_timeout())
-            } else {
-                AuthState::Unknown {
-                    reason: "auth not collected".to_string(),
-                }
-            };
-            auth.insert(descriptor.id, auth_state);
+            executable.insert(descriptor.id, state);
         }
 
         let installed = executable
@@ -117,7 +87,6 @@ impl CapabilitySession {
 
         Self {
             executable,
-            auth,
             installed,
             offline: options.offline,
             probe_refresh: options.probe_refresh,
@@ -144,10 +113,6 @@ impl CapabilitySession {
 
     pub fn executable_snapshot(&self) -> BTreeMap<HarnessId, ExecutableState> {
         self.executable.clone()
-    }
-
-    pub fn auth_snapshot(&self) -> BTreeMap<HarnessId, AuthState> {
-        self.auth.clone()
     }
 
     pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
@@ -220,7 +185,6 @@ impl CapabilitySession {
 
         CapabilitySnapshot {
             executable: self.executable,
-            auth: self.auth,
             opencode,
             pi,
             cursor,

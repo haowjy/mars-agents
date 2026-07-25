@@ -571,7 +571,7 @@ pub(crate) fn apply_plan(
     // Persist config/local only after validation gate and before apply.
     if has_mutation && !request.options.dry_run {
         match &request.mutation {
-            Some(ConfigMutation::SetOverride { .. } | ConfigMutation::ClearOverride { .. }) => {
+            Some(ConfigMutation::SetOverride { .. }) => {
                 crate::config::save_local(project_root, &planned.targeted.resolved.loaded.local)?;
             }
             Some(

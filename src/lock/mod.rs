@@ -295,10 +295,6 @@ pub struct LockedSource {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitHash>,
-    /// Reserved for future content verification of fetched source trees.
-    /// TODO: populate during fetch/build once deterministic tree hashing is implemented.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree_hash: Option<String>,
 }
 
 /// V2 locked item: one logical item with per-output records.
@@ -769,7 +765,6 @@ pub fn build(
                 subpath: None,
                 version: None,
                 commit: None,
-                tree_hash: None,
             },
         );
     }
@@ -1247,7 +1242,6 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
         subpath,
         version: node.resolved_ref.version_tag.clone(),
         commit: node.resolved_ref.commit.clone(),
-        tree_hash: None,
     }
 }
 
@@ -1282,7 +1276,6 @@ mod tests {
                 subpath: None,
                 version: Some("v1.0.0".into()),
                 commit: Some("abc123".into()),
-                tree_hash: Some("def456".into()),
             },
         );
 
@@ -1334,7 +1327,6 @@ version = 1
 url = "https://github.com/org/base.git"
 version = "v1.0.0"
 commit = "abc123"
-tree_hash = "def456"
 
 [items."agents/coder.md"]
 source = "base"
@@ -2380,7 +2372,6 @@ dest_path = "agents/coder.md"
                 subpath: None,
                 version: Some("v0.0.1".into()),
                 commit: Some("deadbeef".into()),
-                tree_hash: None,
             },
         );
         let old_lock = LockFile {
@@ -2490,7 +2481,6 @@ dest_path = "agents/coder.md"
                     subpath: None,
                     version: None,
                     commit: None,
-                    tree_hash: None,
                 },
             )]),
             items: IndexMap::from([(

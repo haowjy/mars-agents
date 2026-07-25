@@ -154,30 +154,6 @@ impl LockFile {
             })
             .collect()
     }
-
-    /// Flat view of all items as owned `(dest_path, LockedItem)` pairs.
-    ///
-    /// Used by diff, orphan scan, and CLI commands that need a per-output view.
-    pub fn flat_items(&self) -> Vec<(DestPath, LockedItem)> {
-        self.items
-            .values()
-            .flat_map(|item_v2| {
-                item_v2.outputs.iter().map(|output| {
-                    (
-                        output.dest_path.clone(),
-                        LockedItem {
-                            source: item_v2.source.clone(),
-                            kind: item_v2.kind,
-                            version: item_v2.version.clone(),
-                            source_checksum: item_v2.source_checksum.clone(),
-                            installed_checksum: output.installed_checksum.clone(),
-                            dest_path: output.dest_path.clone(),
-                        },
-                    )
-                })
-            })
-            .collect()
-    }
 }
 
 /// Ephemeral lookup index for lock files.
@@ -187,20 +163,14 @@ impl LockFile {
 pub struct LockIndex<'a> {
     lock: &'a LockFile,
     by_output: HashMap<(String, String), (&'a str, usize)>,
-    by_dest_path: HashMap<String, (&'a str, usize)>,
 }
 
 impl<'a> LockIndex<'a> {
     pub fn new(lock: &'a LockFile) -> Self {
         let mut by_output = HashMap::new();
-        let mut by_dest_path = HashMap::new();
-
         for (key, item) in &lock.items {
             for (idx, output) in item.outputs.iter().enumerate() {
                 let normalized_dest = normalize_dest_path(output.dest_path.as_str());
-                by_dest_path
-                    .entry(normalized_dest.clone())
-                    .or_insert((key.as_str(), idx));
                 by_output.insert(
                     (output.target_root.clone(), normalized_dest),
                     (key.as_str(), idx),
@@ -208,19 +178,7 @@ impl<'a> LockIndex<'a> {
             }
         }
 
-        Self {
-            lock,
-            by_output,
-            by_dest_path,
-        }
-    }
-
-    /// Look up a locked item by output dest_path, returning a flat [`LockedItem`] view.
-    pub fn find_by_dest_path(&self, dest_path: &DestPath) -> Option<LockedItem> {
-        let (item_key, output_idx) = *self
-            .by_dest_path
-            .get(&normalize_dest_path(dest_path.as_str()))?;
-        self.locked_item_for(item_key, output_idx)
+        Self { lock, by_output }
     }
 
     /// Look up a locked output by target root + dest_path, returning a flat [`LockedItem`] view.
@@ -265,12 +223,6 @@ impl<'a> LockIndex<'a> {
             installed_checksum: output.installed_checksum.clone(),
             dest_path: output.dest_path.clone(),
         })
-    }
-
-    /// Check if any output record has the given dest_path.
-    pub fn contains_dest_path(&self, dest_path: &DestPath) -> bool {
-        self.by_dest_path
-            .contains_key(&normalize_dest_path(dest_path.as_str()))
     }
 }
 
@@ -1653,36 +1605,6 @@ installed_checksum = "sha256:222"
     }
 
     #[test]
-    fn lock_index_find_by_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        let index = LockIndex::new(&lock);
-
-        let found = index
-            .find_by_dest_path(&DestPath::from("agents/coder.md"))
-            .unwrap();
-        assert_eq!(found.source, "base");
-        assert_eq!(found.kind, ItemKind::Agent);
-        assert_eq!(found.source_checksum, "sha256:aaa");
-        assert_eq!(found.installed_checksum, "sha256:bbb");
-        assert_eq!(found.dest_path.as_str(), "agents/coder.md");
-
-        assert!(
-            index
-                .find_by_dest_path(&DestPath::from("agents/missing.md"))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn lock_index_contains_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        let index = LockIndex::new(&lock);
-
-        assert!(index.contains_dest_path(&DestPath::from("agents/coder.md")));
-        assert!(!index.contains_dest_path(&DestPath::from("agents/nobody.md")));
-    }
-
-    #[test]
     fn lock_index_target_scoped_lookup_distinguishes_same_dest_path() {
         let mut lock = sample_lock();
         lock.items
@@ -2258,16 +2180,6 @@ installed_checksum = "sha256:222"
         let cursor = lock.flat_items_for_target(".cursor");
         assert_eq!(cursor.len(), 1);
         assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
-    }
-
-    #[test]
-    fn flat_items_yields_all_outputs() {
-        let lock = sample_lock();
-        let flat = lock.flat_items();
-        assert_eq!(flat.len(), 2);
-        let paths: Vec<&str> = flat.iter().map(|(dp, _)| dp.as_str()).collect();
-        assert!(paths.contains(&"agents/coder.md"));
-        assert!(paths.contains(&"skills/review"));
     }
 
     #[test]

@@ -735,14 +735,31 @@ pub(crate) fn finalize(
             state.config_entries,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
+        let mut confirmed_output_removals: Vec<(String, String)> = state
+            .target_outcomes
+            .iter()
+            .flat_map(|outcome| {
+                outcome
+                    .removed_dest_paths
+                    .iter()
+                    .map(|dest_path| (outcome.target.clone(), dest_path.clone()))
+            })
+            .collect();
+        confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
+        confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_removed_native_outputs(
             &mut new_lock,
             &state.removed_config_entry_outputs,
         );
-        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs);
+        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs)?;
         crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
-        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs);
+        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
+        crate::lock::retain_unremoved_native_outputs(
+            &mut new_lock,
+            old_lock,
+            &confirmed_output_removals,
+        );
         if let Some(warning) =
             crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {

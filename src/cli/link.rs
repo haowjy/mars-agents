@@ -197,7 +197,7 @@ fn link_target(
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
     crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
-    crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs);
+    crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs)?;
     if let Some(warning) =
         crate::compiler::persist_lock_then_native_agent_manifest(&ctx.project_root, &new_lock)?
     {

@@ -1045,15 +1045,86 @@ pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, Str
 }
 
 /// Record native harness outputs produced by dual-surface compile.
-pub fn apply_compiled_native_outputs(lock: &mut LockFile, records: &[CompiledNativeOutput]) {
+pub fn apply_compiled_native_outputs(
+    lock: &mut LockFile,
+    records: &[CompiledNativeOutput],
+) -> Result<(), LockError> {
     for record in records {
-        upsert_native_output_on_owner(
+        if !upsert_native_output_on_owner(
             lock,
             &record.owner_canonical_dest_path,
             &record.target_root,
             &record.dest_path,
             &record.installed_checksum,
-        );
+        ) {
+            return Err(LockError::Corrupt {
+                message: format!(
+                    "native output `{}/{}` has no canonical owner `{}`",
+                    record.target_root, record.dest_path, record.owner_canonical_dest_path
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Preserve prior native-output authority unless this sync positively removed it.
+///
+/// A rebuilt lock omits canonical items removed from the source graph. Their
+/// linked-target artifacts can outlive that removal when filesystem deletion
+/// fails, so absence from the rebuild is not evidence that ownership ended.
+/// Successful removals are the sole authority for dropping such records.
+pub fn retain_unremoved_native_outputs(
+    lock: &mut LockFile,
+    old_lock: &LockFile,
+    removed: &[(String, String)],
+) {
+    for (old_key, old_item) in &old_lock.items {
+        let unresolved: Vec<_> = old_item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root != CANONICAL_TARGET_ROOT)
+            .filter(|output| {
+                !removed.iter().any(|(target_root, dest_path)| {
+                    output.target_root == *target_root
+                        && crate::target::dest_paths_equivalent(
+                            output.dest_path.as_str(),
+                            dest_path,
+                        )
+                })
+            })
+            .filter(|output| !lock.contains_output(&output.target_root, output.dest_path.as_str()))
+            .cloned()
+            .collect();
+        if unresolved.is_empty() {
+            continue;
+        }
+
+        let item = lock
+            .items
+            .entry(old_key.clone())
+            .or_insert_with(|| LockedItemV2 {
+                source: old_item.source.clone(),
+                kind: old_item.kind,
+                version: old_item.version.clone(),
+                source_checksum: old_item.source_checksum.clone(),
+                outputs: old_item
+                    .outputs
+                    .iter()
+                    .filter(|output| output.target_root == CANONICAL_TARGET_ROOT)
+                    .cloned()
+                    .collect(),
+            });
+        item.outputs.extend(unresolved);
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        item.outputs.dedup_by(|a, b| {
+            a.target_root == b.target_root
+                && crate::target::dest_paths_equivalent(a.dest_path.as_str(), b.dest_path.as_str())
+        });
     }
 }
 
@@ -1117,7 +1188,7 @@ fn upsert_native_output_on_owner(
     target_root: &str,
     native_dest_path: &str,
     installed_checksum: &ContentHash,
-) {
+) -> bool {
     let native_dest = DestPath::from(native_dest_path);
     for item in lock.items.values_mut() {
         let owns_canonical = item.outputs.iter().any(|output| {
@@ -1136,7 +1207,7 @@ fn upsert_native_output_on_owner(
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), native_dest_path)
         }) {
             output.installed_checksum = installed_checksum.clone();
-            return;
+            return true;
         }
 
         item.outputs.push(OutputRecord {
@@ -1149,8 +1220,9 @@ fn upsert_native_output_on_owner(
                 .cmp(&b.target_root)
                 .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
         });
-        return;
+        return true;
     }
+    false
 }
 
 fn remove_target_output(lock: &mut LockFile, target_root: &str, dest_path: &str) {
@@ -1716,7 +1788,8 @@ installed_checksum = "sha256:222"
                 dest_path: "agents/coder.toml".to_string(),
                 installed_checksum: "sha256:codex".into(),
             }],
-        );
+        )
+        .unwrap();
         assert!(lock.contains_output(".codex", "agents/coder.toml"));
         assert!(lock.contains_output(".mars", "agents/coder.md"));
     }
@@ -1746,7 +1819,8 @@ installed_checksum = "sha256:222"
                 dest_path: "agents/alias-name.md".to_string(),
                 installed_checksum: "sha256:claude-native".into(),
             }],
-        );
+        )
+        .unwrap();
         assert!(lock.contains_output(".claude", "agents/alias-name.md"));
     }
 

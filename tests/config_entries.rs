@@ -1430,6 +1430,57 @@ fn force_adopts_file_fragment_and_records_exact_output() {
 }
 
 #[test]
+fn force_does_not_emit_file_fragment_without_canonical_owner() {
+    for (target, destination) in file_fragment_targets() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        configure_file_fragment(&project, target);
+
+        let canonical = project
+            .child(".mars/hooks")
+            .child(target.trim_start_matches('.'))
+            .child("audit");
+        canonical.create_dir_all().unwrap();
+        canonical.child("unmanaged").write_str("user").unwrap();
+
+        let installed = project.child(target).child("hooks/audit");
+        installed.create_dir_all().unwrap();
+        installed
+            .child("hook.toml")
+            .write_str(&format!(
+                "[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"
+            ))
+            .unwrap();
+        installed.child("run.sh").write_str("#!/bin/sh\n").unwrap();
+        installed
+            .child("plugin.ts")
+            .write_str("const SCRIPT = \"${MARS_HOOK_DIR}/run.sh\"\n")
+            .unwrap();
+
+        sync_force(&project)
+            .success()
+            .stderr(predicate::str::contains("unmanaged"));
+
+        project
+            .child(target)
+            .child(destination)
+            .assert(predicate::path::missing());
+        let lock: mars_agents::lock::LockFile =
+            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
+                .unwrap();
+        assert!(
+            !lock
+                .items
+                .values()
+                .flat_map(|item| &item.outputs)
+                .any(|output| output.target_root == target
+                    && output.dest_path.as_str() == destination),
+            "an emitted file fragment must always have a canonical owner"
+        );
+    }
+}
+
+#[test]
 fn hand_edited_managed_file_fragment_is_not_silently_replaced() {
     for (target, destination) in file_fragment_targets() {
         let dir = TempDir::new().unwrap();
@@ -1441,6 +1492,43 @@ fn hand_edited_managed_file_fragment_is_not_silently_replaced() {
 
         sync(&project).success();
         placed.assert("hand edited");
+    }
+}
+
+#[test]
+fn failed_file_fragment_removal_retains_ownership_for_retry() {
+    for (target, destination) in file_fragment_targets() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        configure_file_fragment(&project, target);
+        sync(&project).success();
+
+        let placed = project.child(target).child(destination);
+        fs::remove_file(placed.path()).unwrap();
+        placed.create_dir_all().unwrap();
+        fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains("failed to remove"));
+        placed.assert(predicate::path::is_dir());
+        let lock: mars_agents::lock::LockFile =
+            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
+                .unwrap();
+        assert!(
+            lock.items
+                .values()
+                .flat_map(|item| &item.outputs)
+                .any(|output| output.target_root == target
+                    && output.dest_path.as_str() == destination),
+            "failed removal must retain ownership authority"
+        );
+
+        fs::remove_dir_all(placed.path()).unwrap();
+        sync(&project).success();
+        placed.assert(predicate::path::missing());
+        let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+        assert!(!lock.contains(destination));
     }
 }
 

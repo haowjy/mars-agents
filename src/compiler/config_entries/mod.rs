@@ -342,6 +342,7 @@ fn validate_destination_path(
 pub(crate) fn compile_config_entries(
     ctx: &MarsContext,
     applied: &AppliedState,
+    ownership_lock: &mut crate::lock::LockFile,
     dry_run: bool,
     force: bool,
     diag: &mut DiagnosticCollector,
@@ -887,6 +888,27 @@ pub(crate) fn compile_config_entries(
                     continue;
                 }
             }
+            let output = crate::lock::CompiledNativeOutput {
+                owner_canonical_dest_path,
+                target_root: target_root.clone(),
+                dest_path: relative,
+                installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
+                    content.as_bytes(),
+                )),
+            };
+            if let Err(error) = crate::lock::apply_compiled_native_outputs(
+                ownership_lock,
+                std::slice::from_ref(&output),
+            ) {
+                diag.warn(
+                    "config-entry-write",
+                    format!(
+                        "not writing file hook `{}` because its ownership cannot be recorded: {error}",
+                        path.display()
+                    ),
+                );
+                continue;
+            }
             let result = (|| -> Result<(), crate::error::MarsError> {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -900,14 +922,7 @@ pub(crate) fn compile_config_entries(
                 );
                 continue;
             }
-            emitted_outputs.push(crate::lock::CompiledNativeOutput {
-                owner_canonical_dest_path,
-                target_root: target_root.clone(),
-                dest_path: relative,
-                installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
-                    content.as_bytes(),
-                )),
-            });
+            emitted_outputs.push(output);
         }
     }
 

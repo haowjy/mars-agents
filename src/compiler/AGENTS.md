@@ -171,6 +171,10 @@ let outputs = compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &mars_ag
 ## Linked-target writes
 
 Native reconcile and dual-surface compile gate deletes and copies through `surface_ownership` (same rules as `target_sync`). See `src/target_sync/.context/CONTEXT.md`.
+File-mode hook emission also reserves its exact `OutputRecord` against the
+post-sync ownership lock before writing. Lock finalization retains every prior
+linked output unless its removal was positively confirmed, so failed filesystem
+removals remain retryable.
 
 ## See Also
 

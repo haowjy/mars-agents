@@ -359,7 +359,7 @@ pub(crate) fn compile_config_entries(
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = effective.settings.managed_targets();
 
-    // Compute package depths via BFS from direct deps (depth 1; local = 0).
+    // Compute package depths from direct deps (depth 1; local = 0).
     let depths = compute_depths(graph);
     // Compute declaration-order precedence from mars.toml insertion order.
     let decl_orders = compute_decl_orders(graph, &effective.dependencies);
@@ -990,56 +990,48 @@ fn hook_directory_is_installed(
 ///
 /// Returns a map from SourceName → depth.
 fn compute_depths(graph: &crate::resolve::ResolvedGraph) -> HashMap<SourceName, usize> {
-    // Build reverse adjacency: for each package, which packages it's a dep of.
-    // We want BFS from "packages with no inbound edges" — those that no other package depends on.
-    // Actually we want the opposite: BFS from packages that nobody else depends on (the leafs),
-    // assigning them the highest depth, and the "root" deps get the lowest depth.
-
-    // Simpler: compute depth as the length of the longest path from the package to a leaf.
-    // But that's expensive. Use the topological order instead.
-
-    // Approach: packages in graph.order are in topological order (deps first, dependents last).
-    // The packages that appear FIRST in topological order (no predecessors) are depth 1.
-    // The packages they depend on are depth 2+.
-    // Wait, that's also complex.
-
-    // Simplest correct approach: BFS from "packages nobody else depends on" (they are direct deps).
-    let mut in_degree: HashMap<SourceName, usize> = HashMap::new();
-    for name in graph.nodes.keys() {
-        in_degree.insert(name.clone(), 0);
+    // A dependency is ready only after every package that depends on it has
+    // contributed its depth. This is Kahn's topological algorithm over the
+    // reversed dependency edges, with graph.order as the deterministic tie
+    // breaker for direct dependencies.
+    let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
+    for name in &graph.order {
+        remaining_dependents.insert(name.clone(), 0);
     }
-    for node in graph.nodes.values() {
+    for name in &graph.order {
+        let Some(node) = graph.nodes.get(name) else {
+            continue;
+        };
         for dep in &node.deps {
             if graph.nodes.contains_key(dep) {
-                *in_degree.entry(dep.clone()).or_insert(0) += 1;
+                *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
             }
         }
     }
 
-    // Direct dependencies of the consumer project have in_degree 0.
     let mut depths: HashMap<SourceName, usize> = HashMap::new();
     let mut queue: VecDeque<SourceName> = VecDeque::new();
-
-    for (name, degree) in &in_degree {
-        if *degree == 0 {
+    for name in &graph.order {
+        if remaining_dependents.get(name) == Some(&0) {
             depths.insert(name.clone(), 1);
             queue.push_back(name.clone());
         }
     }
 
-    // BFS to assign depths to transitives.
     while let Some(current) = queue.pop_front() {
         let current_depth = depths[&current];
         if let Some(node) = graph.nodes.get(&current) {
             for dep in &node.deps {
-                if graph.nodes.contains_key(dep) {
-                    depths
-                        .entry(dep.clone())
-                        .and_modify(|d| *d = (*d).max(current_depth + 1))
-                        .or_insert_with(|| {
-                            queue.push_back(dep.clone());
-                            current_depth + 1
-                        });
+                let Some(remaining) = remaining_dependents.get_mut(dep) else {
+                    continue;
+                };
+                depths
+                    .entry(dep.clone())
+                    .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
+                    .or_insert(current_depth + 1);
+                *remaining -= 1;
+                if *remaining == 0 {
+                    queue.push_back(dep.clone());
                 }
             }
         }
@@ -1097,6 +1089,36 @@ fn compute_decl_orders(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolve::{ResolvedGraph, ResolvedNode, RootedSourceRef};
+    use crate::source::ResolvedRef;
+    use crate::types::SourceId;
+    use indexmap::IndexMap;
+    use std::path::PathBuf;
+
+    fn graph_node(name: &str, deps: &[&str]) -> ResolvedNode {
+        let root = PathBuf::from(format!("/tmp/{name}"));
+        ResolvedNode {
+            source_name: name.into(),
+            source_id: SourceId::Path {
+                canonical: root.clone(),
+                subpath: None,
+            },
+            rooted_ref: RootedSourceRef {
+                checkout_root: root.clone(),
+                package_root: root.clone(),
+            },
+            resolved_ref: ResolvedRef {
+                source_name: name.into(),
+                version: None,
+                version_tag: None,
+                commit: None,
+                tree_path: root,
+            },
+            latest_version: None,
+            manifest: None,
+            deps: deps.iter().map(|dep| (*dep).into()).collect(),
+        }
+    }
 
     #[test]
     fn failed_hook_sweep_retains_prior_ownership_record() {
@@ -1116,5 +1138,57 @@ mod tests {
             ".claude",
         ));
         assert_eq!(retained.get(".claude"), Some(&prior));
+    }
+
+    #[test]
+    fn hook_depths_are_stable_for_longer_path_discovered_after_shorter_path() {
+        let definitions = [
+            ("direct-short", vec!["shared"]),
+            ("shared", vec!["leaf"]),
+            ("leaf", vec![]),
+            ("direct-long", vec!["middle"]),
+            ("middle", vec!["shared"]),
+        ];
+        let graph_order: Vec<SourceName> =
+            ["direct-short", "shared", "leaf", "direct-long", "middle"]
+                .into_iter()
+                .map(SourceName::from)
+                .collect();
+        let expected_emission = vec![
+            "direct-long".to_string(),
+            "direct-short".to_string(),
+            "middle".to_string(),
+            "shared".to_string(),
+            "leaf".to_string(),
+        ];
+
+        for run in 0..128 {
+            let mut insertion_order = definitions.clone();
+            let definition_count = insertion_order.len();
+            insertion_order.rotate_left(run % definition_count);
+            if run % 2 == 1 {
+                insertion_order.reverse();
+            }
+            let nodes = insertion_order
+                .into_iter()
+                .map(|(name, deps)| (name.into(), graph_node(name, &deps)))
+                .collect::<IndexMap<_, _>>();
+            let graph = ResolvedGraph {
+                order: graph_order.clone(),
+                nodes,
+                filters: HashMap::new(),
+                version_constraints: HashMap::new(),
+            };
+            let depths = compute_depths(&graph);
+            let mut emitted_order = graph.order.clone();
+            emitted_order.sort_by_key(|name| (depths[name], name.clone()));
+            assert_eq!(
+                emitted_order
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+                expected_emission,
+            );
+        }
     }
 }

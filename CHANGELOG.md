@@ -34,6 +34,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   authority cannot reclaim a canonical path removed by the current sync.
 - Key same-name hook ownership by target and skip MCP discovery for dependency
   filters that cannot emit MCP config.
+- Emit `${MARS_HOOK_DIR}` with portable separators so Windows paths remain
+  literal in JSON and TypeScript hook fragments.
 
 ## [0.11.0] - 2026-07-24
 

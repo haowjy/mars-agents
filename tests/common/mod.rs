@@ -69,6 +69,12 @@ pub fn mars() -> Command {
     Command::cargo_bin("mars").unwrap()
 }
 
+/// Render a path with separators that are safe in TOML/JSON string fixtures
+/// and accepted by Windows as well as POSIX.
+pub fn portable_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// Set up a minimal project with one local path source synced.
 pub fn setup_synced_project(
     dir: &TempDir,
@@ -83,7 +89,7 @@ pub fn setup_synced_project(
 
     let toml = format!(
         "[dependencies]\n{source_name} = {{ path = \"{}\" }}\n",
-        source.display().to_string().replace('\\', "/")
+        portable_path(&source)
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 

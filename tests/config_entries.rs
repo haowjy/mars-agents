@@ -8,6 +8,10 @@ use toml::Value;
 
 use common::*;
 
+fn contains_path(path: &str) -> impl Predicate<str> + '_ {
+    predicate::function(move |value: &str| value.replace('\\', "/").contains(path))
+}
+
 fn write_hook(project: &assert_fs::fixture::ChildPath, dir_name: &str, manifest: &str) {
     let hook = project.child("hooks").child(dir_name);
     hook.create_dir_all().unwrap();
@@ -115,8 +119,8 @@ fn hook_identity_and_materialization_are_scoped_per_target() {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".claude\", \".codex\"]\n[dependencies]\nclaude-source = {{ path = \"{}\" }}\ncodex-source = {{ path = \"{}\" }}\n",
-            claude_source.path().display(),
-            codex_source.path().display()
+            portable_path(claude_source.path()),
+            portable_path(codex_source.path())
         ))
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
@@ -173,13 +177,13 @@ fn same_name_hooks_keep_target_scoped_ownership_when_removed_independently() {
         if claude {
             raw.push_str(&format!(
                 "claude-source = {{ path = \"{}\" }}\n",
-                claude_source.path().display()
+                portable_path(claude_source.path())
             ));
         }
         if codex {
             raw.push_str(&format!(
                 "codex-source = {{ path = \"{}\" }}\n",
-                codex_source.path().display()
+                portable_path(codex_source.path())
             ));
         }
         config.write_str(&raw).unwrap();
@@ -268,7 +272,7 @@ fn unmanaged_target_hook_directory_fails_before_emission_or_canonical_mutation()
     sync(&project)
         .failure()
         .stderr(predicate::str::contains("unmanaged"))
-        .stderr(predicate::str::contains(".claude/hooks/audit"));
+        .stderr(contains_path(".claude/hooks/audit"));
     project
         .child(".claude/settings.local.json")
         .assert(r#"{"sentinel":true}"#);
@@ -302,7 +306,7 @@ fn blocking_hook_parent_fails_preflight_without_partial_state() {
 
     sync(&project)
         .failure()
-        .stderr(predicate::str::contains(".claude/hooks"))
+        .stderr(contains_path(".claude/hooks"))
         .stderr(predicate::str::contains("directory"));
     project.child(".claude/hooks").assert("user file");
     project
@@ -344,7 +348,7 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
     sync(&project)
         .failure()
         .stderr(predicate::str::contains("unmanaged"))
-        .stderr(predicate::str::contains(".claude/hooks/audit"));
+        .stderr(contains_path(".claude/hooks/audit"));
     installed.child("run.sh").assert("#!/bin/sh\n");
     project
         .child(".claude/settings.local.json")
@@ -461,7 +465,7 @@ fn skill_only_sync_ignores_unrelated_malformed_config() {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".claude\"]\n[dependencies]\nsource = {{ path = \"{}\", only_skills = true }}\n",
-            source.display()
+            portable_path(&source)
         ))
         .unwrap();
     project.child(".claude").create_dir_all().unwrap();
@@ -690,7 +694,10 @@ order = 7
     .unwrap();
     assert_eq!(claude["hooks"]["PreToolUse"][0]["matcher"], "Bash|Agent");
     assert_eq!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 30);
-    let expected = format!("bash \"{}\"", installed.child("run.sh").path().display());
+    let expected = format!(
+        "bash \"{}\"",
+        portable_path(installed.child("run.sh").path())
+    );
     assert_eq!(
         claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
         expected
@@ -751,7 +758,7 @@ fn exported_dependency_hook_uses_item_lifecycle_for_whole_directory_copy() {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".claude\"]\n[dependencies]\nbase = {{ path = \"{}\" }}\n",
-            source.path().display()
+            portable_path(source.path())
         ))
         .unwrap();
 

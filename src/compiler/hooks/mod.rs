@@ -266,10 +266,8 @@ pub fn load_file_fragment(
 }
 
 fn substitute_hook_dir(text: &str, installed_hook_dir: &Path) -> String {
-    text.replace(
-        "${MARS_HOOK_DIR}",
-        installed_hook_dir.to_string_lossy().as_ref(),
-    )
+    let portable_hook_dir = installed_hook_dir.to_string_lossy().replace('\\', "/");
+    text.replace("${MARS_HOOK_DIR}", &portable_hook_dir)
 }
 
 fn substitute_json_strings(mut value: Value, installed_hook_dir: &Path) -> Value {
@@ -297,4 +295,29 @@ fn invalid(path: &Path, message: &str) -> MarsError {
     MarsError::Config(ConfigError::Invalid {
         message: format!("{}: {message}", path.display()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{substitute_hook_dir, substitute_json_strings};
+    use serde_json::json;
+    use std::path::Path;
+
+    #[test]
+    fn hook_dir_substitution_uses_escape_safe_separators_in_file_and_json_fragments() {
+        let windows_path = Path::new(r"C:\temp\Users\hooks\audit");
+        let substituted =
+            substitute_hook_dir(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#, windows_path);
+        assert_eq!(
+            substituted,
+            r#"const SCRIPT = "C:/temp/Users/hooks/audit/run.sh";"#
+        );
+
+        let substituted =
+            substitute_json_strings(json!({"command": "${MARS_HOOK_DIR}/run.sh"}), windows_path);
+        assert_eq!(
+            substituted,
+            json!({"command": "C:/temp/Users/hooks/audit/run.sh"})
+        );
+    }
 }

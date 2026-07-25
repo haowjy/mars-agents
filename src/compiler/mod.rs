@@ -31,9 +31,11 @@ pub mod variants;
 pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
-pub use native_agents::selective_native_orphan_preserve_paths;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, materialize_native_agents_after_link,
+};
+pub use native_agents::{
+    native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,
 };
 
 use crate::config::AgentEmission;

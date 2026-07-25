@@ -20,8 +20,6 @@ impl TestFixture {
     fn new() -> Self {
         let project_root = TempDir::new().unwrap();
         let managed_root = project_root.path().join(".agents");
-        // Create .mars/cache directories
-        fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
         TestFixture {
             project_root,
             managed_root,
@@ -156,13 +154,9 @@ fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Depen
     }
 }
 
-fn create_sync_plan(
-    sync_diff: &diff::SyncDiff,
-    options: &SyncOptions,
-    cache_bases_dir: &std::path::Path,
-) -> plan::SyncPlan {
+fn create_sync_plan(sync_diff: &diff::SyncDiff, options: &SyncOptions) -> plan::SyncPlan {
     let mut diag = DiagnosticCollector::new();
-    plan::create(sync_diff, options, cache_bases_dir, &mut diag)
+    plan::create(sync_diff, options, &mut diag)
 }
 
 #[test]
@@ -716,7 +710,6 @@ fn planned_bump_entries_preserve_filters_and_renames() {
 fn execute_auto_inits_config_for_mutation() {
     let project_root = TempDir::new().unwrap();
     let managed_root = project_root.path().join(".agents");
-    fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
     let source = TempDir::new().unwrap();
     fs::create_dir_all(source.path().join("agents")).unwrap();
     fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
@@ -744,7 +737,6 @@ fn execute_auto_inits_config_for_mutation() {
 fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
     let managed_root = project_root.path().join(".agents");
-    fs::create_dir_all(project_root.path().join(".mars/cache/bases")).unwrap();
     crate::config::save(
         project_root.path(),
         &Config {
@@ -810,16 +802,15 @@ fn full_pipeline_fresh_sync() {
     }
 
     // Create plan
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
+    let sync_plan = create_sync_plan(&sync_diff, &options);
     assert_eq!(sync_plan.actions.len(), 2);
     for action in &sync_plan.actions {
         assert!(matches!(action, plan::PlannedAction::Install { .. }));
     }
 
     // Execute plan
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     assert_eq!(result.outcomes.len(), 2);
 
     // Verify files were created
@@ -851,10 +842,9 @@ fn re_sync_no_changes() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -870,7 +860,7 @@ fn re_sync_no_changes() {
         );
     }
 
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
     for action in &sync_plan2.actions {
         assert!(matches!(action, plan::PlannedAction::Skip { .. }));
     }
@@ -935,15 +925,13 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         g
     };
 
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
 
     let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
         let (target, _, _) = target::build_with_collisions(graph, cfg).unwrap();
         let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
-        let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-        let result =
-            apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+        let sync_plan = create_sync_plan(&sync_diff, &options);
+        let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
         let new_lock =
             crate::lock::build(graph, &result, lock, std::collections::BTreeMap::new()).unwrap();
         (sync_diff, sync_plan, new_lock)
@@ -1141,10 +1129,9 @@ fn source_update_detects_changes() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1175,10 +1162,9 @@ fn local_modification_preserved() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1201,7 +1187,7 @@ fn local_modification_preserved() {
     ));
 
     // Plan should KeepLocal
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
     assert!(matches!(
         &sync_plan2.actions[0],
         plan::PlannedAction::KeepLocal { .. }
@@ -1219,10 +1205,9 @@ fn force_overwrites_local_modifications() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1245,19 +1230,13 @@ fn force_overwrites_local_modifications() {
         force: true,
         ..SyncOptions::default()
     };
-    let sync_plan2 = create_sync_plan(&sync_diff2, &force_options, &cache_dir);
+    let sync_plan2 = create_sync_plan(&sync_diff2, &force_options);
     assert!(matches!(
         &sync_plan2.actions[0],
         plan::PlannedAction::Overwrite { .. }
     ));
 
-    let result2 = apply::execute(
-        fixture.managed_root(),
-        &sync_plan2,
-        &force_options,
-        &cache_dir,
-    )
-    .unwrap();
+    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &force_options).unwrap();
     assert!(matches!(
         result2.outcomes[0].action,
         apply::ActionTaken::Updated
@@ -1282,10 +1261,9 @@ fn orphan_removed_when_source_drops_item() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1307,9 +1285,8 @@ fn orphan_removed_when_source_drops_item() {
         .count();
     assert_eq!(orphan_count, 1);
 
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options, &cache_dir);
-    let result2 =
-        apply::execute(fixture.managed_root(), &sync_plan2, &options, &cache_dir).unwrap();
+    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
+    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &options).unwrap();
 
     // Reviewer should be removed
     assert!(!fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1335,18 +1312,16 @@ fn dry_run_produces_plan_without_changes() {
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
 
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let dry_options = SyncOptions {
         dry_run: true,
         ..SyncOptions::default()
     };
 
-    let sync_plan = create_sync_plan(&sync_diff, &dry_options, &cache_dir);
+    let sync_plan = create_sync_plan(&sync_diff, &dry_options);
     assert!(!sync_plan.actions.is_empty());
 
     // Execute in dry-run mode
-    let result =
-        apply::execute(fixture.managed_root(), &sync_plan, &dry_options, &cache_dir).unwrap();
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
     assert!(!result.outcomes.is_empty());
 
     // No files should have been created
@@ -1364,10 +1339,9 @@ fn lock_written_after_apply() {
     let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
 
     let new_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
@@ -1404,10 +1378,9 @@ fn two_sources_no_collision() {
 
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let cache_dir = fixture.project_root().join(".mars/cache/bases");
     let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options, &cache_dir);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options, &cache_dir).unwrap();
+    let sync_plan = create_sync_plan(&sync_diff, &options);
+    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
 
     assert!(fixture.managed_root().join("agents/coder.md").exists());
     assert!(fixture.managed_root().join("agents/reviewer.md").exists());

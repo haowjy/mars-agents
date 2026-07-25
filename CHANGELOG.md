@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Stop creating the unused `.mars/cache/bases` directory during sync.
 - **Breaking:** hooks now author per-target native JSON fragments instead of
   `events`/`matcher`/`[action]`; Mars installs whole hook directories and
   substitutes `${MARS_HOOK_DIR}` with portable path separators. The old schema

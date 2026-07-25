@@ -53,7 +53,6 @@ pub fn execute(
     root: &Path,
     plan: &SyncPlan,
     options: &SyncOptions,
-    cache_bases_dir: &Path,
 ) -> Result<ApplyResult, MarsError> {
     let mut outcomes = Vec::new();
 
@@ -62,7 +61,7 @@ pub fn execute(
             // Dry run: compute the outcome without touching disk
             dry_run_action(action)
         } else {
-            execute_action(root, action, cache_bases_dir)?
+            execute_action(root, action)?
         };
         outcomes.push(outcome);
     }
@@ -71,20 +70,13 @@ pub fn execute(
 }
 
 /// Execute a single action, writing to disk.
-fn execute_action(
-    root: &Path,
-    action: &PlannedAction,
-    cache_bases_dir: &Path,
-) -> Result<ActionOutcome, MarsError> {
+fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, MarsError> {
     match action {
         PlannedAction::Install { target } => {
             let dest = target.dest_path.resolve(root);
 
             // Read source content and install
             let installed_checksum = install_item(target, &dest)?;
-
-            // Writes base for future three-way merge support — currently unused by plan stage.
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
 
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
@@ -101,9 +93,6 @@ fn execute_action(
 
             // Install (overwrite) source content
             let installed_checksum = install_item(target, &dest)?;
-
-            // Writes base for future three-way merge support — currently unused by plan stage.
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
 
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
@@ -290,48 +279,6 @@ fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
     }
 }
 
-/// Cache base content for future three-way merges.
-///
-/// Content-addressed by installed checksum. Written after every install/overwrite.
-/// Missing cache = degrade to two-way diff (more conflict markers), not crash.
-fn cache_base_content(
-    cache_bases_dir: &Path,
-    installed_checksum: &ContentHash,
-    dest: &Path,
-    kind: ItemKind,
-) -> Result<(), MarsError> {
-    std::fs::create_dir_all(cache_bases_dir)?;
-    // Replace colon with underscore for Windows filename compatibility.
-    let safe_filename = installed_checksum.as_ref().replace(':', "_");
-    let cache_path = cache_bases_dir.join(&safe_filename);
-
-    // Only cache if not already present (content-addressed = immutable)
-    if cache_path.exists() {
-        return Ok(());
-    }
-
-    match kind {
-        ItemKind::Agent | ItemKind::McpServer => {
-            let content = std::fs::read(dest)?;
-            fs_ops::atomic_write_file(&cache_path, &content)?;
-        }
-        ItemKind::BootstrapDoc => {
-            let content = std::fs::read(dest)?;
-            fs_ops::atomic_write_file(&cache_path, &content)?;
-        }
-        ItemKind::Skill | ItemKind::Hook => {
-            // For skills, cache the SKILL.md content (the merge-relevant part)
-            let skill_md = dest.join("SKILL.md");
-            if skill_md.exists() {
-                let content = std::fs::read(&skill_md)?;
-                fs_ops::atomic_write_file(&cache_path, &content)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Prune orphans: items in old lock but not in new target.
 ///
 /// This is handled by the Remove action in the plan, but exposed
@@ -448,8 +395,6 @@ mod tests {
     fn install_creates_new_file() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let content = b"# new agent content";
         let source_path = setup_source_agent(source_dir.path(), "coder", content);
@@ -463,7 +408,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert_eq!(result.outcomes.len(), 1);
 
         let outcome = &result.outcomes[0];
@@ -482,40 +427,12 @@ mod tests {
         assert!(outcome.installed_checksum.is_some());
     }
 
-    #[test]
-    fn install_caches_base_content() {
-        let root = TempDir::new().unwrap();
-        let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
-
-        let content = b"# cached content";
-        let source_path = setup_source_agent(source_dir.path(), "coder", content);
-        let target = make_agent_target("coder", source_path, content);
-
-        let plan = SyncPlan {
-            actions: vec![PlannedAction::Install { target }],
-        };
-
-        let options = SyncOptions::default();
-
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
-        let installed_checksum = result.outcomes[0].installed_checksum.as_ref().unwrap();
-
-        // Verify base content was cached
-        let cached = bases_dir.join(installed_checksum.as_ref().replace(':', "_"));
-        assert!(cached.exists(), "base content should be cached");
-        assert_eq!(fs::read(&cached).unwrap(), content);
-    }
-
     // === Overwrite tests ===
 
     #[test]
     fn overwrite_replaces_existing_file() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create existing file
         let agents_dir = root.path().join("agents");
@@ -532,7 +449,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Updated));
 
         let installed = fs::read(root.path().join("agents/coder.md")).unwrap();
@@ -543,8 +460,6 @@ mod tests {
     fn install_bootstrap_doc_directory_to_canonical_file_path() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = source_dir.path().join("bootstrap/global-auth");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# auth").unwrap();
@@ -555,7 +470,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
 
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
         assert_eq!(
@@ -569,8 +484,6 @@ mod tests {
     #[test]
     fn remove_deletes_file() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create file to remove
         let agents_dir = root.path().join("agents");
@@ -592,7 +505,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("agents/orphan.md").exists());
     }
@@ -600,8 +513,6 @@ mod tests {
     #[test]
     fn remove_skill_directory() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create skill directory
         let skill_dir = root.path().join("skills/old-skill");
@@ -623,7 +534,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("skills/old-skill").exists());
     }
@@ -631,8 +542,6 @@ mod tests {
     #[test]
     fn remove_bootstrap_doc_removes_container_directory() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = root.path().join("bootstrap/global-auth");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# auth").unwrap();
@@ -651,7 +560,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.exists());
     }
@@ -659,8 +568,6 @@ mod tests {
     #[test]
     fn remove_degenerate_bootstrap_doc_path_removes_exact_file_only() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
         let bootstrap_dir = root.path().join("bootstrap");
         fs::create_dir_all(&bootstrap_dir).unwrap();
         fs::write(bootstrap_dir.join("BOOTSTRAP.md"), b"# root").unwrap();
@@ -680,7 +587,7 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.join("BOOTSTRAP.md").exists());
         assert!(bootstrap_dir.join("keep.md").exists());
@@ -692,8 +599,6 @@ mod tests {
     fn dry_run_does_not_modify_files() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let content = b"# new agent";
         let source_path = setup_source_agent(source_dir.path(), "coder", content);
@@ -708,7 +613,7 @@ mod tests {
             ..SyncOptions::default()
         };
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert_eq!(result.outcomes.len(), 1);
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
@@ -721,8 +626,6 @@ mod tests {
     #[test]
     fn skip_produces_skipped_outcome() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let plan = SyncPlan {
             actions: vec![PlannedAction::Skip {
@@ -739,7 +642,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Skipped));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -755,8 +658,6 @@ mod tests {
     #[test]
     fn keep_local_produces_kept_outcome() {
         let root = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let plan = SyncPlan {
             actions: vec![PlannedAction::KeepLocal {
@@ -771,7 +672,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Kept));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -786,8 +687,6 @@ mod tests {
     fn install_skill_directory() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         // Create source skill directory
         let source_skill = source_dir.path().join("skills/planning");
@@ -821,7 +720,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        let result = execute(root.path(), &plan, &options).unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
         let installed_dir = root.path().join("skills/planning");
@@ -838,8 +737,6 @@ mod tests {
     fn install_flat_skill_excludes_repo_metadata() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
-        let cache_dir = TempDir::new().unwrap();
-        let bases_dir = cache_dir.path().join("bases");
 
         let flat_source = source_dir.path().join("flat-skill");
         fs::create_dir_all(flat_source.join(".git")).unwrap();
@@ -880,7 +777,7 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        execute(root.path(), &plan, &options, &bases_dir).unwrap();
+        execute(root.path(), &plan, &options).unwrap();
 
         let installed = root.path().join("skills/flat-skill");
         assert!(installed.join("SKILL.md").exists());

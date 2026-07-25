@@ -43,12 +43,7 @@ pub enum PlannedAction {
 ///
 /// `--force`: all Conflict entries become Overwrite (source wins).
 /// `--dry_run`: plan is computed identically but not executed (handled by apply).
-pub fn create(
-    diff: &SyncDiff,
-    options: &SyncOptions,
-    _cache_bases_dir: &std::path::Path,
-    diag: &mut DiagnosticCollector,
-) -> SyncPlan {
+pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticCollector) -> SyncPlan {
     let mut actions = Vec::new();
 
     for entry in &diff.items {
@@ -134,7 +129,6 @@ mod tests {
     use crate::sync::diff::{DiffEntry, SyncDiff};
     use crate::sync::target::TargetItem;
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     fn make_target_with_kind(name: &str, kind: ItemKind) -> TargetItem {
         let (source_path, dest_path) = match kind {
@@ -225,42 +219,35 @@ mod tests {
         }
     }
 
-    fn create_plan(
-        diff: &SyncDiff,
-        options: &SyncOptions,
-        cache_bases_dir: &std::path::Path,
-    ) -> SyncPlan {
+    fn create_plan(diff: &SyncDiff, options: &SyncOptions) -> SyncPlan {
         let mut diag = DiagnosticCollector::new();
-        create(diff, options, cache_bases_dir, &mut diag)
+        create(diff, options, &mut diag)
     }
 
     fn create_plan_with_diag(
         diff: &SyncDiff,
         options: &SyncOptions,
-        cache_bases_dir: &std::path::Path,
     ) -> (SyncPlan, DiagnosticCollector) {
         let mut diag = DiagnosticCollector::new();
-        let plan = create(diff, options, cache_bases_dir, &mut diag);
+        let plan = create(diff, options, &mut diag);
         (plan, diag)
     }
 
     #[test]
     fn add_produces_install() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Add {
                 target: make_target("new-agent"),
             }],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));
     }
 
     #[test]
     fn update_produces_overwrite() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Update {
                 target: make_target("updated"),
@@ -268,14 +255,13 @@ mod tests {
             }],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
 
     #[test]
     fn unchanged_produces_skip() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Unchanged {
                 target: make_target("stable"),
@@ -283,7 +269,7 @@ mod tests {
             }],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(
             &plan.actions[0],
@@ -296,7 +282,6 @@ mod tests {
 
     #[test]
     fn conflict_produces_overwrite_and_warning() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
@@ -305,7 +290,7 @@ mod tests {
             }],
         };
 
-        let (plan, mut diag) = create_plan_with_diag(&diff, &default_options(), cache_dir.path());
+        let (plan, mut diag) = create_plan_with_diag(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
 
@@ -316,7 +301,6 @@ mod tests {
 
     #[test]
     fn skill_conflict_produces_overwrite_and_warning() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_skill_target("planning"),
@@ -326,7 +310,7 @@ mod tests {
         };
         let mut diag = DiagnosticCollector::new();
 
-        let plan = create(&diff, &default_options(), cache_dir.path(), &mut diag);
+        let plan = create(&diff, &default_options(), &mut diag);
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
 
@@ -341,7 +325,6 @@ mod tests {
 
     #[test]
     fn conflict_with_force_produces_overwrite() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Conflict {
                 target: make_target("conflicted"),
@@ -350,28 +333,26 @@ mod tests {
             }],
         };
 
-        let plan = create_plan(&diff, &force_options(), cache_dir.path());
+        let plan = create_plan(&diff, &force_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
 
     #[test]
     fn orphan_produces_remove() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::Orphan {
                 locked: make_locked("removed"),
             }],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Remove { .. }));
     }
 
     #[test]
     fn local_modified_produces_keep_local() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
@@ -380,14 +361,13 @@ mod tests {
             }],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::KeepLocal { .. }));
     }
 
     #[test]
     fn local_modified_with_force_produces_overwrite() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![DiffEntry::LocalModified {
                 target: make_target("modified"),
@@ -396,14 +376,13 @@ mod tests {
             }],
         };
 
-        let plan = create_plan(&diff, &force_options(), cache_dir.path());
+        let plan = create_plan(&diff, &force_options());
         assert_eq!(plan.actions.len(), 1);
         assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
     }
 
     #[test]
     fn mixed_plan() {
-        let cache_dir = TempDir::new().unwrap();
         let diff = SyncDiff {
             items: vec![
                 DiffEntry::Add {
@@ -423,7 +402,7 @@ mod tests {
             ],
         };
 
-        let plan = create_plan(&diff, &default_options(), cache_dir.path());
+        let plan = create_plan(&diff, &default_options());
         assert_eq!(plan.actions.len(), 4);
 
         assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));

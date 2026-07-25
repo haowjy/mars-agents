@@ -501,7 +501,6 @@ pub(crate) fn create_plan(
     // Diff against .mars/ canonical store.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
-    let cache_bases_dir = mars_dir.join("cache").join("bases");
 
     // Compute diff.
     let sync_diff = diff::compute(
@@ -528,7 +527,7 @@ pub(crate) fn create_plan(
     }
 
     // Create plan.
-    let sync_plan = plan::create(&sync_diff, &request.options, &cache_bases_dir, diag);
+    let sync_plan = plan::create(&sync_diff, &request.options, diag);
 
     Ok(PlannedState {
         targeted,
@@ -560,7 +559,6 @@ pub(crate) fn apply_plan(
 ) -> Result<AppliedState, MarsError> {
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
-    let cache_bases_dir = mars_dir.join("cache").join("bases");
 
     let has_bump_version_changes =
         has_version_changes(&planned.targeted.resolved.loaded.dependency_changes)
@@ -595,7 +593,7 @@ pub(crate) fn apply_plan(
     // Apply plan to .mars/ canonical store (D25).
     // Content is written to .mars/agents/ and .mars/skills/, then
     // sync_targets() copies to all managed target directories.
-    let applied = apply::execute(&mars_dir, &planned.plan, &request.options, &cache_bases_dir)?;
+    let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
 }

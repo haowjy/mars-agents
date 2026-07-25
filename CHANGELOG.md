@@ -6,8 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Breaking:** `mars.lock` version 3 distinguishes installed outputs from
-  pending-deletion ownership records; older locks must be removed and regenerated
-  with `mars sync`.
+  pending-deletion ownership records. Version 2 locks are promoted for one release
+  so legacy hook cleanup can run; version 1 locks must be removed and regenerated.
 - **Breaking:** remove unused public helpers, wrappers, re-exports, and unread
   fields from the library API.
 - `discover_installed` now scans only installed item identity and path instead of

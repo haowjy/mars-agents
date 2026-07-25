@@ -135,7 +135,7 @@ path = "run.sh"
 }
 
 #[test]
-fn one_sync_migrates_v011_command_path_residue_and_is_idempotent() {
+fn promoted_v2_lock_sweeps_v011_command_path_residue_and_is_idempotent() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -174,6 +174,7 @@ fn one_sync_migrates_v011_command_path_residue_and_is_idempotent() {
     lock_path
         .write_str(&toml::to_string(&lock).unwrap())
         .unwrap();
+    downgrade_lock_to_v2(&project);
     let legacy = format!(
         "bash '{}'/hooks/audit/run.sh",
         project

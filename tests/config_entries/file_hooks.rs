@@ -75,6 +75,43 @@ fn legacy_opencode_hook_records_reach_the_removal_only_sweep() {
 }
 
 #[test]
+fn promoted_v2_absent_file_hook_is_a_tombstone_not_ghost_ownership() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, ".opencode");
+    sync(&project).success();
+
+    let placed = project.child(".opencode/plugins/mars-audit.ts");
+    fs::remove_file(placed.path()).unwrap();
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    downgrade_lock_to_v2(&project);
+
+    let promoted = mars_agents::lock::load(project.path()).unwrap();
+    let output = promoted
+        .items
+        .values()
+        .flat_map(|item| &item.outputs)
+        .find(|output| {
+            output.target_root == ".opencode"
+                && output.dest_path.as_str() == "plugins/mars-audit.ts"
+        })
+        .expect("v2 retry tombstone must survive promotion");
+    assert!(matches!(
+        output.state,
+        mars_agents::lock::OutputState::PendingDeletion
+    ));
+
+    sync(&project).success();
+    placed.assert(predicate::path::missing());
+    let final_lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    assert!(
+        !final_lock.contains_output(".opencode", "plugins/mars-audit.ts"),
+        "confirmed deletion must not leave ghost ownership"
+    );
+}
+
+#[test]
 fn file_fragments_place_substitute_remove_and_resync_idempotently() {
     for (target, destination, export) in [
         (

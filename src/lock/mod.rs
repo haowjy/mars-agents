@@ -361,7 +361,7 @@ const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
 // ---------------------------------------------------------------------------
-// Current persisted wire format.
+// Persisted wire formats.
 // ---------------------------------------------------------------------------
 
 /// Current wire format for Deserialize (mirrors `LockFile` but derives `Deserialize`).
@@ -378,6 +378,40 @@ struct LockFileWire {
     dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
+/// Version 2 output records did not distinguish installed content from retry tombstones.
+#[derive(Deserialize)]
+struct OutputRecordV2 {
+    target_root: String,
+    dest_path: DestPath,
+    installed_checksum: ContentHash,
+}
+
+#[derive(Deserialize)]
+struct LockedItemV2Wire {
+    source: SourceName,
+    kind: ItemKind,
+    #[serde(default)]
+    version: Option<String>,
+    source_checksum: ContentHash,
+    outputs: Vec<OutputRecordV2>,
+}
+
+/// One-release v2 wire format. Delete this promotion after the release following
+/// lock v3, alongside the #130 legacy-hook sweeps that depend on these records.
+#[derive(Deserialize)]
+struct LockFileV2Wire {
+    #[allow(dead_code)]
+    version: u32,
+    #[serde(default)]
+    dependencies: IndexMap<SourceName, LockedSource>,
+    #[serde(default)]
+    items: IndexMap<String, LockedItemV2Wire>,
+    #[serde(default)]
+    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    #[serde(default)]
+    dependency_model_aliases: IndexMap<String, ModelAlias>,
+}
+
 // ---------------------------------------------------------------------------
 // Load / write
 // ---------------------------------------------------------------------------
@@ -385,7 +419,8 @@ struct LockFileWire {
 /// Load the lock file from the given root directory.
 ///
 /// Returns an empty current-version lock if the file is absent.
-/// Older schemas fail with actionable re-sync guidance.
+/// Version 2 is promoted in memory for one release; other older schemas fail
+/// with actionable re-sync guidance.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
     let (lock, _) = load_with_diagnostics(root)?;
     Ok(lock)
@@ -432,7 +467,9 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 
 /// Load the lock file and return any diagnostics produced while reading it.
 ///
-/// Version and schema failures are returned as actionable lock errors.
+/// Version 2 locks are promoted in memory so one-release cleanup bridges can
+/// inspect their ownership records. Other version and schema failures are
+/// returned as actionable lock errors.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
@@ -452,38 +489,104 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
         .ok_or_else(|| LockError::Corrupt {
             message: format!("{} has no integer lock version", path.display()),
         })?;
-    if version != i64::from(LOCK_VERSION) {
-        let message = if version < i64::from(LOCK_VERSION) {
-            format!(
-                "{} predates lock version {LOCK_VERSION}; remove it and run `{}`",
+    match version {
+        3 => {
+            let wire: LockFileWire = value.try_into().map_err(|error| LockError::Corrupt {
+                message: format!(
+                    "failed to parse {} lock version {LOCK_VERSION}: {error}",
+                    path.display()
+                ),
+            })?;
+            Ok((
+                LockFile {
+                    version: wire.version,
+                    dependencies: wire.dependencies,
+                    items: wire.items,
+                    config_entries: wire.config_entries,
+                    dependency_model_aliases: wire.dependency_model_aliases,
+                },
+                Vec::new(),
+            ))
+        }
+        2 => {
+            let wire: LockFileV2Wire =
+                value.try_into().map_err(|error| LockError::Corrupt {
+                    message: format!("failed to parse {} lock version 2: {error}", path.display()),
+                })?;
+            Ok((promote_v2_lock(root, wire), Vec::new()))
+        }
+        older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
+            message: format!(
+                "{} uses unsupported lock version {older}; remove it and run `{}` (only version 2 can be promoted to version {LOCK_VERSION})",
                 path.display(),
                 crate::types::managed_cmd("mars sync")
-            )
-        } else {
-            format!(
-                "{} uses unsupported lock version {version}; this Mars supports version {LOCK_VERSION}",
+            ),
+        }
+        .into()),
+        newer => Err(LockError::Corrupt {
+            message: format!(
+                "{} uses unsupported lock version {newer}; this Mars supports version {LOCK_VERSION}",
                 path.display()
-            )
-        };
-        return Err(LockError::Corrupt { message }.into());
+            ),
+        }
+        .into()),
     }
+}
 
-    let wire: LockFileWire = value.try_into().map_err(|error| LockError::Corrupt {
-        message: format!(
-            "failed to parse {} lock version {LOCK_VERSION}: {error}",
-            path.display()
-        ),
-    })?;
-    Ok((
-        LockFile {
-            version: wire.version,
-            dependencies: wire.dependencies,
-            items: wire.items,
-            config_entries: wire.config_entries,
-            dependency_model_aliases: wire.dependency_model_aliases,
-        },
-        Vec::new(),
-    ))
+/// Cross the untyped v2 output boundary exactly once.
+///
+/// A v2 checksum could describe either installed bytes or a retry tombstone left
+/// after failed removal. Only an on-disk regular file whose bytes still match the
+/// checksum is promoted as installed; every other path retains deletion authority
+/// without asserting ghost content.
+fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
+    let items = wire
+        .items
+        .into_iter()
+        .map(|(key, item)| {
+            let outputs = item
+                .outputs
+                .into_iter()
+                .map(|output| {
+                    let path = root
+                        .join(&output.target_root)
+                        .join(output.dest_path.as_str());
+                    let matches_disk = std::fs::symlink_metadata(&path)
+                        .is_ok_and(|metadata| metadata.file_type().is_file())
+                        && std::fs::read(&path).is_ok_and(|bytes| {
+                            crate::hash::hash_bytes(&bytes) == output.installed_checksum.as_ref()
+                        });
+                    if matches_disk {
+                        OutputRecord::installed(
+                            output.target_root,
+                            output.dest_path,
+                            output.installed_checksum,
+                        )
+                    } else {
+                        OutputRecord::pending_deletion(output.target_root, output.dest_path)
+                    }
+                })
+                .collect();
+            (
+                key,
+                LockedItemV2 {
+                    source: item.source,
+                    kind: item.kind,
+                    version: item.version,
+                    source_checksum: item.source_checksum,
+                    outputs,
+                },
+            )
+        })
+        .collect();
+
+    LockFile {
+        version: LOCK_VERSION,
+        dependencies: wire.dependencies,
+        items,
+        config_entries: wire.config_entries,
+        dependency_model_aliases: wire.dependency_model_aliases,
+    }
 }
 
 /// Write the lock file atomically to the given root directory (always current format).
@@ -1267,17 +1370,81 @@ mod tests {
     }
 
     #[test]
-    fn old_lock_version_has_actionable_error() {
+    fn v1_lock_version_has_actionable_error() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), "version = 2\n").unwrap();
+        std::fs::write(dir.path().join("mars.lock"), "version = 1\n").unwrap();
 
         let error = load(dir.path()).unwrap_err().to_string();
 
-        assert!(error.contains("mars.lock predates lock version 3"));
+        assert!(error.contains("unsupported lock version 1"));
+        assert!(error.contains("only version 2 can be promoted"));
         assert!(error.contains(&format!(
             "remove it and run `{}`",
             crate::types::managed_cmd("mars sync")
         )));
+    }
+
+    #[test]
+    fn v2_output_matching_regular_file_promotes_to_installed() {
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join(".mars/agents/coder.md");
+        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        std::fs::write(&output, "managed").unwrap();
+        let checksum = crate::hash::hash_bytes(b"managed");
+        std::fs::write(
+            dir.path().join("mars.lock"),
+            format!(
+                r#"
+version = 2
+
+[items."agent/coder"]
+source = "_self"
+kind = "agent"
+source_checksum = "{checksum}"
+
+[[items."agent/coder".outputs]]
+target_root = ".mars"
+dest_path = "agents/coder.md"
+installed_checksum = "{checksum}"
+"#
+            ),
+        )
+        .unwrap();
+
+        let lock = load(dir.path()).unwrap();
+        let output = &lock.items["agent/coder"].outputs[0];
+
+        assert_eq!(lock.version, LOCK_VERSION);
+        assert!(matches!(output.state, OutputState::Installed { .. }));
+    }
+
+    #[test]
+    fn v2_output_absent_on_disk_promotes_to_pending_deletion() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.lock"),
+            r#"
+version = 2
+
+[items."hook/audit"]
+source = "_self"
+kind = "hook"
+source_checksum = "sha256:source"
+
+[[items."hook/audit".outputs]]
+target_root = ".opencode"
+dest_path = "plugins/mars-audit.ts"
+installed_checksum = "sha256:old"
+"#,
+        )
+        .unwrap();
+
+        let lock = load(dir.path()).unwrap();
+
+        assert!(matches!(
+            lock.items["hook/audit"].outputs[0].state,
+            OutputState::PendingDeletion
+        ));
     }
 
     #[test]

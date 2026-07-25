@@ -41,6 +41,14 @@ Pending deletion is deliberately part of the same type because it changes the
 meaning of an existing path-ownership record. The enum makes a checksum
 unavailable in that state, so disk-content consumers must handle the lifecycle.
 
+For one release, loading a v2 lock crosses its untyped output records into this
+model. The promotion consults disk at that boundary only: a regular file with a
+matching checksum becomes installed; an absent, non-file, unreadable, or
+mismatched path becomes pending deletion. This preserves retry authority without
+asserting ghost content and leaves legacy config-entry records available to the
+#130 hook sweep. Delete the v2 promotion after the release following lock v3,
+alongside that sweep.
+
 Interrupted-write recovery is not represented here. Publishing intent before
 materialization would add a second lock write, transaction ordering, and
 fault-injection recovery semantics. That is a separate pipeline transaction

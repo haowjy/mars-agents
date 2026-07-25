@@ -118,9 +118,6 @@ impl TargetAdapter for ClaudeAdapter {
         Ok(written)
     }
 
-    fn config_file_names(&self) -> &'static [&'static str] {
-        &[".mcp.json", "settings.local.json"]
-    }
     fn mcp_config_file_names(&self) -> &'static [&'static str] {
         &[".mcp.json"]
     }
@@ -146,9 +143,7 @@ impl TargetAdapter for ClaudeAdapter {
         entry_keys: &[String],
         target_dir: &Path,
     ) -> Result<(), MarsError> {
-        remove_mcp_entries_by_key(entry_keys, target_dir)?;
-        remove_hook_entries_by_key(entry_keys, target_dir)?;
-        Ok(())
+        remove_mcp_entries_by_key(entry_keys, target_dir)
     }
 }
 
@@ -481,68 +476,6 @@ fn remove_structural_matches(
     missing
 }
 
-/// Remove hook entries by key from `settings.local.json`.
-///
-/// Keys are "hook:<event>:<name>" — we use the native event name to locate
-/// the section. Because hooks are additive and the settings file may contain
-/// user-owned entries, we only remove entries we wrote (matched by command path).
-///
-/// We also apply the same removal to the committed `settings.json` so any stale
-/// managed bindings left there by an older sync get cleaned up.
-fn remove_hook_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let hook_names: Vec<&str> = entry_keys
-        .iter()
-        .filter_map(|k| {
-            let rest = k.strip_prefix("hook:")?;
-            let (_, name) = rest.split_once(':')?;
-            Some(name)
-        })
-        .collect();
-
-    if hook_names.is_empty() {
-        return Ok(());
-    }
-
-    remove_hook_names_from_file(&target_dir.join("settings.local.json"), &hook_names)?;
-    remove_hook_names_from_file(&target_dir.join("settings.json"), &hook_names)?;
-
-    Ok(())
-}
-
-/// Remove the given (event, name) managed hook bindings from a single settings
-/// file, if it exists. Conservative — only removes entries whose command path
-/// matches a mars-managed hook (`/hooks/<name>/`).
-fn remove_hook_names_from_file(path: &Path, hook_names: &[&str]) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let mut root = super::parse_json_file(path)?;
-
-    if let Some(hooks_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("hooks"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for event_hooks in hooks_map.values_mut() {
-            if let Some(arr) = event_hooks.as_array_mut() {
-                for name in hook_names {
-                    remove_managed_hook_bindings(arr, name);
-                }
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())?;
-
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -774,7 +707,16 @@ mod tests {
         )
         .unwrap();
 
-        remove_hook_entries_by_key(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
+        let records = std::collections::BTreeMap::from([(
+            "hook:tool.pre:audit".to_string(),
+            crate::lock::ConfigEntryRecord { emitted_json: None },
+        )]);
+        remove_owned_claude_hooks(
+            &records,
+            tmp.path(),
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();

@@ -31,11 +31,8 @@ pub fn find_stale_entries(
 mod tests {
     use super::*;
 
-    fn record(source: &str) -> ConfigEntryRecord {
-        ConfigEntryRecord {
-            source: source.to_string(),
-            emitted_json: None,
-        }
+    fn record() -> ConfigEntryRecord {
+        ConfigEntryRecord { emitted_json: None }
     }
 
     #[test]
@@ -43,13 +40,13 @@ mod tests {
         let previous = BTreeMap::from([(
             ".claude".to_string(),
             BTreeMap::from([
-                ("mcp:old".to_string(), record("base")),
-                ("mcp:kept".to_string(), record("base")),
+                ("mcp:old".to_string(), record()),
+                ("mcp:kept".to_string(), record()),
             ]),
         )]);
         let current = BTreeMap::from([(
             ".claude".to_string(),
-            BTreeMap::from([("mcp:kept".to_string(), record("base"))]),
+            BTreeMap::from([("mcp:kept".to_string(), record())]),
         )]);
 
         let stale = find_stale_entries(&previous, &current);

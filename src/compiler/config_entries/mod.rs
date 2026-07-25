@@ -488,20 +488,16 @@ pub(crate) fn compile_config_entries(
     // bindings with the same name are written.
     for target_root in &target_roots {
         // Lower MCP items for this target.
-        let mut entries_with_source: Vec<(ConfigEntry, String)> = Vec::new();
+        let mut entries = Vec::new();
 
         for parsed in resolve_mcp_collisions_for_target(&all_mcp, target_root, diag) {
-            let source = parsed.source_name.clone();
             let e = TargetMcpEntry::from_parsed(parsed);
-            entries_with_source.push((
-                ConfigEntry::McpServer(McpServerEntry {
-                    name: e.name,
-                    command: e.command,
-                    args: e.args,
-                    env: e.env.into_iter().collect(),
-                }),
-                source,
-            ));
+            entries.push(ConfigEntry::McpServer(McpServerEntry {
+                name: e.name,
+                command: e.command,
+                args: e.args,
+                env: e.env.into_iter().collect(),
+            }));
         }
 
         // Load opaque fragment arrays, then collision-resolve by (event, name).
@@ -571,22 +567,16 @@ pub(crate) fn compile_config_entries(
                 hook.event.as_str(),
             )
         });
-        let hook_entries: Vec<(ConfigEntry, String)> = target_hooks
-            .into_iter()
-            .map(|hook| {
-                (
-                    ConfigEntry::Hook(HookEntry {
-                        name: hook.item.def.name.clone(),
-                        native_event: hook.event.clone(),
-                        entries: hook.entries.clone(),
-                    }),
-                    hook.item.source_name.clone(),
-                )
+        let hook_entries = target_hooks.into_iter().map(|hook| {
+            ConfigEntry::Hook(HookEntry {
+                name: hook.item.def.name.clone(),
+                native_event: hook.event.clone(),
+                entries: hook.entries.clone(),
             })
-            .collect();
+        });
 
         // Combine all entries.
-        entries_with_source.extend(hook_entries);
+        entries.extend(hook_entries);
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
@@ -637,17 +627,11 @@ pub(crate) fn compile_config_entries(
         }
 
         // Write via the target adapter (if one is registered).
-        let entries: Vec<ConfigEntry> = entries_with_source
-            .iter()
-            .map(|(entry, _)| entry.clone())
-            .collect();
-
         let mut target_records = BTreeMap::new();
-        for (entry, source) in &entries_with_source {
+        for entry in &entries {
             target_records.insert(
                 entry.key(),
                 ConfigEntryRecord {
-                    source: source.clone(),
                     emitted_json: match entry {
                         ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
                         ConfigEntry::McpServer(_) => None,
@@ -1125,7 +1109,6 @@ mod tests {
         let prior = BTreeMap::from([(
             "hook:SessionStart:audit".to_string(),
             ConfigEntryRecord {
-                source: "base".to_string(),
                 emitted_json: Some("[{\"hooks\":[]}]".to_string()),
             },
         )]);

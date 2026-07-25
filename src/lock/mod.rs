@@ -330,7 +330,6 @@ pub struct OutputRecord {
 /// Ownership record for one target-native config entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
-    pub source: String,
     /// Canonical JSON for the exact post-substitution hook entry array.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_json: Option<String>,
@@ -1476,10 +1475,7 @@ installed_checksum = "sha256:bbb"
             ".claude".to_string(),
             BTreeMap::from([(
                 "mcp:context7".to_string(),
-                ConfigEntryRecord {
-                    source: "base".to_string(),
-                    emitted_json: None,
-                },
+                ConfigEntryRecord { emitted_json: None },
             )]),
         );
 
@@ -1489,8 +1485,8 @@ installed_checksum = "sha256:bbb"
 
         assert_eq!(lock, reloaded);
         assert_eq!(
-            reloaded.config_entries[".claude"]["mcp:context7"].source,
-            "base"
+            reloaded.config_entries[".claude"]["mcp:context7"].emitted_json,
+            None
         );
     }
 

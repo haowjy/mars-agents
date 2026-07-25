@@ -97,9 +97,6 @@ impl TargetAdapter for CursorAdapter {
         Ok(written)
     }
 
-    fn config_file_names(&self) -> &'static [&'static str] {
-        &["mcp.json", "hooks.json"]
-    }
     fn mcp_config_file_names(&self) -> &'static [&'static str] {
         &["mcp.json"]
     }

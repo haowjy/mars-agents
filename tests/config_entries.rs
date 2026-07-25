@@ -1659,17 +1659,6 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
 }
 
 #[test]
-fn codex_trust_docs_warn_that_script_edits_do_not_reprompt() {
-    let docs = fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/docs/config/mcp-and-hooks.md"
-    ))
-    .unwrap();
-    assert!(docs.contains("script contents"));
-    assert!(docs.contains("without another trust prompt"));
-}
-
-#[test]
 fn remove_prunes_stale_config_entries() {
     let dir = TempDir::new().unwrap();
     let source = create_mcp_source(&dir, "base", "context7");

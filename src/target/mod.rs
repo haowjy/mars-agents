@@ -18,12 +18,10 @@ pub mod pi;
 
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
-
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
+use indexmap::IndexMap;
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
@@ -77,7 +75,7 @@ pub struct HookEntry {
 }
 
 /// How a target consumes hook fragments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookFragmentMode {
     MergeJson,
     File,

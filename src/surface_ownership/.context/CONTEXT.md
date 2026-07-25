@@ -8,6 +8,15 @@ Path ownership is scoped by `(target_root, dest_path)` and carried by an
 | `Installed { installed_checksum }` | Mars-installed bytes are at the path | Content comparison, overwrite, and deletion authority |
 | `PendingDeletion` | A prior deletion was not confirmed | Retry deletion only |
 
+Deletion authority and replacement authority are distinct powers:
+
+- **Either** lifecycle state authorizes deletion of the recorded path.
+- **Only** `Installed` authorizes overwriting an existing path without
+  `--force`, because the checksum asserts what content mars put there.
+- `PendingDeletion` at an existing path is an unmanaged collision:
+  mars preserves the local content and reports the collision. `--force`
+  explicitly adopts that path back to `Installed`.
+
 A failed removal converts the retained output to `PendingDeletion`; it does not
 carry forward a stale checksum. A successful write converts the same path back
 to `Installed`. An already-absent path confirms deletion and must not produce a

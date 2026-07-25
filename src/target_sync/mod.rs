@@ -308,36 +308,37 @@ fn sync_one_target(
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
                         }
-                    } else if native_skill_variant_key.is_none()
-                        && old_lock.contains_output(target_name, dest_rel)
-                        && let Some(expected_checksum) = &outcome.installed_checksum
-                    {
-                        match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
-                            Ok(actual) => {
-                                let actual = ContentHash::from(actual);
-                                if &actual != expected_checksum {
-                                    diag.warn(
-                                        "target-divergent",
-                                        format!(
-                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
-                                            dest_rel,
-                                            cmd1 = managed_cmd("mars sync --force"),
-                                            cmd2 = managed_cmd("mars repair"),
-                                        ),
-                                    );
+                    } else if native_skill_variant_key.is_none() && dest_exists {
+                        if old_lock
+                            .installed_checksum_for_output(target_name, dest_rel)
+                            .is_none()
+                        {
+                            surface_ownership::warn_no_installed_claim_collision(
+                                target_name,
+                                dest_rel,
+                                collision_hint,
+                                diag,
+                            );
+                        } else if let Some(expected_checksum) = &outcome.installed_checksum {
+                            match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
+                                Ok(actual) => {
+                                    let actual = ContentHash::from(actual);
+                                    if &actual != expected_checksum {
+                                        diag.warn(
+                                            "target-divergent",
+                                            format!(
+                                                "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
+                                                dest_rel,
+                                                cmd1 = managed_cmd("mars sync --force"),
+                                                cmd2 = managed_cmd("mars repair"),
+                                            ),
+                                        );
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                errors.push(format!("failed to verify {dest_rel} checksum: {e}"))
+                                Err(e) => errors
+                                    .push(format!("failed to verify {dest_rel} checksum: {e}")),
                             }
                         }
-                    } else if dest_exists && !old_lock.contains_output(target_name, dest_rel) {
-                        surface_ownership::warn_no_installed_claim_collision(
-                            target_name,
-                            dest_rel,
-                            collision_hint,
-                            diag,
-                        );
                     }
                 }
             }
@@ -1241,6 +1242,54 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|d| d.code == "target-divergent" && d.message.contains("agents/coder.md"))
+        );
+    }
+
+    #[test]
+    fn sync_skipped_pending_deletion_reports_missing_installed_claim() {
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".agents");
+
+        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
+        std::fs::write(mars_dir.join("agents/coder.md"), "# Canonical").unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(target.join("agents/coder.md"), "# User replacement").unwrap();
+
+        let checksum = hash::hash_bytes(b"# Canonical");
+        let outcomes = vec![make_skipped_with_checksum("agents/coder.md", &checksum)];
+        let mut lock = lock_with_target_outputs(".agents", &[("agents/coder.md", "sha256:old")]);
+        lock.items.get_mut("agent/coder.md").unwrap().outputs[0].mark_pending_deletion();
+        let mut diag = DiagnosticCollector::new();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".agents".to_string()],
+            &outcomes,
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        assert_eq!(results[0].items_synced, 0);
+        assert_eq!(
+            std::fs::read_to_string(target.join("agents/coder.md")).unwrap(),
+            "# User replacement"
+        );
+        let diagnostics = diag.drain();
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "target-unmanaged-collision"
+                    && diagnostic
+                        .message
+                        .contains("has no installed-content claim")
+            }),
+            "a pending-deletion record carries no installed-content authority"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "target-divergent")
         );
     }
 

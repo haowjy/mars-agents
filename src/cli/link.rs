@@ -19,7 +19,7 @@ use super::output;
 pub struct LinkArgs {
     /// Target directory to materialize (e.g. `.claude`).
     pub target: String,
-    /// Adopt untracked collisions in the linked target (overwrite + record in lock).
+    /// Adopt collisions without an installed-content claim (overwrite + record in lock).
     #[arg(long)]
     pub force: bool,
 }

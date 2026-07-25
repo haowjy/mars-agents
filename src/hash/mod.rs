@@ -54,6 +54,11 @@ fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
 fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<String, MarsError> {
     let mut entries: Vec<(String, String)> = Vec::new();
     collect_file_hashes(dir, dir, &mut entries, excluded_top_level)?;
+    Ok(hash_file_manifest(entries))
+}
+
+/// Hash `(relative path, file hash)` entries using the directory-hash format.
+pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut manifest = String::new();
@@ -64,7 +69,7 @@ fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<
         manifest.push('\n');
     }
 
-    Ok(hash_bytes(manifest.as_bytes()))
+    hash_bytes(manifest.as_bytes())
 }
 
 /// Recursively collect (relative_path, hash) pairs for all files in a directory.

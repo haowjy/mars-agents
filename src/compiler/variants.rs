@@ -224,26 +224,86 @@ pub fn project_skill_for_target(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<bool, MarsError> {
+    let native_projection = match harness_variant_key {
+        Some(key) => Some(prepare_native_skill_projection(
+            source, key, diag, skill_name,
+        )?),
+        None => None,
+    };
+    project_prepared_skill_for_target(source, dest, native_projection.as_ref())
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeSkillProjection {
+    overrides: std::collections::BTreeMap<String, Vec<u8>>,
+    pub(crate) installed_checksum: crate::types::ContentHash,
+}
+
+pub(crate) fn prepare_native_skill_projection(
+    source: &Path,
+    harness_key: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    skill_name: &str,
+) -> Result<NativeSkillProjection, MarsError> {
+    let selected_skill =
+        harness_skill_variant_path(source, harness_key).unwrap_or_else(|| source.join("SKILL.md"));
+    let selected_content = fs::read_to_string(&selected_skill)?;
+    let lowered = lower_projected_skill_for_harness(
+        source,
+        &selected_content,
+        harness_key,
+        skill_name,
+        diag,
+    )?;
+
+    let mut overrides =
+        std::collections::BTreeMap::from([("SKILL.md".to_string(), selected_content.into_bytes())]);
+    if let Some(lowered) = lowered {
+        overrides.insert("SKILL.md".to_string(), lowered.bytes);
+        for sibling in lowered.siblings {
+            overrides.insert(sibling.rel_path, sibling.bytes);
+        }
+    }
+
+    let mut entries = Vec::new();
+    collect_native_projection_hashes(source, source, &mut entries)?;
+    let mut hashes: std::collections::BTreeMap<_, _> = entries.into_iter().collect();
+    for (rel_path, bytes) in &overrides {
+        hashes.insert(rel_path.clone(), crate::hash::hash_bytes(bytes));
+    }
+    let installed_checksum = crate::types::ContentHash::from(crate::hash::hash_file_manifest(
+        hashes.into_iter().collect(),
+    ));
+
+    Ok(NativeSkillProjection {
+        overrides,
+        installed_checksum,
+    })
+}
+
+pub(crate) fn project_prepared_skill_for_target(
+    source: &Path,
+    dest: &Path,
+    native_projection: Option<&NativeSkillProjection>,
+) -> Result<bool, MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
 
     let tmp_dir = tempfile::TempDir::new_in(parent)?;
-    if harness_variant_key.is_some() {
+    if native_projection.is_some() {
         copy_dir_following_symlinks_excluding_top_level_variants(source, tmp_dir.path())?;
     } else {
         copy_dir_following_symlinks(source, tmp_dir.path())?;
     }
 
-    if let Some(variant_path) =
-        harness_variant_key.and_then(|key| harness_skill_variant_path(source, key))
-    {
-        let projected_skill = tmp_dir.path().join("SKILL.md");
-        let content = fs::read(variant_path)?;
-        fs::write(projected_skill, content)?;
-    }
-
-    if let Some(key) = harness_variant_key {
-        compile_projected_skill_frontmatter(source, tmp_dir.path(), key, diag, skill_name)?;
+    if let Some(projection) = native_projection {
+        for (rel_path, bytes) in &projection.overrides {
+            let projected_path = tmp_dir.path().join(rel_path);
+            if let Some(parent) = projected_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(projected_path, bytes)?;
+        }
     }
 
     let tmp_path = tmp_dir.keep();
@@ -253,25 +313,6 @@ pub fn project_skill_for_target(
     }
     crate::platform::fs::replace_generated_dir(&tmp_path, dest)?;
     Ok(true)
-}
-
-fn compile_projected_skill_frontmatter(
-    source: &Path,
-    projected_dir: &Path,
-    harness_key: &str,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-    skill_name: &str,
-) -> Result<(), MarsError> {
-    let projected_skill = projected_dir.join("SKILL.md");
-    let lowered =
-        lower_projected_skill_for_harness(source, &projected_skill, harness_key, skill_name, diag)?;
-    if let Some(lowered) = lowered {
-        fs::write(projected_skill, lowered.bytes)?;
-        for sibling in lowered.siblings {
-            fs::write(projected_dir.join(&sibling.rel_path), sibling.bytes)?;
-        }
-    }
-    Ok(())
 }
 
 /// Lower a staged skill for one native harness (variant-aware) and emit lossiness warnings.
@@ -286,9 +327,10 @@ pub(crate) fn emit_staged_skill_lossiness_for_harness(
 ) -> Result<(), MarsError> {
     let projected_skill = harness_skill_variant_path(staged_skill_dir, harness_key)
         .unwrap_or_else(|| staged_skill_dir.join("SKILL.md"));
+    let selected_content = fs::read_to_string(&projected_skill)?;
     let _ = lower_projected_skill_for_harness(
         staged_skill_dir,
-        &projected_skill,
+        &selected_content,
         harness_key,
         skill_name,
         diag,
@@ -298,7 +340,7 @@ pub(crate) fn emit_staged_skill_lossiness_for_harness(
 
 fn lower_projected_skill_for_harness(
     source: &Path,
-    projected_skill: &Path,
+    selected_content: &str,
     harness_key: &str,
     skill_name: &str,
     diag: &mut crate::diagnostic::DiagnosticCollector,
@@ -312,7 +354,6 @@ fn lower_projected_skill_for_harness(
 
     let base_skill = source.join("SKILL.md");
     let base_content = fs::read_to_string(&base_skill)?;
-    let selected_content = fs::read_to_string(projected_skill)?;
 
     let mut skill_diags = Vec::new();
     let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
@@ -348,7 +389,7 @@ fn lower_projected_skill_for_harness(
         return Ok(None);
     }
 
-    let selected_fm = match crate::frontmatter::parse(&selected_content) {
+    let selected_fm = match crate::frontmatter::parse(selected_content) {
         Ok(fm) => fm,
         Err(e) => {
             diag.error_with_category(
@@ -368,6 +409,43 @@ fn lower_projected_skill_for_harness(
     );
 
     Ok(Some(lowered))
+}
+
+fn collect_native_projection_hashes(
+    root: &Path,
+    current: &Path,
+    entries: &mut Vec<(String, String)>,
+) -> Result<(), MarsError> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root).expect("path is always under root");
+        if rel
+            .components()
+            .next()
+            .is_some_and(|component| component.as_os_str() == std::ffi::OsStr::new("variants"))
+        {
+            continue;
+        }
+        let metadata = fs::metadata(&path)?;
+        if metadata.is_dir() {
+            collect_native_projection_hashes(root, &path, entries)?;
+        } else if metadata.is_file() {
+            let rel_path = rel
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            entries.push((rel_path, crate::hash::hash_bytes(&fs::read(path)?)));
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported filesystem entry: {}", path.display()),
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir_following_symlinks_excluding_top_level_variants(

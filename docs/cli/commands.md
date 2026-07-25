@@ -315,7 +315,7 @@ mars link .claude --force    # Adopt collisions without an installed-content cla
 
 ## `mars unlink`
 
-Remove a managed target directory.
+Stop managing a target and remove Mars-owned content from it.
 
 ```bash
 mars unlink <target>
@@ -323,7 +323,8 @@ mars unlink <target>
 
 **Behavior:**
 - Removes `<target>` from `mars.toml [settings] targets` (and `managed_root` if it matches)
-- Deletes the target directory if it was managed
+- Removes only outputs and config entries owned by the target's lock records
+- Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
 - Reports if the target was not managed (no-op)
 
 ```bash
@@ -497,7 +498,11 @@ Rebuild managed state from config + dependencies.
 mars repair
 ```
 
-Runs a forced sync that overwrites everything. If the lock file is corrupt, resets it to empty and rebuilds from scratch. Handles unmanaged collisions during corrupt-lock recovery by removing colliding paths and retrying (bounded to 1024 retries).
+Runs one forced sync. If the lock file is corrupt, repair treats it as empty in
+memory and rebuilds from config plus dependencies. The corrupt on-disk bytes
+are replaced only when the full pipeline finalizes successfully. If recovery
+encounters unreadable removed-schema hooks, it halts before materialization
+and leaves the corrupt lock untouched.
 
 ---
 

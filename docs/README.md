@@ -16,7 +16,12 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
-**Lock file** (`mars.lock`) records every managed item with its source, version, and content checksums. Lock v2 tracks outputs per `(target_root, dest_path)` — ownership in `.cursor` is independent from the same path under `.mars/`. Dependency model-alias winners are also persisted in committed lock state (`dependency_model_aliases`). See [internals/lock-file.md](internals/lock-file.md) for format details.
+**Lock file** (`mars.lock`) records every managed item with its source, version,
+and per-output lifecycle. Lock v3 tracks installed and pending-deletion outputs
+per `(target_root, dest_path)` — ownership in `.cursor` is independent from the
+same path under `.mars/`. Dependency model-alias winners are also persisted in
+committed lock state (`dependency_model_aliases`). See
+[internals/lock-file.md](internals/lock-file.md) for format details.
 
 **Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [config/mars-toml.md](config/mars-toml.md).
 

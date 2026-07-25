@@ -2,7 +2,7 @@
 
 ## `mars doctor`
 
-The primary diagnostic tool. Checks six areas and reports all issues at once.
+The primary diagnostic tool. It reports all detected issues at once.
 
 ```bash
 mars doctor
@@ -18,7 +18,8 @@ mars doctor
 | Conflict markers | Agent files don't contain `<<<<<<<` / `>>>>>>>` |
 | Config-lock consistency | Every dependency in config has a lock entry |
 | Skill references | Every agent's declared skill deps exist on disk |
-| Link health | Symlinks exist, point to correct managed root, not broken |
+| Legacy item symlinks | Symlinked agents and skills in `.mars/` are reported for normalization |
+| Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree |
 | Target divergence | Each locked item's target copy matches lock checksum |
 
 ### Exit codes
@@ -34,7 +35,7 @@ mars doctor
   agents/coder.md has unresolved conflict markers
   dependency `dev` is in config but not in lock — run `mars sync`
   agent `coder` references missing skill `planning` — add a source that provides it
-  link `.claude` — .claude/agents points to ../other (expected .agents/agents)
+  legacy symlinked agent `coder` detected in managed dir — run `mars sync` to normalize to copied content
 ```
 
 ### Target divergence
@@ -51,9 +52,9 @@ mars repair
 
 ### What it does
 
-1. Loads the lock file. If corrupt, resets to empty and warns.
-2. Runs a forced sync (`--force` mode): overwrites all managed files from dependencies.
-3. During corrupt-lock recovery, removes unmanaged collision paths and retries (bounded to 1024 retries).
+1. Loads the lock file. If corrupt, treats it as empty in memory and warns while preserving the on-disk bytes.
+2. Runs one forced sync (`--force` mode) to rebuild managed files from config and dependencies.
+3. Replaces a corrupt lock only if the complete pipeline reaches atomic finalization. Unreadable removed-schema hooks cause a recovery halt before materialization.
 
 ### When to use
 
@@ -94,14 +95,16 @@ The lock file is corrupt. Run:
 mars repair
 ```
 
-This resets the lock and rebuilds from dependencies.
+Repair rebuilds from config and dependencies. It preserves the corrupt lock
+bytes until a complete run succeeds, so a recovery halt or other failure
+leaves the original evidence on disk.
 
 ### "collides with unmanaged path"
 
 A managed item would overwrite a file that Mars doesn't own. Options:
 - Move the unmanaged file out of the way
 - Rename the managed item: `mars rename agents/conflict.md agents/other-name.md`
-- If this is during repair, the file is removed automatically
+- Use `--force` with a command that supports deliberate adoption; repair does not run a special collision-removal retry loop
 
 ### Missing files on disk
 

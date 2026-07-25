@@ -4,8 +4,6 @@
 //! for package-defined MCP servers and hooks.
 
 pub mod resolve;
-pub mod stale;
-
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -17,12 +15,6 @@ pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_outputs: Vec<(String, String)>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigEntrySurface {
-    Mcp,
-    Hook,
 }
 
 pub(crate) fn file_hook_output_preserve_paths(
@@ -171,43 +163,34 @@ pub(crate) fn preflight_config_entries(
             continue;
         }
         if let Some(adapter) = registry.get(target_name) {
-            let names = adapter
-                .mcp_config_file_names()
-                .iter()
-                .filter(|_| *touches_mcp)
-                .chain(
-                    adapter
-                        .hook_config_file_names()
-                        .iter()
-                        .filter(|_| *touches_hooks),
-                );
-            for name in names {
-                let path = target_dir.join(name);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                }
-                if let Err(error) = crate::target::validate_json_config_file(&path) {
-                    errors.push(error.to_string());
-                }
-            }
-        }
-        if let Some(adapter) = registry.get(target_name)
-            && resolved
+            let has_legacy_hooks = resolved
                 .loaded
                 .old_lock
                 .config_entries
                 .get(target_name)
                 .is_some_and(|records| {
                     records.iter().any(|(key, record)| {
-                        key.starts_with("hook:") && record.emitted_json.is_none()
+                        crate::surface_ownership::retention::Surface::of_key(key)
+                            == crate::surface_ownership::retention::Surface::Hook
+                            && record.emitted_json.is_none()
                     })
-                })
-        {
-            for name in adapter.legacy_hook_config_file_names() {
-                let path = ctx.project_root.join(target_name).join(name);
-                if path.is_file()
-                    && let Err(error) = crate::target::parse_json_file(&path)
-                {
+                });
+            let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            if *touches_mcp {
+                names.extend(adapter.mcp_config_file_names());
+            }
+            if *touches_hooks {
+                names.extend(adapter.hook_config_file_names());
+            }
+            if has_legacy_hooks {
+                names.extend(adapter.legacy_hook_config_file_names());
+            }
+            for name in names {
+                let path = target_dir.join(name);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                    errors.push(error);
+                }
+                if let Err(error) = crate::target::validate_json_config_file(&path) {
                     errors.push(error.to_string());
                 }
             }
@@ -483,10 +466,13 @@ pub(crate) fn compile_config_entries(
     let registry = TargetRegistry::new();
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
-    let mut pending_writes: BTreeMap<String, Vec<ConfigEntry>> = BTreeMap::new();
+    let mut pending_writes: BTreeMap<
+        (String, crate::surface_ownership::retention::Surface),
+        Vec<ConfigEntry>,
+    > = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     let mut desired_file_outputs = std::collections::BTreeSet::new();
-    let mut emitted_outputs = Vec::new();
+    let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
 
     // First lower every target without mutating its config. Stale hook removal
@@ -651,8 +637,11 @@ pub(crate) fn compile_config_entries(
         if !target_records.is_empty() {
             desired_records.insert(target_root.clone(), target_records);
         }
-        if !entries.is_empty() {
-            pending_writes.insert(target_root.clone(), entries);
+        for entry in entries {
+            pending_writes
+                .entry((target_root.clone(), entry.surface()))
+                .or_default()
+                .push(entry);
         }
         if !file_writes.is_empty() {
             pending_file_writes.insert(target_root.clone(), file_writes);
@@ -666,48 +655,11 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
-    let mut retained_stale_records = BTreeMap::new();
-    let mut hook_sweep_failures = std::collections::BTreeSet::new();
+    let removal_plan =
+        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records);
 
-    // Sweep every prior merge-mode hook emission before writing replacements. Exact fragment
-    // arrays come from the lock; records from v0.11.0 intentionally fall back to
-    // the one-release command-path bridge in the adapters.
-    if !dry_run {
-        for (target_root, records) in previous_records {
-            let hook_records: BTreeMap<_, _> = records
-                .iter()
-                .filter(|(key, _)| key.starts_with("hook:"))
-                .map(|(key, record)| (key.clone(), record.clone()))
-                .collect();
-            if hook_records.is_empty() {
-                continue;
-            }
-            if let Some(adapter) = registry.get(target_root) {
-                let target_dir = ctx.project_root.join(target_root);
-                let sweep_result =
-                    adapter.remove_owned_hook_entries(&hook_records, &target_dir, diag);
-                if let Err(error) = &sweep_result {
-                    diag.warn(
-                        "config-entry-remove",
-                        format!(
-                            "failed to remove prior hook entries from `{target_root}`: {error}"
-                        ),
-                    );
-                }
-                if !record_hook_sweep_outcome(
-                    &hook_records,
-                    sweep_result.is_ok(),
-                    &mut retained_stale_records,
-                    target_root,
-                ) {
-                    hook_sweep_failures.insert(target_root.clone());
-                }
-            }
-        }
-    }
-    for (target_root, keys) in stale_entries {
-        if dry_run {
+    if dry_run {
+        for (target_root, keys) in removal_plan.stale_keys() {
             diag.warn(
                 "stale-config-entry",
                 format!(
@@ -715,51 +667,38 @@ pub(crate) fn compile_config_entries(
                     keys.join(", ")
                 ),
             );
-            continue;
         }
-
-        let Some(adapter) = registry.get(&target_root) else {
-            continue;
-        };
-        let target_dir = ctx.project_root.join(&target_root);
-        let non_hook_keys: Vec<String> = keys
-            .iter()
-            .filter(|key| !key.starts_with("hook:"))
-            .cloned()
-            .collect();
-        if let Err(e) = adapter.remove_config_entries(&non_hook_keys, &target_dir) {
-            diag.warn(
-                "config-entry-remove",
-                format!("failed to remove stale config entries from `{target_root}`: {e}"),
-            );
-            if let Some(previous_target_records) = previous_records.get(&target_root) {
-                let target_records = retained_stale_records
-                    .entry(target_root.clone())
-                    .or_insert_with(BTreeMap::new);
-                for key in &keys {
-                    if let Some(record) = previous_target_records.get(key) {
-                        target_records.insert(key.clone(), record.clone());
-                    }
-                }
-            }
-        } else {
-            diag.info(
-                "stale-config-entry",
-                format!(
-                    "removed stale config entries from `{target_root}`: {}",
-                    keys.join(", ")
-                ),
-            );
-        }
-    }
-
-    if dry_run {
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
             removed_outputs,
         };
     }
+
+    use crate::surface_ownership::retention::Surface;
+    let retention = removal_plan.execute(
+        |token, target_root, surface, removal, diag| {
+            let adapter = registry
+                .get(target_root)
+                .ok_or_else(|| format!("no adapter registered for `{target_root}`"))?;
+            let target_dir = ctx.project_root.join(target_root);
+            match surface {
+                Surface::Hook => adapter
+                    .remove_owned_hook_entries(token, &removal.prior_records, &target_dir, diag)
+                    .map_err(|error| {
+                        format!("failed to remove prior hook entries from `{target_root}`: {error}")
+                    }),
+                Surface::Mcp => adapter
+                    .remove_config_entries(token, &removal.keys_to_remove, &target_dir)
+                    .map_err(|error| {
+                        format!(
+                            "failed to remove stale config entries from `{target_root}`: {error}"
+                        )
+                    }),
+            }
+        },
+        diag,
+    );
 
     // File-mode fragments are ordinary target outputs. Remove only exact paths
     // owned by the old lock and no longer desired.
@@ -787,175 +726,223 @@ pub(crate) fn compile_config_entries(
         }
     }
 
-    // Write desired entries only after every stale/name-matched binding has
-    // been swept. A single sync therefore converges both config and lock when
-    // a hook keeps its name but changes from a universal to native event key.
-    let mut current_records = retained_stale_records;
-    for (target_root, entries) in pending_writes {
+    apply_replacement_writes(
+        ctx,
+        &registry,
+        old_lock,
+        ownership_lock,
+        retention,
+        pending_writes,
+        pending_file_writes,
+        &desired_records,
+        force,
+        diag,
+        emitted_outputs,
+        removed_outputs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_replacement_writes(
+    ctx: &MarsContext,
+    registry: &crate::target::TargetRegistry,
+    old_lock: &crate::lock::LockFile,
+    ownership_lock: &mut crate::lock::LockFile,
+    retention: crate::surface_ownership::retention::RetentionPlan,
+    pending_writes: BTreeMap<
+        (String, crate::surface_ownership::retention::Surface),
+        Vec<crate::target::ConfigEntry>,
+    >,
+    pending_file_writes: BTreeMap<String, Vec<(String, String, String)>>,
+    desired_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    force: bool,
+    diag: &mut DiagnosticCollector,
+    mut emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
+    removed_outputs: Vec<(String, String)>,
+) -> ConfigEntryCompilation {
+    use crate::surface_ownership::retention::Surface;
+    use crate::target::ConfigEntry;
+
+    // Write desired entries only after every removal has completed.
+    let mut written_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
+        BTreeMap::new();
+    for ((target_root, surface), entries) in pending_writes {
+        let Some(permit) = retention.write_permit(&target_root, surface) else {
+            diag.info(
+                "config-entry-suppressed",
+                format!(
+                    "not writing {surface:?} entries to `{target_root}`: prior removal unconfirmed"
+                ),
+            );
+            continue;
+        };
         let Some(adapter) = registry.get(&target_root) else {
             continue;
         };
         let target_dir = ctx.project_root.join(&target_root);
-        let mut mcp_entries = Vec::new();
-        let mut hook_entries = Vec::new();
-        for entry in entries {
-            match entry {
-                ConfigEntry::McpServer(_) => mcp_entries.push(entry),
-                ConfigEntry::Hook(_) => hook_entries.push(entry),
-            }
-        }
-        for (surface, surface_entries) in [
-            (ConfigEntrySurface::Mcp, mcp_entries),
-            (ConfigEntrySurface::Hook, hook_entries),
-        ] {
-            if surface_entries.is_empty() {
-                continue;
-            }
-            if surface == ConfigEntrySurface::Hook && hook_sweep_failures.contains(&target_root) {
-                continue;
-            }
-            match adapter.write_config_entries(&surface_entries, &target_dir) {
-                Ok(_) => {
-                    if let Some(records) = desired_records.get(&target_root) {
-                        let written_keys: std::collections::BTreeSet<_> =
-                            surface_entries.iter().map(ConfigEntry::key).collect();
-                        current_records
-                            .entry(target_root.clone())
-                            .or_default()
-                            .extend(
-                                records
-                                    .iter()
-                                    .filter(|(key, _)| written_keys.contains(*key))
-                                    .map(|(key, record)| (key.clone(), record.clone())),
-                            );
-                    }
-                }
-                Err(e) => {
-                    diag.warn(
-                        "config-entry-write",
-                        format!("failed to write config entries to `{target_root}`: {e}"),
-                    );
+        match adapter.write_config_entries(permit, &entries, &target_dir) {
+            Ok(_) => {
+                if let Some(records) = desired_records.get(&target_root) {
+                    let written_keys: std::collections::BTreeSet<_> =
+                        entries.iter().map(ConfigEntry::key).collect();
+                    written_records
+                        .entry(target_root.clone())
+                        .or_default()
+                        .extend(
+                            records
+                                .iter()
+                                .filter(|(key, _)| written_keys.contains(*key))
+                                .map(|(key, record)| (key.clone(), record.clone())),
+                        );
                 }
             }
+            Err(error) => diag.warn(
+                "config-entry-write",
+                format!("failed to write config entries to `{target_root}`: {error}"),
+            ),
         }
     }
 
     for (target_root, files) in pending_file_writes {
-        for (owner_canonical_dest_path, relative, content) in files {
-            let path = ctx.project_root.join(&target_root).join(&relative);
-            let dest_exists = crate::surface_ownership::target_dest_exists(&path);
-            match crate::surface_ownership::copy_decision(
-                old_lock,
-                &target_root,
-                &relative,
-                dest_exists,
-                force,
-            ) {
-                crate::surface_ownership::SurfaceCopyDecision::SkipUnmanagedCollision => {
-                    crate::surface_ownership::warn_unmanaged_collision(
-                        &target_root,
-                        &relative,
-                        crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                        diag,
-                    );
-                    continue;
-                }
-                crate::surface_ownership::SurfaceCopyDecision::Proceed => {
-                    if dest_exists && force && !old_lock.contains_output(&target_root, &relative) {
-                        crate::surface_ownership::warn_unmanaged_adopted(
-                            &target_root,
-                            &relative,
-                            crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                            diag,
-                        );
-                    }
-                }
-            }
-            if dest_exists && !force {
-                let previous = old_lock.items.values().find_map(|item| {
-                    item.outputs.iter().find(|output| {
-                        output.target_root == target_root
-                            && crate::target::dest_paths_equivalent(
-                                output.dest_path.as_str(),
-                                &relative,
-                            )
-                    })
-                });
-                let diverged = previous.is_some_and(|previous| {
-                    std::fs::read(&path)
-                        .map(|bytes| crate::hash::hash_bytes(&bytes))
-                        .is_ok_and(|actual| actual != previous.installed_checksum.as_ref())
-                });
-                if diverged {
-                    diag.warn(
-                        "target-divergent",
-                        format!(
-                            "target `{target_root}` item `{relative}` was edited after Mars installed it \
-                             (preserved local content; run `{}` to reset)",
-                            crate::types::managed_cmd("mars sync --force")
-                        ),
-                    );
-                    continue;
-                }
-            }
-            let output = crate::lock::CompiledNativeOutput {
-                owner_canonical_dest_path,
-                target_root: target_root.clone(),
-                dest_path: relative,
-                installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
-                    content.as_bytes(),
-                )),
-            };
-            if let Err(error) = crate::lock::apply_compiled_native_outputs(
-                ownership_lock,
-                std::slice::from_ref(&output),
-            ) {
-                diag.warn(
-                    "config-entry-write",
-                    format!(
-                        "not writing file hook `{}` because its ownership cannot be recorded: {error}",
-                        path.display()
-                    ),
-                );
-                continue;
-            }
-            let result = (|| -> Result<(), crate::error::MarsError> {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                crate::fs::atomic_write(&path, content.as_bytes())
-            })();
-            if let Err(error) = result {
-                diag.warn(
-                    "config-entry-write",
-                    format!("failed to write file hook `{}`: {error}", path.display()),
-                );
-                continue;
-            }
-            emitted_outputs.push(output);
-        }
+        let Some(permit) = retention.write_permit(&target_root, Surface::Hook) else {
+            diag.info(
+                "config-entry-suppressed",
+                format!("not writing Hook entries to `{target_root}`: prior removal unconfirmed"),
+            );
+            continue;
+        };
+        write_file_hook_outputs(
+            permit,
+            ctx,
+            old_lock,
+            ownership_lock,
+            &target_root,
+            files,
+            force,
+            diag,
+            &mut emitted_outputs,
+        );
     }
 
+    let mut records = retention.into_retained_records();
+    for (target_root, target_records) in written_records {
+        records
+            .entry(target_root)
+            .or_default()
+            .extend(target_records);
+    }
     ConfigEntryCompilation {
-        records: current_records,
+        records,
         emitted_outputs,
         removed_outputs,
     }
 }
 
-fn record_hook_sweep_outcome(
-    prior_hook_records: &BTreeMap<String, ConfigEntryRecord>,
-    sweep_succeeded: bool,
-    retained_records: &mut BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+#[allow(clippy::too_many_arguments)]
+fn write_file_hook_outputs(
+    _permit: crate::surface_ownership::retention::WritePermit<'_>,
+    ctx: &MarsContext,
+    old_lock: &crate::lock::LockFile,
+    ownership_lock: &mut crate::lock::LockFile,
     target_root: &str,
-) -> bool {
-    if !sweep_succeeded {
-        retained_records
-            .entry(target_root.to_string())
-            .or_default()
-            .extend(prior_hook_records.clone());
+    files: Vec<(String, String, String)>,
+    force: bool,
+    diag: &mut DiagnosticCollector,
+    emitted_outputs: &mut Vec<crate::lock::CompiledNativeOutput>,
+) {
+    for (owner_canonical_dest_path, relative, content) in files {
+        let path = ctx.project_root.join(target_root).join(&relative);
+        let dest_exists = crate::surface_ownership::target_dest_exists(&path);
+        match crate::surface_ownership::copy_decision(
+            old_lock,
+            target_root,
+            &relative,
+            dest_exists,
+            force,
+        ) {
+            crate::surface_ownership::SurfaceCopyDecision::SkipUnmanagedCollision => {
+                crate::surface_ownership::warn_unmanaged_collision(
+                    target_root,
+                    &relative,
+                    crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                    diag,
+                );
+                continue;
+            }
+            crate::surface_ownership::SurfaceCopyDecision::Proceed => {
+                if dest_exists && force && !old_lock.contains_output(target_root, &relative) {
+                    crate::surface_ownership::warn_unmanaged_adopted(
+                        target_root,
+                        &relative,
+                        crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                        diag,
+                    );
+                }
+            }
+        }
+        if dest_exists && !force {
+            let previous = old_lock.items.values().find_map(|item| {
+                item.outputs.iter().find(|output| {
+                    output.target_root == target_root
+                        && crate::target::dest_paths_equivalent(
+                            output.dest_path.as_str(),
+                            &relative,
+                        )
+                })
+            });
+            let diverged = previous.is_some_and(|previous| {
+                std::fs::read(&path)
+                    .map(|bytes| crate::hash::hash_bytes(&bytes))
+                    .is_ok_and(|actual| actual != previous.installed_checksum.as_ref())
+            });
+            if diverged {
+                diag.warn(
+                    "target-divergent",
+                    format!(
+                        "target `{target_root}` item `{relative}` was edited after Mars installed it \
+                         (preserved local content; run `{}` to reset)",
+                        crate::types::managed_cmd("mars sync --force")
+                    ),
+                );
+                continue;
+            }
+        }
+        let output = crate::lock::CompiledNativeOutput {
+            owner_canonical_dest_path,
+            target_root: target_root.to_owned(),
+            dest_path: relative,
+            installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
+                content.as_bytes(),
+            )),
+        };
+        if let Err(error) = crate::lock::apply_compiled_native_outputs(
+            ownership_lock,
+            std::slice::from_ref(&output),
+        ) {
+            diag.warn(
+                "config-entry-write",
+                format!(
+                    "not writing file hook `{}` because its ownership cannot be recorded: {error}",
+                    path.display()
+                ),
+            );
+            continue;
+        }
+        let result = (|| -> Result<(), crate::error::MarsError> {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::fs::atomic_write(&path, content.as_bytes())
+        })();
+        if let Err(error) = result {
+            diag.warn(
+                "config-entry-write",
+                format!("failed to write file hook `{}`: {error}", path.display()),
+            );
+            continue;
+        }
+        emitted_outputs.push(output);
     }
-    sweep_succeeded
 }
 
 fn source_may_emit_mcp(graph: &crate::resolve::ResolvedGraph, source_name: &SourceName) -> bool {
@@ -1114,25 +1101,6 @@ mod tests {
             manifest: None,
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }
-    }
-
-    #[test]
-    fn failed_hook_sweep_retains_prior_ownership_record() {
-        let prior = BTreeMap::from([(
-            "hook:SessionStart:audit".to_string(),
-            ConfigEntryRecord {
-                emitted_json: Some("[{\"hooks\":[]}]".to_string()),
-            },
-        )]);
-        let mut retained = BTreeMap::new();
-
-        assert!(!record_hook_sweep_outcome(
-            &prior,
-            false,
-            &mut retained,
-            ".claude",
-        ));
-        assert_eq!(retained.get(".claude"), Some(&prior));
     }
 
     #[test]

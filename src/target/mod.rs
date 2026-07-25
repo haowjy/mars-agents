@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
+use crate::surface_ownership::retention::{RemovalToken, Surface, WritePermit};
 use crate::types::DestPath;
 use indexmap::IndexMap;
 
@@ -39,6 +40,13 @@ pub enum ConfigEntry {
 
 impl ConfigEntry {
     /// Stable identity key for this entry (used by stale-cleanup logic).
+    pub(crate) fn surface(&self) -> Surface {
+        match self {
+            Self::McpServer(_) => Surface::Mcp,
+            Self::Hook(_) => Surface::Hook,
+        }
+    }
+
     pub fn key(&self) -> String {
         match self {
             ConfigEntry::McpServer(e) => format!("mcp:{}", e.name),
@@ -142,6 +150,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Default: no-op — targets that don't use a config file leave this as-is.
     fn write_config_entries(
         &self,
+        _permit: WritePermit<'_>,
         _entries: &[ConfigEntry],
         _target_dir: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
@@ -178,6 +187,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Remove hook entries recorded in the previous lock by structural equality.
     fn remove_owned_hook_entries(
         &self,
+        _token: RemovalToken<'_>,
         _records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         _target_dir: &Path,
         _diag: &mut crate::diagnostic::DiagnosticCollector,
@@ -191,6 +201,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Default: no-op.
     fn remove_config_entries(
         &self,
+        _token: RemovalToken<'_>,
         _entry_keys: &[String],
         _target_dir: &Path,
     ) -> Result<(), MarsError> {

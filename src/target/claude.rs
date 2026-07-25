@@ -78,6 +78,7 @@ impl TargetAdapter for ClaudeAdapter {
 
     fn write_config_entries(
         &self,
+        _permit: crate::surface_ownership::retention::WritePermit<'_>,
         entries: &[ConfigEntry],
         target_dir: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
@@ -131,6 +132,7 @@ impl TargetAdapter for ClaudeAdapter {
 
     fn remove_owned_hook_entries(
         &self,
+        _token: crate::surface_ownership::retention::RemovalToken<'_>,
         records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         target_dir: &Path,
         diag: &mut crate::diagnostic::DiagnosticCollector,
@@ -140,6 +142,7 @@ impl TargetAdapter for ClaudeAdapter {
 
     fn remove_config_entries(
         &self,
+        _token: crate::surface_ownership::retention::RemovalToken<'_>,
         entry_keys: &[String],
         target_dir: &Path,
     ) -> Result<(), MarsError> {
@@ -443,6 +446,11 @@ fn remove_owned_claude_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::surface_ownership::retention::{RemovalToken, Surface, WritePermit};
+
+    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
+        WritePermit::for_test(".claude", entries[0].surface())
+    }
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
@@ -498,7 +506,9 @@ mod tests {
 
         let adapter = ClaudeAdapter;
         let entries = vec![make_mcp_entry("context7")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        let written = adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join(".mcp.json").exists());
@@ -523,7 +533,9 @@ mod tests {
 
         let adapter = ClaudeAdapter;
         let entries = vec![make_mcp_entry("new-server")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -536,7 +548,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         let entries = vec![make_mcp_entry_with_env("server", "API_KEY", "MY_SECRET")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -551,7 +565,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        let written = adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join("settings.local.json").exists());
@@ -569,6 +585,7 @@ mod tests {
         let adapter = ClaudeAdapter;
         adapter
             .write_config_entries(
+                WritePermit::for_test(".claude", Surface::Hook),
                 &[make_hook_entry_with_path(
                     "audit",
                     "tool.pre",
@@ -580,6 +597,7 @@ mod tests {
             .unwrap();
         adapter
             .write_config_entries(
+                WritePermit::for_test(".claude", Surface::Hook),
                 &[make_hook_entry_with_path(
                     "audit",
                     "tool.pre",
@@ -613,10 +631,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         let entries = vec![make_mcp_entry("context7"), make_mcp_entry("other")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         adapter
-            .remove_config_entries(&["mcp:context7".to_string()], tmp.path())
+            .remove_config_entries(
+                RemovalToken::for_test(),
+                &["mcp:context7".to_string()],
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
@@ -633,7 +657,9 @@ mod tests {
             make_mcp_entry("context7"),
             make_hook_entry("audit", "tool.pre", "PreToolUse"),
         ];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        let written = adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
         assert_eq!(written.len(), 2);
         assert!(tmp.path().join(".mcp.json").exists());
         assert!(tmp.path().join("settings.local.json").exists());
@@ -749,7 +775,9 @@ mod tests {
 
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         // New hook lands in settings.local.json.
         let local_raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();

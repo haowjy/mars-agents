@@ -57,6 +57,7 @@ impl TargetAdapter for CodexAdapter {
 
     fn write_config_entries(
         &self,
+        _permit: crate::surface_ownership::retention::WritePermit<'_>,
         entries: &[ConfigEntry],
         target_dir: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
@@ -110,6 +111,7 @@ impl TargetAdapter for CodexAdapter {
 
     fn remove_owned_hook_entries(
         &self,
+        _token: crate::surface_ownership::retention::RemovalToken<'_>,
         records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
         target_dir: &Path,
         diag: &mut crate::diagnostic::DiagnosticCollector,
@@ -119,6 +121,7 @@ impl TargetAdapter for CodexAdapter {
 
     fn remove_config_entries(
         &self,
+        _token: crate::surface_ownership::retention::RemovalToken<'_>,
         entry_keys: &[String],
         target_dir: &Path,
     ) -> Result<(), MarsError> {
@@ -423,6 +426,11 @@ fn remove_owned_codex_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::surface_ownership::retention::{RemovalToken, Surface, WritePermit};
+
+    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
+        WritePermit::for_test(".codex", entries[0].surface())
+    }
     use indexmap::IndexMap;
     use tempfile::TempDir;
 
@@ -471,7 +479,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry("context7")];
-        let written = adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        let written = adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join("codex_mcp.json").exists());
 
@@ -485,7 +495,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry_with_env("server")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -500,7 +512,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_hook_entry("audit", "PreToolUse")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -521,6 +535,7 @@ mod tests {
         let adapter = CodexAdapter;
         adapter
             .write_config_entries(
+                WritePermit::for_test(".codex", Surface::Hook),
                 &[make_hook_entry_with_path(
                     "audit",
                     "PreToolUse",
@@ -531,6 +546,7 @@ mod tests {
             .unwrap();
         adapter
             .write_config_entries(
+                WritePermit::for_test(".codex", Surface::Hook),
                 &[make_hook_entry_with_path(
                     "audit",
                     "PreToolUse",
@@ -557,10 +573,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
-        adapter.write_config_entries(&entries, tmp.path()).unwrap();
+        adapter
+            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .unwrap();
 
         adapter
-            .remove_config_entries(&["mcp:to-remove".to_string()], tmp.path())
+            .remove_config_entries(
+                RemovalToken::for_test(),
+                &["mcp:to-remove".to_string()],
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();

@@ -694,9 +694,10 @@ order = 7
     .unwrap();
     assert_eq!(claude["hooks"]["PreToolUse"][0]["matcher"], "Bash|Agent");
     assert_eq!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 30);
+    let canonical_project = dunce::canonicalize(project.path()).unwrap();
     let expected = format!(
         "bash \"{}\"",
-        portable_path(installed.child("run.sh").path())
+        portable_path(&canonical_project.join(".claude/hooks/audit/run.sh"))
     );
     assert_eq!(
         claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"],

@@ -787,7 +787,9 @@ fn full_pipeline_fresh_sync() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Build target
-    let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, renames, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     assert!(renames.is_empty());
     assert_eq!(target.items.len(), 2);
 
@@ -839,7 +841,9 @@ fn re_sync_no_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -849,7 +853,9 @@ fn re_sync_no_changes() {
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
     // Second sync with same content
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // All items should be Unchanged
@@ -925,7 +931,9 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
     let options = SyncOptions::default();
 
     let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
-        let (target, _, _) = target::build_with_collisions(graph, cfg).unwrap();
+        let (target, _, _) =
+            target::build_with_collisions_and_diag(graph, cfg, &mut DiagnosticCollector::new())
+                .unwrap();
         let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
         let sync_plan = create_sync_plan(&sync_diff, &options);
         let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1013,7 +1021,9 @@ fn validate_skill_refs_ignores_stale_installed_agent_content() {
     .unwrap();
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
 
     let warnings = validate::validate_skill_refs(&target);
 
@@ -1032,7 +1042,9 @@ fn validate_skill_refs_warns_for_missing_target_source_ref() {
     );
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
 
     let warnings = validate::validate_skill_refs(&target);
 
@@ -1123,7 +1135,9 @@ fn source_update_detects_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -1137,7 +1151,9 @@ fn source_update_detects_changes() {
     fs::write(agents_dir.join("coder.md"), "# Version 2").unwrap();
 
     // Rebuild target with updated content
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should detect an Update
@@ -1156,7 +1172,9 @@ fn local_modification_preserved() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -1173,7 +1191,9 @@ fn local_modification_preserved() {
     .unwrap();
 
     // Re-sync (source unchanged)
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should detect LocalModified
@@ -1199,7 +1219,9 @@ fn force_overwrites_local_modifications() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -1220,7 +1242,9 @@ fn force_overwrites_local_modifications() {
     fs::write(agents_dir.join("coder.md"), "# Upstream update").unwrap();
 
     // Re-sync with --force
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     let force_options = SyncOptions {
@@ -1255,7 +1279,9 @@ fn orphan_removed_when_source_drops_item() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync — install both
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -1271,7 +1297,9 @@ fn orphan_removed_when_source_drops_item() {
     fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
 
     // Re-sync
-    let (target2, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target2, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
     // Should have one Unchanged and one Orphan
@@ -1305,7 +1333,9 @@ fn dry_run_produces_plan_without_changes() {
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
 
@@ -1333,7 +1363,9 @@ fn lock_written_after_apply() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Full pipeline minus actual sync() (which needs real config files)
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     let lock = LockFile::empty();
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
@@ -1369,7 +1401,9 @@ fn two_sources_no_collision() {
         ],
     );
 
-    let (target, renames, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, renames, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     assert!(renames.is_empty());
     assert_eq!(target.items.len(), 2);
 
@@ -1397,7 +1431,9 @@ fn pipeline_only_skills_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlySkills)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // Should only have the skill, not the agent
     assert_eq!(target.items.len(), 1);
     assert!(target.items.contains_key("skills/planning"));
@@ -1419,7 +1455,9 @@ fn pipeline_only_agents_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // Should have the agent + its transitive skill dep, but NOT standalone
     assert_eq!(target.items.len(), 2);
     assert!(target.items.contains_key("agents/coder.md"));
@@ -1435,7 +1473,9 @@ fn pipeline_only_agents_no_agents_source() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions(&graph, &config).unwrap();
+    let (target, _, _) =
+        target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap();
     // No agents means nothing gets installed
     assert_eq!(target.items.len(), 0);
 }

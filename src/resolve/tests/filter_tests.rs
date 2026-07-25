@@ -366,7 +366,12 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
         skills: vec!["planning".into()],
     }));
 
-    let (target, renames, _) = crate::sync::target::build_with_collisions(&graph, &config).unwrap();
+    let (target, renames, _) = crate::sync::target::build_with_collisions_and_diag(
+        &graph,
+        &config,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert!(renames.is_empty());
     assert_eq!(target.items.len(), 2);
     assert!(target.items.contains_key("agents/runner.md"));

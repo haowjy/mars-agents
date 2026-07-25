@@ -59,20 +59,6 @@ pub struct CollisionRename {
     pub source_name: SourceName,
     pub kind: ItemKind,
 }
-
-/// Build target state with collision detection integrated.
-///
-/// This is the main entry point — it builds the target, applies explicit
-/// rename mappings, and auto-renames cross-source agent/skill destination
-/// collisions.
-pub fn build_with_collisions(
-    graph: &ResolvedGraph,
-    config: &EffectiveConfig,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
-    let mut diag = DiagnosticCollector::new();
-    build_with_collisions_and_diag(graph, config, &mut diag)
-}
-
 pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
@@ -692,7 +678,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -742,7 +730,9 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "agents/new-name.md".into());
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
@@ -802,7 +792,8 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "../escape.md".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
         assert!(matches!(err, MarsError::Source { .. }));
     }
 
@@ -866,7 +857,8 @@ mod tests {
         ]);
 
         let (target, explicit_renames, collision_renames) =
-            build_with_collisions(&graph, &config).unwrap();
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert!(explicit_renames.is_empty());
         assert_eq!(collision_renames.len(), 2);
@@ -895,7 +887,9 @@ mod tests {
             ("source-c", &tree3, None, FilterMode::All),
         ]);
 
-        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, _, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert_eq!(collision_renames.len(), 3);
         assert!(target.items.contains_key("agents/coder__source-a.md"));
@@ -920,7 +914,9 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "agents/source-a-coder.md".into());
 
-        let (target, _, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, _, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
 
         assert!(collision_renames.is_empty());
         assert!(target.items.contains_key("agents/source-a-coder.md"));
@@ -947,7 +943,8 @@ mod tests {
             .rename
             .insert("agents/reviewer.md".into(), "agents/coder.md".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -964,7 +961,8 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "skills/planning".into());
 
-        let err = build_with_collisions(&graph, &config).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+            .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -1022,7 +1020,9 @@ mod tests {
             ),
         ]);
 
-        let (target, renames, collision_renames) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, collision_renames) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert!(collision_renames.is_empty());
         assert_eq!(target.items.len(), 2);
@@ -1047,7 +1047,9 @@ mod tests {
             },
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2); // coder + planning
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1067,7 +1069,9 @@ mod tests {
             FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1100,7 +1104,9 @@ mod tests {
             ],
         );
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 3);
         assert!(target.items.contains_key("skills/skill-a"));
@@ -1115,7 +1121,9 @@ mod tests {
 
         let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
@@ -1132,7 +1140,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1159,7 +1169,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1184,7 +1196,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1210,7 +1224,9 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) = build_with_collisions(&graph, &config).unwrap();
+        let (target, renames, _) =
+            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
+                .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 

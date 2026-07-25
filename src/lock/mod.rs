@@ -601,7 +601,7 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())
+    crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------

@@ -636,15 +636,11 @@ pub(crate) fn sync_targets(
     };
     let mut orphan_preserve_paths =
         crate::compiler::config_entries::file_hook_output_preserve_paths(old_lock);
-    if let crate::compiler::AgentSurfacePolicy::EmitSelective(spec) = &agent_surface_policy {
-        for (target, paths) in
-            crate::compiler::selective_native_orphan_preserve_paths(old_lock, spec)
-        {
-            orphan_preserve_paths
-                .entry(target)
-                .or_default()
-                .extend(paths);
-        }
+    for (target, paths) in crate::compiler::native_agent_orphan_preserve_paths(old_lock, &targets) {
+        orphan_preserve_paths
+            .entry(target)
+            .or_default()
+            .extend(paths);
     }
     let orphan_preserve = (!orphan_preserve_paths.is_empty()).then_some(&orphan_preserve_paths);
 

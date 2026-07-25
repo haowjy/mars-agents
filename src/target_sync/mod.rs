@@ -198,26 +198,88 @@ fn sync_one_target(
                     let dest_exists = surface_ownership::target_dest_exists(&dest);
                     let managed_dest_is_current_or_stale = dest_exists
                         && old_lock.contains_output(target_name, dest_rel)
-                        && disk_matches_recorded_or_desired(
-                            &dest,
-                            outcome.item_id.kind,
-                            target_name,
-                            dest_rel,
-                            old_lock,
-                            outcome.installed_checksum.as_ref(),
-                        );
+                        && (should_refresh_native_skill
+                            || disk_matches_recorded_or_desired(
+                                &dest,
+                                outcome.item_id.kind,
+                                target_name,
+                                dest_rel,
+                                old_lock,
+                                outcome.installed_checksum.as_ref(),
+                            ));
                     let wants_copy = force
                         || !dest_exists
                         || should_refresh_native_skill
                         || managed_dest_is_current_or_stale;
                     if wants_copy {
                         if should_copy_to_target(&dest, target_name, dest_rel, ctx, diag) {
-                            let previous_target_hash = if should_refresh_native_skill && dest_exists
+                            if let Some(variant_key) = native_skill_variant_key.as_deref()
+                                && should_refresh_native_skill
                             {
-                                crate::hash::compute_hash(&dest, outcome.item_id.kind).ok()
-                            } else {
-                                None
-                            };
+                                crate::compiler::variants::validate_skill_variants(
+                                    &source,
+                                    outcome.item_id.name.as_str(),
+                                    diag,
+                                );
+                                let projection =
+                                    match crate::compiler::variants::prepare_native_skill_projection(
+                                        &source,
+                                        variant_key,
+                                        diag,
+                                        outcome.item_id.name.as_str(),
+                                    ) {
+                                        Ok(projection) => projection,
+                                        Err(e) => {
+                                            errors
+                                                .push(format!("failed to prepare {dest_rel}: {e}"));
+                                            continue;
+                                        }
+                                    };
+                                let previous_target_hash = dest_exists
+                                    .then(|| crate::hash::compute_hash(&dest, outcome.item_id.kind))
+                                    .transpose()
+                                    .ok()
+                                    .flatten()
+                                    .map(ContentHash::from);
+                                if previous_target_hash.as_ref()
+                                    == Some(&projection.installed_checksum)
+                                {
+                                    synced_outputs.push(TargetSyncedOutput {
+                                        dest_path: dest_rel.to_string(),
+                                        installed_checksum: projection.installed_checksum,
+                                    });
+                                    continue;
+                                }
+                                match crate::compiler::variants::project_prepared_skill_for_target(
+                                    &source,
+                                    &dest,
+                                    Some(&projection),
+                                ) {
+                                    Ok(wrote) => {
+                                        if wrote {
+                                            items_synced += 1;
+                                        }
+                                        synced_outputs.push(TargetSyncedOutput {
+                                            dest_path: dest_rel.to_string(),
+                                            installed_checksum: projection
+                                                .installed_checksum
+                                                .clone(),
+                                        });
+                                        if previous_target_hash.is_some() {
+                                            diag.warn(
+                                                "target-native-projection-repaired",
+                                                format!(
+                                                    "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        errors.push(format!("failed to copy {dest_rel}: {e}"))
+                                    }
+                                }
+                                continue;
+                            }
                             match copy_item_to_target(
                                 &source,
                                 &dest,
@@ -234,18 +296,6 @@ fn sync_one_target(
                                         dest_rel,
                                         outcome.item_id.kind,
                                     );
-                                    if let Some(previous_target_hash) = previous_target_hash
-                                        && let Ok(current_target_hash) =
-                                            crate::hash::compute_hash(&dest, outcome.item_id.kind)
-                                        && previous_target_hash != current_target_hash
-                                    {
-                                        diag.warn(
-                                            "target-native-projection-repaired",
-                                            format!(
-                                                "repaired diverged native projection: {target_name}/{dest_rel}/SKILL.md"
-                                            ),
-                                        );
-                                    }
                                 }
                                 Ok(false) => {
                                     // Byte-identical tracked content is still an installation
@@ -1431,6 +1481,55 @@ mod tests {
             "no-op sync must not rewrite native skill output"
         );
         assert_eq!(std::fs::read_to_string(&native_skill).unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_skipped_native_skill_does_not_construct_a_temporary_projection() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let mars_dir = dir.path().join(".mars");
+        let target = dir.path().join(".claude");
+        let skill_source = mars_dir.join("skills/planning");
+        std::fs::create_dir_all(skill_source.join("resources")).unwrap();
+        std::fs::write(skill_source.join("SKILL.md"), "# Planning").unwrap();
+        std::fs::write(skill_source.join("resources/reference.md"), "reference").unwrap();
+
+        let outcomes = vec![make_installed_skill_outcome("skills/planning", "planning")];
+        let mut diag = DiagnosticCollector::new();
+        sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &outcomes,
+            &target_sync_ctx(&LockFile::empty(), false),
+            &mut diag,
+        );
+
+        let skill_dir = target.join("skills/planning");
+        let checksum = hash::compute_hash(&skill_dir, ItemKind::Skill).unwrap();
+        let lock =
+            lock_with_skill_target_outputs(".claude", &[("skills/planning", checksum.as_str())]);
+        let skills_parent = target.join("skills");
+        std::fs::set_permissions(&skills_parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let results = sync_managed_targets(
+            dir.path(),
+            &mars_dir,
+            &[".claude".to_string()],
+            &[make_skipped_skill_outcome("skills/planning", "planning")],
+            &target_sync_ctx(&lock, false),
+            &mut diag,
+        );
+
+        std::fs::set_permissions(&skills_parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            results[0].errors.is_empty(),
+            "a no-op must not need a writable parent for a disposable projection: {:?}",
+            results[0].errors
+        );
+        assert_eq!(results[0].items_synced, 0);
     }
 
     #[test]

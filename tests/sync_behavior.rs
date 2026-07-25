@@ -928,6 +928,179 @@ path = "{}"
 }
 
 #[test]
+fn sync_noop_leaves_native_agent_output_mtime_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_agent = project.child(".codex/agents/explorer.toml");
+    let before = fs::metadata(native_agent.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    let after = fs::metadata(native_agent.path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "no-op sync must not rewrite byte-identical native agent output"
+    );
+}
+
+#[test]
+fn sync_detects_and_repairs_diverged_native_agent_output() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_agent = project.child(".codex/agents/explorer.toml");
+    let expected = fs::read(native_agent.path()).unwrap();
+    fs::write(native_agent.path(), "user edit").unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: repaired diverged native agent: .codex/agents/explorer.toml",
+        ));
+
+    assert_eq!(fs::read(native_agent.path()).unwrap(), expected);
+}
+
+#[test]
+fn sync_noop_leaves_lock_and_native_manifest_mtimes_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(
+        &dir,
+        "base",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let lock = project.child("mars.lock");
+    let manifest = project.child(".mars/native-agents.json");
+    let lock_before = fs::metadata(lock.path()).unwrap().modified().unwrap();
+    let manifest_before = fs::metadata(manifest.path()).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    assert_eq!(
+        lock_before,
+        fs::metadata(lock.path()).unwrap().modified().unwrap(),
+        "no-op sync must not rewrite mars.lock"
+    );
+    assert_eq!(
+        manifest_before,
+        fs::metadata(manifest.path()).unwrap().modified().unwrap(),
+        "no-op sync must not rewrite the native agent manifest"
+    );
+}
+
+#[test]
 fn sync_cursor_native_agent_target_emits_cursor_markdown_and_lossiness_warning() {
     let dir = TempDir::new().unwrap();
     let cursor_agent = r#"---

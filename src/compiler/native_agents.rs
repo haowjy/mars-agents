@@ -401,26 +401,41 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     }
 }
 
-/// Lock-recorded native agent paths to keep during selective target-sync orphan cleanup.
-pub fn selective_native_orphan_preserve_paths(
+/// Lock-recorded native agent paths to keep until native-agent reconciliation runs.
+pub fn native_agent_orphan_preserve_paths(
     old_lock: &crate::lock::LockFile,
-    spec: &agent_copy::AgentCopySpec,
+    targets: &[String],
 ) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
     use std::collections::{HashMap, HashSet};
 
     let mut preserved: HashMap<String, HashSet<String>> = HashMap::new();
-    for harness in &spec.harnesses {
-        let target = harness.target_dir();
+    for target in targets {
+        if crate::compiler::agents::HarnessKind::from_target_dir(target).is_none() {
+            continue;
+        }
         for dest_path in old_lock.output_dest_paths_for_target(target) {
             if is_native_agent_dest_path(&dest_path) {
                 preserved
-                    .entry(target.to_string())
+                    .entry(target.clone())
                     .or_default()
                     .insert(dest_path.to_string());
             }
         }
     }
     preserved
+}
+
+/// Lock-recorded native paths retained by `mars link` for its selected harnesses.
+pub fn selective_native_orphan_preserve_paths(
+    old_lock: &crate::lock::LockFile,
+    spec: &agent_copy::AgentCopySpec,
+) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+    let targets: Vec<_> = spec
+        .harnesses
+        .iter()
+        .map(|harness| harness.target_dir().to_string())
+        .collect();
+    native_agent_orphan_preserve_paths(old_lock, &targets)
 }
 
 fn is_native_agent_dest_path(dest_rel: &str) -> bool {
@@ -974,6 +989,38 @@ fn emit_lowered_native_agent(
         return;
     }
 
+    let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
+    let existing_bytes = native_path
+        .symlink_metadata()
+        .ok()
+        .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .and_then(|_| std::fs::read(&native_path).ok());
+    if existing_bytes.as_deref() == Some(lowered.bytes.as_slice()) {
+        records.push(CompiledNativeOutput {
+            owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
+            target_root: target_dir.to_string(),
+            dest_path: dest_rel,
+            installed_checksum: checksum,
+        });
+        return;
+    }
+
+    if !ctx.options.force
+        && let Some(existing_bytes) = existing_bytes
+        && let Some(recorded) = ctx.old_lock.items.values().find_map(|item| {
+            item.outputs.iter().find(|output| {
+                output.target_root == target_dir
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), &dest_rel)
+            })
+        })
+        && crate::hash::hash_bytes(&existing_bytes) != recorded.installed_checksum.as_ref()
+    {
+        diag.warn(
+            "native-agent-projection-repaired",
+            format!("repaired diverged native agent: {target_dir}/{dest_rel}"),
+        );
+    }
+
     if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {
         diag.warn(
             "dual-surface-mkdir",
@@ -988,7 +1035,6 @@ fn emit_lowered_native_agent(
             format!("could not write {}: {e}", native_path.display()),
         );
     } else {
-        let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
         records.push(CompiledNativeOutput {
             owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
             target_root: target_dir.to_string(),

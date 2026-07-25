@@ -38,6 +38,24 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
     Ok(())
 }
 
+/// Atomically write a regular file unless its bytes are already identical.
+///
+/// Returns `true` when a write occurred. Symlinks and non-regular destinations
+/// are always replaced rather than treated as managed output.
+pub fn atomic_write_if_changed(dest: &Path, content: &[u8]) -> Result<bool, MarsError> {
+    let unchanged = dest
+        .symlink_metadata()
+        .ok()
+        .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .and_then(|_| fs::read(dest).ok())
+        .is_some_and(|existing| existing == content);
+    if unchanged {
+        return Ok(false);
+    }
+    atomic_write(dest, content)?;
+    Ok(true)
+}
+
 /// Atomic directory install: copy source tree to a temp dir in the same
 /// parent as `dest`, then rename into place.
 ///

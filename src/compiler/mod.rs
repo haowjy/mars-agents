@@ -111,8 +111,16 @@ pub fn compile(
 
     // Phase 5.1 / 5.2 / 5.3: MCP and hooks config-entry compilation. Merge-mode
     // hook bindings are now emitted only after their directories are installed.
-    synced.config_entries =
-        config_entries::compile_config_entries(ctx, &synced.applied, request.options.dry_run, diag);
+    let config_entry_compilation = config_entries::compile_config_entries(
+        ctx,
+        &synced.applied,
+        request.options.dry_run,
+        request.options.force,
+        diag,
+    );
+    synced.config_entries = config_entry_compilation.records;
+    synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
+    synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
 
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;

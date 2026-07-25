@@ -13,6 +13,56 @@ use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
 use crate::types::{MarsContext, SourceName};
 
+pub(crate) struct ConfigEntryCompilation {
+    pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
+    pub removed_outputs: Vec<(String, String)>,
+}
+
+pub(crate) fn file_hook_output_preserve_paths(
+    lock: &crate::lock::LockFile,
+) -> HashMap<String, std::collections::HashSet<String>> {
+    let registry = crate::target::TargetRegistry::new();
+    let mut preserve = HashMap::<String, std::collections::HashSet<String>>::new();
+    for item in lock
+        .items
+        .values()
+        .filter(|item| item.kind == crate::lock::ItemKind::Hook)
+    {
+        for output in item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
+        {
+            let Some(adapter) = registry.get(&output.target_root) else {
+                continue;
+            };
+            let owner_prefix = format!("hooks/{}/", output.target_root.trim_start_matches('.'));
+            let is_file_fragment = item.outputs.iter().any(|canonical| {
+                canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
+                    && canonical
+                        .dest_path
+                        .as_str()
+                        .strip_prefix(&owner_prefix)
+                        .and_then(|name| adapter.hook_file_dest_path(name))
+                        .is_some_and(|path| {
+                            crate::target::dest_paths_equivalent(
+                                path.to_string_lossy().as_ref(),
+                                output.dest_path.as_str(),
+                            )
+                        })
+            });
+            if is_file_fragment {
+                preserve
+                    .entry(output.target_root.clone())
+                    .or_default()
+                    .insert(output.dest_path.as_str().to_string());
+            }
+        }
+    }
+    preserve
+}
+
 /// Validate all hook schemas and native event names before the apply phase.
 ///
 /// This is deliberately separate from config emission so an invalid hook
@@ -293,8 +343,9 @@ pub(crate) fn compile_config_entries(
     ctx: &MarsContext,
     applied: &AppliedState,
     dry_run: bool,
+    force: bool,
     diag: &mut DiagnosticCollector,
-) -> BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> {
+) -> ConfigEntryCompilation {
     use crate::compiler::config_entries::resolve::{
         LoadedHookContribution, resolve_file_hook_collisions_for_target,
         resolve_hook_collisions_for_target, resolve_mcp_collisions_for_target,
@@ -427,6 +478,9 @@ pub(crate) fn compile_config_entries(
         BTreeMap::new();
     let mut pending_writes: BTreeMap<String, Vec<ConfigEntry>> = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
+    let mut desired_file_outputs = std::collections::BTreeSet::new();
+    let mut emitted_outputs = Vec::new();
+    let mut removed_outputs = Vec::new();
 
     // First lower every target without mutating its config. Stale hook removal
     // is name-based across native events, so it must run before replacement
@@ -535,7 +589,6 @@ pub(crate) fn compile_config_entries(
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
-        let mut file_records = BTreeMap::new();
         if mode == Some(crate::target::HookFragmentMode::File) {
             for item in resolve_file_hook_collisions_for_target(&all_hooks, target_root, diag) {
                 let installed = ctx
@@ -565,17 +618,15 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &installed) {
                     Ok(content) => {
-                        let record_key = format!("hook-file:{}", item.def.name);
-                        file_records.insert(
-                            record_key.clone(),
-                            ConfigEntryRecord {
-                                source: item.source_name.clone(),
-                                emitted_json: None,
-                            },
-                        );
+                        let relative_dest = relative_dest.to_string_lossy().into_owned();
+                        desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
-                            record_key,
-                            relative_dest.to_string_lossy().into_owned(),
+                            format!(
+                                "hooks/{}/{}",
+                                target_root.trim_start_matches('.'),
+                                item.def.name
+                            ),
+                            relative_dest,
                             content,
                         ));
                     }
@@ -606,7 +657,6 @@ pub(crate) fn compile_config_entries(
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
         adapter.emit_pre_write_diagnostics(&entries, diag);
-        target_records.extend(file_records);
         if !target_records.is_empty() {
             desired_records.insert(target_root.clone(), target_records);
         }
@@ -628,29 +678,11 @@ pub(crate) fn compile_config_entries(
     let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
     let mut retained_stale_records = BTreeMap::new();
 
-    // Sweep every prior hook emission before writing replacements. Exact fragment
+    // Sweep every prior merge-mode hook emission before writing replacements. Exact fragment
     // arrays come from the lock; records from v0.11.0 intentionally fall back to
     // the one-release command-path bridge in the adapters.
     if !dry_run {
         for (target_root, records) in previous_records {
-            if let Some(adapter) = registry.get(target_root) {
-                for key in records.keys().filter(|key| key.starts_with("hook-file:")) {
-                    let Some(name) = key.strip_prefix("hook-file:") else {
-                        continue;
-                    };
-                    if let Some(relative) = adapter.hook_file_dest_path(name) {
-                        let path = ctx.project_root.join(target_root).join(relative);
-                        if let Err(error) = std::fs::remove_file(&path)
-                            && error.kind() != std::io::ErrorKind::NotFound
-                        {
-                            diag.warn(
-                                "config-entry-remove",
-                                format!("failed to remove `{}`: {error}", path.display()),
-                            );
-                        }
-                    }
-                }
-            }
             let hook_records: BTreeMap<_, _> = records
                 .iter()
                 .filter(|(key, _)| key.starts_with("hook:"))
@@ -692,7 +724,7 @@ pub(crate) fn compile_config_entries(
         let target_dir = ctx.project_root.join(&target_root);
         let non_hook_keys: Vec<String> = keys
             .iter()
-            .filter(|key| !key.starts_with("hook:") && !key.starts_with("hook-file:"))
+            .filter(|key| !key.starts_with("hook:"))
             .cloned()
             .collect();
         if let Err(e) = adapter.remove_config_entries(&non_hook_keys, &target_dir) {
@@ -722,7 +754,37 @@ pub(crate) fn compile_config_entries(
     }
 
     if dry_run {
-        return desired_records;
+        return ConfigEntryCompilation {
+            records: desired_records,
+            emitted_outputs,
+            removed_outputs,
+        };
+    }
+
+    // File-mode fragments are ordinary target outputs. Remove only exact paths
+    // owned by the old lock and no longer desired.
+    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
+    for (target_root, paths) in file_hook_output_preserve_paths(old_lock) {
+        for dest_path in paths {
+            let pair = (target_root.clone(), dest_path.clone());
+            if desired_file_outputs.contains(&pair) {
+                continue;
+            }
+            if !crate::surface_ownership::may_delete(old_lock, &target_root, &dest_path) {
+                continue;
+            }
+            let path = ctx.project_root.join(&target_root).join(&dest_path);
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed_outputs.push(pair),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    removed_outputs.push(pair)
+                }
+                Err(error) => diag.warn(
+                    "config-entry-remove",
+                    format!("failed to remove `{}`: {error}", path.display()),
+                ),
+            }
+        }
     }
 
     // Write desired entries only after every stale/name-matched binding has
@@ -768,8 +830,63 @@ pub(crate) fn compile_config_entries(
     }
 
     for (target_root, files) in pending_file_writes {
-        for (record_key, relative, content) in files {
-            let path = ctx.project_root.join(&target_root).join(relative);
+        for (owner_canonical_dest_path, relative, content) in files {
+            let path = ctx.project_root.join(&target_root).join(&relative);
+            let dest_exists = crate::surface_ownership::target_dest_exists(&path);
+            match crate::surface_ownership::copy_decision(
+                old_lock,
+                &target_root,
+                &relative,
+                dest_exists,
+                force,
+            ) {
+                crate::surface_ownership::SurfaceCopyDecision::SkipUnmanagedCollision => {
+                    crate::surface_ownership::warn_unmanaged_collision(
+                        &target_root,
+                        &relative,
+                        crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                        diag,
+                    );
+                    continue;
+                }
+                crate::surface_ownership::SurfaceCopyDecision::Proceed => {
+                    if dest_exists && force && !old_lock.contains_output(&target_root, &relative) {
+                        crate::surface_ownership::warn_unmanaged_adopted(
+                            &target_root,
+                            &relative,
+                            crate::surface_ownership::CollisionAdoptHint::SyncForce,
+                            diag,
+                        );
+                    }
+                }
+            }
+            if dest_exists && !force {
+                let previous = old_lock.items.values().find_map(|item| {
+                    item.outputs.iter().find(|output| {
+                        output.target_root == target_root
+                            && crate::target::dest_paths_equivalent(
+                                output.dest_path.as_str(),
+                                &relative,
+                            )
+                    })
+                });
+                let diverged = previous.is_some_and(|previous| {
+                    std::fs::read(&path)
+                        .map(|bytes| crate::hash::hash_bytes(&bytes))
+                        .is_ok_and(|actual| actual != previous.installed_checksum.as_ref())
+                });
+                if diverged {
+                    diag.warn(
+                        "target-divergent",
+                        format!(
+                            "target `{target_root}` item `{relative}` was edited after Mars installed it \
+                             (preserved local content; run `{}` to reset)",
+                            crate::types::managed_cmd("mars sync --force")
+                        ),
+                    );
+                    continue;
+                }
+            }
             let result = (|| -> Result<(), crate::error::MarsError> {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -783,19 +900,22 @@ pub(crate) fn compile_config_entries(
                 );
                 continue;
             }
-            if let Some(record) = desired_records
-                .get(&target_root)
-                .and_then(|records| records.get(&record_key))
-            {
-                current_records
-                    .entry(target_root.clone())
-                    .or_default()
-                    .insert(record_key, record.clone());
-            }
+            emitted_outputs.push(crate::lock::CompiledNativeOutput {
+                owner_canonical_dest_path,
+                target_root: target_root.clone(),
+                dest_path: relative,
+                installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
+                    content.as_bytes(),
+                )),
+            });
         }
     }
 
-    current_records
+    ConfigEntryCompilation {
+        records: current_records,
+        emitted_outputs,
+        removed_outputs,
+    }
 }
 
 fn source_may_emit_mcp(graph: &crate::resolve::ResolvedGraph, source_name: &SourceName) -> bool {

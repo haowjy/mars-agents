@@ -18,6 +18,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Treat OpenCode and Pi file-mode hook fragments as ordinary target outputs:
+  preserve untracked and hand-edited files, require `--force` to adopt
+  collisions, and delete only exact lock-owned destinations.
 - Scope hook directory ownership per target, preflight unmanaged destinations
   and every merge config before writes, and reject malformed JSON without
   replacing user files.

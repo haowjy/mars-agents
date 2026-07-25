@@ -255,8 +255,8 @@ fn sync_one_target(
                                     }
                                 }
                                 Ok(false) => {
-                                    // Byte-identical content is an installation outcome too:
-                                    // adopt it into the ownership lock even though no bytes moved.
+                                    // Byte-identical tracked content is still an installation
+                                    // outcome even though no bytes moved.
                                     record_synced_output(
                                         &mut synced_outputs,
                                         &dest,

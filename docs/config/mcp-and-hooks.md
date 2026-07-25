@@ -241,6 +241,11 @@ export const AuditPlugin: Plugin = async ({ $ }) => ({
 
 Mars places it at `.opencode/plugins/mars-<name>.ts`.
 
+These placed fragments are managed target outputs. Mars preserves an existing
+untracked file at that path during ordinary sync; use `mars sync --force` to
+adopt it. Mars also preserves later edits during ordinary sync and removes a
+fragment only when the lock owns that exact target path.
+
 Self-contained Pi extension:
 
 ```ts
@@ -291,9 +296,10 @@ structurally equal entries from the current config. User-edited entries no
 longer match and are preserved; user-authored entries and unrelated config are
 always untouched. Event keys emptied by Mars are pruned.
 
-For file-mode targets, the lock records `hook-file:<name>` and ownership is the
-placed `mars-<name>.ts` file itself. Removal deletes that file and leaves every
-other plugin or extension untouched.
+For file-mode targets, the hook item's output list records the exact target
+root, placed `mars-<name>.ts` path, and installed checksum. Removal deletes
+only that exact lock-owned output and leaves every other plugin or extension
+untouched.
 
 For one release, removal also recognizes v0.11.0 command-path entries containing
 `/hooks/<name>/`, including staging-path commands. This migration sweep runs

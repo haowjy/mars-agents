@@ -1060,21 +1060,6 @@ pub fn merge_with_root(
 
     let skills = overlay_skills_replace_by_key(&config.skills, &local.skills);
 
-    // Warn if override references a dependency not in config
-    for override_name in local.overrides.keys() {
-        if !config.dependencies.contains_key(override_name) {
-            diagnostics.push(Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "override-missing-dep",
-                message: format!(
-                    "override `{override_name}` references a dependency not in mars.toml"
-                ),
-                context: None,
-                category: None,
-            });
-        }
-    }
-
     Ok((
         EffectiveConfig {
             dependencies,

@@ -216,8 +216,22 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
+    let source_overrides = loaded
+        .local
+        .overrides
+        .iter()
+        .map(|(name, entry)| {
+            let path = if entry.path.is_absolute() {
+                entry.path.clone()
+            } else {
+                ctx.project_root.join(&entry.path)
+            };
+            (name.clone(), path)
+        })
+        .collect();
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
         .with_staging_root(ctx.project_root.join(".mars/staging"))
+        .with_source_overrides(source_overrides)
         .with_removed_hook_schema_policy(removed_hook_schema_policy(request));
     let graph = crate::resolve::resolve(
         &loaded.effective,
@@ -226,6 +240,24 @@ pub(crate) fn resolve_graph(
         &resolve_options,
         diag,
     )?;
+    if let Some(ConfigMutation::SetOverride { source_name, .. }) = &request.mutation
+        && !graph.nodes.contains_key(source_name)
+    {
+        return Err(MarsError::Source {
+            source_name: source_name.to_string(),
+            message: format!("dependency `{source_name}` not found in the resolved project graph"),
+        });
+    }
+    for override_name in loaded.local.overrides.keys() {
+        if !graph.nodes.contains_key(override_name) {
+            diag.warn(
+                "override-missing-dep",
+                format!(
+                    "override `{override_name}` references a dependency not in the resolved project graph"
+                ),
+            );
+        }
+    }
     let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
         0
     } else {

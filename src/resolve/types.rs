@@ -294,6 +294,8 @@ pub struct ResolveOptions {
     pub mode: ResolveMode,
     /// Per-project directory for dependency-scoped canonical source staging.
     pub staging_root: Option<std::path::PathBuf>,
+    /// Local source substitutions, including names first introduced transitively.
+    pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     /// Recovery commands omit hooks written in the removed schema so users can
     /// upgrade, override, remove, or repair the package that supplied them.
     pub(crate) removed_hook_schema: crate::staging::RemovedHookSchemaPolicy,
@@ -304,6 +306,7 @@ impl Default for ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
             removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
@@ -325,6 +328,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
             removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
@@ -333,6 +337,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Frozen,
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
             removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
@@ -344,12 +349,21 @@ impl ResolveOptions {
                 bump_direct_constraints,
             },
             staging_root: None,
+            source_overrides: indexmap::IndexMap::new(),
             removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
     pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
         self.staging_root = Some(staging_root);
+        self
+    }
+
+    pub(crate) fn with_source_overrides(
+        mut self,
+        source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
+    ) -> Self {
+        self.source_overrides = source_overrides;
         self
     }
 

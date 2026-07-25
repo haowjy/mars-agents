@@ -69,15 +69,7 @@ pub(crate) fn apply_mutation(
             config.dependencies.shift_remove(name);
             Ok(Vec::new())
         }
-        ConfigMutation::SetOverride { source_name, .. } => {
-            if !config.dependencies.contains_key(source_name) {
-                return Err(MarsError::Source {
-                    source_name: source_name.to_string(),
-                    message: format!("dependency `{source_name}` not found in mars.toml"),
-                });
-            }
-            Ok(Vec::new())
-        }
+        ConfigMutation::SetOverride { .. } => Ok(Vec::new()),
         ConfigMutation::SetRename {
             source_name,
             from,

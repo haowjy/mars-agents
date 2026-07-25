@@ -35,6 +35,11 @@ Convergence is guaranteed — versions only move upward toward the lock-preferre
 
 All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
 
+`ResolveOptions.source_overrides` applies project-local path overrides by source
+name to both direct and manifest-discovered transitive dependencies. Recovery
+commands can also request omission of removed-schema hooks from the derived
+staged tree; normal sync leaves them in place for strict source validation.
+
 ## Key Traits
 
 | Trait | Role |

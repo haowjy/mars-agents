@@ -262,7 +262,7 @@ pub(crate) fn resolve_package_bottom_up(
     };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
-        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest)?;
+        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
     let deps = manifest_requests
         .iter()
         .map(|request| request.name.clone())
@@ -469,6 +469,7 @@ pub(crate) fn collect_manifest_requests(
     pending_src: &PendingSource,
     package_root: &Path,
     manifest: &Option<Manifest>,
+    options: &ResolveOptions,
 ) -> Result<Vec<PendingSource>, MarsError> {
     let mut requests = Vec::new();
     let Some(manifest_data) = manifest else {
@@ -479,37 +480,44 @@ pub(crate) fn collect_manifest_requests(
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
 
-        let (dep_spec_resolved, dep_constraint) = match (&dep_spec.url, &dep_spec.path) {
-            (Some(url), None) => (
-                SourceSpec::Git(GitSpec {
-                    url: url.clone(),
-                    version: dep_spec.version.clone(),
-                }),
-                parse_version_constraint(dep_spec.version.as_deref()),
-            ),
-            (None, Some(path)) => {
-                let resolved_path = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    package_root.join(path)
-                };
-                (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
-            }
-            (Some(_), Some(_)) => {
-                return Err(ConfigError::Invalid {
-                    message: format!("source `{dep_name}` has both `url` and `path` — pick one"),
-                }
-                .into());
-            }
-            (None, None) => {
-                return Err(ConfigError::Invalid {
-                    message: format!(
-                        "source `{dep_name}` has neither `url` nor `path` — one is required"
+        let (dep_spec_resolved, dep_constraint) =
+            if let Some(path) = options.source_overrides.get(&dep_name_typed) {
+                (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
+            } else {
+                match (&dep_spec.url, &dep_spec.path) {
+                    (Some(url), None) => (
+                        SourceSpec::Git(GitSpec {
+                            url: url.clone(),
+                            version: dep_spec.version.clone(),
+                        }),
+                        parse_version_constraint(dep_spec.version.as_deref()),
                     ),
+                    (None, Some(path)) => {
+                        let resolved_path = if path.is_absolute() {
+                            path.clone()
+                        } else {
+                            package_root.join(path)
+                        };
+                        (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
+                    }
+                    (Some(_), Some(_)) => {
+                        return Err(ConfigError::Invalid {
+                            message: format!(
+                                "source `{dep_name}` has both `url` and `path` — pick one"
+                            ),
+                        }
+                        .into());
+                    }
+                    (None, None) => {
+                        return Err(ConfigError::Invalid {
+                            message: format!(
+                                "source `{dep_name}` has neither `url` nor `path` — one is required"
+                            ),
+                        }
+                        .into());
+                    }
                 }
-                .into());
-            }
-        };
+            };
 
         let dep_source_id =
             source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());

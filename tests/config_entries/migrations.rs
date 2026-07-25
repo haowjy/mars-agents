@@ -118,6 +118,60 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
 }
 
 #[test]
+fn override_can_replace_a_transitive_source_during_recovery() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let migrated = write_migrated_hook_source(&dir, "base-migrated");
+    let workflow = dir.child("workflow");
+    workflow.create_dir_all().unwrap();
+    workflow
+        .child("mars.toml")
+        .write_str(&format!(
+            "[package]\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
+             [dependencies.base]\npath = \"{}\"\n",
+            portable_path(&legacy)
+        ))
+        .unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.workflow]\npath = \"{}\"\n\n\
+             [settings]\ntargets = [\".claude\"]\n",
+            portable_path(&workflow)
+        ))
+        .unwrap();
+    project
+        .child("mars.lock")
+        .write_str("version = 2\n")
+        .unwrap();
+    write_old_staging_fixture(&project);
+
+    mars()
+        .args([
+            "override",
+            "base",
+            "--path",
+            migrated.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let local = fs::read_to_string(project.child("mars.local.toml").path()).unwrap();
+    assert!(local.contains("[overrides.base]"));
+    assert!(local.contains("base-migrated"));
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(settings.contains("SessionEnd"));
+}
+
+#[test]
 fn unmatched_legacy_claude_sweep_does_not_rewrite_settings() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");

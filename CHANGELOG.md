@@ -41,6 +41,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when promoting version 2 locks.
 - Repair linked native skill projections when the destination is a symlink,
   a non-directory, or has structural differences such as extra empty directories.
+- Describe pending-deletion copy collisions as paths without installed-content
+  claims instead of incorrectly calling them untracked.
 - Preflight `mars adopt` before moving user content, and restore the original
   path if the subsequent sync fails.
 - Report stale config entries as removed only when removal was confirmed for

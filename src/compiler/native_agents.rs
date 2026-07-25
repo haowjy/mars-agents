@@ -961,8 +961,8 @@ fn emit_lowered_native_agent(
         dest_exists,
         ctx.options.force,
     ) {
-        SurfaceCopyDecision::SkipUnmanagedCollision => {
-            surface_ownership::warn_unmanaged_collision(
+        SurfaceCopyDecision::SkipWithoutInstalledClaim => {
+            surface_ownership::warn_no_installed_claim_collision(
                 target_dir,
                 &dest_rel,
                 ctx.options.collision_hint,
@@ -978,7 +978,7 @@ fn emit_lowered_native_agent(
                     .installed_checksum_for_output(target_dir, &dest_rel)
                     .is_none()
             {
-                surface_ownership::warn_unmanaged_adopted(
+                surface_ownership::warn_no_installed_claim_adopted(
                     target_dir,
                     &dest_rel,
                     ctx.options.collision_hint,

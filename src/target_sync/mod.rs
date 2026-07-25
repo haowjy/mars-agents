@@ -332,7 +332,7 @@ fn sync_one_target(
                             }
                         }
                     } else if dest_exists && !old_lock.contains_output(target_name, dest_rel) {
-                        surface_ownership::warn_unmanaged_collision(
+                        surface_ownership::warn_no_installed_claim_collision(
                             target_name,
                             dest_rel,
                             collision_hint,
@@ -430,7 +430,7 @@ fn should_copy_to_target(
                     .installed_checksum_for_output(target_name, dest_rel)
                     .is_none()
             {
-                surface_ownership::warn_unmanaged_adopted(
+                surface_ownership::warn_no_installed_claim_adopted(
                     target_name,
                     dest_rel,
                     ctx.collision_hint,
@@ -439,8 +439,8 @@ fn should_copy_to_target(
             }
             true
         }
-        SurfaceCopyDecision::SkipUnmanagedCollision => {
-            surface_ownership::warn_unmanaged_collision(
+        SurfaceCopyDecision::SkipWithoutInstalledClaim => {
+            surface_ownership::warn_no_installed_claim_collision(
                 target_name,
                 dest_rel,
                 ctx.collision_hint,

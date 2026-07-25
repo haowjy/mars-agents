@@ -5,11 +5,13 @@
 //! `(target_root, dest_path)`. `.mars`-only records do not imply ownership
 //! elsewhere.
 //!
-//! Path ownership has two explicit lifecycle claims. An installed record asserts
-//! that its checksum describes content at the path. A pending-deletion record
-//! asserts only authority to retry removal; it carries no checksum and must not
-//! be treated as evidence of installed bytes. Either claim authorizes deletion,
-//! but only installed records participate in content comparison.
+//! Path ownership has two explicit lifecycle claims. Deletion authority and
+//! replacement authority are distinct. Either lifecycle state authorizes deletion
+//! of the recorded path. Overwriting an existing path without `--force` requires
+//! an installed record, whose checksum describes content at the path. A
+//! pending-deletion record carries removal-retry authority only: it has no
+//! checksum and must be treated as a copy/install collision. `--force` may
+//! explicitly adopt that path and restore its state to installed.
 //!
 //! Merge-mode config entries use entry ownership rather than path ownership. A
 //! config entry may be removed only when the lock holds a
@@ -44,10 +46,10 @@ pub enum CollisionAdoptHint {
 /// Whether a copy/install to a linked target may proceed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceCopyDecision {
-    /// Dest is missing, installed, or `--force` adopt applies.
+    /// Dest is missing, has an installed-content claim, or `--force` adopt applies.
     Proceed,
-    /// Dest exists but is not tracked for this target — preserve local content.
-    SkipUnmanagedCollision,
+    /// Dest exists without an installed-content claim — preserve local content.
+    SkipWithoutInstalledClaim,
 }
 
 /// Whether `dest` exists on disk (file, directory, or symlink).
@@ -80,11 +82,11 @@ pub fn copy_decision(
     if force {
         return SurfaceCopyDecision::Proceed;
     }
-    SurfaceCopyDecision::SkipUnmanagedCollision
+    SurfaceCopyDecision::SkipWithoutInstalledClaim
 }
 
-/// Emit `target-unmanaged-collision` when an untracked existing file is preserved.
-pub fn warn_unmanaged_collision(
+/// Emit `target-unmanaged-collision` when an existing path lacks an installed claim.
+pub fn warn_no_installed_claim_collision(
     target_name: &str,
     dest_rel: &str,
     hint: CollisionAdoptHint,
@@ -100,14 +102,14 @@ pub fn warn_unmanaged_collision(
     diag.warn(
         "target-unmanaged-collision",
         format!(
-            "target `{target_name}` item `{dest_rel}` exists locally but is not tracked by Mars \
+            "target `{target_name}` item `{dest_rel}` exists locally but has no installed-content claim \
              (preserved local content; run `{adopt_cmd}` to adopt)"
         ),
     );
 }
 
-/// Emit `target-unmanaged-adopted` when `--force` takes over an untracked collision.
-pub fn warn_unmanaged_adopted(
+/// Emit `target-unmanaged-adopted` when `--force` adopts a path without an installed claim.
+pub fn warn_no_installed_claim_adopted(
     target_name: &str,
     dest_rel: &str,
     hint: CollisionAdoptHint,
@@ -117,7 +119,7 @@ pub fn warn_unmanaged_adopted(
     diag.warn(
         "target-unmanaged-adopted",
         format!(
-            "target `{target_name}` item `{dest_rel}` existed but was not tracked by Mars; \
+            "target `{target_name}` item `{dest_rel}` existed but had no installed-content claim; \
              adopting with `--force`"
         ),
     );
@@ -166,7 +168,7 @@ mod tests {
         let lock = lock_with_output(".mars", "agents/coder.md");
         assert_eq!(
             copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
-            SurfaceCopyDecision::SkipUnmanagedCollision
+            SurfaceCopyDecision::SkipWithoutInstalledClaim
         );
     }
 
@@ -186,7 +188,7 @@ mod tests {
 
         assert_eq!(
             copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
-            SurfaceCopyDecision::SkipUnmanagedCollision
+            SurfaceCopyDecision::SkipWithoutInstalledClaim
         );
         assert_eq!(
             copy_decision(&lock, ".cursor", "agents/coder.md", true, true),
@@ -203,5 +205,23 @@ mod tests {
         let lock = lock_with_output(".mars", "agents/coder.md");
         assert!(!may_delete(&lock, ".cursor", "agents/coder.md"));
         assert!(may_delete(&lock, ".mars", "agents/coder.md"));
+    }
+
+    #[test]
+    fn collision_diagnostic_describes_missing_installed_content_claim() {
+        let mut diagnostics = DiagnosticCollector::new();
+
+        warn_no_installed_claim_collision(
+            ".cursor",
+            "agents/coder.md",
+            CollisionAdoptHint::SyncForce,
+            &mut diagnostics,
+        );
+
+        let diagnostics = diagnostics.drain();
+        assert_eq!(diagnostics.len(), 1);
+        let message = &diagnostics[0].message;
+        assert!(message.contains("has no installed-content claim"));
+        assert!(!message.contains("not tracked by Mars"));
     }
 }

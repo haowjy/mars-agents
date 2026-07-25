@@ -871,8 +871,8 @@ fn write_file_hook_outputs(
             dest_exists,
             force,
         ) {
-            crate::surface_ownership::SurfaceCopyDecision::SkipUnmanagedCollision => {
-                crate::surface_ownership::warn_unmanaged_collision(
+            crate::surface_ownership::SurfaceCopyDecision::SkipWithoutInstalledClaim => {
+                crate::surface_ownership::warn_no_installed_claim_collision(
                     &target_root,
                     &relative,
                     crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -887,7 +887,7 @@ fn write_file_hook_outputs(
                         .installed_checksum_for_output(&target_root, &relative)
                         .is_none()
                 {
-                    crate::surface_ownership::warn_unmanaged_adopted(
+                    crate::surface_ownership::warn_no_installed_claim_adopted(
                         &target_root,
                         &relative,
                         crate::surface_ownership::CollisionAdoptHint::SyncForce,

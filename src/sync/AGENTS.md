@@ -29,6 +29,13 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 - **Normal**: lock-preferred latest-compatible
 - **Maximize**: upgrade to newest versions, optionally bump constraints
 
+### Recovery Policy
+
+`SyncRequest.recovery` is strict by default and independent of `--force`.
+Upgrade, override, remove, and repair opt into preserving unreadable removed-
+schema hook surfaces. Frozen sources produce skip outcomes in diff, retain prior
+config bindings, and carry exact prior hook lock records forward.
+
 ### Key Operations
 
 | Function | Responsibility |

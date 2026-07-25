@@ -25,6 +25,9 @@ pub struct ResolvedGraph {
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
     /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    /// Sources whose prior hook surface must be carried forward because a
+    /// recovery resolution could not read the current schema.
+    pub frozen_hook_sources: HashSet<SourceName>,
 }
 
 /// A single node in the resolved graph.

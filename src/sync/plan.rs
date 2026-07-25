@@ -91,6 +91,18 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
                 });
             }
 
+            DiffEntry::Frozen { locked } => {
+                actions.push(PlannedAction::Skip {
+                    item_id: ItemId {
+                        kind: locked.kind,
+                        name: locked.dest_path.item_name(locked.kind).into(),
+                    },
+                    dest_path: locked.dest_path.clone(),
+                    source_name: locked.source.clone(),
+                    installed_checksum: Some(locked.installed_checksum.clone()),
+                });
+            }
+
             DiffEntry::LocalModified { target } => {
                 if options.force {
                     // --force: source wins even when only local changed

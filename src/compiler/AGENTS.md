@@ -130,6 +130,9 @@ validates merge-mode event keys against per-target allowlists, unwraps copy-past
 wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
 fragment text, and returns structured `HookFragment` or substituted file content.
 Placement and lock recording are handled by `config_entries/`.
+Recovery-frozen source hook bindings bypass stale-entry removal and are carried
+forward byte-for-byte; config compilation never rewrites content it could not
+read.
 
 ## Variants (`variants/`)
 

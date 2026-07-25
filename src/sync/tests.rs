@@ -119,6 +119,7 @@ fn make_graph_config(
             order,
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         },
         EffectiveConfig {
             dependencies: config_dependencies,
@@ -509,6 +510,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
         order,
         filters: std::collections::HashMap::new(),
         version_constraints: std::collections::HashMap::new(),
+        frozen_hook_sources: std::collections::HashSet::new(),
     }
 }
 
@@ -786,7 +788,14 @@ fn full_pipeline_fresh_sync() {
 
     // Compute diff against empty lock
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     // All items should be Add
     assert_eq!(sync_diff.items.len(), 2);
@@ -836,7 +845,14 @@ fn re_sync_no_changes() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -847,7 +863,14 @@ fn re_sync_no_changes() {
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(
+        fixture.managed_root(),
+        &first_lock,
+        &target2,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     // All items should be Unchanged
     for entry in &sync_diff2.items {
@@ -914,6 +937,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             &mut diag,
         )
         .unwrap()
+        .rooted
     };
 
     let mut graph = {
@@ -928,7 +952,14 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         let (target, _, _) =
             target::build_with_collisions_and_diag(graph, cfg, &mut DiagnosticCollector::new())
                 .unwrap();
-        let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
+        let sync_diff = diff::compute(
+            fixture.managed_root(),
+            lock,
+            &target,
+            false,
+            &Default::default(),
+        )
+        .unwrap();
         let sync_plan = create_sync_plan(&sync_diff, &options);
         let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
         let new_lock =
@@ -1125,7 +1156,14 @@ fn source_update_detects_changes() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1140,7 +1178,14 @@ fn source_update_detects_changes() {
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(
+        fixture.managed_root(),
+        &first_lock,
+        &target2,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     // Should detect an Update
     assert_eq!(sync_diff2.items.len(), 1);
@@ -1162,7 +1207,14 @@ fn local_modification_preserved() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1180,7 +1232,14 @@ fn local_modification_preserved() {
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(
+        fixture.managed_root(),
+        &first_lock,
+        &target2,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     // Should detect LocalModified
     assert_eq!(sync_diff2.items.len(), 1);
@@ -1209,7 +1268,14 @@ fn force_overwrites_local_modifications() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1231,7 +1297,14 @@ fn force_overwrites_local_modifications() {
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(
+        fixture.managed_root(),
+        &first_lock,
+        &target2,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     let force_options = SyncOptions {
         force: true,
@@ -1269,7 +1342,14 @@ fn orphan_removed_when_source_drops_item() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1286,7 +1366,14 @@ fn orphan_removed_when_source_drops_item() {
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(
+        fixture.managed_root(),
+        &first_lock,
+        &target2,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     // Should have one Unchanged and one Orphan
     let orphan_count = sync_diff2
@@ -1323,7 +1410,14 @@ fn dry_run_produces_plan_without_changes() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
 
     let dry_options = SyncOptions {
         dry_run: true,
@@ -1353,7 +1447,14 @@ fn lock_written_after_apply() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
@@ -1399,7 +1500,14 @@ fn two_sources_no_collision() {
     assert_eq!(target.items.len(), 2);
 
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(
+        fixture.managed_root(),
+        &lock,
+        &target,
+        false,
+        &Default::default(),
+    )
+    .unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();

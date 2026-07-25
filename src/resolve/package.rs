@@ -177,14 +177,19 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let new_rooted = stage_rooted_package(
+                    let staged = stage_rooted_package(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
                         options,
                         diag,
                     )?;
-                    ctx.set_pending_restart(pending_src.name.clone(), new_ref, new_rooted);
+                    ctx.set_pending_restart(
+                        pending_src.name.clone(),
+                        new_ref,
+                        staged.rooted,
+                        staged.hook_surface,
+                    );
                     return Err(MarsError::ResolutionRestartNeeded {
                         package: pending_src.name.to_string(),
                     });
@@ -237,29 +242,31 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let (resolved_ref, rooted_ref) = if let Some((override_ref, override_rooted)) =
-        ctx.version_override(&pending_src.name).cloned()
-    {
-        // Use the pre-computed ref from the prior pass.
-        (override_ref, override_rooted)
-    } else {
-        let ref_ = resolve_single_source(
-            pending_src,
-            provider,
-            locked,
-            options,
-            ctx.version_constraints(),
-            diag,
-        )?;
-        let rooted = apply_subpath(
-            &pending_src.name,
-            &ref_.tree_path,
-            pending_src.subpath.as_ref(),
-        )?;
-        let rooted =
-            stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
-        (ref_, rooted)
-    };
+    let (resolved_ref, rooted_ref, hook_surface) =
+        if let Some((override_ref, override_rooted, hook_surface)) =
+            ctx.version_override(&pending_src.name)
+        {
+            // Use the pre-computed ref from the prior pass.
+            (override_ref.clone(), override_rooted.clone(), hook_surface)
+        } else {
+            let ref_ = resolve_single_source(
+                pending_src,
+                provider,
+                locked,
+                options,
+                ctx.version_constraints(),
+                diag,
+            )?;
+            let rooted = apply_subpath(
+                &pending_src.name,
+                &ref_.tree_path,
+                pending_src.subpath.as_ref(),
+            )?;
+            let staged =
+                stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
+            (ref_, staged.rooted, staged.hook_surface)
+        };
+    ctx.set_hook_surface(&pending_src.name, hook_surface);
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
@@ -373,9 +380,12 @@ fn stage_rooted_package(
     effective_config: &EffectiveConfig,
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
-) -> Result<super::types::RootedSourceRef, MarsError> {
+) -> Result<staging::StagedRootedSource, MarsError> {
     let Some(staging_root) = options.staging_root.as_deref() else {
-        return Ok(rooted);
+        return Ok(staging::StagedRootedSource {
+            rooted,
+            hook_surface: staging::HookSurfaceState::Readable,
+        });
     };
 
     let dep = effective_config.dependencies.get(source_name);

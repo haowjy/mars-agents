@@ -38,8 +38,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Allow `upgrade`, `override`, `remove`, and `repair` to recover projects whose
-  resolved packages still contain the removed hook schema, while normal sync
-  continues to reject those packages with a source name and version.
+  resolved packages still contain the removed hook schema. Recovery freezes
+  unreadable hook outputs, config bindings, and lock records for dependencies
+  that remain; normal sync, including `sync --force`, continues to reject them.
 - Apply local overrides to transitive dependencies, allowing a broken
   transitive package to be replaced without first declaring it directly.
 - Preserve installed-content authority for matching skill and hook directories

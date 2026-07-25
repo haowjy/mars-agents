@@ -672,6 +672,7 @@ mod tests {
             order,
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,

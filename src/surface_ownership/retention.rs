@@ -35,6 +35,7 @@ pub(crate) struct SurfaceRemoval {
 pub(crate) struct RemovalPlan {
     per_pair: BTreeMap<(String, Surface), SurfaceRemoval>,
     stale_keys: BTreeMap<String, Vec<String>>,
+    preserved_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
 }
 
 impl RemovalPlan {
@@ -42,10 +43,30 @@ impl RemovalPlan {
         previous: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
         desired: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     ) -> Self {
+        Self::build_preserving(previous, desired, &BTreeMap::new())
+    }
+
+    pub(crate) fn build_preserving(
+        previous: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+        desired: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+        preserved_keys: &BTreeMap<String, std::collections::BTreeSet<String>>,
+    ) -> Self {
         let mut per_pair: BTreeMap<(String, Surface), SurfaceRemoval> = BTreeMap::new();
         let mut stale_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut preserved_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
+            BTreeMap::new();
         for (target_root, records) in previous {
             for (key, record) in records {
+                if preserved_keys
+                    .get(target_root)
+                    .is_some_and(|keys| keys.contains(key))
+                {
+                    preserved_records
+                        .entry(target_root.clone())
+                        .or_default()
+                        .insert(key.clone(), record.clone());
+                    continue;
+                }
                 let surface = Surface::of_key(key);
                 per_pair
                     .entry((target_root.clone(), surface))
@@ -81,6 +102,7 @@ impl RemovalPlan {
         Self {
             per_pair,
             stale_keys,
+            preserved_records,
         }
     }
 
@@ -96,6 +118,7 @@ impl RemovalPlan {
         let Self {
             per_pair,
             stale_keys,
+            preserved_records,
         } = self;
         let mut outcomes = BTreeMap::new();
         for ((target_root, surface), removal) in per_pair {
@@ -137,7 +160,10 @@ impl RemovalPlan {
                 );
             }
         }
-        RetentionPlan { outcomes }
+        RetentionPlan {
+            outcomes,
+            preserved_records,
+        }
     }
 }
 
@@ -208,6 +234,7 @@ enum RemovalOutcome {
 
 pub(crate) struct RetentionPlan {
     outcomes: BTreeMap<(String, Surface), RemovalOutcome>,
+    preserved_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
 }
 
 impl RetentionPlan {
@@ -228,7 +255,7 @@ impl RetentionPlan {
     pub(crate) fn into_retained_records(
         self,
     ) -> BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> {
-        let mut records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
+        let mut records = self.preserved_records;
         for ((target_root, _), outcome) in self.outcomes {
             if let RemovalOutcome::Unconfirmed { retained } = outcome {
                 records.entry(target_root).or_default().extend(retained);

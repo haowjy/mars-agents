@@ -34,6 +34,17 @@ pub(crate) enum RemovedHookSchemaPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookSurfaceState {
+    Readable,
+    Frozen,
+}
+
+pub(crate) struct StagedRootedSource {
+    pub rooted: RootedSourceRef,
+    pub hook_surface: HookSurfaceState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RootedStageOptions {
     pub dialect: Dialect,
     pub removed_hook_schema: RemovedHookSchemaPolicy,
@@ -48,7 +59,7 @@ pub(crate) fn stage_rooted_source(
     renames: &RenameMap,
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
-) -> Result<RootedSourceRef, MarsError> {
+) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
     stage_canonical_source(
         &rooted.package_root,
@@ -59,12 +70,19 @@ pub(crate) fn stage_rooted_source(
         Some(source_name.as_ref()),
         diag,
     )?;
-    if options.removed_hook_schema == RemovedHookSchemaPolicy::Omit {
-        omit_removed_schema_hooks(&staged_package_root, source_name, diag)?;
-    }
-    Ok(RootedSourceRef {
-        checkout_root: rooted.checkout_root,
-        package_root: staged_package_root,
+    let hook_surface = if options.removed_hook_schema == RemovedHookSchemaPolicy::Omit
+        && omit_removed_schema_hooks(&staged_package_root, source_name, diag)?
+    {
+        HookSurfaceState::Frozen
+    } else {
+        HookSurfaceState::Readable
+    };
+    Ok(StagedRootedSource {
+        rooted: RootedSourceRef {
+            checkout_root: rooted.checkout_root,
+            package_root: staged_package_root,
+        },
+        hook_surface,
     })
 }
 
@@ -72,7 +90,8 @@ fn omit_removed_schema_hooks(
     package_root: &Path,
     source_name: &SourceName,
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
+    let mut omitted = Vec::new();
     for hook_dir in crate::discover::discover_hook_directories(package_root)? {
         let manifest = hook_dir.join("hook.toml");
         let raw = fs::read_to_string(&manifest)?;
@@ -86,7 +105,7 @@ fn omit_removed_schema_hooks(
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>");
-        fs::remove_dir_all(&hook_dir)?;
+        omitted.push(hook_name.to_owned());
         diag.warn(
             "removed-hook-schema-omitted",
             format!(
@@ -95,7 +114,15 @@ fn omit_removed_schema_hooks(
             ),
         );
     }
-    Ok(())
+    if omitted.is_empty() {
+        return Ok(false);
+    }
+
+    // A removed-schema manifest makes the package's hook surface unreadable as
+    // a whole. Freeze that surface rather than mixing new partial state with
+    // prior installed state.
+    fs::remove_dir_all(package_root.join("hooks"))?;
+    Ok(true)
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.

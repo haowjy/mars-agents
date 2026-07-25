@@ -17,6 +17,69 @@ pub(crate) struct ConfigEntryCompilation {
     pub removed_outputs: Vec<(String, String)>,
 }
 
+struct FrozenHookRetention {
+    config_keys: BTreeMap<String, std::collections::BTreeSet<String>>,
+    output_paths: std::collections::BTreeSet<(String, String)>,
+}
+
+fn frozen_hook_retention(
+    graph: &crate::resolve::ResolvedGraph,
+    lock: &crate::lock::LockFile,
+) -> FrozenHookRetention {
+    let mut names_by_target: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let mut output_paths = std::collections::BTreeSet::new();
+
+    for item in lock.items.values().filter(|item| {
+        item.kind == crate::lock::ItemKind::Hook && graph.frozen_hook_sources.contains(&item.source)
+    }) {
+        let Some(name) = item
+            .outputs
+            .iter()
+            .find(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
+            .and_then(|output| output.dest_path.as_str().rsplit('/').next())
+        else {
+            continue;
+        };
+        for output in item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
+        {
+            names_by_target
+                .entry(output.target_root.clone())
+                .or_default()
+                .insert(name.to_owned());
+            output_paths.insert((
+                output.target_root.clone(),
+                output.dest_path.as_str().to_owned(),
+            ));
+        }
+    }
+
+    let mut config_keys = BTreeMap::new();
+    for (target_root, names) in names_by_target {
+        let Some(records) = lock.config_entries.get(&target_root) else {
+            continue;
+        };
+        for key in records.keys().filter(|key| {
+            key.starts_with("hook:")
+                && key
+                    .rsplit_once(':')
+                    .is_some_and(|(_, name)| names.contains(name))
+        }) {
+            config_keys
+                .entry(target_root.clone())
+                .or_insert_with(std::collections::BTreeSet::new)
+                .insert(key.clone());
+        }
+    }
+
+    FrozenHookRetention {
+        config_keys,
+        output_paths,
+    }
+}
+
 pub(crate) fn file_hook_output_preserve_paths(
     lock: &crate::lock::LockFile,
 ) -> HashMap<String, std::collections::HashSet<String>> {
@@ -347,6 +410,8 @@ pub(crate) fn compile_config_entries(
     let graph = &applied.planned.targeted.resolved.graph;
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = effective.settings.managed_targets();
+    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
+    let frozen = frozen_hook_retention(graph, old_lock);
 
     // Compute package depths from direct deps (depth 1; local = 0).
     let depths = compute_depths(graph);
@@ -471,7 +536,7 @@ pub(crate) fn compile_config_entries(
         Vec<ConfigEntry>,
     > = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
-    let mut desired_file_outputs = std::collections::BTreeSet::new();
+    let mut desired_file_outputs = frozen.output_paths;
     let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
 
@@ -655,8 +720,11 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let removal_plan =
-        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records);
+    let removal_plan = crate::surface_ownership::retention::RemovalPlan::build_preserving(
+        previous_records,
+        &desired_records,
+        &frozen.config_keys,
+    );
 
     if dry_run {
         for (target_root, keys) in removal_plan.stale_keys() {
@@ -705,7 +773,6 @@ pub(crate) fn compile_config_entries(
 
     // File-mode fragments are ordinary target outputs. Remove only exact paths
     // owned by the old lock and no longer desired.
-    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
     for (target_root, paths) in file_hook_output_preserve_paths(old_lock) {
         for dest_path in paths {
             let pair = (target_root.clone(), dest_path.clone());
@@ -1160,6 +1227,7 @@ mod tests {
                 nodes,
                 filters: HashMap::new(),
                 version_constraints: HashMap::new(),
+                frozen_hook_sources: std::collections::HashSet::new(),
             };
             let depths = compute_depths(&graph);
             let mut emitted_order = graph.order.clone();

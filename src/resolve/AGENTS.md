@@ -37,8 +37,10 @@ All downstream consumers (manifest reading, item discovery) transparently read f
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Recovery
-commands can also request omission of removed-schema hooks from the derived
-staged tree; normal sync leaves them in place for strict source validation.
+commands can also mark a removed-schema package hook surface as frozen while
+omitting it from the derived staged tree. `ResolvedGraph.frozen_hook_sources`
+carries that state to every persistence lane; normal sync leaves the surface in
+place for strict source validation.
 
 ## Key Traits
 

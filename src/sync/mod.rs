@@ -306,9 +306,7 @@ pub(crate) fn resolve_graph(
 fn removed_hook_schema_policy(request: &SyncRequest) -> crate::staging::RemovedHookSchemaPolicy {
     match request.recovery {
         RecoveryPolicy::Strict => crate::staging::RemovedHookSchemaPolicy::Reject,
-        RecoveryPolicy::PreserveUnreadableHooks => {
-            crate::staging::RemovedHookSchemaPolicy::Omit
-        }
+        RecoveryPolicy::PreserveUnreadableHooks => crate::staging::RemovedHookSchemaPolicy::Omit,
     }
 }
 
@@ -553,6 +551,7 @@ pub(crate) fn create_plan(
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,
+        &targeted.resolved.graph.frozen_hook_sources,
     )?;
 
     if !request.options.force {

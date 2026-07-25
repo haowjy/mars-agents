@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -29,10 +29,23 @@ pub struct ResolverContext {
     /// branch in `resolve_package_bottom_up` checks this map and uses the override
     /// directly, so the same constraint-accumulation pattern does NOT re-trigger a
     /// restart on the next pass.
-    version_overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef)>,
+    version_overrides: HashMap<
+        SourceName,
+        (
+            ResolvedRef,
+            RootedSourceRef,
+            crate::staging::HookSurfaceState,
+        ),
+    >,
     /// Pending restart info set by `resolve_package_bottom_up` just before it returns
     /// `ResolutionRestartNeeded`. The driver reads this before discarding the context.
-    pending_restart: Option<(SourceName, ResolvedRef, RootedSourceRef)>,
+    pending_restart: Option<(
+        SourceName,
+        ResolvedRef,
+        RootedSourceRef,
+        crate::staging::HookSurfaceState,
+    )>,
+    frozen_hook_sources: HashSet<SourceName>,
 }
 
 impl Default for ResolverContext {
@@ -54,6 +67,7 @@ impl ResolverContext {
             package_versions: PackageVersions::new(),
             version_overrides: HashMap::new(),
             pending_restart: None,
+            frozen_hook_sources: HashSet::new(),
         }
     }
 
@@ -62,7 +76,14 @@ impl ResolverContext {
     /// packages where the correct version was already computed.
     pub(super) fn set_version_overrides(
         &mut self,
-        overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef)>,
+        overrides: HashMap<
+            SourceName,
+            (
+                ResolvedRef,
+                RootedSourceRef,
+                crate::staging::HookSurfaceState,
+            ),
+        >,
     ) {
         self.version_overrides = overrides;
     }
@@ -72,8 +93,14 @@ impl ResolverContext {
     pub(super) fn version_override(
         &self,
         name: &SourceName,
-    ) -> Option<&(ResolvedRef, RootedSourceRef)> {
-        self.version_overrides.get(name)
+    ) -> Option<(
+        &ResolvedRef,
+        &RootedSourceRef,
+        crate::staging::HookSurfaceState,
+    )> {
+        self.version_overrides
+            .get(name)
+            .map(|(resolved, rooted, state)| (resolved, rooted, *state))
     }
 
     /// Record the restart info: the package that triggered a restart and the ref
@@ -84,15 +111,31 @@ impl ResolverContext {
         package: SourceName,
         new_ref: ResolvedRef,
         new_rooted: RootedSourceRef,
+        hook_surface: crate::staging::HookSurfaceState,
     ) {
-        self.pending_restart = Some((package, new_ref, new_rooted));
+        self.pending_restart = Some((package, new_ref, new_rooted, hook_surface));
     }
 
     /// Drain the pending restart info. Called by the driver after catching the signal.
     pub(super) fn take_pending_restart(
         &mut self,
-    ) -> Option<(SourceName, ResolvedRef, RootedSourceRef)> {
+    ) -> Option<(
+        SourceName,
+        ResolvedRef,
+        RootedSourceRef,
+        crate::staging::HookSurfaceState,
+    )> {
         self.pending_restart.take()
+    }
+
+    pub(super) fn set_hook_surface(
+        &mut self,
+        source_name: &SourceName,
+        state: crate::staging::HookSurfaceState,
+    ) {
+        if state == crate::staging::HookSurfaceState::Frozen {
+            self.frozen_hook_sources.insert(source_name.clone());
+        }
     }
 
     pub(super) fn registry(&self) -> &IndexMap<SourceName, RegisteredPackage> {
@@ -181,6 +224,7 @@ impl ResolverContext {
             order,
             filters: self.materialization_filters,
             version_constraints: self.version_constraints,
+            frozen_hook_sources: self.frozen_hook_sources,
         }
     }
 }

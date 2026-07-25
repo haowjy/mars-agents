@@ -40,6 +40,39 @@ fn write_migrated_hook_source(dir: &TempDir, source_name: &str) -> std::path::Pa
     source.to_path_buf()
 }
 
+fn write_named_hook_source(
+    dir: &TempDir,
+    source_name: &str,
+    hook_name: &str,
+    command: &str,
+) -> std::path::PathBuf {
+    let source = dir.child(source_name);
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str(&format!(
+            "[package]\nname = \"{source_name}\"\nversion = \"1.0.0\"\n"
+        ))
+        .unwrap();
+    write_dependency_hook(&source, hook_name, ".claude", "SessionEnd", command);
+    source.to_path_buf()
+}
+
+fn replace_hook_with_removed_schema(source: &std::path::Path, hook_name: &str) {
+    let hook = source.join("hooks").join(hook_name);
+    fs::remove_dir_all(&hook).unwrap();
+    fs::create_dir_all(&hook).unwrap();
+    fs::write(
+        hook.join("hook.toml"),
+        format!(
+            "name = \"{hook_name}\"\nevent = \"session.end\"\nvisibility = \"exported\"\n\
+             targets = [\".claude\"]\n\n[action]\nkind = \"script\"\npath = \"run.sh\"\n"
+        ),
+    )
+    .unwrap();
+    fs::write(hook.join("run.sh"), "#!/bin/sh\n").unwrap();
+}
+
 fn write_old_staging_fixture(project: &assert_fs::fixture::ChildPath) {
     let staged = project.child(".mars/staging/base/claude/hooks/context-autosync");
     staged.create_dir_all().unwrap();
@@ -134,6 +167,62 @@ fn sync_force_still_rejects_removed_hook_schema() {
     sync_force(&project)
         .failure()
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"));
+}
+
+#[test]
+fn recovery_freezes_unreadable_hooks_from_dependencies_that_remain() {
+    let dir = TempDir::new().unwrap();
+    let source_a = write_named_hook_source(&dir, "a", "audit-a", "printf a");
+    let source_b = write_named_hook_source(&dir, "b", "audit-b", "printf b");
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.a]\npath = \"{}\"\n\n[dependencies.b]\npath = \"{}\"\n\n\
+             [settings]\ntargets = [\".claude\"]\n",
+            portable_path(&source_a),
+            portable_path(&source_b),
+        ))
+        .unwrap();
+    sync(&project).success();
+
+    let settings_before =
+        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    let lock_before = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    replace_hook_with_removed_schema(&source_a, "audit-a");
+    replace_hook_with_removed_schema(&source_b, "audit-b");
+
+    mars()
+        .args(["remove", "a", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    project
+        .child(".mars/hooks/claude/audit-a")
+        .assert(predicate::path::missing());
+    project
+        .child(".claude/hooks/audit-a")
+        .assert(predicate::path::missing());
+    project
+        .child(".mars/hooks/claude/audit-b")
+        .assert(predicate::path::is_dir());
+    project
+        .child(".claude/hooks/audit-b")
+        .assert(predicate::path::is_dir());
+
+    let settings_after =
+        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(settings_before.contains("printf b"));
+    assert!(settings_after.contains("printf b"));
+    assert!(!settings_after.contains("printf a"));
+
+    let lock_after = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock_before.contains("hook/audit-b@claude"));
+    assert!(lock_after.contains("hook/audit-b@claude"));
+    assert!(lock_after.contains("hook:SessionEnd:audit-b"));
+    assert!(!lock_after.contains("hook/audit-a@claude"));
+    assert!(!lock_after.contains("hook:SessionEnd:audit-a"));
 }
 
 #[test]

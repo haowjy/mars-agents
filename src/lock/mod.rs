@@ -874,6 +874,18 @@ pub fn build(
         }
     }
 
+    // Recovery cannot derive a new logical identity or checksum for an
+    // unreadable hook surface. Replace any outcome-derived approximation with
+    // the exact prior records for those sources.
+    items.retain(|_, item| {
+        item.kind != ItemKind::Hook || !graph.frozen_hook_sources.contains(&item.source)
+    });
+    for (key, item) in old_lock.items.iter().filter(|(_, item)| {
+        item.kind == ItemKind::Hook && graph.frozen_hook_sources.contains(&item.source)
+    }) {
+        items.insert(key.clone(), item.clone());
+    }
+
     // Add synthetic _self source if any local package items exist.
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
     let has_self_items = items.values().any(|item| item.source == local_source_name);
@@ -2072,6 +2084,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -2180,6 +2193,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![
@@ -2259,6 +2273,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -2587,6 +2602,7 @@ installed_checksum = "sha256:222"
             order: vec![git_name.clone(), path_name.clone()],
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
 
@@ -2673,6 +2689,7 @@ installed_checksum = "sha256:222"
             order: vec![source_name.clone()],
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
         let new_lock = build(
@@ -2695,6 +2712,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
         let old_lock = LockFile {
@@ -2772,6 +2790,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let old_lock = LockFile::empty();
         let applied = ApplyResult {
@@ -2807,6 +2826,7 @@ installed_checksum = "sha256:222"
             order: Vec::new(),
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
+            frozen_hook_sources: std::collections::HashSet::new(),
         };
         let old_lock = LockFile {
             version: LOCK_VERSION,

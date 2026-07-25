@@ -20,6 +20,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Derive config-entry retention and replacement suppression from one removal
+  outcome per target surface, preventing ghost ownership and writes after a
+  failed sweep.
 - Preserve hand-edited Codex and Cursor hook files byte-for-byte when no
   lock-recorded hook entry can be removed.
 - Allow OpenCode file hooks to sync without validating an unrelated

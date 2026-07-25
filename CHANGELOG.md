@@ -39,6 +39,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Preserve installed-content authority for matching skill and hook directories
   when promoting version 2 locks.
+- Reject version 2 directory outputs containing symlinks or special entries
+  before promotion can grant installed-content authority.
 - Repair linked native skill projections when the destination is a symlink,
   a non-directory, or has structural differences such as extra empty directories.
 - Describe pending-deletion copy collisions as paths without installed-content

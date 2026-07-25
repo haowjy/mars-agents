@@ -389,6 +389,92 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
 
 #[cfg(unix)]
 #[test]
+fn sync_does_not_adopt_v2_linked_skill_with_nested_file_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    fs::write(
+        source.join("skills/planning/reference.md"),
+        "# Managed reference",
+    )
+    .unwrap();
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let linked_reference = project.child(".claude/skills/planning/reference.md");
+    let external_reference = dir.child("external-reference.md");
+    external_reference.write_str("# Managed reference").unwrap();
+    fs::remove_file(linked_reference.path()).unwrap();
+    symlink(external_reference.path(), linked_reference.path()).unwrap();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: toml::Value =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["version"] = toml::Value::Integer(2);
+    for (_, item) in lock["items"].as_table_mut().unwrap().iter_mut() {
+        for output in item["outputs"].as_array_mut().unwrap() {
+            output.as_table_mut().unwrap().remove("state");
+        }
+    }
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("has no installed-content claim"));
+
+    assert!(
+        linked_reference
+            .path()
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "v2 promotion must not grant authority to replace a nested symlink"
+    );
+    let promoted = mars_agents::lock::load(project.path()).unwrap();
+    let linked = promoted.items["skill/planning"]
+        .outputs
+        .iter()
+        .find(|output| {
+            output.target_root == ".claude" && output.dest_path.as_str() == "skills/planning"
+        })
+        .unwrap();
+    assert!(matches!(
+        linked.state,
+        mars_agents::lock::OutputState::PendingDeletion
+    ));
+}
+
+#[cfg(unix)]
+#[test]
 fn sync_replaces_symlinked_native_skill_projection() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);

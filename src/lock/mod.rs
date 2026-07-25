@@ -628,9 +628,37 @@ fn v2_output_checksum(path: &Path) -> Option<String> {
             .map(|bytes| crate::hash::hash_bytes(&bytes));
     }
     if file_type.is_dir() {
+        if !has_only_regular_file_entries(path) {
+            return None;
+        }
         return crate::hash::compute_dir_hash(path).ok();
     }
     None
+}
+
+/// Validate a directory without following links or opening entry contents.
+fn has_only_regular_file_entries(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            return false;
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            if !has_only_regular_file_entries(&path) {
+                return false;
+            }
+        } else if !file_type.is_file() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Write the lock file atomically to the given root directory (always current format).
@@ -1489,6 +1517,58 @@ installed_checksum = "sha256:old"
             lock.items["hook/audit"].outputs[0].state,
             OutputState::PendingDeletion
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_dangling_symlink_has_no_checksum() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        symlink("missing.md", output.join("reference.md")).unwrap();
+
+        assert_eq!(v2_output_checksum(&output), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_directory_symlink_has_no_checksum() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        let external = dir.path().join("external");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::create_dir(&external).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        std::fs::write(external.join("reference.md"), "# Reference").unwrap();
+        symlink(&external, output.join("references")).unwrap();
+
+        assert_eq!(v2_output_checksum(&output), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_directory_output_with_nested_fifo_returns_without_opening_it() {
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("skill");
+        std::fs::create_dir(&output).unwrap();
+        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(output.join("events"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let started = std::time::Instant::now();
+        assert_eq!(v2_output_checksum(&output), None);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "shape validation must not open and block on the FIFO"
+        );
     }
 
     #[cfg(unix)]

@@ -99,6 +99,17 @@ pub enum RecoveryPolicy {
     #[default]
     Strict,
     DeferOnUnreadable,
+    /// Defer on unreadable sources and rebuild a corrupt lock in memory.
+    ///
+    /// The corrupt file remains untouched unless the full pipeline reaches
+    /// finalization and replaces it with a rebuilt lock.
+    Repair,
+}
+
+impl RecoveryPolicy {
+    fn defers_on_unreadable(self) -> bool {
+        matches!(self, Self::DeferOnUnreadable | Self::Repair)
+    }
 }
 
 /// Resolution behavior for the resolver stage.
@@ -176,8 +187,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
     let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
-    if request.recovery == RecoveryPolicy::DeferOnUnreadable && !unreadable_hook_surfaces.is_empty()
-    {
+    if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
         persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
         let recovery_halt = build_recovery_halt(&ir.resolved, unreadable_hook_surfaces, request);
         return Ok(SyncReport {
@@ -329,7 +339,19 @@ pub(crate) fn load_config(
     diag.extend(config_diagnostics);
 
     // Load existing lock file, routing load diagnostics through sync diagnostics.
-    let (old_lock, lock_diagnostics) = crate::lock::load_with_diagnostics(project_root)?;
+    let (old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
+        Ok(loaded) => loaded,
+        Err(MarsError::Lock(crate::error::LockError::Corrupt { message }))
+            if request.recovery == RecoveryPolicy::Repair =>
+        {
+            diag.warn(
+                "corrupt-lock-rebuild",
+                format!("{message}; lock is corrupt, rebuilding from mars.toml + dependencies"),
+            );
+            (LockFile::empty(), Vec::new())
+        }
+        Err(err) => return Err(err),
+    };
     diag.extend(lock_diagnostics);
 
     Ok(LoadedConfig {

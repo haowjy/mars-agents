@@ -1,7 +1,6 @@
 //! `mars repair` — rebuild state from lock + dependencies.
 
-use crate::error::{LockError, MarsError};
-use crate::lock::LockFile;
+use crate::error::MarsError;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 
 use super::output;
@@ -20,16 +19,6 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         output::print_info("repairing — re-syncing from dependencies...");
     }
 
-    match crate::lock::load(&ctx.project_root) {
-        Ok(_) => {}
-        Err(MarsError::Lock(LockError::Corrupt { message })) => {
-            eprintln!("warning: {message}");
-            eprintln!("warning: lock is corrupt, rebuilding from mars.toml + dependencies");
-            crate::lock::write(&ctx.project_root, &LockFile::empty())?;
-        }
-        Err(err) => return Err(err),
-    }
-
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: None,
@@ -37,7 +26,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             force: true,
             ..SyncOptions::default()
         },
-        recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
+        recovery: crate::sync::RecoveryPolicy::Repair,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 

@@ -537,6 +537,44 @@ fn repair_halt_preserves_user_edited_target_and_all_persisted_state() {
 }
 
 #[test]
+fn repair_halt_preserves_corrupt_lock_bytes() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+            portable_path(&legacy)
+        ))
+        .unwrap();
+    let corrupt_lock = b"corrupt lock evidence\nnot = [valid";
+    project
+        .child("mars.lock")
+        .write_binary(corrupt_lock)
+        .unwrap();
+
+    mars()
+        .args([
+            "repair",
+            "--json",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            "\"persisted\":[\"nothing persisted\"]",
+        ));
+
+    assert_eq!(
+        fs::read(project.child("mars.lock").path()).unwrap(),
+        corrupt_lock
+    );
+}
+
+#[test]
 fn override_can_replace_a_transitive_source_during_recovery() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");

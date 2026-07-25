@@ -147,7 +147,18 @@ fn repair_recovers_from_corrupt_lock() {
 
     let repaired_lock = fs::read_to_string(dir.child("project").child("mars.lock").path()).unwrap();
     let lock_value: Value = toml::from_str(&repaired_lock).unwrap();
-    assert!(lock_value["items"].as_table().is_some());
+    assert!(
+        lock_value["dependencies"]
+            .as_table()
+            .unwrap()
+            .contains_key("base")
+    );
+    assert!(
+        lock_value["items"]
+            .as_table()
+            .unwrap()
+            .contains_key("agent/coder")
+    );
 
     assert!(mars_dir.child("agents").child("coder.md").exists());
 }

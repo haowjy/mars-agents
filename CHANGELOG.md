@@ -37,6 +37,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
+  hook source; the lock is now rebuilt in memory and replaced only after a
+  complete repair.
 - Let `upgrade`, `override`, and `remove` recover projects whose resolved
   packages still contain the removed hook schema. When legacy sources remain,
   recovery persists only the requested config intent and exits 2 before

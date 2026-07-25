@@ -35,7 +35,9 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 Upgrade, override, remove, and repair opt into deferring materialization when
 staging finds an unreadable removed-schema hook surface. The gate persists only
 pending intent and returns before the compiler; strict sync still enters the
-compiler and reports the contextualized schema error.
+compiler and reports the contextualized schema error. Repair also treats a
+corrupt lock as empty in memory under the sync flock; only successful
+finalization replaces the corrupt file.
 
 ### Key Operations
 

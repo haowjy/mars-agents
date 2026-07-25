@@ -1,9 +1,10 @@
 //! Per-target surface ownership — gate linked-target mutations on lock records.
 //!
-//! For linked targets (`.cursor`, `.claude`, etc.), Mars may delete or overwrite
-//! only when the lock has an [`OutputRecord`](crate::lock::OutputRecord) for
-//! `(target_root, dest_path)`. `.mars`-only records do not imply ownership
-//! elsewhere.
+//! For linked targets (`.cursor`, `.claude`, etc.), Mars may delete only when
+//! the lock has an [`OutputRecord`](crate::lock::OutputRecord) for
+//! `(target_root, dest_path)`, and may overwrite without `--force` only when
+//! that record asserts installed content. `.mars`-only records do not imply
+//! ownership elsewhere.
 //!
 //! Path ownership has two explicit lifecycle claims. Deletion authority and
 //! replacement authority are distinct. Either lifecycle state authorizes deletion

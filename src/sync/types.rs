@@ -3,7 +3,7 @@
 /// Options controlling sync behavior.
 #[derive(Debug, Clone, Default)]
 pub struct SyncOptions {
-    /// Force overwrite on conflicts (skip merge).
+    /// Force overwrite local modifications and unmanaged collisions.
     pub force: bool,
     /// Compute plan but don't execute (dry run).
     pub dry_run: bool,

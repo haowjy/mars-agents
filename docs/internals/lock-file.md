@@ -155,7 +155,7 @@ Items are categorized by their apply action:
 
 | Action | Lock behavior |
 |---|---|
-| Installed / Updated / Merged / Conflicted | New item entry with computed checksums |
+| Installed / Updated | New item entry with computed checksums |
 | Kept (local modification preserved) | Carried forward from old lock |
 | Skipped | Carried forward from old lock |
 | Removed | Excluded from new lock |

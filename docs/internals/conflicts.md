@@ -121,4 +121,4 @@ If conflict markers are still present, `mars resolve` reports the file as still 
 
 ## Exit Codes
 
-`mars sync` and `mars resolve` exit with code 1 when unresolved conflicts remain. Use `mars list --status` to see which items are conflicted, or `mars doctor` to check for conflict markers.
+`mars resolve` exits with code 1 when unresolved conflicts remain. Use `mars list --status` to see which items are conflicted, or `mars doctor` to check for conflict markers.

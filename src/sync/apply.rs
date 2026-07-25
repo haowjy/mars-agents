@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::file_ops as fs_ops;
 use crate::lock::{ItemId, ItemKind};
+use crate::platform::fs as fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;
@@ -254,7 +254,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
 
 /// Write bytes to `dest` and verify persisted bytes hash matches expected.
 fn write_file_and_verify(dest: &Path, content: &[u8]) -> Result<ContentHash, MarsError> {
-    fs_ops::atomic_write_file(dest, content)?;
+    fs_ops::atomic_write(dest, content)?;
     let expected = ContentHash::from(crate::hash::hash_bytes(content));
     let persisted = std::fs::read(dest)?;
     let actual = ContentHash::from(crate::hash::hash_bytes(&persisted));

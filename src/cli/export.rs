@@ -32,7 +32,7 @@ pub struct ExportArgs {
 /// Top-level export envelope.
 ///
 /// Schema versioned for forward compatibility. The `status` field indicates
-/// whether the compile plan is complete, partial, or failed.
+/// whether the compile plan completed or failed.
 #[derive(Debug, Serialize)]
 pub struct ExportEnvelope {
     /// Format version — increment when the JSON shape changes incompatibly.
@@ -55,8 +55,6 @@ pub struct ExportEnvelope {
 pub enum ExportStatus {
     /// All items compiled successfully — no conflicts or errors.
     Complete,
-    /// Some items have conflicts or warnings that prevent clean install.
-    Partial,
     /// The compile pipeline failed entirely (resolver error, I/O error, etc.).
     Failed,
 }
@@ -82,7 +80,7 @@ pub struct ExportItem {
     pub kind: String,
     /// Source dependency that provides this item.
     pub source: String,
-    /// Planned action: "install", "overwrite", "skip", "conflict", "remove".
+    /// Planned action: "install", "overwrite", "skip", or "remove".
     pub action: String,
 }
 
@@ -162,27 +160,6 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
                     kind: kind.clone(),
                     source: source.clone(),
                     action: action.to_string(),
-                });
-                outputs.push(ExportOutput {
-                    item_name: name,
-                    kind,
-                    dest_path,
-                    source,
-                });
-            }
-
-            // Include pruned (remove) actions.
-            for outcome in &report.pruned {
-                let name = outcome.item_id.name.to_string();
-                let kind = kind_label(&outcome.item_id.kind);
-                let source = outcome.source_name.to_string();
-                let dest_path = outcome.dest_path.to_string();
-
-                items.push(ExportItem {
-                    name: name.clone(),
-                    kind: kind.clone(),
-                    source: source.clone(),
-                    action: "remove".to_string(),
                 });
                 outputs.push(ExportOutput {
                     item_name: name,
@@ -291,10 +268,8 @@ mod tests {
     #[test]
     fn export_status_serializes_lowercase() {
         let complete = serde_json::to_string(&ExportStatus::Complete).unwrap();
-        let partial = serde_json::to_string(&ExportStatus::Partial).unwrap();
         let failed = serde_json::to_string(&ExportStatus::Failed).unwrap();
         assert_eq!(complete, r#""complete""#);
-        assert_eq!(partial, r#""partial""#);
         assert_eq!(failed, r#""failed""#);
     }
 

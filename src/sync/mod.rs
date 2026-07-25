@@ -37,7 +37,6 @@ pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange, apply_co
 #[derive(Debug)]
 pub struct SyncReport {
     pub applied: ApplyResult,
-    pub pruned: Vec<apply::ActionOutcome>,
     pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     pub upgrades_available: usize,
@@ -831,7 +830,6 @@ pub(crate) fn finalize(
 
     Ok(SyncReport {
         applied: state.applied.applied,
-        pruned: Vec::new(),
         diagnostics,
         dependency_changes,
         upgrades_available,
@@ -885,7 +883,7 @@ fn retry_tombstone_removals(
                     Err(error) => Err(error.into()),
                 }
             } else {
-                crate::file_ops::safe_remove(&path)
+                crate::platform::fs::safe_remove(&path)
             };
 
             match result {

@@ -37,6 +37,20 @@ mod tests {
     }
 
     #[test]
+    fn detects_opening_marker_without_closing_marker() {
+        assert!(has_conflict_markers(
+            b"content\n<<<<<<< local\nunresolved content\n"
+        ));
+    }
+
+    #[test]
+    fn detects_markers_in_non_utf8_content() {
+        assert!(has_conflict_markers(
+            b"invalid: \xff\n<<<<<<< local\nunresolved content\n"
+        ));
+    }
+
+    #[test]
     fn ignores_content_without_markers() {
         assert!(!has_conflict_markers(b"normal content\nwith lines\n"));
     }
@@ -47,9 +61,9 @@ mod tests {
     }
 
     #[test]
-    fn ignores_marker_in_middle_of_line() {
+    fn ignores_paired_markers_in_middle_of_lines() {
         assert!(!has_conflict_markers(
-            b"content <<<<<<< not at line start\n"
+            b"content <<<<<<< not at line start\nconflict\ncontent >>>>>>> also mid-line\n"
         ));
     }
 }

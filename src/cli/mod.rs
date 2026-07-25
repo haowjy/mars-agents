@@ -13,6 +13,7 @@ pub mod agents;
 pub mod build;
 pub mod cache;
 pub mod check;
+pub(crate) mod conflict_markers;
 pub mod doctor;
 pub mod export;
 pub mod init;

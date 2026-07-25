@@ -247,7 +247,7 @@ pub fn project_skill_for_target(
     }
 
     let tmp_path = tmp_dir.keep();
-    if dest.exists() && crate::file_ops::directory_trees_content_equal(&tmp_path, dest)? {
+    if dest.exists() && crate::platform::fs::directory_trees_content_equal(&tmp_path, dest)? {
         let _ = crate::platform::fs::safe_remove(&tmp_path);
         return Ok(false);
     }

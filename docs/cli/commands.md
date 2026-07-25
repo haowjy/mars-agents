@@ -14,7 +14,7 @@ The managed root's parent directory is the project root (where `mars.toml` and `
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `sync`: unresolved conflicts present; `check`: validation errors found |
+| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
 | `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 

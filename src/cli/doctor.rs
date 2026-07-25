@@ -49,9 +49,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
         // Check for conflict markers
         if item.kind == crate::lock::ItemKind::Agent
-            && let Ok(content) = std::fs::read_to_string(&disk_path)
-            && content.contains("<<<<<<<")
-            && content.contains(">>>>>>>")
+            && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
             errors.push(format!("{dest_path_str} has unresolved conflict markers"));
         }

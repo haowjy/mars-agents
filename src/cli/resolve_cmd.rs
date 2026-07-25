@@ -59,7 +59,7 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
 
         // Check for conflict markers
-        if crate::conflict_markers::file_has_conflict_markers(&disk_path) {
+        if super::conflict_markers::file_has_conflict_markers(&disk_path) {
             still_conflicted.push(dest_path_str.clone());
             continue;
         }

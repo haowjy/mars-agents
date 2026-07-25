@@ -10,8 +10,8 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::file_ops as fs_ops;
 use crate::lock::LockFile;
+use crate::platform::fs as fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;

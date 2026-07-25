@@ -191,12 +191,6 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         }
     }
 
-    for outcome in &report.pruned {
-        if matches!(outcome.action, ActionTaken::Removed) {
-            removed += 1;
-        }
-    }
-
     let targets = report
         .target_outcomes
         .iter()
@@ -252,13 +246,6 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
                 kept += 1;
             }
             ActionTaken::Skipped => {}
-        }
-    }
-
-    for outcome in &report.pruned {
-        if matches!(outcome.action, ActionTaken::Removed) {
-            removed += 1;
-            print_action_line(&mut stdout, "-", Color::Red, outcome);
         }
     }
 

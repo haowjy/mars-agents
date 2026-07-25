@@ -48,7 +48,7 @@ cli → sync → compiler → target adapters
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
 - `build/` launch bundle construction (serializable artifact for harness runtime)
-- `file_ops.rs` shared atomic file and directory operations
+- `platform::fs` is the canonical layer for durable writes, copies, replacements, comparisons, and removals
 
 ## What Changes Together
 

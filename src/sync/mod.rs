@@ -887,7 +887,7 @@ fn retry_tombstone_removals(
                     Err(error) => Err(error.into()),
                 }
             } else {
-                crate::reconcile::fs_ops::safe_remove(&path)
+                crate::file_ops::safe_remove(&path)
             };
 
             match result {

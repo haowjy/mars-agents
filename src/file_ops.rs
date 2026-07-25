@@ -3,7 +3,6 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::platform::fs::{replace_generated_dir, safe_remove as platform_safe_remove};
-use crate::types::{ContentHash, ItemKind};
 
 /// Atomic file write via tmp+rename in the same directory.
 pub fn atomic_write_file(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
@@ -40,11 +39,6 @@ pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
 /// Remove a file or directory tree safely.
 pub fn safe_remove(path: &Path) -> Result<(), MarsError> {
     platform_safe_remove(path)
-}
-
-/// Compute hash of file or directory for comparison.
-pub fn content_hash(path: &Path, kind: ItemKind) -> Result<ContentHash, MarsError> {
-    crate::hash::compute_hash(path, kind).map(ContentHash::from)
 }
 
 /// Whether two regular files have identical byte content.

@@ -48,7 +48,7 @@ cli → sync → compiler → target adapters
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
 - `build/` launch bundle construction (serializable artifact for harness runtime)
-- `reconcile/` shared atomic fs operations + state-based reconciliation
+- `file_ops.rs` shared atomic file and directory operations
 
 ## What Changes Together
 

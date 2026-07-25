@@ -10,8 +10,8 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
+use crate::file_ops as fs_ops;
 use crate::lock::LockFile;
-use crate::reconcile::fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
@@ -466,7 +466,7 @@ fn record_synced_output(
 /// Copy an item (file or directory) from .mars/ to a target directory.
 ///
 /// Follows symlinks on the source side (D26 — targets get file copies, not symlinks).
-/// Uses atomic operations via the reconcile layer.
+/// Uses shared atomic file operations.
 ///
 /// Returns `true` when bytes were written to `dest`, `false` when existing content
 /// was already byte-identical and left untouched.

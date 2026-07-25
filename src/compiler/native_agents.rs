@@ -730,7 +730,7 @@ fn remove_native_agent_shapes_for_harness(
         if dry_run {
             continue;
         }
-        match crate::reconcile::fs_ops::safe_remove(&native_path) {
+        match crate::file_ops::safe_remove(&native_path) {
             Ok(()) => removed.push((target.to_string(), dest_rel)),
             Err(e) => diag.warn(
                 "native-agent-remove",

@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::error::MarsError;
+use crate::file_ops as fs_ops;
 use crate::lock::{ItemId, ItemKind};
-use crate::reconcile::fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;

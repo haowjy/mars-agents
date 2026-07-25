@@ -207,8 +207,6 @@ fn assert_config_entry_consistency_with_diagnostics(
         }
     }
 
-    let output_divergence_was_reported = diagnostics.contains("edited after Mars installed it")
-        || diagnostics.contains("failed to remove");
     for item in lock
         .items
         .values()
@@ -224,6 +222,10 @@ fn assert_config_entry_consistency_with_diagnostics(
             let path = project
                 .child(&output.target_root)
                 .child(output.dest_path.as_str());
+            let output_divergence_was_reported = diagnostics.contains(&format!(
+                "target `{}` item `{}` was edited after Mars installed it",
+                output.target_root, output.dest_path
+            ));
             let Ok(bytes) = fs::read(path.path()) else {
                 if output_divergence_was_reported {
                     continue;

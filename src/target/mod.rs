@@ -351,11 +351,6 @@ impl TargetRegistry {
             .find(|a| a.name() == name)
             .map(|a| a.as_ref())
     }
-
-    /// Iterate over all registered adapters.
-    pub fn iter(&self) -> impl Iterator<Item = &dyn TargetAdapter> {
-        self.adapters.iter().map(|a| a.as_ref())
-    }
 }
 
 impl Default for TargetRegistry {
@@ -412,19 +407,6 @@ pub fn dest_paths_equivalent(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn registry_contains_all_builtin_adapters() {
-        let registry = TargetRegistry::new();
-        let names: Vec<&str> = registry.iter().map(|a| a.name()).collect();
-        assert!(names.contains(&".agents"));
-        assert!(names.contains(&".claude"));
-        assert!(names.contains(&".codex"));
-        assert!(names.contains(&".opencode"));
-        assert!(names.contains(&".pi"));
-        assert!(names.contains(&".cursor"));
-    }
-
     #[test]
     fn registry_get_returns_adapter_by_name() {
         let registry = TargetRegistry::new();

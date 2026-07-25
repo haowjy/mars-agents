@@ -37,14 +37,6 @@ pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError>
 pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
     parse_item_skill_deps(agent_path)
 }
-
-/// Parse skill dependencies from a skill's frontmatter.
-///
-/// Skills can also reference other skills via the `skills:` field.
-pub fn parse_skill_skills(skill_path: &Path) -> Result<Vec<String>, MarsError> {
-    parse_item_skill_deps(skill_path)
-}
-
 /// Extract skills list from markdown content with YAML frontmatter.
 ///
 /// Defensive: returns empty vec on any parse failure.
@@ -123,13 +115,6 @@ mod tests {
         fs::write(&path, content).unwrap();
         path
     }
-
-    fn write_skill(dir: &Path, name: &str, content: &str) -> PathBuf {
-        let path = dir.join(format!("{name}.md"));
-        fs::write(&path, content).unwrap();
-        path
-    }
-
     #[test]
     fn parse_agent_skills_reads_frontmatter() {
         let dir = TempDir::new().unwrap();
@@ -142,20 +127,6 @@ mod tests {
         let skills = parse_agent_skills(&path).unwrap();
         assert_eq!(skills, vec!["planning", "review"]);
     }
-
-    #[test]
-    fn parse_skill_skills_reads_frontmatter() {
-        let dir = TempDir::new().unwrap();
-        let path = write_skill(
-            dir.path(),
-            "frontend",
-            "---\nskills:\n  - design-tokens\n  - motion\n---\n# Frontend Skill\n",
-        );
-
-        let skills = parse_skill_skills(&path).unwrap();
-        assert_eq!(skills, vec!["design-tokens", "motion"]);
-    }
-
     #[test]
     fn all_skills_present_no_warnings() {
         let dir = TempDir::new().unwrap();

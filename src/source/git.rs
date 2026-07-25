@@ -19,21 +19,6 @@ pub struct FetchOptions {
     /// Used for lock replay to guarantee reproducible content.
     pub preferred_commit: Option<CommitHash>,
 }
-
-/// Normalize a git URL to a filesystem-safe directory name.
-///
-/// Delegates to [`super::canonical::canonicalize_git_url`] for uniform URL
-/// normalization, then replaces `/` with `_` to produce a single path component.
-///
-/// Examples:
-/// - `https://github.com/foo/bar` -> `github.com_foo_bar`
-/// - `github.com/foo/bar` -> `github.com_foo_bar`
-/// - `git@github.com:foo/bar.git` -> `github.com_foo_bar`
-/// - `ssh://git@github.com/foo/bar` -> `github.com_foo_bar`
-pub fn url_to_dirname(url: &str) -> String {
-    super::canonical::canonicalize_git_url(url).replace('/', "_")
-}
-
 /// Parse a tag name as a semver version tag.
 ///
 /// Accepts: `v1.0.0`, `v0.5.2`, `1.0.0`
@@ -302,65 +287,6 @@ mod tests {
         run_git(repo, ["commit", "-m", message]);
         run_git(repo, ["rev-parse", "HEAD"])
     }
-
-    // ==================== url_to_dirname tests ====================
-
-    #[test]
-    fn url_to_dirname_https() {
-        assert_eq!(
-            url_to_dirname("https://github.com/foo/bar"),
-            "github.com_foo_bar"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_bare_domain() {
-        assert_eq!(
-            url_to_dirname("github.com/meridian-flow/meridian-base"),
-            "github.com_meridian-flow_meridian-base"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_ssh() {
-        assert_eq!(
-            url_to_dirname("git@github.com:foo/bar.git"),
-            "github.com_foo_bar"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_https_with_git_suffix() {
-        assert_eq!(
-            url_to_dirname("https://github.com/foo/bar.git"),
-            "github.com_foo_bar"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_ssh_protocol() {
-        assert_eq!(
-            url_to_dirname("ssh://git@github.com/foo/bar"),
-            "github.com_foo_bar"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_http() {
-        assert_eq!(
-            url_to_dirname("http://gitlab.com/org/repo"),
-            "gitlab.com_org_repo"
-        );
-    }
-
-    #[test]
-    fn url_to_dirname_trailing_slash() {
-        assert_eq!(
-            url_to_dirname("https://github.com/foo/bar/"),
-            "github.com_foo_bar"
-        );
-    }
-
     // ==================== parse_semver_tag tests ====================
 
     #[test]

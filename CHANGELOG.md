@@ -31,6 +31,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Preflight `mars adopt` before moving user content, and restore the original
+  path if the subsequent sync fails.
 - Record exact emitted hook config and remove only structural matches, preserving
   hand edits and reporting them as config divergence.
 - Preserve untracked and hand-edited linked-target files; require `--force` to

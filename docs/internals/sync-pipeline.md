@@ -1,6 +1,10 @@
 # Sync Pipeline
 
-Every mutating command (`add`, `remove`, `sync`, `upgrade`, `override`, `rename`) runs the same pipeline. The pipeline resolves the full desired state before touching any files.
+Every mutating command (`add`, `remove`, `sync`, `upgrade`, `override`, `rename`,
+`repair`) enters the same pipeline. The pipeline normally resolves the full
+desired state before materializing it. Recovery commands have one intentional
+early-return path after resolution: the recovery halt described below may
+persist only the user's config mutation.
 
 ## Pipeline Overview
 
@@ -20,6 +24,11 @@ mars.toml + mars.local.toml
 │                 │  frontmatter to canonical, apply skill overlays, repoint package_root
 │                 │  to .mars/staging/<source>/<dialect>/
 └────────┬────────┘
+         ▼
+┌─────────────────┐
+│ Recovery Halt?  │  For recovery commands, persist user intent and return
+└────────┬────────┘  if removed-schema hook content is unreadable
+         │ continue
          ▼
 ┌─────────────────┐
 │  3. Build Target│  Discover items, apply filters, detect collisions.
@@ -124,6 +133,20 @@ tests), the raw source is used directly.
 | Local path | Resolve to canonical path, no version logic |
 
 Additionally, this phase merges model aliases from the dependency tree. Each resolved dependency's `[models]` config is collected in **declaration order** (the order deps appear in the consumer's `mars.toml`, not alphabetical). `merge_model_config()` applies two layers: dependencies first (declaration-order first-wins on sibling conflicts), consumer config on top (always wins). Within transitive subtrees, each parent's manifest declaration order determines its children's ordering. Diamond deps inherit the position of the earliest direct dep that reaches them. See [configuration.md](../config/mars-toml.md#merge-precedence) for the full precedence rules, conflict warnings, and examples.
+
+### Recovery halt (reader/compiler boundary)
+
+Upgrade, override, remove, and repair opt into recovery behavior for packages
+that still contain unreadable removed-schema hook surfaces. After the reader
+resolves and stages the graph, `sync::execute` checks
+`unreadable_hook_surfaces` before calling the compiler.
+
+When blockers exist, Mars persists only the requested `mars.toml` or
+`mars.local.toml` mutation (unless `--dry-run`), attaches a `RecoveryHalt` to
+the report, and returns. It does not build the target, compile or apply
+content, sync targets, or write `mars.lock`. The command exits 2 with the
+blocking packages and a suggested next step. Strict `mars sync` does not take
+this branch; it enters the compiler and reports the schema error.
 
 ### 3. Build Target (`build_target`)
 

@@ -217,7 +217,8 @@ pub(crate) fn resolve_graph(
     let cache = GlobalCache::new()?;
     let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
-        .with_staging_root(ctx.project_root.join(".mars/staging"));
+        .with_staging_root(ctx.project_root.join(".mars/staging"))
+        .with_removed_hook_schema_policy(removed_hook_schema_policy(request));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -254,6 +255,20 @@ pub(crate) fn resolve_graph(
         graph,
         upgrades_available,
     })
+}
+
+fn removed_hook_schema_policy(request: &SyncRequest) -> crate::staging::RemovedHookSchemaPolicy {
+    let is_escape_hatch = matches!(request.resolution, ResolutionMode::Maximize { .. })
+        || request.options.force
+        || matches!(
+            request.mutation,
+            Some(ConfigMutation::SetOverride { .. } | ConfigMutation::RemoveDependency { .. })
+        );
+    if is_escape_hatch {
+        crate::staging::RemovedHookSchemaPolicy::Omit
+    } else {
+        crate::staging::RemovedHookSchemaPolicy::Reject
+    }
 }
 
 /// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.

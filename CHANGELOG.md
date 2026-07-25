@@ -37,6 +37,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Allow `upgrade`, `override`, `remove`, and `repair` to recover projects whose
+  resolved packages still contain the removed hook schema, while normal sync
+  continues to reject those packages with a source name and version.
 - Preserve installed-content authority for matching skill and hook directories
   when promoting version 2 locks.
 - Reject version 2 directory outputs containing symlinks or special entries

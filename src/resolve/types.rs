@@ -294,6 +294,9 @@ pub struct ResolveOptions {
     pub mode: ResolveMode,
     /// Per-project directory for dependency-scoped canonical source staging.
     pub staging_root: Option<std::path::PathBuf>,
+    /// Recovery commands omit hooks written in the removed schema so users can
+    /// upgrade, override, remove, or repair the package that supplied them.
+    pub(crate) removed_hook_schema: crate::staging::RemovedHookSchemaPolicy,
 }
 
 impl Default for ResolveOptions {
@@ -301,6 +304,7 @@ impl Default for ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 }
@@ -321,6 +325,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Sync,
             staging_root: None,
+            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
@@ -328,6 +333,7 @@ impl ResolveOptions {
         Self {
             mode: ResolveMode::Frozen,
             staging_root: None,
+            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
@@ -338,11 +344,20 @@ impl ResolveOptions {
                 bump_direct_constraints,
             },
             staging_root: None,
+            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
     pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
         self.staging_root = Some(staging_root);
+        self
+    }
+
+    pub(crate) fn with_removed_hook_schema_policy(
+        mut self,
+        policy: crate::staging::RemovedHookSchemaPolicy,
+    ) -> Self {
+        self.removed_hook_schema = policy;
         self
     }
 

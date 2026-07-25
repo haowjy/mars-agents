@@ -9,6 +9,9 @@ use serde_json::Value;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 
+pub(crate) const REMOVED_HOOK_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); \
+     migrate to per-target native fragment files with `fragment = \"<target>.json\"`";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookTarget {
@@ -54,6 +57,23 @@ pub struct ParsedHookItem {
 #[derive(Debug, Clone)]
 pub struct HookFragment {
     pub events: BTreeMap<String, Vec<Value>>,
+}
+
+pub(crate) fn uses_removed_schema(value: &toml::Value) -> bool {
+    let removed = ["events", "matcher", "action", "path"];
+    let target_has_removed = value
+        .get("targets")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|targets| {
+            targets.values().any(|value| {
+                value
+                    .as_table()
+                    .is_some_and(|target| removed.iter().any(|key| target.contains_key(*key)))
+            })
+        });
+    removed.iter().any(|key| value.get(*key).is_some())
+        || target_has_removed
+        || value.get("targets").is_some_and(toml::Value::is_array)
 }
 
 fn validate_path_component(name: &str) -> Result<(), &'static str> {
@@ -106,24 +126,12 @@ pub fn discover_hook_items(
         let toml_path = hook_dir.join("hook.toml");
         let raw = std::fs::read_to_string(&toml_path)?;
         let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
-        let removed = ["events", "matcher", "action", "path"];
-        let target_has_removed = value
-            .get("targets")
-            .and_then(toml::Value::as_table)
-            .is_some_and(|targets| {
-                targets.values().any(|v| {
-                    v.as_table()
-                        .is_some_and(|t| removed.iter().any(|k| t.contains_key(*k)))
-                })
-            });
-        if removed.iter().any(|key| value.get(*key).is_some())
-            || target_has_removed
-            || value.get("targets").is_some_and(toml::Value::is_array)
-        {
-            return Err(invalid(
-                &toml_path,
-                "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); migrate to per-target native fragment files with `fragment = \"<target>.json\"`",
-            ));
+        if uses_removed_schema(&value) {
+            return Err(ConfigError::RemovedHookSchema {
+                path: toml_path,
+                message: REMOVED_HOOK_SCHEMA_MESSAGE,
+            }
+            .into());
         }
         let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
         if raw_def.targets.is_empty() {

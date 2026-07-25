@@ -1,5 +1,122 @@
 use super::support::*;
 
+fn write_legacy_hook_source(dir: &TempDir, source_name: &str) -> std::path::PathBuf {
+    let source = dir.child(source_name);
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str(&format!(
+            "[package]\nname = \"{source_name}\"\nversion = \"0.8.9\"\n"
+        ))
+        .unwrap();
+    write_hook(
+        &source,
+        "context-autosync",
+        "name = \"context-autosync\"\nevent = \"session.end\"\nvisibility = \"exported\"\ntargets = [\".claude\"]\n\n[action]\nkind = \"script\"\npath = \"run.sh\"\n",
+    );
+    source.to_path_buf()
+}
+
+fn write_migrated_hook_source(dir: &TempDir, source_name: &str) -> std::path::PathBuf {
+    let source = dir.child(source_name);
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str(&format!(
+            "[package]\nname = \"{source_name}\"\nversion = \"0.9.0\"\n"
+        ))
+        .unwrap();
+    write_hook(
+        &source,
+        "context-autosync",
+        "name = \"context-autosync\"\nvisibility = \"exported\"\n\n[targets.\".claude\"]\n",
+    );
+    write_fragment(
+        &source,
+        "context-autosync",
+        "claude.json",
+        r#"{"SessionEnd":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+    source.to_path_buf()
+}
+
+fn write_old_staging_fixture(project: &assert_fs::fixture::ChildPath) {
+    let staged = project.child(".mars/staging/base/claude/hooks/context-autosync");
+    staged.create_dir_all().unwrap();
+    staged
+        .child("hook.toml")
+        .write_str(
+            "name = \"context-autosync\"\nevent = \"session.end\"\n\
+             visibility = \"exported\"\ntargets = [\".claude\"]\n\n\
+             [action]\nkind = \"script\"\npath = \"run.sh\"\n",
+        )
+        .unwrap();
+}
+
+#[test]
+fn removed_hook_schema_does_not_block_recovery_commands() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let migrated = write_migrated_hook_source(&dir, "base-migrated");
+
+    for (name, args) in [
+        ("upgrade", vec!["upgrade"]),
+        ("repair", vec!["repair"]),
+        (
+            "override",
+            vec!["override", "base", "--path", migrated.to_str().unwrap()],
+        ),
+        ("remove", vec!["remove", "base"]),
+    ] {
+        let project = dir.child(format!("project-{name}"));
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!(
+                "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+                portable_path(&legacy)
+            ))
+            .unwrap();
+        project
+            .child("mars.lock")
+            .write_str("version = 2\n")
+            .unwrap();
+        write_old_staging_fixture(&project);
+
+        mars()
+            .args(args)
+            .args(["--root", project.path().to_str().unwrap()])
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+            portable_path(&legacy)
+        ))
+        .unwrap();
+    write_old_staging_fixture(&project);
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "source package `base` version `0.8.9`",
+        ))
+        .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
+        .stderr(predicate::str::contains(".mars/staging").not());
+}
+
 #[test]
 fn unmatched_legacy_claude_sweep_does_not_rewrite_settings() {
     let dir = TempDir::new().unwrap();

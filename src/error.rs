@@ -17,6 +17,15 @@ pub enum ConfigError {
     #[error("invalid config: {message}")]
     Invalid { message: String },
 
+    #[error(
+        "invalid config: {}: {message}",
+        path.display()
+    )]
+    RemovedHookSchema {
+        path: PathBuf,
+        message: &'static str,
+    },
+
     #[error("source `{name}` uses both agents/skills and exclude — pick one")]
     ConflictingFilters { name: String },
 

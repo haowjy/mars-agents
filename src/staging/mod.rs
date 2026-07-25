@@ -27,30 +27,75 @@ use crate::types::{RenameMap, SourceName};
 pub(crate) use lift::lift_frontmatter_with_change;
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemovedHookSchemaPolicy {
+    Reject,
+    Omit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RootedStageOptions {
+    pub dialect: Dialect,
+    pub removed_hook_schema: RemovedHookSchemaPolicy,
+}
+
 /// Stage a package tree and repoint `package_root` at the staged output.
 pub(crate) fn stage_rooted_source(
     source_name: &SourceName,
     rooted: RootedSourceRef,
-    dialect: Dialect,
+    options: RootedStageOptions,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<RootedSourceRef, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, dialect);
+    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
     stage_canonical_source(
         &rooted.package_root,
         &staged_package_root,
-        dialect,
+        options.dialect,
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
         diag,
     )?;
+    if options.removed_hook_schema == RemovedHookSchemaPolicy::Omit {
+        omit_removed_schema_hooks(&staged_package_root, source_name, diag)?;
+    }
     Ok(RootedSourceRef {
         checkout_root: rooted.checkout_root,
         package_root: staged_package_root,
     })
+}
+
+fn omit_removed_schema_hooks(
+    package_root: &Path,
+    source_name: &SourceName,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    for hook_dir in crate::discover::discover_hook_directories(package_root)? {
+        let manifest = hook_dir.join("hook.toml");
+        let raw = fs::read_to_string(&manifest)?;
+        let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+            continue;
+        };
+        if !crate::compiler::hooks::uses_removed_schema(&value) {
+            continue;
+        }
+        let hook_name = hook_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+        fs::remove_dir_all(&hook_dir)?;
+        diag.warn(
+            "removed-hook-schema-omitted",
+            format!(
+                "omitted hook `{hook_name}` from source package `{source_name}` because it uses \
+                 the removed v0.11.0 schema; migrate the package to native hook fragments"
+            ),
+        );
+    }
+    Ok(())
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.

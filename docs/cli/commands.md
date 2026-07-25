@@ -297,18 +297,18 @@ mars link <target> [--force]
 
 | Flag | Description |
 |---|---|
-| `--force` | Adopt untracked collisions in the linked target (overwrite + record in lock) |
+| `--force` | Adopt collisions without an installed-content claim (overwrite + record in lock) |
 
 **Behavior:**
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
-- If a path in the target exists on disk but is not tracked for that `target_root`, Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record ownership (`target-unmanaged-adopted`)
+- If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
 mars link .cursor            # Copy skills/MCP into .cursor
-mars link .claude --force    # Adopt untracked collisions in .claude/
+mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
 
 ---

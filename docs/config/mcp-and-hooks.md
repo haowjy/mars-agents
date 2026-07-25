@@ -242,8 +242,8 @@ export const AuditPlugin: Plugin = async ({ $ }) => ({
 Mars places it at `.opencode/plugins/mars-<name>.ts`.
 
 These placed fragments are managed target outputs. Mars preserves an existing
-untracked file at that path during ordinary sync; use `mars sync --force` to
-adopt it. Mars also preserves later edits during ordinary sync and removes a
+file at that path during ordinary sync when the lock holds no installed-content
+claim for it; use `mars sync --force` to adopt it. Mars also preserves later edits during ordinary sync and removes a
 fragment only when the lock owns that exact target path.
 
 Self-contained Pi extension:

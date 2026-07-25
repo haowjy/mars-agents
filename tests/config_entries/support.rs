@@ -129,10 +129,14 @@ pub fn assert_hook_target_owner(
     );
 }
 
-/// Cross-artifact oracle for the config-entry lane. A sync may leave a
-/// malformed user-owned config file untouched, so unreadable files are skipped;
-/// every readable record must agree with disk and every file-hook checksum must
-/// match its owned output.
+/// Cross-artifact oracle for the config-entry lane.
+///
+/// A sync may leave a malformed user-owned config file untouched, so unreadable
+/// files are skipped. Managed file-hook records have three disk states: a regular
+/// file must match its checksum unless that exact output was reported as
+/// user-edited; a non-file needs no checksum check because retaining its record
+/// preserves authority to retry deletion; an absent path must not retain a record,
+/// because that would be ghost ownership.
 pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) {
     assert_config_entry_consistency_with_diagnostics(project, "");
 }
@@ -226,18 +230,31 @@ fn assert_config_entry_consistency_with_diagnostics(
                 "target `{}` item `{}` was edited after Mars installed it",
                 output.target_root, output.dest_path
             ));
-            let Ok(bytes) = fs::read(path.path()) else {
-                if output_divergence_was_reported {
-                    continue;
+            let metadata = match fs::symlink_metadata(path.path()) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    panic!(
+                        "lock owns file hook `{}/{}` but it is absent",
+                        output.target_root, output.dest_path
+                    );
                 }
-                panic!(
-                    "lock owns file hook `{}/{}` but it is absent",
+                Err(error) => panic!(
+                    "failed to inspect owned file hook `{}/{}`: {error}",
                     output.target_root, output.dest_path
-                );
+                ),
             };
+            if !metadata.file_type().is_file() {
+                continue;
+            }
             if output_divergence_was_reported {
                 continue;
             }
+            let bytes = fs::read(path.path()).unwrap_or_else(|error| {
+                panic!(
+                    "failed to read owned file hook `{}/{}`: {error}",
+                    output.target_root, output.dest_path
+                )
+            });
             assert_eq!(
                 mars_agents::hash::hash_bytes(&bytes),
                 output.installed_checksum.as_ref(),

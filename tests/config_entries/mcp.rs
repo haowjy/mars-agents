@@ -1,5 +1,23 @@
 use super::support::*;
 
+fn create_dependency_source(
+    dir: &TempDir,
+    name: &str,
+    dependency: Option<(&str, &std::path::Path)>,
+) -> std::path::PathBuf {
+    let source = dir.child(name);
+    source.create_dir_all().unwrap();
+    let mut manifest = format!("[package]\nname = \"{name}\"\nversion = \"1.0.0\"\n");
+    if let Some((dependency_name, dependency_path)) = dependency {
+        manifest.push_str(&format!(
+            "\n[dependencies.{dependency_name}]\npath = \"{}\"\n",
+            portable_path(dependency_path)
+        ));
+    }
+    source.child("mars.toml").write_str(&manifest).unwrap();
+    source.to_path_buf()
+}
+
 #[test]
 fn remove_prunes_stale_config_entries() {
     let dir = TempDir::new().unwrap();
@@ -96,6 +114,115 @@ fn override_writes_local_config() {
     let content = fs::read_to_string(dir.child("project").child("mars.local.toml").path()).unwrap();
     assert!(content.contains("base"));
     assert!(content.contains("local-override"));
+}
+
+#[test]
+fn direct_override_preserves_matching_transitive_declared_identity() {
+    let dir = TempDir::new().unwrap();
+    let original = create_dependency_source(&dir, "original", None);
+    let replacement = create_dependency_source(&dir, "replacement", None);
+    let workflow = create_dependency_source(&dir, "workflow", Some(("shared", original.as_path())));
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.shared]\npath = \"{}\"\n\n\
+             [dependencies.workflow]\npath = \"{}\"\n",
+            portable_path(&original),
+            portable_path(&workflow),
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "override",
+            "shared",
+            "--path",
+            replacement.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let local = fs::read_to_string(project.child("mars.local.toml").path()).unwrap();
+    assert!(local.contains("[overrides.shared]"));
+    assert!(local.contains("replacement"));
+}
+
+#[test]
+fn direct_override_does_not_collapse_conflicting_transitive_declared_identity() {
+    let dir = TempDir::new().unwrap();
+    let direct_original = create_dependency_source(&dir, "direct-original", None);
+    let transitive_original = create_dependency_source(&dir, "transitive-original", None);
+    let replacement = create_dependency_source(&dir, "replacement", None);
+    let workflow = create_dependency_source(
+        &dir,
+        "workflow",
+        Some(("shared", transitive_original.as_path())),
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.shared]\npath = \"{}\"\n\n\
+             [dependencies.workflow]\npath = \"{}\"\n",
+            portable_path(&direct_original),
+            portable_path(&workflow),
+        ))
+        .unwrap();
+
+    mars()
+        .args([
+            "override",
+            "shared",
+            "--path",
+            replacement.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("conflicting identities"))
+        .stderr(predicate::str::contains("direct-original"))
+        .stderr(predicate::str::contains("transitive-original"));
+
+    project
+        .child("mars.local.toml")
+        .assert(predicate::path::missing());
+}
+
+#[test]
+fn unused_override_diagnostic_remains_emitted() {
+    let dir = TempDir::new().unwrap();
+    let source = create_dependency_source(&dir, "base", None);
+    let replacement = create_dependency_source(&dir, "replacement", None);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n",
+            portable_path(&source)
+        ))
+        .unwrap();
+    project
+        .child("mars.local.toml")
+        .write_str(&format!(
+            "[overrides.unused]\npath = \"{}\"\n",
+            portable_path(&replacement)
+        ))
+        .unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "override `unused` references a dependency not in the resolved project graph",
+        ));
 }
 
 #[test]

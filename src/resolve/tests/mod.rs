@@ -328,7 +328,8 @@ fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
         map.insert(
             name.into(),
             EffectiveDependency {
-                id: source_id_for_spec(&spec, None),
+                declared_source_id: source_id_for_spec(&spec, None),
+                source_id: source_id_for_spec(&spec, None),
                 spec,
                 subpath: None,
                 filter: FilterMode::All,

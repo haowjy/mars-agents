@@ -200,7 +200,11 @@ mod tests {
             dependencies.insert(
                 (*name).into(),
                 EffectiveDependency {
-                    id: SourceId::Path {
+                    declared_source_id: SourceId::Path {
+                        canonical: canonical.clone(),
+                        subpath: None,
+                    },
+                    source_id: SourceId::Path {
                         canonical: canonical.clone(),
                         subpath: None,
                     },

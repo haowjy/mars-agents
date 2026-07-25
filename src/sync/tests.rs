@@ -100,7 +100,11 @@ fn make_graph_config(
         config_dependencies.insert(
             name.into(),
             EffectiveDependency {
-                id: crate::types::SourceId::Path {
+                declared_source_id: crate::types::SourceId::Path {
+                    canonical: tree_path.clone(),
+                    subpath: None,
+                },
+                source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
                 },
@@ -883,7 +887,11 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
         dependencies: indexmap::IndexMap::from([(
             "base".into(),
             EffectiveDependency {
-                id: crate::types::SourceId::Path {
+                declared_source_id: crate::types::SourceId::Path {
+                    canonical: tree_path.clone(),
+                    subpath: None,
+                },
+                source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
                 },

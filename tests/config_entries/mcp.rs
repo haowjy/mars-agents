@@ -28,6 +28,7 @@ fn remove_prunes_stale_config_entries() {
         ])
         .assert()
         .success();
+    assert_config_entry_consistency(&project);
 
     let mcp_path = project.child(".claude").child(".mcp.json");
     let installed: serde_json::Value =
@@ -38,6 +39,7 @@ fn remove_prunes_stale_config_entries() {
         .args(["remove", "base", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
+    assert_config_entry_consistency(&project);
 
     let removed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(mcp_path.path()).unwrap()).unwrap();

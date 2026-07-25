@@ -122,6 +122,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             dry_run: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 

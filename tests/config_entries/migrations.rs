@@ -118,6 +118,25 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
 }
 
 #[test]
+fn sync_force_still_rejects_removed_hook_schema() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+            portable_path(&legacy)
+        ))
+        .unwrap();
+
+    sync_force(&project)
+        .failure()
+        .stderr(predicate::str::contains("removed v0.11.0 hook schema"));
+}
+
+#[test]
 fn override_can_replace_a_transitive_source_during_recovery() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");

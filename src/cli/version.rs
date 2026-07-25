@@ -186,6 +186,7 @@ fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsErr
             dry_run: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 

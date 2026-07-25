@@ -93,6 +93,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             dry_run: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     crate::sync::execute(ctx, &preflight)?;
@@ -103,6 +104,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     let report = match crate::sync::execute(ctx, &request) {

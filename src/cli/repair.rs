@@ -37,6 +37,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             force: true,
             ..SyncOptions::default()
         },
+        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 

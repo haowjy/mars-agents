@@ -34,6 +34,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         },
         mutation: None,
         options: SyncOptions::default(),
+        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose
         } else {

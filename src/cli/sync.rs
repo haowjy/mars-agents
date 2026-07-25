@@ -51,6 +51,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             no_refresh_models: args.no_refresh_models,
             check_upgrades: !no_upgrade_hint,
         },
+        recovery: Default::default(),
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose
         } else {

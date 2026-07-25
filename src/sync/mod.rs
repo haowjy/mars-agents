@@ -61,9 +61,23 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
+    /// Whether resolution may preserve hook state it cannot read while a
+    /// recovery command repairs the dependency graph.
+    pub recovery: RecoveryPolicy,
     /// Whether lossiness warnings are included in the returned report.
     /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
     pub lossiness_mode: LossinessMode,
+}
+
+/// Schema handling policy for content encountered during sync resolution.
+///
+/// Strict is the safe default: only commands whose purpose is to recover a
+/// locked-out graph may opt into preserving unreadable prior state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecoveryPolicy {
+    #[default]
+    Strict,
+    PreserveUnreadableHooks,
 }
 
 /// Resolution behavior for the resolver stage.
@@ -290,16 +304,11 @@ pub(crate) fn resolve_graph(
 }
 
 fn removed_hook_schema_policy(request: &SyncRequest) -> crate::staging::RemovedHookSchemaPolicy {
-    let is_escape_hatch = matches!(request.resolution, ResolutionMode::Maximize { .. })
-        || request.options.force
-        || matches!(
-            request.mutation,
-            Some(ConfigMutation::SetOverride { .. } | ConfigMutation::RemoveDependency { .. })
-        );
-    if is_escape_hatch {
-        crate::staging::RemovedHookSchemaPolicy::Omit
-    } else {
-        crate::staging::RemovedHookSchemaPolicy::Reject
+    match request.recovery {
+        RecoveryPolicy::Strict => crate::staging::RemovedHookSchemaPolicy::Reject,
+        RecoveryPolicy::PreserveUnreadableHooks => {
+            crate::staging::RemovedHookSchemaPolicy::Omit
+        }
     }
 }
 

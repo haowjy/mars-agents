@@ -26,6 +26,7 @@ pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<
             local_path: args.path.clone(),
         }),
         options: SyncOptions::default(),
+        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     let report = crate::sync::execute(ctx, &request)?;

@@ -205,6 +205,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -261,6 +262,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -336,6 +338,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -392,6 +395,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -450,6 +454,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         resolution: ResolutionMode::Normal,
         mutation: None,
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
@@ -519,6 +524,7 @@ fn validate_request_rejects_frozen_with_maximize() {
             frozen: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
@@ -538,6 +544,7 @@ fn validate_request_rejects_frozen_with_mutation() {
             frozen: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
@@ -703,6 +710,7 @@ fn execute_auto_inits_config_for_mutation() {
             entry: path_dependency_entry(source.path()),
         }),
         options: SyncOptions::default(),
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 
@@ -743,6 +751,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
             dry_run: true,
             ..SyncOptions::default()
         },
+        recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
 

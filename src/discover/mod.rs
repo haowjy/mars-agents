@@ -739,18 +739,12 @@ fn sort_items(items: &mut [DiscoveredItem]) {
     });
 }
 
-/// An installed item with parsed frontmatter metadata.
+/// An installed item's identity and path.
 #[derive(Debug, Clone)]
 pub struct InstalledItem {
     pub id: ItemId,
     /// Disk path (absolute) to the installed file/dir.
     pub path: PathBuf,
-    /// Parsed frontmatter name (may differ from filename).
-    pub frontmatter_name: Option<String>,
-    /// Parsed frontmatter description.
-    pub description: Option<String>,
-    /// Skills referenced in frontmatter (agents only).
-    pub skill_refs: Vec<String>,
 }
 
 /// Result of scanning an installed managed root.
@@ -770,55 +764,18 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
     scan_agent_dir(root, Path::new("agents"), &mut scratch, &mut visited)?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
-        let (frontmatter_name, description, skill_refs) = parse_installed_frontmatter(&path);
-        agents.push(InstalledItem {
-            id: item.id,
-            path,
-            frontmatter_name,
-            description,
-            skill_refs,
-        });
+        agents.push(InstalledItem { id: item.id, path });
     }
 
     scan_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
-        let skill_md = if item.source_path == Path::new(".") {
-            root.join("SKILL.md")
-        } else {
-            path.join("SKILL.md")
-        };
-        let (frontmatter_name, description, _) = parse_installed_frontmatter(&skill_md);
-        skills.push(InstalledItem {
-            id: item.id,
-            path,
-            frontmatter_name,
-            description,
-            skill_refs: Vec::new(),
-        });
+        skills.push(InstalledItem { id: item.id, path });
     }
 
     sort_installed(&mut agents);
     sort_installed(&mut skills);
     Ok(InstalledState { agents, skills })
-}
-
-fn parse_installed_frontmatter(path: &Path) -> (Option<String>, Option<String>, Vec<String>) {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return (None, None, Vec::new()),
-    };
-    match crate::frontmatter::parse(&content) {
-        Ok(fm) => {
-            let name = fm.name().map(str::to_owned);
-            let description = fm
-                .get("description")
-                .and_then(|value| value.as_str())
-                .map(str::to_owned);
-            (name, description, fm.skills())
-        }
-        Err(_) => (None, None, Vec::new()),
-    }
 }
 
 fn sort_installed(items: &mut [InstalledItem]) {

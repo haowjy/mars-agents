@@ -796,29 +796,3 @@ fn fallback_manifest_declared_escape_is_rejected() {
     let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
     assert!(matches!(err, MarsError::ManifestDeclaredPathEscape { .. }));
 }
-
-#[test]
-fn discover_installed_reads_frontmatter() {
-    let dir = TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join("agents")).unwrap();
-    fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
-    fs::write(
-        dir.path().join("agents/coder.md"),
-        "---\nname: coder\ndescription: test\nskills: [planning]\n---\n# Coder\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("skills/planning/SKILL.md"),
-        "---\nname: planning\ndescription: test\n---\n# Planning\n",
-    )
-    .unwrap();
-
-    let state = discover_installed(dir.path()).unwrap();
-    assert_eq!(state.agents.len(), 1);
-    assert_eq!(state.skills.len(), 1);
-    assert_eq!(state.agents[0].skill_refs, vec!["planning"]);
-    assert_eq!(
-        state.skills[0].frontmatter_name.as_deref(),
-        Some("planning")
-    );
-}

@@ -62,7 +62,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 
     output::print_sync_report(&report, json, no_upgrade_hint);
 
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }
 
 fn no_upgrade_hint_from_env() -> bool {

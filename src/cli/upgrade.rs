@@ -48,7 +48,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
     output::print_sync_report(&report, json, true);
 
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }
 
 fn print_bump_messages(changes: &[DependencyUpsertChange]) {

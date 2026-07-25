@@ -182,7 +182,7 @@ fn run_status(
         let hash_path = hash_path_for_kind(&disk_path, item.kind);
         let status = if !hash_path.exists() {
             "missing".to_string()
-        } else if crate::merge::file_has_conflict_markers(&disk_path) {
+        } else if crate::conflict_markers::file_has_conflict_markers(&disk_path) {
             "conflicted".to_string()
         } else {
             let disk_hash = hash::compute_hash(&hash_path, item.kind)?;

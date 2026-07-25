@@ -50,7 +50,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     output::print_sync_report(&report, json, true);
 
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }
 
 fn execute_repair_with_collision_cleanup(

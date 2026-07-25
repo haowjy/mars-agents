@@ -112,7 +112,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         output::print_sync_report(&report, false, true);
     }
 
-    Ok(if report.has_conflicts() { 1 } else { 0 })
+    Ok(0)
 }
 
 fn resolve_cli_path(path: &Path) -> Result<PathBuf, MarsError> {

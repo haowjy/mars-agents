@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::{ItemId, LockedItem};
 use crate::sync::diff::{DiffEntry, SyncDiff};
@@ -30,13 +28,6 @@ pub enum PlannedAction {
         source_name: SourceName,
         installed_checksum: Option<ContentHash>,
         reason: &'static str,
-    },
-    /// Three-way merge required.
-    // Reserved — plan stage emits Overwrite for conflicts; merge not yet implemented end-to-end.
-    Merge {
-        target: TargetItem,
-        base_content: Vec<u8>,
-        local_path: PathBuf,
     },
     /// Remove an orphaned item.
     Remove { locked: LockedItem },

@@ -145,12 +145,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
     // Run the pipeline in dry-run mode to get the compile plan.
     let (status, items, outputs, diagnostics) = match crate::sync::execute(ctx, &request) {
         Ok(report) => {
-            let has_conflicts = report.has_conflicts();
-            let status = if has_conflicts {
-                ExportStatus::Partial
-            } else {
-                ExportStatus::Complete
-            };
+            let status = ExportStatus::Complete;
 
             let mut items: Vec<ExportItem> = Vec::new();
             let mut outputs: Vec<ExportOutput> = Vec::new();
@@ -248,8 +243,6 @@ fn action_label(action: &crate::sync::apply::ActionTaken) -> &'static str {
     match action {
         ActionTaken::Installed => "install",
         ActionTaken::Updated => "overwrite",
-        ActionTaken::Merged => "merge",
-        ActionTaken::Conflicted => "conflict",
         ActionTaken::Removed => "remove",
         ActionTaken::Skipped => "skip",
         ActionTaken::Kept => "skip",

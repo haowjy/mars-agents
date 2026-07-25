@@ -113,7 +113,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         }
 
         output::print_sync_report(&report, json, true);
-        return if report.has_conflicts() { Ok(1) } else { Ok(0) };
+        return Ok(0);
     }
 
     // Multi-source: send one batch mutation through sync pipeline.
@@ -131,7 +131,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
     }
 
     output::print_sync_report(&report, json, true);
-    if report.has_conflicts() { Ok(1) } else { Ok(0) }
+    Ok(0)
 }
 
 /// Build FilterConfig from CLI args.

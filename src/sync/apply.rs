@@ -33,8 +33,6 @@ pub struct ActionOutcome {
 pub enum ActionTaken {
     Installed,
     Updated,
-    Merged,
-    Conflicted,
     Removed,
     Skipped,
     Kept,
@@ -45,7 +43,6 @@ pub enum ActionTaken {
 /// For each action:
 /// - Install: copy source content to dest (atomic_write or atomic_install_dir)
 /// - Overwrite: replace existing with new source content
-/// - Merge: three-way merge using base from cache
 /// - Remove: delete file/dir from disk
 /// - Skip/KeepLocal: record as no-op
 ///
@@ -118,57 +115,6 @@ fn execute_action(
             })
         }
 
-        // Reserved — unreachable from current plan stage. See PlannedAction::Merge.
-        PlannedAction::Merge {
-            target,
-            base_content,
-            local_path,
-        } => {
-            let dest = target.dest_path.resolve(root);
-            let full_local_path = root.join(local_path);
-
-            // Read source (theirs) content
-            let theirs_content = read_target_content_for_merge(target)?;
-
-            // Read local content
-            let local_content = read_item_content(&full_local_path, target.id.kind)?;
-
-            // Perform three-way merge
-            let labels = crate::merge::MergeLabels {
-                base: "base (last sync)".into(),
-                local: "local".into(),
-                theirs: format!("{}@{}", target.source_name, "upstream"),
-            };
-
-            let merge_result = crate::merge::merge_content(
-                base_content,
-                &local_content,
-                &theirs_content,
-                &labels,
-            )?;
-
-            // Write merged content and verify persisted bytes before recording checksum.
-            let installed_checksum = write_file_and_verify(&dest, &merge_result.content)?;
-
-            // Cache the merged content as new base
-            cache_base_content(cache_bases_dir, &installed_checksum, &dest, target.id.kind)?;
-
-            let action_taken = if merge_result.has_conflicts {
-                ActionTaken::Conflicted
-            } else {
-                ActionTaken::Merged
-            };
-
-            Ok(ActionOutcome {
-                item_id: target.id.clone(),
-                action: action_taken,
-                dest_path: target.dest_path.clone(),
-                source_name: target.source_name.clone(),
-                source_checksum: Some(target.source_hash.clone()),
-                installed_checksum: Some(installed_checksum),
-            })
-        }
-
         PlannedAction::Remove { locked } => {
             let dest = removal_path(root, &locked.dest_path, locked.kind);
             if dest.exists() {
@@ -234,14 +180,6 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
         PlannedAction::Overwrite { target } => ActionOutcome {
             item_id: target.id.clone(),
             action: ActionTaken::Updated,
-            dest_path: target.dest_path.clone(),
-            source_name: target.source_name.clone(),
-            source_checksum: Some(target.source_hash.clone()),
-            installed_checksum: None,
-        },
-        PlannedAction::Merge { target, .. } => ActionOutcome {
-            item_id: target.id.clone(),
-            action: ActionTaken::Merged,
             dest_path: target.dest_path.clone(),
             source_name: target.source_name.clone(),
             source_checksum: Some(target.source_hash.clone()),
@@ -349,36 +287,6 @@ fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
         Ok(std::fs::read(target.source_path.join("BOOTSTRAP.md"))?)
     } else {
         Ok(std::fs::read(&target.source_path)?)
-    }
-}
-
-/// Read source content for merge operations.
-fn read_target_content_for_merge(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
-    match target.id.kind {
-        ItemKind::Agent | ItemKind::McpServer | ItemKind::BootstrapDoc => {
-            content_to_install(target)
-        }
-        ItemKind::Skill | ItemKind::Hook => read_item_content(&target.source_path, target.id.kind),
-    }
-}
-
-/// Read content from an item (file for agents, concatenated for skills).
-/// For merge purposes, we only support file-level merge (agents).
-/// Skills that need merging would require per-file merge, which is complex.
-/// For now, read the primary file content.
-fn read_item_content(path: &Path, kind: ItemKind) -> Result<Vec<u8>, MarsError> {
-    match kind {
-        ItemKind::Agent | ItemKind::McpServer => Ok(std::fs::read(path)?),
-        ItemKind::BootstrapDoc => Ok(std::fs::read(path.join("BOOTSTRAP.md"))?),
-        ItemKind::Skill | ItemKind::Hook => {
-            // For skills (directories), read the SKILL.md as the merge target
-            let skill_md = path.join("SKILL.md");
-            if skill_md.exists() {
-                Ok(std::fs::read(&skill_md)?)
-            } else {
-                Ok(Vec::new())
-            }
-        }
     }
 }
 

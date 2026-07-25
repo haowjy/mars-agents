@@ -587,10 +587,7 @@ pub fn build(
 
     for outcome in &applied.outcomes {
         match outcome.action {
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 let installed =
                     outcome
                         .installed_checksum
@@ -702,10 +699,7 @@ pub fn build(
                     });
                 }
             }
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 let dest_path = outcome.dest_path.clone();
                 if dest_path.as_str().is_empty() {
                     continue;
@@ -923,10 +917,7 @@ pub fn apply_apply_outcomes_to_lock(
                     });
                 }
             }
-            ActionTaken::Installed
-            | ActionTaken::Updated
-            | ActionTaken::Merged
-            | ActionTaken::Conflicted => {
+            ActionTaken::Installed | ActionTaken::Updated => {
                 if outcome.dest_path.as_str().is_empty() {
                     continue;
                 }

@@ -54,16 +54,6 @@ pub struct SyncReport {
     pub native_removed: Vec<(String, String)>,
 }
 
-impl SyncReport {
-    /// Whether the sync produced any unresolved conflicts.
-    pub fn has_conflicts(&self) -> bool {
-        self.applied
-            .outcomes
-            .iter()
-            .any(|o| matches!(o.action, apply::ActionTaken::Conflicted))
-    }
-}
-
 /// What a CLI command requests from the sync pipeline.
 #[derive(Debug, Clone)]
 pub struct SyncRequest {

@@ -14,10 +14,11 @@
 //! old-lock bridge is narrower: a record without `emitted_json` authorizes only
 //! the legacy command-path cleanup associated with that recorded key.
 //!
-//! [`retention`] enforces the other half of the contract: an unconfirmed removal
-//! retains the prior `ConfigEntryRecord` and cannot issue a permit for a
-//! replacement write on that surface. This preserves retry authority instead of
-//! silently replacing ownership evidence after a failed sweep.
+//! [`retention`] enforces the other half of the contract: each removal is a
+//! single-use operation that reports the records it could not confirm removing.
+//! A confirmed pair can bind its target, surface, and payload into one write
+//! operation; an unconfirmed pair cannot. This preserves retry authority instead
+//! of silently replacing ownership evidence after a failed sweep.
 
 pub(crate) mod retention;
 

@@ -71,6 +71,26 @@ fn configure_file_fragment(project: &assert_fs::fixture::ChildPath, target: &str
     );
 }
 
+#[test]
+fn opencode_file_hook_ignores_malformed_unrelated_config() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, ".opencode");
+    project
+        .child(".opencode/opencode.json")
+        .write_str("{ malformed")
+        .unwrap();
+
+    sync(&project).success();
+
+    project
+        .child(".opencode/plugins/mars-audit.ts")
+        .assert(predicate::str::contains("hooks/audit/run.sh"));
+    project
+        .child(".opencode/opencode.json")
+        .assert("{ malformed");
+}
+
 fn write_dependency_hook(
     source: &assert_fs::fixture::ChildPath,
     name: &str,

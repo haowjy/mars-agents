@@ -148,19 +148,14 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Existing JSON files this adapter may mutate during config-entry sync.
-    fn config_file_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
     /// Config files mutated by MCP entries.
     fn mcp_config_file_names(&self) -> &'static [&'static str] {
-        self.config_file_names()
+        &[]
     }
 
     /// Config files mutated by merge-mode hook entries.
     fn hook_config_file_names(&self) -> &'static [&'static str] {
-        self.config_file_names()
+        &[]
     }
 
     /// One-release legacy hook files touched only when old lock records lack

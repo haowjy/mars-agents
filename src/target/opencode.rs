@@ -65,7 +65,7 @@ impl TargetAdapter for OpencodeAdapter {
         Ok(vec![path])
     }
 
-    fn config_file_names(&self) -> &'static [&'static str] {
+    fn mcp_config_file_names(&self) -> &'static [&'static str] {
         &["opencode.json"]
     }
 

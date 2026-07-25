@@ -18,6 +18,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Allow OpenCode file hooks to sync without validating an unrelated
+  `opencode.json`.
 - Make transitive hook precedence use deterministic longest-path depth, avoiding
   hook config churn across identical syncs.
 - Preserve prior hook ownership and skip replacement when Mars cannot confirm

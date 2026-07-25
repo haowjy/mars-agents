@@ -1048,13 +1048,13 @@ pub fn merge_with_root(
             base_spec
         };
         let dialect = entry.dialect;
-        let id = source_id_for_spec(root, &spec, subpath.clone());
+        let effective_source_id = source_id_for_spec(root, &spec, subpath.clone());
 
         dependencies.insert(
             name.clone(),
             EffectiveDependency {
                 declared_source_id,
-                source_id: id,
+                source_id: effective_source_id,
                 spec,
                 subpath,
                 filter,

@@ -125,8 +125,11 @@ Discovers MCP server items, validates env refs, detects collisions.
 
 ## Hooks Compilation (`hooks/`)
 
-Discovers hook items, validates merge-mode native events against target adapter
-allowlists, orders bindings, and places opaque OpenCode/Pi file fragments.
+Fragment-manifest discovery, validation, and loading. Discovers `hook.toml` items,
+validates merge-mode event keys against per-target allowlists, unwraps copy-paste
+wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
+fragment text, and returns structured `HookFragment` or substituted file content.
+Placement and lock recording are handled by `config_entries/`.
 
 ## Variants (`variants/`)
 

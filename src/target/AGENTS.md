@@ -34,15 +34,19 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `write_config_entries(entries, target_dir)` | MCP/hook config file writes |
 | `known_hook_events()` | Native merge-fragment event allowlist, or `None` when unsupported |
-| `hook_fragment_mode()` | Declares merge/file fragment placement |
+| `hook_fragment_mode()` | Declares `MergeJson` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
-| `remove_config_entries(keys, target_dir)` | Stale config cleanup |
+| `config_file_names()` | All JSON files this adapter may mutate |
+| `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
+| `legacy_hook_config_file_names()` | One-release legacy hook files for old lock records |
+| `remove_owned_hook_entries(records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
+| `remove_config_entries(keys, target_dir)` | Stale config cleanup by key |
 
 ## Config Entries
 
 Two entry types flow through adapters:
 - `McpServerEntry` — name, command, args, env (symbolic variable names)
-- `HookEntry` — name/event provenance plus an opaque native JSON entry array
+- `HookEntry` — hook name, native event name, and an opaque `Vec<Value>` of entries (post-substitution); structural removal matches these exact entries by JSON equality
 
 Adapters translate env variable names to target interpolation syntax (e.g., `${VAR}` for Claude).
 

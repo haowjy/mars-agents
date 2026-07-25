@@ -33,6 +33,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Preflight `mars adopt` before moving user content, and restore the original
   path if the subsequent sync fails.
+- Report stale config entries as removed only when removal was confirmed for
+  that entry's MCP or hook surface.
 - Record exact emitted hook config and remove only structural matches, preserving
   hand edits and reporting them as config divergence.
 - Preserve untracked and hand-edited linked-target files; require `--force` to

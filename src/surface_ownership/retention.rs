@@ -314,4 +314,62 @@ mod tests {
         assert_eq!(Surface::of_key("mcp:server"), Surface::Mcp);
         assert_eq!(Surface::of_key("future:key"), Surface::Mcp);
     }
+
+    #[test]
+    fn fault_matrix_derives_retention_and_permits_from_each_pair_outcome() {
+        for failed_target in [".claude", ".codex", ".cursor", ".opencode"] {
+            for failed_surface in [Surface::Mcp, Surface::Hook] {
+                let mut previous = BTreeMap::new();
+                for target in [".claude", ".codex", ".cursor", ".opencode"] {
+                    previous.insert(
+                        target.to_owned(),
+                        BTreeMap::from([
+                            ("mcp:old".to_owned(), record(None)),
+                            ("hook:Start:audit".to_owned(), record(Some("[]"))),
+                        ]),
+                    );
+                }
+                let plan = RemovalPlan::build(&previous, &BTreeMap::new());
+                let mut diag = DiagnosticCollector::new();
+                let retention = plan.execute(
+                    |_, target, surface, _, _| {
+                        if target == failed_target && surface == failed_surface {
+                            Err("injected removal failure".to_owned())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    &mut diag,
+                );
+
+                // Reference outcome table: exactly the injected pair is
+                // unconfirmed; all adjacent successful pairs are confirmed.
+                for target in [".claude", ".codex", ".cursor", ".opencode"] {
+                    for surface in [Surface::Mcp, Surface::Hook] {
+                        let unconfirmed = target == failed_target && surface == failed_surface;
+                        assert_eq!(
+                            retention.write_permit(target, surface).is_none(),
+                            unconfirmed,
+                            "permit disagrees with outcome table for ({target}, {surface:?})"
+                        );
+                    }
+                }
+                let retained = retention.into_retained_records();
+                let expected_key = match failed_surface {
+                    Surface::Mcp => "mcp:old",
+                    Surface::Hook => "hook:Start:audit",
+                };
+                assert_eq!(
+                    retained,
+                    BTreeMap::from([(
+                        failed_target.to_owned(),
+                        BTreeMap::from([(
+                            expected_key.to_owned(),
+                            previous[failed_target][expected_key].clone(),
+                        )]),
+                    )])
+                );
+            }
+        }
+    }
 }

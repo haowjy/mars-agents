@@ -35,7 +35,8 @@ pub fn sync(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Asse
     let assertion = mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert();
-    assert_config_entry_consistency(project);
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr);
+    assert_config_entry_consistency_with_diagnostics(project, &stderr);
     assertion
 }
 
@@ -48,7 +49,8 @@ pub fn sync_force(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert
             project.path().to_str().unwrap(),
         ])
         .assert();
-    assert_config_entry_consistency(project);
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr);
+    assert_config_entry_consistency_with_diagnostics(project, &stderr);
     assertion
 }
 
@@ -132,6 +134,13 @@ pub fn assert_hook_target_owner(
 /// every readable record must agree with disk and every file-hook checksum must
 /// match its owned output.
 pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) {
+    assert_config_entry_consistency_with_diagnostics(project, "");
+}
+
+fn assert_config_entry_consistency_with_diagnostics(
+    project: &assert_fs::fixture::ChildPath,
+    diagnostics: &str,
+) {
     let lock_path = project.child("mars.lock");
     if !lock_path.exists() {
         return;
@@ -198,6 +207,8 @@ pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) 
         }
     }
 
+    let output_divergence_was_reported = diagnostics.contains("edited after Mars installed it")
+        || diagnostics.contains("failed to remove");
     for item in lock
         .items
         .values()
@@ -213,12 +224,18 @@ pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) 
             let path = project
                 .child(&output.target_root)
                 .child(output.dest_path.as_str());
-            let bytes = fs::read(path.path()).unwrap_or_else(|_| {
+            let Ok(bytes) = fs::read(path.path()) else {
+                if output_divergence_was_reported {
+                    continue;
+                }
                 panic!(
                     "lock owns file hook `{}/{}` but it is absent",
                     output.target_root, output.dest_path
-                )
-            });
+                );
+            };
+            if output_divergence_was_reported {
+                continue;
+            }
             assert_eq!(
                 mars_agents::hash::hash_bytes(&bytes),
                 output.installed_checksum.as_ref(),

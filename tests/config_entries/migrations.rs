@@ -212,3 +212,50 @@ fn one_sync_migrates_v011_command_path_residue_and_is_idempotent() {
     );
     assert_eq!(fs::read_to_string(lock_path.path()).unwrap(), first_lock);
 }
+
+#[test]
+fn malformed_opencode_legacy_sweep_cannot_replace_file_hook() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, ".opencode");
+    sync(&project).success();
+    let plugin = project.child(".opencode/plugins/mars-audit.ts");
+    let original = fs::read_to_string(plugin.path()).unwrap();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock.as_table_mut()
+        .unwrap()
+        .entry("config_entries")
+        .or_insert_with(|| Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .unwrap()
+        .entry(".opencode")
+        .or_insert_with(|| Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .unwrap()
+        .insert(
+            "hook:PreToolUse:audit".into(),
+            toml::Table::from_iter([("source".into(), Value::String("_self".into()))]).into(),
+        );
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+    project
+        .child("hooks/audit/plugin.ts")
+        .write_str("export default 'replacement'\n")
+        .unwrap();
+    project
+        .child(".opencode/opencode.json")
+        .write_str("{malformed")
+        .unwrap();
+
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("opencode.json"))
+        .stderr(predicate::str::contains("valid JSON"));
+    plugin.assert(original.as_str());
+    let after: Value =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    assert!(after["config_entries"][".opencode"]["hook:PreToolUse:audit"].is_table());
+}

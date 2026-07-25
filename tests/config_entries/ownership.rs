@@ -400,3 +400,59 @@ fn exported_dependency_hook_uses_item_lifecycle_for_whole_directory_copy() {
     let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
     assert!(lock.contains("hooks/claude/dep-hook"));
 }
+
+#[test]
+fn unrelated_malformed_mcp_file_cannot_retain_removed_hook_ownership() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+    sync(&project).success();
+
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    project
+        .child(".claude/.mcp.json")
+        .write_str("{malformed")
+        .unwrap();
+    sync(&project).success();
+
+    let lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    assert!(
+        !lock
+            .config_entries
+            .get(".claude")
+            .is_some_and(|records| records.contains_key("hook:SessionStart:audit")),
+        "confirmed hook removal must not leave ghost ownership"
+    );
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings, serde_json::json!({}));
+    project
+        .child(".claude/hooks/audit")
+        .assert(predicate::path::missing());
+
+    // Repair and run again: the already-consistent state remains converged and
+    // no ghost record is resurrected on a later sync.
+    project.child(".claude/.mcp.json").write_str("{}").unwrap();
+    sync(&project).success();
+    assert_config_entry_consistency(&project);
+    let repaired = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    sync(&project).success();
+    assert_eq!(
+        fs::read_to_string(project.child("mars.lock").path()).unwrap(),
+        repaired
+    );
+}

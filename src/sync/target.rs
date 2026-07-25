@@ -605,7 +605,6 @@ mod tests {
                         commit: None,
                         tree_path: tree.path().to_path_buf(),
                     },
-                    latest_version: None,
                     manifest: None,
                     deps: vec![],
                 },

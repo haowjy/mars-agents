@@ -45,7 +45,6 @@ pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
     pub(crate) constraint: VersionConstraint,
-    pub(crate) spec: SourceSpec,
     pub(crate) is_local: bool,
 }
 
@@ -155,7 +154,7 @@ pub(crate) fn resolve_package_bottom_up(
             };
 
             if !skip {
-                let (new_ref, latest_version) = resolve_single_source(
+                let new_ref = resolve_single_source(
                     pending_src,
                     provider,
                     locked,
@@ -185,12 +184,7 @@ pub(crate) fn resolve_package_bottom_up(
                         options,
                         diag,
                     )?;
-                    ctx.set_pending_restart(
-                        pending_src.name.clone(),
-                        new_ref,
-                        new_rooted,
-                        latest_version,
-                    );
+                    ctx.set_pending_restart(pending_src.name.clone(), new_ref, new_rooted);
                     return Err(MarsError::ResolutionRestartNeeded {
                         package: pending_src.name.to_string(),
                     });
@@ -243,30 +237,29 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let (resolved_ref, latest_version, rooted_ref) =
-        if let Some((override_ref, override_rooted, override_latest_version)) =
-            ctx.version_override(&pending_src.name).cloned()
-        {
-            // Use pre-computed ref and latest-version metadata from prior pass.
-            (override_ref, override_latest_version, override_rooted)
-        } else {
-            let (ref_, latest) = resolve_single_source(
-                pending_src,
-                provider,
-                locked,
-                options,
-                ctx.version_constraints(),
-                diag,
-            )?;
-            let rooted = apply_subpath(
-                &pending_src.name,
-                &ref_.tree_path,
-                pending_src.subpath.as_ref(),
-            )?;
-            let rooted =
-                stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
-            (ref_, latest, rooted)
-        };
+    let (resolved_ref, rooted_ref) = if let Some((override_ref, override_rooted)) =
+        ctx.version_override(&pending_src.name).cloned()
+    {
+        // Use the pre-computed ref from the prior pass.
+        (override_ref, override_rooted)
+    } else {
+        let ref_ = resolve_single_source(
+            pending_src,
+            provider,
+            locked,
+            options,
+            ctx.version_constraints(),
+            diag,
+        )?;
+        let rooted = apply_subpath(
+            &pending_src.name,
+            &ref_.tree_path,
+            pending_src.subpath.as_ref(),
+        )?;
+        let rooted =
+            stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
+        (ref_, rooted)
+    };
     let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest)?;
@@ -292,13 +285,11 @@ pub(crate) fn resolve_package_bottom_up(
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
                 resolved_ref,
-                latest_version,
                 manifest,
                 deps,
             },
             items,
             constraint: pending_src.constraint.clone(),
-            spec: pending_src.spec.clone(),
             is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
         },
     );
@@ -467,7 +458,6 @@ pub(crate) fn seed_items_for_request(
             constraint: pending_src.constraint.clone(),
             required_by: pending_src.required_by.clone(),
             is_local: package.is_local,
-            spec: pending_src.spec.clone(),
         })
         .collect()
 }

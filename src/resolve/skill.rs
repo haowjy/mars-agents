@@ -181,7 +181,6 @@ pub(crate) fn resolve_skill_ref(
         constraint,
         required_by,
         is_local: package.is_local,
-        spec: package.spec.clone(),
     })
 }
 

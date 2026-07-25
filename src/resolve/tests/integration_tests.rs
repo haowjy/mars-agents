@@ -805,7 +805,6 @@ fn path_source_resolves_without_version() {
     assert_eq!(graph.nodes.len(), 1);
     let node = &graph.nodes["local"];
     assert!(node.resolved_ref.version.is_none());
-    assert!(node.latest_version.is_none());
 }
 
 #[test]
@@ -858,7 +857,6 @@ fn alphabetical_order_linear_chain() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into()],
         },
@@ -870,7 +868,6 @@ fn alphabetical_order_linear_chain() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["a".into()],
         },
@@ -882,7 +879,6 @@ fn alphabetical_order_linear_chain() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -903,7 +899,6 @@ fn alphabetical_order_ignores_dependency_shape() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into(), "c".into()],
         },
@@ -915,7 +910,6 @@ fn alphabetical_order_ignores_dependency_shape() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["d".into()],
         },
@@ -927,7 +921,6 @@ fn alphabetical_order_ignores_dependency_shape() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["d".into()],
         },
@@ -939,7 +932,6 @@ fn alphabetical_order_ignores_dependency_shape() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/d"), None),
             resolved_ref: dummy_ref("d"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -959,7 +951,6 @@ fn alphabetical_order_no_deps() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -971,7 +962,6 @@ fn alphabetical_order_no_deps() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec![],
         },
@@ -993,7 +983,6 @@ fn alphabetical_order_is_stable_for_cycles() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["b".into()],
         },
@@ -1005,7 +994,6 @@ fn alphabetical_order_is_stable_for_cycles() {
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
-            latest_version: None,
             manifest: None,
             deps: vec!["a".into()],
         },
@@ -1833,11 +1821,6 @@ fn restart_override_preserves_latest_version_metadata() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let shared = graph.nodes.get("shared").expect("shared should resolve");
     assert_eq!(shared.resolved_ref.version, Some(Version::new(1, 2, 0)));
-    assert_eq!(
-        shared.latest_version,
-        Some(Version::new(2, 0, 0)),
-        "latest_version should survive override-based restart"
-    );
     assert!(
         provider.fetch_count("shared") > 1,
         "shared should be re-resolved at least once to exercise override path"

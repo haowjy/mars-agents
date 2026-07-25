@@ -43,13 +43,11 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
             ),
             rooted_ref: dummy_rooted_ref(),
             resolved_ref: dummy_ref("dep"),
-            latest_version: None,
             manifest: None,
             deps: Vec::new(),
         },
         items: package_items,
         constraint: VersionConstraint::Latest,
-        spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
         is_local: false,
     };
     let pending = PendingSource {

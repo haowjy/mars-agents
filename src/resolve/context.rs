@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
-use semver::Version;
 
 use super::filter::push_filter_constraint;
 use super::{
@@ -30,10 +29,10 @@ pub struct ResolverContext {
     /// branch in `resolve_package_bottom_up` checks this map and uses the override
     /// directly, so the same constraint-accumulation pattern does NOT re-trigger a
     /// restart on the next pass.
-    version_overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef, Option<Version>)>,
+    version_overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef)>,
     /// Pending restart info set by `resolve_package_bottom_up` just before it returns
     /// `ResolutionRestartNeeded`. The driver reads this before discarding the context.
-    pending_restart: Option<(SourceName, ResolvedRef, RootedSourceRef, Option<Version>)>,
+    pending_restart: Option<(SourceName, ResolvedRef, RootedSourceRef)>,
 }
 
 impl Default for ResolverContext {
@@ -63,17 +62,17 @@ impl ResolverContext {
     /// packages where the correct version was already computed.
     pub(super) fn set_version_overrides(
         &mut self,
-        overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef, Option<Version>)>,
+        overrides: HashMap<SourceName, (ResolvedRef, RootedSourceRef)>,
     ) {
         self.version_overrides = overrides;
     }
 
     /// Look up an override for the first resolution of `name`.
-    /// Returns the pre-computed (ResolvedRef, RootedSourceRef, latest_version) if present.
+    /// Returns the pre-computed ref and rooted package if present.
     pub(super) fn version_override(
         &self,
         name: &SourceName,
-    ) -> Option<&(ResolvedRef, RootedSourceRef, Option<Version>)> {
+    ) -> Option<&(ResolvedRef, RootedSourceRef)> {
         self.version_overrides.get(name)
     }
 
@@ -85,15 +84,14 @@ impl ResolverContext {
         package: SourceName,
         new_ref: ResolvedRef,
         new_rooted: RootedSourceRef,
-        latest_version: Option<Version>,
     ) {
-        self.pending_restart = Some((package, new_ref, new_rooted, latest_version));
+        self.pending_restart = Some((package, new_ref, new_rooted));
     }
 
     /// Drain the pending restart info. Called by the driver after catching the signal.
     pub(super) fn take_pending_restart(
         &mut self,
-    ) -> Option<(SourceName, ResolvedRef, RootedSourceRef, Option<Version>)> {
+    ) -> Option<(SourceName, ResolvedRef, RootedSourceRef)> {
         self.pending_restart.take()
     }
 

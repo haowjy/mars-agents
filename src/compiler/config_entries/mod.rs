@@ -1108,7 +1108,6 @@ mod tests {
                 commit: None,
                 tree_path: root,
             },
-            latest_version: None,
             manifest: None,
             deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }

@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
-use semver::{Version, VersionReq};
+use semver::VersionReq;
 
 use super::compat::CompatibilityResult;
-use crate::config::{FilterMode, Manifest, SourceSpec};
+use crate::config::{FilterMode, Manifest};
 use crate::error::ResolutionError;
 use crate::lock::ItemKind;
 use crate::source::ResolvedRef;
@@ -189,7 +189,6 @@ impl VisitedSet {
             },
         );
     }
-
 }
 
 /// Tracks resolved version per package and rejects divergent refs.

@@ -141,9 +141,9 @@ pub(crate) fn preflight_config_entries(
     let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
     for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
         if let Some(node) = resolved.graph.nodes.get(source_name) {
-            hooks.extend(discover_hook_items(
-                &node.rooted_ref.package_root,
-                source_name.as_str(),
+            hooks.extend(crate::compiler::hooks::discover_resolved_hook_items(
+                node,
+                source_name,
                 1,
                 decl_order,
             )?);
@@ -471,7 +471,12 @@ pub(crate) fn compile_config_entries(
         }
 
         let depth = depths.get(source_name).copied().unwrap_or(1);
-        match discover_hook_items(package_root, source_name.as_str(), depth, decl_order) {
+        match crate::compiler::hooks::discover_resolved_hook_items(
+            node,
+            source_name,
+            depth,
+            decl_order,
+        ) {
             Ok(items) => all_hooks.extend(items),
             Err(e) => {
                 diag.error(

@@ -90,13 +90,8 @@ pub fn build_with_collisions_and_diag(
             .unwrap_or_default();
 
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
-        let parsed_hooks = crate::compiler::hooks::discover_hook_items(
-            &node.rooted_ref.package_root,
-            source_name.as_str(),
-            1,
-            0,
-        )
-        .map_err(|error| removed_hook_schema_source_error(error, source_name, node))?;
+        let parsed_hooks =
+            crate::compiler::hooks::discover_resolved_hook_items(node, source_name, 1, 0)?;
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
@@ -206,32 +201,6 @@ pub fn build_with_collisions_and_diag(
         explicit_skill_renames,
         collision_renames,
     ))
-}
-
-fn removed_hook_schema_source_error(
-    error: MarsError,
-    source_name: &SourceName,
-    node: &crate::resolve::ResolvedNode,
-) -> MarsError {
-    let MarsError::Config(crate::error::ConfigError::RemovedHookSchema { message, .. }) = error
-    else {
-        return error;
-    };
-    let version = node
-        .resolved_ref
-        .version_tag
-        .as_deref()
-        .map(|version| version.trim_start_matches('v'))
-        .or_else(|| {
-            node.manifest
-                .as_ref()
-                .map(|manifest| manifest.package.version.as_str())
-        })
-        .unwrap_or("unknown");
-    crate::error::ConfigError::Invalid {
-        message: format!("source package `{source_name}` version `{version}` {message}"),
-    }
-    .into()
 }
 
 /// Canonical hook directories are target-scoped so providers with the same

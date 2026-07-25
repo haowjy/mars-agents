@@ -172,6 +172,46 @@ pub fn discover_hook_items(
     Ok(items)
 }
 
+pub(crate) fn discover_resolved_hook_items(
+    node: &crate::resolve::ResolvedNode,
+    source_name: &crate::types::SourceName,
+    package_depth: usize,
+    decl_order: usize,
+) -> Result<Vec<ParsedHookItem>, MarsError> {
+    discover_hook_items(
+        &node.rooted_ref.package_root,
+        source_name.as_str(),
+        package_depth,
+        decl_order,
+    )
+    .map_err(|error| contextualize_dependency_error(error, source_name, node))
+}
+
+fn contextualize_dependency_error(
+    error: MarsError,
+    source_name: &crate::types::SourceName,
+    node: &crate::resolve::ResolvedNode,
+) -> MarsError {
+    let MarsError::Config(ConfigError::RemovedHookSchema { message, .. }) = error else {
+        return error;
+    };
+    let version = node
+        .resolved_ref
+        .version_tag
+        .as_deref()
+        .map(|version| version.trim_start_matches('v'))
+        .or_else(|| {
+            node.manifest
+                .as_ref()
+                .map(|manifest| manifest.package.version.as_str())
+        })
+        .unwrap_or("unknown");
+    ConfigError::Invalid {
+        message: format!("source package `{source_name}` version `{version}` {message}"),
+    }
+    .into()
+}
+
 pub fn load_merge_fragment(
     item: &ParsedHookItem,
     target_name: &str,

@@ -133,6 +133,9 @@ Placement and lock recording are handled by `config_entries/`.
 Recovery-frozen source hook bindings bypass stale-entry removal and are carried
 forward byte-for-byte; config compilation never rewrites content it could not
 read.
+Dependency hook discovery is contextualized by
+`hooks::discover_resolved_hook_items` in both target construction and config
+preflight; callers must not expose derived staging paths in schema errors.
 
 ## Variants (`variants/`)
 

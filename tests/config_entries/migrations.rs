@@ -151,6 +151,40 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
 }
 
 #[test]
+fn filtered_transitive_removed_hook_error_hides_staging_path() {
+    let dir = TempDir::new().unwrap();
+    let legacy = write_legacy_hook_source(&dir, "base");
+    let workflow = dir.child("workflow");
+    workflow.create_dir_all().unwrap();
+    workflow
+        .child("mars.toml")
+        .write_str(&format!(
+            "[package]\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
+             [dependencies.base]\npath = \"{}\"\nagents = [\"missing\"]\n",
+            portable_path(&legacy)
+        ))
+        .unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.workflow]\npath = \"{}\"\n\n\
+             [settings]\ntargets = [\".claude\"]\n",
+            portable_path(workflow.path())
+        ))
+        .unwrap();
+
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains(
+            "source package `base` version `0.8.9`",
+        ))
+        .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
+        .stderr(predicate::str::contains(".mars/staging").not());
+}
+
+#[test]
 fn sync_force_still_rejects_removed_hook_schema() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");

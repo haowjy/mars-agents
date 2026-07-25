@@ -72,6 +72,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reject malformed merge config before writing hook files instead of replacing
   user config.
 - Skip MCP discovery for dependency filters that cannot emit MCP config.
+- Report removed hook schemas from filtered transitive packages with source
+  name and version instead of leaking internal staging paths.
 
 ## [0.11.0] - 2026-07-24
 

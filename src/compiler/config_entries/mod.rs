@@ -678,6 +678,7 @@ pub(crate) fn compile_config_entries(
         .config_entries;
     let stale_entries = stale::find_stale_entries(previous_records, &desired_records);
     let mut retained_stale_records = BTreeMap::new();
+    let mut hook_sweep_failures = std::collections::BTreeSet::new();
 
     // Sweep every prior merge-mode hook emission before writing replacements. Exact fragment
     // arrays come from the lock; records from v0.11.0 intentionally fall back to
@@ -694,15 +695,23 @@ pub(crate) fn compile_config_entries(
             }
             if let Some(adapter) = registry.get(target_root) {
                 let target_dir = ctx.project_root.join(target_root);
-                if let Err(error) =
-                    adapter.remove_owned_hook_entries(&hook_records, &target_dir, diag)
-                {
+                let sweep_result =
+                    adapter.remove_owned_hook_entries(&hook_records, &target_dir, diag);
+                if let Err(error) = &sweep_result {
                     diag.warn(
                         "config-entry-remove",
                         format!(
                             "failed to remove prior hook entries from `{target_root}`: {error}"
                         ),
                     );
+                }
+                if !record_hook_sweep_outcome(
+                    &hook_records,
+                    sweep_result.is_ok(),
+                    &mut retained_stale_records,
+                    target_root,
+                ) {
+                    hook_sweep_failures.insert(target_root.clone());
                 }
             }
         }
@@ -802,6 +811,11 @@ pub(crate) fn compile_config_entries(
             .partition(|entry| matches!(entry, ConfigEntry::McpServer(_)));
         for surface_entries in [mcp_entries, hook_entries] {
             if surface_entries.is_empty() {
+                continue;
+            }
+            if matches!(surface_entries.first(), Some(ConfigEntry::Hook(_)))
+                && hook_sweep_failures.contains(&target_root)
+            {
                 continue;
             }
             match adapter.write_config_entries(&surface_entries, &target_dir) {
@@ -931,6 +945,21 @@ pub(crate) fn compile_config_entries(
         emitted_outputs,
         removed_outputs,
     }
+}
+
+fn record_hook_sweep_outcome(
+    prior_hook_records: &BTreeMap<String, ConfigEntryRecord>,
+    sweep_succeeded: bool,
+    retained_records: &mut BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    target_root: &str,
+) -> bool {
+    if !sweep_succeeded {
+        retained_records
+            .entry(target_root.to_string())
+            .or_default()
+            .extend(prior_hook_records.clone());
+    }
+    sweep_succeeded
 }
 
 fn source_may_emit_mcp(graph: &crate::resolve::ResolvedGraph, source_name: &SourceName) -> bool {
@@ -1063,4 +1092,29 @@ fn compute_decl_orders(
     }
 
     orders
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_hook_sweep_retains_prior_ownership_record() {
+        let prior = BTreeMap::from([(
+            "hook:SessionStart:audit".to_string(),
+            ConfigEntryRecord {
+                source: "base".to_string(),
+                emitted_json: Some("[{\"hooks\":[]}]".to_string()),
+            },
+        )]);
+        let mut retained = BTreeMap::new();
+
+        assert!(!record_hook_sweep_outcome(
+            &prior,
+            false,
+            &mut retained,
+            ".claude",
+        ));
+        assert_eq!(retained.get(".claude"), Some(&prior));
+    }
 }

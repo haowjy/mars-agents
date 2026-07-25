@@ -1068,13 +1068,13 @@ pub fn apply_compiled_native_outputs(
     Ok(())
 }
 
-/// Preserve prior native-output authority unless this sync positively removed it.
+/// Preserve unresolved noncanonical removal authority as a retry tombstone.
 ///
 /// A rebuilt lock omits canonical items removed from the source graph. Their
 /// linked-target artifacts can outlive that removal when filesystem deletion
-/// fails, so absence from the rebuild is not evidence that ownership ended.
-/// Successful removals are the sole authority for dropping such records.
-pub fn retain_unremoved_native_outputs(
+/// fails, so the unresolved linked outputs must remain owned until removal
+/// succeeds.
+pub fn retain_unremoved_noncanonical_outputs(
     lock: &mut LockFile,
     old_lock: &LockFile,
     removed: &[(String, String)],
@@ -1108,12 +1108,10 @@ pub fn retain_unremoved_native_outputs(
                 kind: old_item.kind,
                 version: old_item.version.clone(),
                 source_checksum: old_item.source_checksum.clone(),
-                outputs: old_item
-                    .outputs
-                    .iter()
-                    .filter(|output| output.target_root == CANONICAL_TARGET_ROOT)
-                    .cloned()
-                    .collect(),
+                // A retry tombstone may carry only unresolved noncanonical outputs.
+                // It must never resurrect an old canonical output: only the current
+                // apply pass can grant canonical ownership and deletion authority.
+                outputs: Vec::new(),
             });
         item.outputs.extend(unresolved);
         item.outputs.sort_by(|a, b| {

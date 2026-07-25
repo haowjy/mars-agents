@@ -172,6 +172,86 @@ fn switching_between_standalone_and_meridian_managed_converges() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct RestoreDirPerms {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for RestoreDirPerms {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\n\n[dependencies.src]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, None);
+
+    let native_parent = project.child(".codex/agents");
+    let native = native_parent.child("coder.toml");
+    native.assert(predicates::path::is_file());
+    fs::set_permissions(native_parent.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let _restore_native_parent = RestoreDirPerms {
+        path: native_parent.path().to_path_buf(),
+    };
+    fs::remove_file(source.join("agents/coder.md")).unwrap();
+
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("could not remove"));
+
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(
+        lock.contains_output(".codex", "agents/coder.toml"),
+        "failed native removal must leave retry authority"
+    );
+    assert!(
+        !lock.contains_output(".mars", "agents/coder.md"),
+        "retry tombstone must not resurrect canonical ownership"
+    );
+
+    let canonical = project.child(".mars/agents/coder.md");
+    canonical.create_dir_all().unwrap();
+    canonical.child("user.txt").write_str("unmanaged").unwrap();
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("could not remove"));
+    canonical
+        .child("user.txt")
+        .assert(predicates::str::contains("unmanaged"));
+
+    fs::set_permissions(native_parent.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    sync_project(&project, None);
+    native.assert(predicates::path::missing());
+    canonical
+        .child("user.txt")
+        .assert(predicates::str::contains("unmanaged"));
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(
+        !lock.contains_output(".codex", "agents/coder.toml"),
+        "successful retry must clear the linked-output tombstone"
+    );
+}
+
 fn sync_capture(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) -> String {
     let mut cmd = mars();
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);

@@ -1516,6 +1516,13 @@ fn failed_file_fragment_removal_retains_ownership_for_retry() {
             toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
                 .unwrap();
         assert!(
+            !lock.contains_output(
+                ".mars",
+                &format!("hooks/{}/audit", target.trim_start_matches('.'))
+            ),
+            "retry tombstone must not resurrect canonical ownership"
+        );
+        assert!(
             lock.items
                 .values()
                 .flat_map(|item| &item.outputs)
@@ -1524,8 +1531,16 @@ fn failed_file_fragment_removal_retains_ownership_for_retry() {
             "failed removal must retain ownership authority"
         );
 
-        fs::remove_dir_all(placed.path()).unwrap();
+        let canonical = project
+            .child(".mars/hooks")
+            .child(target.trim_start_matches('.'))
+            .child("audit");
+        canonical.create_dir_all().unwrap();
+        canonical.child("user.txt").write_str("unmanaged").unwrap();
         sync(&project).success();
+        canonical
+            .child("user.txt")
+            .assert(predicate::str::contains("unmanaged"));
         placed.assert(predicate::path::missing());
         let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
         assert!(!lock.contains(destination));

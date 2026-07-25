@@ -30,6 +30,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Couple hook config ownership to successful installation, preserve untracked
   target content even when byte-identical, and retry stale managed hooks after
   transient copy failures.
+- Keep failed linked-output removals as noncanonical-only tombstones so retry
+  authority cannot reclaim a canonical path removed by the current sync.
 - Key same-name hook ownership by target and skip MCP discovery for dependency
   filters that cannot emit MCP config.
 

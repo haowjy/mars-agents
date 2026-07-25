@@ -755,7 +755,13 @@ pub(crate) fn finalize(
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs)?;
         crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
-        crate::lock::retain_unremoved_native_outputs(
+        confirmed_output_removals.extend(retry_tombstone_removals(
+            project_root,
+            old_lock,
+            &new_lock,
+            diag,
+        ));
+        crate::lock::retain_unremoved_noncanonical_outputs(
             &mut new_lock,
             old_lock,
             &confirmed_output_removals,
@@ -846,6 +852,70 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
     })
+}
+
+fn retry_tombstone_removals(
+    project_root: &Path,
+    old_lock: &crate::lock::LockFile,
+    current_lock: &crate::lock::LockFile,
+    diag: &mut DiagnosticCollector,
+) -> Vec<(String, String)> {
+    let mut removed = Vec::new();
+    for item in old_lock.items.values().filter(|item| {
+        !item
+            .outputs
+            .iter()
+            .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
+    }) {
+        for output in &item.outputs {
+            let current_pass_owns_output = current_lock.items.values().any(|current_item| {
+                current_item.outputs.iter().any(|current_output| {
+                    current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT
+                }) && current_item.outputs.iter().any(|current_output| {
+                    current_output.target_root == output.target_root
+                        && crate::target::dest_paths_equivalent(
+                            current_output.dest_path.as_str(),
+                            output.dest_path.as_str(),
+                        )
+                })
+            });
+            if output.target_root == crate::lock::CANONICAL_TARGET_ROOT || current_pass_owns_output
+            {
+                continue;
+            }
+
+            let path = project_root
+                .join(&output.target_root)
+                .join(output.dest_path.as_str());
+            let result = if matches!(item.kind, ItemKind::Agent)
+                || (matches!(item.kind, ItemKind::Hook)
+                    && !output.dest_path.as_str().starts_with("hooks/"))
+            {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error.into()),
+                }
+            } else {
+                crate::reconcile::fs_ops::safe_remove(&path)
+            };
+
+            match result {
+                Ok(()) => removed.push((
+                    output.target_root.clone(),
+                    output.dest_path.as_str().to_string(),
+                )),
+                Err(error) => diag.warn(
+                    "tombstone-remove",
+                    format!(
+                        "could not remove tombstoned output `{}`: {error}",
+                        path.display()
+                    ),
+                ),
+            }
+        }
+    }
+    removed
 }
 
 fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {

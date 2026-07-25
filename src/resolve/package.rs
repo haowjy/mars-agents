@@ -399,10 +399,7 @@ fn stage_rooted_package(
     staging::stage_rooted_source(
         source_name,
         rooted,
-        staging::RootedStageOptions {
-            dialect,
-            removed_hook_schema: options.removed_hook_schema,
-        },
+        staging::RootedStageOptions { dialect },
         &effective_config.skills,
         &renames,
         staging_root,

@@ -45,9 +45,6 @@ paths match.
   ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash
   canonical form; lookup normalization preserves Windows compatibility.
-- **Frozen recovery state is exact carry-forward.** Hook items from
-  `ResolvedGraph.frozen_hook_sources` retain their prior logical keys, checksums,
-  and outputs because the current source surface was unreadable.
 
 ## Anti-Patterns
 

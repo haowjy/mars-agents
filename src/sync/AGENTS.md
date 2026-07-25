@@ -32,9 +32,10 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 ### Recovery Policy
 
 `SyncRequest.recovery` is strict by default and independent of `--force`.
-Upgrade, override, remove, and repair opt into preserving unreadable removed-
-schema hook surfaces. Frozen sources produce skip outcomes in diff, retain prior
-config bindings, and carry exact prior hook lock records forward.
+Upgrade, override, remove, and repair opt into deferring materialization when
+staging finds an unreadable removed-schema hook surface. The gate persists only
+pending intent and returns before the compiler; strict sync still enters the
+compiler and reports the contextualized schema error.
 
 ### Key Operations
 

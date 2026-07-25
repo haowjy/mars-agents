@@ -37,7 +37,7 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             force: true,
             ..SyncOptions::default()
         },
-        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
+        recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
@@ -46,5 +46,5 @@ pub fn run(_args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     output::print_sync_report(&report, json, true);
 
-    Ok(0)
+    Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

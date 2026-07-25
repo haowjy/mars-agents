@@ -50,6 +50,27 @@ pub struct SyncReport {
     /// Native harness agent outputs removed this run, as `(target_root, dest_path)`.
     /// Surfaced so SuppressAll / selective prunes are not reported as "up to date".
     pub native_removed: Vec<(String, String)>,
+    /// Present when a recovery command persisted intent but stopped before
+    /// materialization because at least one hook surface was unreadable.
+    pub recovery_halt: Option<RecoveryHalt>,
+}
+
+/// A source package preventing a recovery command from entering the compiler.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryBlocker {
+    pub package: String,
+    pub version: String,
+    pub hook_names: Vec<String>,
+    pub guidance: String,
+    pub suggested_command: String,
+}
+
+/// Successful intent persistence that still requires recovery work.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryHalt {
+    pub persisted: Vec<String>,
+    pub blockers: Vec<RecoveryBlocker>,
+    pub next_step: String,
 }
 
 /// What a CLI command requests from the sync pipeline.
@@ -61,8 +82,8 @@ pub struct SyncRequest {
     pub mutation: Option<ConfigMutation>,
     /// Behavior flags.
     pub options: SyncOptions,
-    /// Whether resolution may preserve hook state it cannot read while a
-    /// recovery command repairs the dependency graph.
+    /// Whether a recovery command may persist intent and halt when resolution
+    /// finds a hook surface the compiler cannot read.
     pub recovery: RecoveryPolicy,
     /// Whether lossiness warnings are included in the returned report.
     /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
@@ -72,12 +93,12 @@ pub struct SyncRequest {
 /// Schema handling policy for content encountered during sync resolution.
 ///
 /// Strict is the safe default: only commands whose purpose is to recover a
-/// locked-out graph may opt into preserving unreadable prior state.
+/// locked-out graph may opt into deferring materialization.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RecoveryPolicy {
     #[default]
     Strict,
-    PreserveUnreadableHooks,
+    DeferOnUnreadable,
 }
 
 /// Resolution behavior for the resolver stage.
@@ -154,7 +175,109 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
+    let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
+    if request.recovery == RecoveryPolicy::DeferOnUnreadable && !unreadable_hook_surfaces.is_empty()
+    {
+        persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
+        let recovery_halt = build_recovery_halt(&ir.resolved, unreadable_hook_surfaces, request);
+        return Ok(SyncReport {
+            applied: ApplyResult {
+                outcomes: Vec::new(),
+            },
+            diagnostics: diag.drain(),
+            dependency_changes: ir.resolved.loaded.dependency_changes,
+            upgrades_available: ir.resolved.upgrades_available,
+            target_outcomes: Vec::new(),
+            dry_run: request.options.dry_run,
+            native_emitted: Vec::new(),
+            native_removed: Vec::new(),
+            recovery_halt: Some(recovery_halt),
+        });
+    }
     crate::compiler::compile(ctx, ir, request, &mut diag)
+}
+
+fn build_recovery_halt(
+    resolved: &ResolvedState,
+    unreadable_hook_surfaces: &BTreeMap<SourceName, std::collections::BTreeSet<String>>,
+    request: &SyncRequest,
+) -> RecoveryHalt {
+    let persisted = persisted_intent_descriptions(resolved, request);
+    let blockers = unreadable_hook_surfaces
+        .iter()
+        .map(|(source_name, hook_names)| {
+            let node = resolved
+                .graph
+                .nodes
+                .get(source_name)
+                .expect("unreadable surface belongs to a resolved node");
+            let version = node
+                .resolved_ref
+                .version
+                .as_ref()
+                .map(ToString::to_string)
+                .or_else(|| node.resolved_ref.version_tag.clone())
+                .or_else(|| {
+                    node.manifest
+                        .as_ref()
+                        .map(|manifest| manifest.package.version.clone())
+                })
+                .or_else(|| node.resolved_ref.commit.as_ref().map(ToString::to_string))
+                .unwrap_or_else(|| "path".to_string());
+            let parents: Vec<_> = resolved
+                .graph
+                .nodes
+                .values()
+                .filter(|candidate| candidate.deps.contains(source_name))
+                .map(|candidate| candidate.source_name.to_string())
+                .collect();
+            let (guidance, suggested_command) = match &request.mutation {
+                Some(ConfigMutation::RemoveDependency { name })
+                    if name == source_name && !parents.is_empty() =>
+                {
+                    (
+                        format!(
+                            "removed direct dependency `{name}`, but `{source_name}` is still required by {} and remains legacy; override it",
+                            parents.join(", ")
+                        ),
+                        format!("mars override {source_name} --path <path>"),
+                    )
+                }
+                None if matches!(request.resolution, ResolutionMode::Maximize { .. }) => (
+                    format!(
+                        "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
+                    ),
+                    format!(
+                        "mars override {source_name} --path <path> or mars remove {source_name}"
+                    ),
+                ),
+                None if request.options.force => (
+                    format!(
+                        "cannot repair while `{source_name}@{version}` uses the removed hook schema; upgrade, override, or remove it"
+                    ),
+                    format!("mars upgrade {source_name}"),
+                ),
+                _ => (
+                    format!(
+                        "`{source_name}@{version}` still uses the removed hook schema; upgrade, override, or remove it"
+                    ),
+                    format!("mars upgrade {source_name}"),
+                ),
+            };
+            RecoveryBlocker {
+                package: source_name.to_string(),
+                version,
+                hook_names: hook_names.iter().cloned().collect(),
+                guidance,
+                suggested_command,
+            }
+        })
+        .collect();
+    RecoveryHalt {
+        persisted,
+        blockers,
+        next_step: format!("then run `{}`", managed_cmd("mars sync")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -245,8 +368,7 @@ pub(crate) fn resolve_graph(
         .collect();
     let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
         .with_staging_root(ctx.project_root.join(".mars/staging"))
-        .with_source_overrides(source_overrides)
-        .with_removed_hook_schema_policy(removed_hook_schema_policy(request));
+        .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -301,13 +423,6 @@ pub(crate) fn resolve_graph(
         graph,
         upgrades_available,
     })
-}
-
-fn removed_hook_schema_policy(request: &SyncRequest) -> crate::staging::RemovedHookSchemaPolicy {
-    match request.recovery {
-        RecoveryPolicy::Strict => crate::staging::RemovedHookSchemaPolicy::Reject,
-        RecoveryPolicy::PreserveUnreadableHooks => crate::staging::RemovedHookSchemaPolicy::Omit,
-    }
 }
 
 /// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
@@ -551,7 +666,6 @@ pub(crate) fn create_plan(
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,
-        &targeted.resolved.graph.frozen_hook_sources,
     )?;
 
     if !request.options.force {
@@ -604,35 +718,8 @@ pub(crate) fn apply_plan(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
-    let has_bump_version_changes =
-        has_version_changes(&planned.targeted.resolved.loaded.dependency_changes)
-            && matches!(
-                request.resolution,
-                ResolutionMode::Maximize { bump: true, .. }
-            );
-    let has_mutation = request.mutation.is_some() || has_bump_version_changes;
-
     // Persist config/local only after validation gate and before apply.
-    if has_mutation && !request.options.dry_run {
-        match &request.mutation {
-            Some(ConfigMutation::SetOverride { .. }) => {
-                crate::config::save_local(project_root, &planned.targeted.resolved.loaded.local)?;
-            }
-            Some(
-                ConfigMutation::UpsertDependency { .. }
-                | ConfigMutation::BatchUpsert(..)
-                | ConfigMutation::RemoveDependency { .. }
-                | ConfigMutation::SetRename { .. },
-            ) => {
-                crate::config::save(project_root, &planned.targeted.resolved.loaded.config)?;
-            }
-            None => {
-                if has_bump_version_changes {
-                    crate::config::save(project_root, &planned.targeted.resolved.loaded.config)?;
-                }
-            }
-        }
-    }
+    persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 
     // Apply plan to .mars/ canonical store (D25).
     // Content is written to .mars/agents/ and .mars/skills/, then
@@ -640,6 +727,82 @@ pub(crate) fn apply_plan(
     let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
+}
+
+fn has_bump_version_changes(loaded: &LoadedConfig, request: &SyncRequest) -> bool {
+    has_version_changes(&loaded.dependency_changes)
+        && matches!(
+            request.resolution,
+            ResolutionMode::Maximize { bump: true, .. }
+        )
+}
+
+/// Persist only the user's pending intent mutation. This is shared by the
+/// normal apply phase and the recovery halt at the reader/compiler boundary.
+fn persist_pending_config_mutation(
+    ctx: &MarsContext,
+    loaded: &LoadedConfig,
+    request: &SyncRequest,
+) -> Result<(), MarsError> {
+    if request.options.dry_run {
+        return Ok(());
+    }
+    let bump_changed = has_bump_version_changes(loaded, request);
+    match &request.mutation {
+        Some(ConfigMutation::SetOverride { .. }) => {
+            crate::config::save_local(&ctx.project_root, &loaded.local)?;
+        }
+        Some(
+            ConfigMutation::UpsertDependency { .. }
+            | ConfigMutation::BatchUpsert(..)
+            | ConfigMutation::RemoveDependency { .. }
+            | ConfigMutation::SetRename { .. },
+        ) => {
+            crate::config::save(&ctx.project_root, &loaded.config)?;
+        }
+        None if bump_changed => {
+            crate::config::save(&ctx.project_root, &loaded.config)?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+fn persisted_intent_descriptions(resolved: &ResolvedState, request: &SyncRequest) -> Vec<String> {
+    let dry_prefix = if request.options.dry_run {
+        "would persist"
+    } else {
+        "persisted"
+    };
+    match &request.mutation {
+        Some(ConfigMutation::SetOverride {
+            source_name,
+            local_path,
+        }) => vec![format!(
+            "{dry_prefix} override for `{source_name}` to `{}` in mars.local.toml",
+            local_path.display()
+        )],
+        Some(ConfigMutation::RemoveDependency { name }) => {
+            vec![format!(
+                "{dry_prefix} removal of direct dependency `{name}` in mars.toml"
+            )]
+        }
+        Some(_) => vec![format!("{dry_prefix} config mutation")],
+        None if has_bump_version_changes(&resolved.loaded, request) => resolved
+            .loaded
+            .dependency_changes
+            .iter()
+            .filter(|change| change.old_version != change.new_version)
+            .map(|change| {
+                format!(
+                    "{dry_prefix} bumped constraint for `{}` to `{}` in mars.toml",
+                    change.name,
+                    change.new_version.as_deref().unwrap_or("latest")
+                )
+            })
+            .collect(),
+        None => vec!["nothing persisted".to_string()],
+    }
 }
 
 /// Phase 6: Sync managed targets from .mars/ canonical store.
@@ -878,6 +1041,7 @@ pub(crate) fn finalize(
         dry_run: request.options.dry_run,
         native_emitted,
         native_removed,
+        recovery_halt: None,
     })
 }
 

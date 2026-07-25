@@ -360,8 +360,7 @@ mod tests {
             order: vec![source_name.into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         }
     }
 
@@ -436,8 +435,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -485,8 +483,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -602,8 +599,7 @@ mod tests {
             order: vec!["source-a".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -686,8 +682,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -773,8 +768,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -858,8 +852,7 @@ mod tests {
             order: vec![],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(
@@ -944,8 +937,7 @@ mod tests {
             order: vec!["source-a".into(), "source-b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(
@@ -1030,8 +1022,7 @@ mod tests {
             order: vec!["source-a".into(), "source-b".into()],
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
-            frozen_hook_sources: std::collections::HashSet::new(),
-            frozen_hook_names: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
 
         apply_test_renames(

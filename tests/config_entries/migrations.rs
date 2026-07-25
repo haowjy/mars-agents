@@ -87,19 +87,104 @@ fn write_old_staging_fixture(project: &assert_fs::fixture::ChildPath) {
 }
 
 #[test]
-fn removed_hook_schema_does_not_block_recovery_commands() {
+fn upgrade_converges_in_one_shot_when_newest_source_is_readable() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("base-git");
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[package]\nname = \"base\"\nversion = \"0.8.9\"\n")
+        .unwrap();
+    write_hook(
+        &source,
+        "context-autosync",
+        "name = \"context-autosync\"\nevent = \"session.end\"\nvisibility = \"exported\"\n\
+         targets = [\".claude\"]\n\n[action]\nkind = \"script\"\npath = \"run.sh\"\n",
+    );
+    for args in [
+        vec!["init"],
+        vec!["config", "user.email", "mars@example.com"],
+        vec!["config", "user.name", "Mars Tests"],
+        vec!["add", "."],
+        vec!["commit", "-m", "legacy"],
+        vec!["tag", "v0.8.9"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(source.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    fs::remove_dir_all(source.child("hooks/context-autosync").path()).unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[package]\nname = \"base\"\nversion = \"0.9.0\"\n")
+        .unwrap();
+    write_dependency_hook(&source, "context-autosync", ".claude", "SessionEnd", "true");
+    for args in [
+        vec!["add", "."],
+        vec!["commit", "-m", "native hooks"],
+        vec!["tag", "v0.9.0"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(source.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    let project = dir.child("project-upgrade-converges");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\nurl = \"file://{}\"\nversion = \">=0.8.9\"\n\n\
+             [settings]\ntargets = [\".claude\"]\n",
+            portable_path(source.path())
+        ))
+        .unwrap();
+    project
+        .child("mars.lock")
+        .write_str("version = 2\n")
+        .unwrap();
+
+    mars()
+        .args(["upgrade", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("version = 3"));
+    assert!(lock.contains("0.9.0"));
+    project
+        .child(".claude/hooks/context-autosync")
+        .assert(predicate::path::is_dir());
+}
+
+#[test]
+fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");
     let migrated = write_migrated_hook_source(&dir, "base-migrated");
 
-    for (name, args) in [
-        ("upgrade", vec!["upgrade"]),
-        ("repair", vec!["repair"]),
+    for (name, args, converges) in [
+        ("upgrade", vec!["upgrade"], false),
+        ("repair", vec!["repair"], false),
         (
             "override",
             vec!["override", "base", "--path", migrated.to_str().unwrap()],
+            true,
         ),
-        ("remove", vec!["remove", "base"]),
+        ("remove", vec!["remove", "base"], true),
     ] {
         let project = dir.child(format!("project-{name}"));
         project.create_dir_all().unwrap();
@@ -116,12 +201,80 @@ fn removed_hook_schema_does_not_block_recovery_commands() {
             .unwrap();
         write_old_staging_fixture(&project);
 
-        mars()
+        let assertion = mars()
             .args(args)
             .args(["--root", project.path().to_str().unwrap()])
-            .assert()
-            .success();
+            .assert();
+        if converges {
+            assertion.success();
+            let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+            assert!(lock.contains("version = 3"));
+        } else {
+            assertion
+                .code(2)
+                .stderr(predicate::str::contains(
+                    "recovery halted before materialization",
+                ))
+                .stderr(predicate::str::contains("base@0.8.9"))
+                .stderr(predicate::str::contains("then run"));
+            assert_eq!(
+                fs::read_to_string(project.child("mars.lock").path()).unwrap(),
+                "version = 2\n"
+            );
+        }
     }
+}
+
+#[test]
+fn recovery_halt_json_lists_persisted_intent_and_every_blocker() {
+    let dir = TempDir::new().unwrap();
+    let source_a = write_legacy_hook_source(&dir, "a");
+    let source_b = write_legacy_hook_source(&dir, "b");
+    write_dependency_hook(
+        &dir.child("b"),
+        "readable-sibling",
+        ".claude",
+        "SessionEnd",
+        "true",
+    );
+    let project = dir.child("project-json");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.a]\npath = \"{}\"\n\n[dependencies.b]\npath = \"{}\"\n",
+            portable_path(&source_a),
+            portable_path(&source_b),
+        ))
+        .unwrap();
+
+    let output = mars()
+        .args([
+            "remove",
+            "a",
+            "--json",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(report["ok"], false);
+    assert!(
+        report["recovery_halt"]["persisted"][0]
+            .as_str()
+            .unwrap()
+            .contains("removal")
+    );
+    let blockers = report["recovery_halt"]["blockers"].as_array().unwrap();
+    assert_eq!(blockers.len(), 1);
+    assert_eq!(blockers[0]["package"], "b");
+    assert_eq!(blockers[0]["version"], "0.8.9");
+    assert_eq!(blockers[0]["hook_names"][0], "context-autosync");
+    assert_eq!(blockers[0]["hook_names"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -204,7 +357,7 @@ fn sync_force_still_rejects_removed_hook_schema() {
 }
 
 #[test]
-fn recovery_freezes_unreadable_hooks_from_dependencies_that_remain() {
+fn remove_halt_persists_intent_and_leaves_installed_state_byte_identical() {
     let dir = TempDir::new().unwrap();
     let source_a = write_named_hook_source(&dir, "a", "audit-a", "printf a");
     let source_b = write_named_hook_source(&dir, "b", "audit-b", "printf b");
@@ -221,46 +374,111 @@ fn recovery_freezes_unreadable_hooks_from_dependencies_that_remain() {
         .unwrap();
     sync(&project).success();
 
-    let settings_before =
-        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
-    let lock_before = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    let settings_before = fs::read(project.child(".claude/settings.local.json").path()).unwrap();
+    let lock_before = fs::read(project.child("mars.lock").path()).unwrap();
+    let canonical_a_before =
+        fs::read(project.child(".mars/hooks/claude/audit-a/run.sh").path()).unwrap();
+    let canonical_b_before =
+        fs::read(project.child(".mars/hooks/claude/audit-b/run.sh").path()).unwrap();
+    let target_a_before = fs::read(project.child(".claude/hooks/audit-a/run.sh").path()).unwrap();
+    let target_b_before = fs::read(project.child(".claude/hooks/audit-b/run.sh").path()).unwrap();
     replace_hook_with_removed_schema(&source_a, "audit-a");
     replace_hook_with_removed_schema(&source_b, "audit-b");
 
     mars()
         .args(["remove", "a", "--root", project.path().to_str().unwrap()])
         .assert()
-        .success();
+        .code(2)
+        .stderr(predicate::str::contains("blocked by b@1.0.0"))
+        .stderr(predicate::str::contains("hooks: audit-b"));
 
-    project
-        .child(".mars/hooks/claude/audit-a")
-        .assert(predicate::path::missing());
-    project
-        .child(".claude/hooks/audit-a")
-        .assert(predicate::path::missing());
-    project
-        .child(".mars/hooks/claude/audit-b")
-        .assert(predicate::path::is_dir());
-    project
-        .child(".claude/hooks/audit-b")
-        .assert(predicate::path::is_dir());
-
-    let settings_after =
-        fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
-    assert!(settings_before.contains("printf b"));
-    assert!(settings_after.contains("printf b"));
-    assert!(!settings_after.contains("printf a"));
-
-    let lock_after = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-    assert!(lock_before.contains("hook/audit-b@claude"));
-    assert!(lock_after.contains("hook/audit-b@claude"));
-    assert!(lock_after.contains("hook:SessionEnd:audit-b"));
-    assert!(!lock_after.contains("hook/audit-a@claude"));
-    assert!(!lock_after.contains("hook:SessionEnd:audit-a"));
+    let config_after = fs::read_to_string(project.child("mars.toml").path()).unwrap();
+    assert!(!config_after.contains("[dependencies.a]"));
+    assert!(config_after.contains("[dependencies.b]"));
+    assert_eq!(
+        fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
+        settings_before
+    );
+    assert_eq!(
+        fs::read(project.child("mars.lock").path()).unwrap(),
+        lock_before
+    );
+    assert_eq!(
+        fs::read(project.child(".mars/hooks/claude/audit-a/run.sh").path()).unwrap(),
+        canonical_a_before
+    );
+    assert_eq!(
+        fs::read(project.child(".mars/hooks/claude/audit-b/run.sh").path()).unwrap(),
+        canonical_b_before
+    );
+    assert_eq!(
+        fs::read(project.child(".claude/hooks/audit-a/run.sh").path()).unwrap(),
+        target_a_before
+    );
+    assert_eq!(
+        fs::read(project.child(".claude/hooks/audit-b/run.sh").path()).unwrap(),
+        target_b_before
+    );
 }
 
 #[test]
-fn recovery_preserves_v2_hook_config_without_item_provenance() {
+fn dry_run_recovery_halt_persists_nothing() {
+    let dir = TempDir::new().unwrap();
+    let source_a = write_named_hook_source(&dir, "a", "audit-a", "printf a");
+    let source_b = write_named_hook_source(&dir, "b", "audit-b", "printf b");
+    let project = dir.child("project-dry-run");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.a]\npath = \"{}\"\n\n[dependencies.b]\npath = \"{}\"\n\n\
+             [settings]\ntargets = [\".claude\"]\n",
+            portable_path(&source_a),
+            portable_path(&source_b),
+        ))
+        .unwrap();
+    sync(&project).success();
+    replace_hook_with_removed_schema(&source_b, "audit-b");
+
+    let config_before = fs::read(project.child("mars.toml").path()).unwrap();
+    let lock_before = fs::read(project.child("mars.lock").path()).unwrap();
+    let target_before = fs::read(project.child(".claude/hooks/audit-b/run.sh").path()).unwrap();
+    let context = mars_agents::types::MarsContext {
+        project_root: project.to_path_buf(),
+        meridian_managed: false,
+    };
+    let request = mars_agents::sync::SyncRequest {
+        resolution: mars_agents::sync::ResolutionMode::Normal,
+        mutation: Some(mars_agents::sync::ConfigMutation::RemoveDependency {
+            name: mars_agents::types::SourceName::from("a"),
+        }),
+        options: mars_agents::sync::SyncOptions {
+            dry_run: true,
+            ..Default::default()
+        },
+        recovery: mars_agents::sync::RecoveryPolicy::DeferOnUnreadable,
+        lossiness_mode: mars_agents::diagnostic::LossinessMode::Hidden,
+    };
+
+    let report = mars_agents::sync::execute(&context, &request).unwrap();
+    assert!(report.recovery_halt.is_some());
+    assert!(report.recovery_halt.unwrap().persisted[0].contains("would persist"));
+    assert_eq!(
+        fs::read(project.child("mars.toml").path()).unwrap(),
+        config_before
+    );
+    assert_eq!(
+        fs::read(project.child("mars.lock").path()).unwrap(),
+        lock_before
+    );
+    assert_eq!(
+        fs::read(project.child(".claude/hooks/audit-b/run.sh").path()).unwrap(),
+        target_before
+    );
+}
+
+#[test]
+fn repair_halt_preserves_user_edited_target_and_all_persisted_state() {
     let dir = TempDir::new().unwrap();
     let source = write_named_hook_source(&dir, "base", "audit", "printf frozen");
     let project = dir.child("project");
@@ -285,16 +503,37 @@ fn recovery_preserves_v2_hook_config_without_item_provenance() {
         .write_str(&toml::to_string_pretty(&lock).unwrap())
         .unwrap();
     replace_hook_with_removed_schema(&source, "audit");
+    project
+        .child(".claude/hooks/audit/run.sh")
+        .write_str("#!/bin/sh\nprintf user-edit\n")
+        .unwrap();
+    let edited_target = fs::read(project.child(".claude/hooks/audit/run.sh").path()).unwrap();
+    let settings_before = fs::read(project.child(".claude/settings.local.json").path()).unwrap();
+    let lock_before = fs::read(lock_path.path()).unwrap();
+    let canonical_before =
+        fs::read(project.child(".mars/hooks/claude/audit/run.sh").path()).unwrap();
 
     mars()
         .args(["repair", "--root", project.path().to_str().unwrap()])
         .assert()
-        .success();
+        .code(2)
+        .stderr(predicate::str::contains("nothing persisted"))
+        .stderr(predicate::str::contains("cannot repair"))
+        .stderr(predicate::str::contains("blocked by base@1.0.0"));
 
-    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
-    let lock = fs::read_to_string(lock_path.path()).unwrap();
-    assert!(settings.contains("printf frozen"));
-    assert!(lock.contains("hook:SessionEnd:audit"));
+    assert_eq!(
+        fs::read(project.child(".claude/hooks/audit/run.sh").path()).unwrap(),
+        edited_target
+    );
+    assert_eq!(
+        fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
+        settings_before
+    );
+    assert_eq!(fs::read(lock_path.path()).unwrap(), lock_before);
+    assert_eq!(
+        fs::read(project.child(".mars/hooks/claude/audit/run.sh").path()).unwrap(),
+        canonical_before
+    );
 }
 
 #[test]

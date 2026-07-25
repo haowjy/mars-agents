@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use indexmap::IndexMap;
 
@@ -45,8 +45,7 @@ pub struct ResolverContext {
         RootedSourceRef,
         crate::staging::HookSurfaceState,
     )>,
-    frozen_hook_sources: HashSet<SourceName>,
-    frozen_hook_names: HashMap<SourceName, std::collections::BTreeSet<String>>,
+    unreadable_hook_surfaces: BTreeMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
 impl Default for ResolverContext {
@@ -68,8 +67,7 @@ impl ResolverContext {
             package_versions: PackageVersions::new(),
             version_overrides: HashMap::new(),
             pending_restart: None,
-            frozen_hook_sources: HashSet::new(),
-            frozen_hook_names: HashMap::new(),
+            unreadable_hook_surfaces: BTreeMap::new(),
         }
     }
 
@@ -133,9 +131,8 @@ impl ResolverContext {
         source_name: &SourceName,
         state: crate::staging::HookSurfaceState,
     ) {
-        if let crate::staging::HookSurfaceState::Frozen { hook_names } = state {
-            self.frozen_hook_sources.insert(source_name.clone());
-            self.frozen_hook_names
+        if let crate::staging::HookSurfaceState::Unreadable { hook_names } = state {
+            self.unreadable_hook_surfaces
                 .insert(source_name.clone(), hook_names);
         }
     }
@@ -226,8 +223,7 @@ impl ResolverContext {
             order,
             filters: self.materialization_filters,
             version_constraints: self.version_constraints,
-            frozen_hook_sources: self.frozen_hook_sources,
-            frozen_hook_names: self.frozen_hook_names,
+            unreadable_hook_surfaces: self.unreadable_hook_surfaces,
         }
     }
 }

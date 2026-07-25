@@ -21,16 +21,16 @@ pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             name: SourceName::from(args.source.as_str()),
         }),
         options: SyncOptions::default(),
-        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
+        recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     let report = crate::sync::execute(ctx, &request)?;
 
-    if !json {
+    if !json && report.recovery_halt.is_none() {
         output::print_info(&format!("removed dependency `{}`", args.source));
     }
 
     output::print_sync_report(&report, json, true);
 
-    Ok(0)
+    Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

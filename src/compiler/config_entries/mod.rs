@@ -17,79 +17,6 @@ pub(crate) struct ConfigEntryCompilation {
     pub removed_outputs: Vec<(String, String)>,
 }
 
-struct FrozenHookRetention {
-    config_keys: BTreeMap<String, std::collections::BTreeSet<String>>,
-    output_paths: std::collections::BTreeSet<(String, String)>,
-}
-
-fn frozen_hook_retention(
-    graph: &crate::resolve::ResolvedGraph,
-    lock: &crate::lock::LockFile,
-) -> FrozenHookRetention {
-    let frozen_names = graph
-        .frozen_hook_names
-        .values()
-        .flatten()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut names_by_target: BTreeMap<String, std::collections::BTreeSet<String>> = lock
-        .config_entries
-        .keys()
-        .map(|target| (target.clone(), frozen_names.clone()))
-        .collect();
-    let mut output_paths = std::collections::BTreeSet::new();
-
-    for item in lock.items.values().filter(|item| {
-        item.kind == crate::lock::ItemKind::Hook && graph.frozen_hook_sources.contains(&item.source)
-    }) {
-        let Some(name) = item
-            .outputs
-            .iter()
-            .find(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
-            .and_then(|output| output.dest_path.as_str().rsplit('/').next())
-        else {
-            continue;
-        };
-        for output in item
-            .outputs
-            .iter()
-            .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
-        {
-            names_by_target
-                .entry(output.target_root.clone())
-                .or_default()
-                .insert(name.to_owned());
-            output_paths.insert((
-                output.target_root.clone(),
-                output.dest_path.as_str().to_owned(),
-            ));
-        }
-    }
-
-    let mut config_keys = BTreeMap::new();
-    for (target_root, names) in names_by_target {
-        let Some(records) = lock.config_entries.get(&target_root) else {
-            continue;
-        };
-        for key in records.keys().filter(|key| {
-            key.starts_with("hook:")
-                && key
-                    .rsplit_once(':')
-                    .is_some_and(|(_, name)| names.contains(name))
-        }) {
-            config_keys
-                .entry(target_root.clone())
-                .or_insert_with(std::collections::BTreeSet::new)
-                .insert(key.clone());
-        }
-    }
-
-    FrozenHookRetention {
-        config_keys,
-        output_paths,
-    }
-}
-
 pub(crate) fn file_hook_output_preserve_paths(
     lock: &crate::lock::LockFile,
 ) -> HashMap<String, std::collections::HashSet<String>> {
@@ -150,9 +77,6 @@ pub(crate) fn preflight_config_entries(
 
     let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
     for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
-        if resolved.graph.frozen_hook_sources.contains(source_name) {
-            continue;
-        }
         if let Some(node) = resolved.graph.nodes.get(source_name) {
             hooks.extend(crate::compiler::hooks::discover_resolved_hook_items(
                 node,
@@ -424,7 +348,6 @@ pub(crate) fn compile_config_entries(
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = effective.settings.managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
-    let frozen = frozen_hook_retention(graph, old_lock);
 
     // Compute package depths from direct deps (depth 1; local = 0).
     let depths = compute_depths(graph);
@@ -483,21 +406,19 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        if !graph.frozen_hook_sources.contains(source_name) {
-            let depth = depths.get(source_name).copied().unwrap_or(1);
-            match crate::compiler::hooks::discover_resolved_hook_items(
-                node,
-                source_name,
-                depth,
-                decl_order,
-            ) {
-                Ok(items) => all_hooks.extend(items),
-                Err(e) => {
-                    diag.error(
-                        "hook-discover",
-                        format!("failed to scan hook items in `{source_name}`: {e}"),
-                    );
-                }
+        let depth = depths.get(source_name).copied().unwrap_or(1);
+        match crate::compiler::hooks::discover_resolved_hook_items(
+            node,
+            source_name,
+            depth,
+            decl_order,
+        ) {
+            Ok(items) => all_hooks.extend(items),
+            Err(e) => {
+                diag.error(
+                    "hook-discover",
+                    format!("failed to scan hook items in `{source_name}`: {e}"),
+                );
             }
         }
     }
@@ -556,7 +477,7 @@ pub(crate) fn compile_config_entries(
         Vec<ConfigEntry>,
     > = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
-    let mut desired_file_outputs = frozen.output_paths;
+    let mut desired_file_outputs = std::collections::BTreeSet::new();
     let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
 
@@ -740,11 +661,8 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let removal_plan = crate::surface_ownership::retention::RemovalPlan::build_preserving(
-        previous_records,
-        &desired_records,
-        &frozen.config_keys,
-    );
+    let removal_plan =
+        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records);
 
     if dry_run {
         for (target_root, keys) in removal_plan.stale_keys() {
@@ -1247,8 +1165,7 @@ mod tests {
                 nodes,
                 filters: HashMap::new(),
                 version_constraints: HashMap::new(),
-                frozen_hook_sources: std::collections::HashSet::new(),
-                frozen_hook_names: std::collections::HashMap::new(),
+                unreadable_hook_surfaces: std::collections::BTreeMap::new(),
             };
             let depths = compute_depths(&graph);
             let mut emitted_order = graph.order.clone();

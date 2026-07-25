@@ -34,7 +34,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         },
         mutation: None,
         options: SyncOptions::default(),
-        recovery: crate::sync::RecoveryPolicy::PreserveUnreadableHooks,
+        recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose
         } else {
@@ -49,7 +49,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
     output::print_sync_report(&report, json, true);
 
-    Ok(0)
+    Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }
 
 fn print_bump_messages(changes: &[DependencyUpsertChange]) {

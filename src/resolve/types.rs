@@ -25,12 +25,12 @@ pub struct ResolvedGraph {
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
     /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
-    /// Sources whose prior hook surface must be carried forward because a
-    /// recovery resolution could not read the current schema.
-    pub frozen_hook_sources: HashSet<SourceName>,
-    /// Hook names belonging to each frozen source, including readable siblings
-    /// frozen as part of the same package surface.
-    pub frozen_hook_names: HashMap<SourceName, std::collections::BTreeSet<String>>,
+    /// Hook surfaces that cannot be compiled because they use a removed schema.
+    ///
+    /// This is classified during staging and consumed only by the recovery halt
+    /// gate at the reader/compiler boundary.
+    pub unreadable_hook_surfaces:
+        std::collections::BTreeMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
 /// A single node in the resolved graph.
@@ -302,9 +302,6 @@ pub struct ResolveOptions {
     pub staging_root: Option<std::path::PathBuf>,
     /// Local source substitutions, including names first introduced transitively.
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
-    /// Recovery commands omit hooks written in the removed schema so users can
-    /// upgrade, override, remove, or repair the package that supplied them.
-    pub(crate) removed_hook_schema: crate::staging::RemovedHookSchemaPolicy,
 }
 
 impl Default for ResolveOptions {
@@ -313,7 +310,6 @@ impl Default for ResolveOptions {
             mode: ResolveMode::Sync,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
-            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 }
@@ -335,7 +331,6 @@ impl ResolveOptions {
             mode: ResolveMode::Sync,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
-            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
@@ -344,7 +339,6 @@ impl ResolveOptions {
             mode: ResolveMode::Frozen,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
-            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
@@ -356,7 +350,6 @@ impl ResolveOptions {
             },
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
-            removed_hook_schema: crate::staging::RemovedHookSchemaPolicy::Reject,
         }
     }
 
@@ -370,14 +363,6 @@ impl ResolveOptions {
         source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     ) -> Self {
         self.source_overrides = source_overrides;
-        self
-    }
-
-    pub(crate) fn with_removed_hook_schema_policy(
-        mut self,
-        policy: crate::staging::RemovedHookSchemaPolicy,
-    ) -> Self {
-        self.removed_hook_schema = policy;
         self
     }
 

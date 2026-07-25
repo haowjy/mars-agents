@@ -173,6 +173,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recovery_halt: Option<crate::sync::RecoveryHalt>,
     }
 
     let mut installed = 0;
@@ -203,7 +205,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         .collect();
 
     serde_json::to_value(JsonReport {
-        ok: true,
+        ok: report.recovery_halt.is_none(),
         dry_run: report.dry_run,
         installed,
         updated,
@@ -215,11 +217,38 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
+        recovery_halt: report.recovery_halt.clone(),
     })
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
+    if let Some(halt) = &report.recovery_halt {
+        let mut stderr = StandardStream::stderr(color_choice());
+        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+        let _ = writeln!(stderr, "  recovery halted before materialization");
+        let _ = stderr.reset();
+        for persisted in &halt.persisted {
+            let _ = writeln!(stderr, "  {persisted}");
+        }
+        for blocker in &halt.blockers {
+            let _ = writeln!(
+                stderr,
+                "  blocked by {}@{} (hooks: {})",
+                blocker.package,
+                blocker.version,
+                blocker.hook_names.join(", ")
+            );
+            let _ = writeln!(stderr, "  {}", blocker.guidance);
+            let _ = writeln!(stderr, "  suggested: `{}`", blocker.suggested_command);
+        }
+        let _ = writeln!(stderr, "  {}", halt.next_step);
+        for diagnostic in &report.diagnostics {
+            let _ = writeln!(stderr, "  {diagnostic}");
+        }
+        return;
+    }
+
     let mut stdout = StandardStream::stdout(color_choice());
 
     let mut installed = 0usize;

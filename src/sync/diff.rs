@@ -5,7 +5,6 @@ use crate::hash;
 use crate::lock::{CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItem};
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::ContentHash;
-use crate::types::SourceName;
 
 /// The diff between current disk state and desired target state.
 #[derive(Debug, Clone)]
@@ -29,8 +28,6 @@ pub enum DiffEntry {
     Conflict { target: TargetItem },
     /// In lock but not in target → should be removed.
     Orphan { locked: LockedItem },
-    /// Hook state was unreadable during recovery → preserve the installed item.
-    Frozen { locked: LockedItem },
     /// Local modification, source unchanged → keep local.
     LocalModified { target: TargetItem },
 }
@@ -47,7 +44,6 @@ pub fn compute(
     lock: &LockFile,
     target: &TargetState,
     force: bool,
-    frozen_hook_sources: &std::collections::HashSet<SourceName>,
 ) -> Result<SyncDiff, MarsError> {
     let mut items = Vec::new();
     let lock_index = LockIndex::new(lock);
@@ -133,17 +129,9 @@ pub fn compute(
     // Find orphans: items in lock but not in target
     for (dest_path, locked_item) in lock.canonical_flat_items() {
         if !target.items.contains_key(&dest_path) {
-            if locked_item.kind == crate::lock::ItemKind::Hook
-                && frozen_hook_sources.contains(&locked_item.source)
-            {
-                items.push(DiffEntry::Frozen {
-                    locked: locked_item,
-                });
-            } else {
-                items.push(DiffEntry::Orphan {
-                    locked: locked_item,
-                });
-            }
+            items.push(DiffEntry::Orphan {
+                locked: locked_item,
+            });
         }
     }
 
@@ -253,7 +241,7 @@ mod tests {
         };
 
         let lock = LockFile::empty();
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
 
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Add { .. }));
@@ -290,7 +278,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Unchanged { .. }));
     }
@@ -329,7 +317,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
     }
@@ -368,7 +356,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::LocalModified { .. }));
     }
@@ -407,7 +395,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Conflict { .. }));
     }
@@ -433,7 +421,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Orphan { .. }));
     }
@@ -478,7 +466,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         // Should be Unchanged because disk matches installed_checksum
         // and source_hash matches source_checksum
@@ -546,7 +534,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 4); // Unchanged + Update + Add + Orphan
 
         let unchanged_count = diff
@@ -627,10 +615,10 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let normal = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let normal = compute(root.path(), &lock, &target, false).unwrap();
         assert!(matches!(&normal.items[0], DiffEntry::Unchanged { .. }));
 
-        let forced = compute(root.path(), &lock, &target, true, &Default::default()).unwrap();
+        let forced = compute(root.path(), &lock, &target, true).unwrap();
         assert!(matches!(&forced.items[0], DiffEntry::LocalModified { .. }));
     }
 
@@ -689,7 +677,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(
             matches!(&diff.items[0], DiffEntry::Unchanged { .. }),
@@ -756,7 +744,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
 
@@ -806,7 +794,7 @@ mod tests {
             dependency_model_aliases: IndexMap::new(),
         };
 
-        let diff = compute(root.path(), &lock, &target, false, &Default::default()).unwrap();
+        let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
         assert!(matches!(&diff.items[0], DiffEntry::Update { .. }));
     }

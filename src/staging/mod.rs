@@ -27,16 +27,10 @@ use crate::types::{RenameMap, SourceName};
 pub(crate) use lift::lift_frontmatter_with_change;
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RemovedHookSchemaPolicy {
-    Reject,
-    Omit,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HookSurfaceState {
     Readable,
-    Frozen {
+    Unreadable {
         hook_names: std::collections::BTreeSet<String>,
     },
 }
@@ -49,7 +43,6 @@ pub(crate) struct StagedRootedSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RootedStageOptions {
     pub dialect: Dialect,
-    pub removed_hook_schema: RemovedHookSchemaPolicy,
 }
 
 /// Stage a package tree and repoint `package_root` at the staged output.
@@ -72,11 +65,7 @@ pub(crate) fn stage_rooted_source(
         Some(source_name.as_ref()),
         diag,
     )?;
-    let hook_surface = if options.removed_hook_schema == RemovedHookSchemaPolicy::Omit {
-        detect_unreadable_hook_surface(&staged_package_root, source_name, diag)?
-    } else {
-        HookSurfaceState::Readable
-    };
+    let hook_surface = detect_unreadable_hook_surface(&staged_package_root)?;
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
             checkout_root: rooted.checkout_root,
@@ -86,17 +75,9 @@ pub(crate) fn stage_rooted_source(
     })
 }
 
-fn detect_unreadable_hook_surface(
-    package_root: &Path,
-    source_name: &SourceName,
-    diag: &mut DiagnosticCollector,
-) -> Result<HookSurfaceState, MarsError> {
+fn detect_unreadable_hook_surface(package_root: &Path) -> Result<HookSurfaceState, MarsError> {
     let hook_dirs = crate::discover::discover_hook_directories(package_root)?;
-    let hook_names = hook_dirs
-        .iter()
-        .filter_map(|hook_dir| hook_dir.file_name()?.to_str().map(str::to_owned))
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut unreadable = false;
+    let mut hook_names = std::collections::BTreeSet::new();
     for hook_dir in hook_dirs {
         let manifest = hook_dir.join("hook.toml");
         let raw = fs::read_to_string(&manifest)?;
@@ -106,24 +87,14 @@ fn detect_unreadable_hook_surface(
         if !crate::compiler::hooks::uses_removed_schema(&value) {
             continue;
         }
-        let hook_name = hook_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("<unknown>");
-        unreadable = true;
-        diag.warn(
-            "removed-hook-schema-omitted",
-            format!(
-                "froze hook surface for source package `{source_name}` because hook \
-                 `{hook_name}` uses the removed v0.11.0 schema; migrate the package to native \
-                 hook fragments"
-            ),
-        );
+        if let Some(hook_name) = hook_dir.file_name().and_then(|name| name.to_str()) {
+            hook_names.insert(hook_name.to_owned());
+        }
     }
-    if !unreadable {
+    if hook_names.is_empty() {
         return Ok(HookSurfaceState::Readable);
     }
-    Ok(HookSurfaceState::Frozen { hook_names })
+    Ok(HookSurfaceState::Unreadable { hook_names })
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.

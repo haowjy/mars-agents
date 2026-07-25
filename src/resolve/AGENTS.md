@@ -38,12 +38,10 @@ All downstream consumers (manifest reading, item discovery) transparently read f
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Declared
 source identity remains separate from the effective override identity, so an
-override cannot collapse conflicting same-name declarations. Recovery
-commands can also mark a removed-schema package hook surface as frozen while
-leaving its derived staging output intact. `ResolvedGraph.frozen_hook_sources`
-and `frozen_hook_names` carry that state to every persistence lane, whose hook
-discovery paths skip the frozen surface; normal sync instead reads and rejects
-the removed schema.
+override cannot collapse conflicting same-name declarations. Staging records
+removed-schema package hooks in `ResolvedGraph.unreadable_hook_surfaces`. The
+sync recovery gate is its only consumer; downstream compilation has no
+unreadable-content exception.
 
 ## Key Traits
 

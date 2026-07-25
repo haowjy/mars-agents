@@ -973,7 +973,10 @@ fn emit_lowered_native_agent(
         SurfaceCopyDecision::Proceed => {
             if dest_exists
                 && ctx.options.force
-                && !ctx.old_lock.contains_output(target_dir, &dest_rel)
+                && ctx
+                    .old_lock
+                    .installed_checksum_for_output(target_dir, &dest_rel)
+                    .is_none()
             {
                 surface_ownership::warn_unmanaged_adopted(
                     target_dir,
@@ -1007,13 +1010,10 @@ fn emit_lowered_native_agent(
 
     if !ctx.options.force
         && let Some(existing_bytes) = existing_bytes
-        && let Some(recorded) = ctx.old_lock.items.values().find_map(|item| {
-            item.outputs.iter().find(|output| {
-                output.target_root == target_dir
-                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), &dest_rel)
-            })
-        })
-        && crate::hash::hash_bytes(&existing_bytes) != recorded.installed_checksum.as_ref()
+        && let Some(recorded_checksum) = ctx
+            .old_lock
+            .installed_checksum_for_output(target_dir, &dest_rel)
+        && crate::hash::hash_bytes(&existing_bytes) != recorded_checksum.as_ref()
     {
         diag.warn(
             "native-agent-projection-repaired",

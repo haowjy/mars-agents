@@ -44,7 +44,7 @@ pub enum CollisionAdoptHint {
 /// Whether a copy/install to a linked target may proceed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceCopyDecision {
-    /// Dest is missing, tracked, or `--force` adopt applies.
+    /// Dest is missing, installed, or `--force` adopt applies.
     Proceed,
     /// Dest exists but is not tracked for this target — preserve local content.
     SkipUnmanagedCollision,
@@ -71,7 +71,10 @@ pub fn copy_decision(
     if !dest_exists {
         return SurfaceCopyDecision::Proceed;
     }
-    if old_lock.contains_output(target_root, dest_path) {
+    if old_lock
+        .installed_checksum_for_output(target_root, dest_path)
+        .is_some()
+    {
         return SurfaceCopyDecision::Proceed;
     }
     if force {
@@ -173,6 +176,25 @@ mod tests {
         assert_eq!(
             copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
             SurfaceCopyDecision::Proceed
+        );
+    }
+
+    #[test]
+    fn copy_decision_treats_pending_deletion_as_collision() {
+        let mut lock = lock_with_output(".cursor", "agents/coder.md");
+        lock.items.get_mut("agent/coder").unwrap().outputs[0].mark_pending_deletion();
+
+        assert_eq!(
+            copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
+            SurfaceCopyDecision::SkipUnmanagedCollision
+        );
+        assert_eq!(
+            copy_decision(&lock, ".cursor", "agents/coder.md", true, true),
+            SurfaceCopyDecision::Proceed
+        );
+        assert!(
+            may_delete(&lock, ".cursor", "agents/coder.md"),
+            "a tombstone still carries deletion authority"
         );
     }
 

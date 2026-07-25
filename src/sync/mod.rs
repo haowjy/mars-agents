@@ -340,7 +340,7 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
-        if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+        if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
         {
             diag.warn(
@@ -396,7 +396,7 @@ pub(crate) fn build_target(
                 );
             }
             let disk_path = dest_path.resolve(managed_root);
-            if !old_lock_index.contains_output(CANONICAL_TARGET_ROOT, &dest_path)
+            if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
                 && disk_path.symlink_metadata().is_ok()
             {
                 diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));

@@ -259,6 +259,70 @@ fn unlink_removes_only_owned_outputs_and_preserves_unmanaged_siblings() {
 }
 
 #[test]
+fn unlink_retires_pending_deletion_output_and_counts_it() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n")
+        .unwrap();
+    project.child(".mars-src/agents").create_dir_all().unwrap();
+    project
+        .child(".mars-src/agents/owned.md")
+        .write_str("# Owned")
+        .unwrap();
+    mars()
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let mut lock = mars_agents::lock::load(project.path()).unwrap();
+    let pending = lock
+        .items
+        .values_mut()
+        .flat_map(|item| &mut item.outputs)
+        .find(|output| {
+            output.target_root == ".claude" && output.dest_path.as_str() == "agents/owned.md"
+        })
+        .expect("native output");
+    pending.mark_pending_deletion();
+    mars_agents::lock::write(project.path(), &lock).unwrap();
+
+    mars()
+        .args([
+            "unlink",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "unlinked `.claude` (removed 1 managed output)",
+        ));
+
+    project
+        .child(".claude/agents/owned.md")
+        .assert(predicate::path::missing());
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(
+        !lock.contains_output(".claude", "agents/owned.md"),
+        "unlink must retire confirmed deletion authority"
+    );
+}
+
+#[test]
 fn link_agents_prints_single_deprecation_warning() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");

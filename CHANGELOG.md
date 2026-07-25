@@ -47,6 +47,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   adopt collisions.
 - Preserve ownership and suppress replacement after a failed removal so a later
   sync retries the removal.
+- Treat pending-deletion records as deletion authority only, preserving content
+  at a reintroduced path unless `--force` explicitly adopts it.
 - Allow OpenCode file hooks to sync without validating an unrelated
   `opencode.json`.
 - Make transitive hook precedence use deterministic longest-path depth, avoiding

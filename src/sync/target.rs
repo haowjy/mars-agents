@@ -356,7 +356,7 @@ pub fn check_unmanaged_collisions(
     let lock_index = LockIndex::new(lock);
 
     for (dest_key, target_item) in &target.items {
-        if lock_index.contains_output(CANONICAL_TARGET_ROOT, dest_key) {
+        if lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, dest_key) {
             continue;
         }
 

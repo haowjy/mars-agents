@@ -425,7 +425,13 @@ fn should_copy_to_target(
         ctx.force,
     ) {
         SurfaceCopyDecision::Proceed => {
-            if dest_exists && ctx.force && !ctx.old_lock.contains_output(target_name, dest_rel) {
+            if dest_exists
+                && ctx.force
+                && ctx
+                    .old_lock
+                    .installed_checksum_for_output(target_name, dest_rel)
+                    .is_none()
+            {
                 surface_ownership::warn_unmanaged_adopted(
                     target_name,
                     dest_rel,

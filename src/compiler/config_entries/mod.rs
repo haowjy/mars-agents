@@ -881,7 +881,12 @@ fn write_file_hook_outputs(
                 continue;
             }
             crate::surface_ownership::SurfaceCopyDecision::Proceed => {
-                if dest_exists && force && !old_lock.contains_output(&target_root, &relative) {
+                if dest_exists
+                    && force
+                    && old_lock
+                        .installed_checksum_for_output(&target_root, &relative)
+                        .is_none()
+                {
                     crate::surface_ownership::warn_unmanaged_adopted(
                         &target_root,
                         &relative,

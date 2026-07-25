@@ -124,6 +124,26 @@ impl LockFile {
         })
     }
 
+    /// The installed checksum claimed for `dest_path` under `target_root`.
+    ///
+    /// Pending-deletion records intentionally return `None`: they authorize a
+    /// removal retry, but do not authorize treating whatever is currently at
+    /// the path as Mars-installed content.
+    pub(crate) fn installed_checksum_for_output(
+        &self,
+        target_root: &str,
+        dest_path: &str,
+    ) -> Option<&ContentHash> {
+        self.items.values().find_map(|item| {
+            item.outputs.iter().find_map(|output| {
+                (output.target_root == target_root
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
+                .then(|| output.installed_checksum())
+                .flatten()
+            })
+        })
+    }
+
     /// Flat view of canonical `.mars` outputs only.
     pub fn canonical_flat_items(&self) -> Vec<(DestPath, LockedItem)> {
         self.flat_items_for_target(CANONICAL_TARGET_ROOT)
@@ -210,6 +230,16 @@ impl<'a> LockIndex<'a> {
             target_root.to_string(),
             normalize_dest_path(dest_path.as_str()),
         ))
+    }
+
+    /// Whether an installed (not pending-deletion) output is recorded for this path.
+    pub(crate) fn contains_installed_output(
+        &self,
+        target_root: &str,
+        dest_path: &DestPath,
+    ) -> bool {
+        self.item_for_output(target_root, dest_path)
+            .is_some_and(|(_, _, output)| output.installed_checksum().is_some())
     }
 
     fn locked_item_for(&self, item_key: &str, output_idx: usize) -> Option<LockedItem> {

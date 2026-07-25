@@ -62,7 +62,8 @@ views over that schema:
 | Method | Use |
 |---|---|
 | `find_output(target_root, dest_path)` | Diff, mutation, collision, and carry-forward checks for one concrete target |
-| `contains_output(target_root, dest_path)` | Ownership checks for one concrete target |
+| `contains_installed_output(target_root, dest_path)` | Checks that require an installed-content claim, including collision and overwrite decisions |
+| `contains_output(target_root, dest_path)` | Checks where either installed or pending-deletion authority is sufficient, chiefly deletion |
 | `find_by_dest_path(dest_path)` | Broad/legacy lookup where target root is intentionally irrelevant |
 | `contains_dest_path(dest_path)` | Broad/legacy existence check |
 
@@ -106,7 +107,7 @@ flowchart TD
 
     LockFile --> Item --> Outputs --> Index
     Index -->|find_output .mars + dest| Canonical
-    Index -->|contains_output target + dest| TargetSync
+    Index -->|contains_installed_output target + dest| TargetSync
     Index -->|contains_output target + dest| CLI
 ```
 

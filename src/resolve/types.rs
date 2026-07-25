@@ -28,6 +28,9 @@ pub struct ResolvedGraph {
     /// Sources whose prior hook surface must be carried forward because a
     /// recovery resolution could not read the current schema.
     pub frozen_hook_sources: HashSet<SourceName>,
+    /// Hook names belonging to each frozen source, including readable siblings
+    /// frozen as part of the same package surface.
+    pub frozen_hook_names: HashMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
 /// A single node in the resolved graph.

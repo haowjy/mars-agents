@@ -260,6 +260,44 @@ fn recovery_freezes_unreadable_hooks_from_dependencies_that_remain() {
 }
 
 #[test]
+fn recovery_preserves_v2_hook_config_without_item_provenance() {
+    let dir = TempDir::new().unwrap();
+    let source = write_named_hook_source(&dir, "base", "audit", "printf frozen");
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+            portable_path(&source)
+        ))
+        .unwrap();
+    sync(&project).success();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["version"] = Value::Integer(2);
+    lock["items"]
+        .as_table_mut()
+        .unwrap()
+        .retain(|_, item| item["kind"].as_str() != Some("hook"));
+    lock_path
+        .write_str(&toml::to_string_pretty(&lock).unwrap())
+        .unwrap();
+    replace_hook_with_removed_schema(&source, "audit");
+
+    mars()
+        .args(["repair", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    let lock = fs::read_to_string(lock_path.path()).unwrap();
+    assert!(settings.contains("printf frozen"));
+    assert!(lock.contains("hook:SessionEnd:audit"));
+}
+
+#[test]
 fn override_can_replace_a_transitive_source_during_recovery() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");

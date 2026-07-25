@@ -46,6 +46,7 @@ pub struct ResolverContext {
         crate::staging::HookSurfaceState,
     )>,
     frozen_hook_sources: HashSet<SourceName>,
+    frozen_hook_names: HashMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
 impl Default for ResolverContext {
@@ -68,6 +69,7 @@ impl ResolverContext {
             version_overrides: HashMap::new(),
             pending_restart: None,
             frozen_hook_sources: HashSet::new(),
+            frozen_hook_names: HashMap::new(),
         }
     }
 
@@ -94,13 +96,11 @@ impl ResolverContext {
         &self,
         name: &SourceName,
     ) -> Option<(
-        &ResolvedRef,
-        &RootedSourceRef,
+        ResolvedRef,
+        RootedSourceRef,
         crate::staging::HookSurfaceState,
     )> {
-        self.version_overrides
-            .get(name)
-            .map(|(resolved, rooted, state)| (resolved, rooted, *state))
+        self.version_overrides.get(name).cloned()
     }
 
     /// Record the restart info: the package that triggered a restart and the ref
@@ -133,8 +133,10 @@ impl ResolverContext {
         source_name: &SourceName,
         state: crate::staging::HookSurfaceState,
     ) {
-        if state == crate::staging::HookSurfaceState::Frozen {
+        if let crate::staging::HookSurfaceState::Frozen { hook_names } = state {
             self.frozen_hook_sources.insert(source_name.clone());
+            self.frozen_hook_names
+                .insert(source_name.clone(), hook_names);
         }
     }
 
@@ -225,6 +227,7 @@ impl ResolverContext {
             filters: self.materialization_filters,
             version_constraints: self.version_constraints,
             frozen_hook_sources: self.frozen_hook_sources,
+            frozen_hook_names: self.frozen_hook_names,
         }
     }
 }

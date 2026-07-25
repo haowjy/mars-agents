@@ -2085,6 +2085,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -2194,6 +2195,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![
@@ -2274,6 +2276,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let applied = ApplyResult {
             outcomes: vec![ActionOutcome {
@@ -2603,6 +2606,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
 
@@ -2690,6 +2694,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let applied = ApplyResult { outcomes: vec![] };
         let new_lock = build(
@@ -2713,6 +2718,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
         let old_lock = LockFile {
@@ -2791,6 +2797,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let old_lock = LockFile::empty();
         let applied = ApplyResult {
@@ -2827,6 +2834,7 @@ installed_checksum = "sha256:222"
             filters: HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let old_lock = LockFile {
             version: LOCK_VERSION,

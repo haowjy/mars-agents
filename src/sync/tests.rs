@@ -120,6 +120,7 @@ fn make_graph_config(
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         },
         EffectiveConfig {
             dependencies: config_dependencies,
@@ -511,6 +512,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
         filters: std::collections::HashMap::new(),
         version_constraints: std::collections::HashMap::new(),
         frozen_hook_sources: std::collections::HashSet::new(),
+        frozen_hook_names: std::collections::HashMap::new(),
     }
 }
 

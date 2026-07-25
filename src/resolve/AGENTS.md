@@ -40,9 +40,10 @@ name to both direct and manifest-discovered transitive dependencies. Declared
 source identity remains separate from the effective override identity, so an
 override cannot collapse conflicting same-name declarations. Recovery
 commands can also mark a removed-schema package hook surface as frozen while
-omitting it from the derived staged tree. `ResolvedGraph.frozen_hook_sources`
-carries that state to every persistence lane; normal sync leaves the surface in
-place for strict source validation.
+leaving its derived staging output intact. `ResolvedGraph.frozen_hook_sources`
+and `frozen_hook_names` carry that state to every persistence lane, whose hook
+discovery paths skip the frozen surface; normal sync instead reads and rejects
+the removed schema.
 
 ## Key Traits
 

@@ -26,7 +26,17 @@ fn frozen_hook_retention(
     graph: &crate::resolve::ResolvedGraph,
     lock: &crate::lock::LockFile,
 ) -> FrozenHookRetention {
-    let mut names_by_target: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    let frozen_names = graph
+        .frozen_hook_names
+        .values()
+        .flatten()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut names_by_target: BTreeMap<String, std::collections::BTreeSet<String>> = lock
+        .config_entries
+        .keys()
+        .map(|target| (target.clone(), frozen_names.clone()))
+        .collect();
     let mut output_paths = std::collections::BTreeSet::new();
 
     for item in lock.items.values().filter(|item| {
@@ -140,6 +150,9 @@ pub(crate) fn preflight_config_entries(
 
     let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
     for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
+        if resolved.graph.frozen_hook_sources.contains(source_name) {
+            continue;
+        }
         if let Some(node) = resolved.graph.nodes.get(source_name) {
             hooks.extend(crate::compiler::hooks::discover_resolved_hook_items(
                 node,
@@ -470,19 +483,21 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        let depth = depths.get(source_name).copied().unwrap_or(1);
-        match crate::compiler::hooks::discover_resolved_hook_items(
-            node,
-            source_name,
-            depth,
-            decl_order,
-        ) {
-            Ok(items) => all_hooks.extend(items),
-            Err(e) => {
-                diag.error(
-                    "hook-discover",
-                    format!("failed to scan hook items in `{source_name}`: {e}"),
-                );
+        if !graph.frozen_hook_sources.contains(source_name) {
+            let depth = depths.get(source_name).copied().unwrap_or(1);
+            match crate::compiler::hooks::discover_resolved_hook_items(
+                node,
+                source_name,
+                depth,
+                decl_order,
+            ) {
+                Ok(items) => all_hooks.extend(items),
+                Err(e) => {
+                    diag.error(
+                        "hook-discover",
+                        format!("failed to scan hook items in `{source_name}`: {e}"),
+                    );
+                }
             }
         }
     }
@@ -1233,6 +1248,7 @@ mod tests {
                 filters: HashMap::new(),
                 version_constraints: HashMap::new(),
                 frozen_hook_sources: std::collections::HashSet::new(),
+                frozen_hook_names: std::collections::HashMap::new(),
             };
             let depths = compute_depths(&graph);
             let mut emitted_order = graph.order.clone();

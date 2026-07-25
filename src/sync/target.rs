@@ -90,11 +90,18 @@ pub fn build_with_collisions_and_diag(
             .unwrap_or_default();
 
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
-        let parsed_hooks =
-            crate::compiler::hooks::discover_resolved_hook_items(node, source_name, 1, 0)?;
+        let hook_surface_frozen = graph.frozen_hook_sources.contains(source_name);
+        let parsed_hooks = if hook_surface_frozen {
+            Vec::new()
+        } else {
+            crate::compiler::hooks::discover_resolved_hook_items(node, source_name, 1, 0)?
+        };
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
+                if hook_surface_frozen {
+                    continue;
+                }
                 let hook_dir = node.rooted_ref.package_root.join(&item.source_path);
                 if !hook_is_exported(&hook_dir) {
                     continue;
@@ -642,6 +649,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let config = EffectiveConfig {
             dependencies: config_dependencies,

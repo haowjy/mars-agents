@@ -361,6 +361,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         }
     }
 
@@ -436,6 +437,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -484,6 +486,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -600,6 +603,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(&mut target, &renames, &[], &graph, &[]);
@@ -683,6 +687,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -769,6 +774,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(&mut target, &[], &renames, &graph, &[]);
@@ -853,6 +859,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(
@@ -938,6 +945,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(
@@ -1023,6 +1031,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
 
         apply_test_renames(

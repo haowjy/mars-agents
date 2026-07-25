@@ -235,6 +235,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         // Direct siblings follow consumer declaration order, not graph insertion order.
         let config = effective_config_with_decl_order(&["b", "a"]);
@@ -256,6 +257,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -277,6 +279,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 
@@ -296,6 +299,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         // D is declared after A, but topological ordering must still emit D first.
         let config = effective_config_with_decl_order(&["a", "d"]);
@@ -318,6 +322,7 @@ mod tests {
             filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             frozen_hook_sources: std::collections::HashSet::new(),
+            frozen_hook_names: std::collections::HashMap::new(),
         };
         let config = effective_config_with_decl_order(&["a", "b"]);
 

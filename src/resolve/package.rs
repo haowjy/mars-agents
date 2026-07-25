@@ -251,7 +251,7 @@ pub(crate) fn resolve_package_bottom_up(
             ctx.version_override(&pending_src.name)
         {
             // Use the pre-computed ref from the prior pass.
-            (override_ref.clone(), override_rooted.clone(), hook_surface)
+            (override_ref, override_rooted, hook_surface)
         } else {
             let ref_ = resolve_single_source(
                 pending_src,

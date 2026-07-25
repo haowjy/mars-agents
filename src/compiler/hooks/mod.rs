@@ -96,26 +96,14 @@ pub fn discover_hook_items(
     package_depth: usize,
     decl_order: usize,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
-    let hooks_dir = package_root.join("hooks");
-    if !hooks_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut entries: Vec<_> = std::fs::read_dir(&hooks_dir)?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect();
-    entries.sort_by_key(|entry| entry.file_name());
-
     let mut items = Vec::new();
-    for entry in entries {
-        let dir_name = entry.file_name().to_string_lossy().into_owned();
-        if dir_name.starts_with('.') {
-            continue;
-        }
-        let toml_path = entry.path().join("hook.toml");
-        if !toml_path.is_file() {
-            continue;
-        }
+    for hook_dir in crate::discover::discover_hook_directories(package_root)? {
+        let dir_name = hook_dir
+            .file_name()
+            .expect("discovered hook directory has a name")
+            .to_string_lossy()
+            .into_owned();
+        let toml_path = hook_dir.join("hook.toml");
         let raw = std::fs::read_to_string(&toml_path)?;
         let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
         let removed = ["events", "matcher", "action", "path"];
@@ -170,7 +158,7 @@ pub fn discover_hook_items(
             source_name: source_name.to_string(),
             package_depth,
             decl_order,
-            hook_dir: entry.path(),
+            hook_dir,
         });
     }
     Ok(items)

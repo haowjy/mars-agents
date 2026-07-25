@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   substitutes `${MARS_HOOK_DIR}`, and records exact emitted arrays for safe
   structural removal. The v0.11.0 command-path cleanup joins the #130
   one-release sweep deletion ledger.
+- Hook discovery now consistently treats only package-root `hooks/` as the
+  hook convention root.
 
 ### Added
 - Cursor native hook fragments emit flat entries under a Mars-owned version 1

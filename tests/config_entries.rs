@@ -91,6 +91,37 @@ fn opencode_file_hook_ignores_malformed_unrelated_config() {
         .assert("{ malformed");
 }
 
+#[test]
+fn nested_hook_container_is_ignored_consistently() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("source");
+    let nested_hook = source.child("packages/tool/hooks/audit");
+    nested_hook.create_dir_all().unwrap();
+    nested_hook
+        .child("hook.toml")
+        .write_str("visibility = \"exported\"\n[targets.\".claude\"]\n")
+        .unwrap();
+    nested_hook
+        .child("claude.json")
+        .write_str(r#"{"SessionStart":[{"hooks":[{"type":"command","command":"echo nested"}]}]}"#)
+        .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\"]\n[dependencies]\ntool = {{ path = \"{}\" }}\n",
+            portable_path(source.path())
+        ))
+        .unwrap();
+
+    sync(&project).success();
+    project
+        .child(".claude/hooks/audit")
+        .assert(predicate::path::missing());
+}
+
 fn write_dependency_hook(
     source: &assert_fs::fixture::ChildPath,
     name: &str,

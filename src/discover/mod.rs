@@ -226,14 +226,10 @@ fn scan_hook_dir(
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), MarsError> {
-    let dir = package_root.join(relative_root);
-    if !dir.is_dir() {
+    if relative_root != Path::new(HOOKS_DIR_NAME) {
         return Ok(());
     }
-    for path in read_dir_paths_sorted(&dir)? {
-        if !path.is_dir() || !path.join("hook.toml").is_file() {
-            continue;
-        }
+    for path in discover_hook_directories(package_root)? {
         let rel = relative_to(package_root, &path)?;
         if !visited.insert(rel.clone()) {
             continue;
@@ -264,6 +260,28 @@ fn scan_hook_dir(
         });
     }
     Ok(())
+}
+
+/// Return package-root hook directories in stable order.
+///
+/// Hooks are deliberately a package-root-only convention. Unlike agents and
+/// skills, nested `hooks/` containers are not independent package layers.
+pub(crate) fn discover_hook_directories(package_root: &Path) -> Result<Vec<PathBuf>, MarsError> {
+    let hooks_dir = package_root.join(HOOKS_DIR_NAME);
+    if !hooks_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    Ok(read_dir_paths_sorted(&hooks_dir)?
+        .into_iter()
+        .filter(|path| {
+            path.is_dir()
+                && path.join("hook.toml").is_file()
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with('.'))
+        })
+        .collect())
 }
 
 fn scan_agent_dir(

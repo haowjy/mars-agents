@@ -6,12 +6,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Breaking:** hooks now author per-target native JSON fragments instead of
-  `events`/`matcher`/`[action]`; Mars installs whole hook directories,
-  substitutes `${MARS_HOOK_DIR}`, and records exact emitted arrays for safe
-  structural removal. The v0.11.0 command-path cleanup joins the #130
-  one-release sweep deletion ledger.
+  `events`/`matcher`/`[action]`; Mars installs whole hook directories and
+  substitutes `${MARS_HOOK_DIR}` with portable path separators. The old schema
+  is rejected as an error.
+- The v0.11.0 command-path cleanup joins the #130 one-release sweep deletion
+  ledger.
 - Hook discovery now consistently treats only package-root `hooks/` as the
   hook convention root.
+- Same-name hook collisions are scoped per target.
 
 ### Added
 - Cursor native hook fragments emit flat entries under a Mars-owned version 1
@@ -20,35 +22,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
-- Derive config-entry retention and replacement suppression from one removal
-  outcome per target surface, preventing ghost ownership and writes after a
-  failed sweep.
-- Preserve hand-edited Codex and Cursor hook files byte-for-byte when no
-  lock-recorded hook entry can be removed.
+- Record exact emitted hook config and remove only structural matches, preserving
+  hand edits and reporting them as config divergence.
+- Preserve untracked and hand-edited linked-target files; require `--force` to
+  adopt collisions.
+- Preserve ownership and suppress replacement after a failed removal so a later
+  sync retries the removal.
 - Allow OpenCode file hooks to sync without validating an unrelated
   `opencode.json`.
 - Make transitive hook precedence use deterministic longest-path depth, avoiding
   hook config churn across identical syncs.
-- Preserve prior hook ownership and skip replacement when Mars cannot confirm
-  removal from a linked target, so later syncs retain retry authority.
-- Treat OpenCode and Pi file-mode hook fragments as ordinary target outputs:
-  preserve untracked and hand-edited files, require `--force` to adopt
-  collisions, and delete only exact lock-owned destinations.
-- Scope hook directory ownership per target, preflight unmanaged destinations
-  and every merge config before writes, and reject malformed JSON without
-  replacing user files.
-- Restrict legacy command-path cleanup to legacy lock records, surface edited
-  managed entries as config divergence, omit empty event contributions, and
-  route legacy OpenCode hook records through their removal-only sweep.
-- Couple hook config ownership to successful installation, preserve untracked
-  target content even when byte-identical, and retry stale managed hooks after
-  transient copy failures.
-- Keep failed linked-output removals as noncanonical-only tombstones so retry
-  authority cannot reclaim a canonical path removed by the current sync.
-- Key same-name hook ownership by target and skip MCP discovery for dependency
-  filters that cannot emit MCP config.
-- Emit `${MARS_HOOK_DIR}` with portable separators so Windows paths remain
-  literal in JSON and TypeScript hook fragments.
+- Reject malformed merge config before writing hook files instead of replacing
+  user config.
+- Skip MCP discovery for dependency filters that cannot emit MCP config.
 
 ## [0.11.0] - 2026-07-24
 

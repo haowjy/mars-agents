@@ -407,11 +407,24 @@ pub fn dest_paths_equivalent(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn registry_get_returns_adapter_by_name() {
+    fn registry_contains_all_builtin_adapters() {
         let registry = TargetRegistry::new();
-        let adapter = registry.get(".agents").unwrap();
-        assert_eq!(adapter.name(), ".agents");
+
+        for name in [
+            ".agents",
+            ".claude",
+            ".codex",
+            ".opencode",
+            ".pi",
+            ".cursor",
+        ] {
+            let adapter = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("built-in target adapter `{name}` is not registered"));
+            assert_eq!(adapter.name(), name);
+        }
     }
 
     #[test]

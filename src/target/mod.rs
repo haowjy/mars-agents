@@ -240,6 +240,70 @@ pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JsonEventArrayUpdate {
+    pub changed: bool,
+    pub missing: usize,
+}
+
+pub(crate) fn append_json_event_entries(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    entries: &[serde_json::Value],
+    path: &Path,
+) -> Result<JsonEventArrayUpdate, MarsError> {
+    if entries.is_empty() {
+        return Ok(JsonEventArrayUpdate {
+            changed: false,
+            missing: 0,
+        });
+    }
+    let event_entries = hooks
+        .entry(event.to_string())
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| {
+            MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!("{}: hooks.{event} is not an array", path.display()),
+            })
+        })?;
+    event_entries.extend(entries.iter().cloned());
+    Ok(JsonEventArrayUpdate {
+        changed: true,
+        missing: 0,
+    })
+}
+
+pub(crate) fn remove_json_event_entries(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    expected: &[serde_json::Value],
+) -> JsonEventArrayUpdate {
+    let Some(current) = hooks
+        .get_mut(event)
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return JsonEventArrayUpdate {
+            changed: false,
+            missing: expected.len(),
+        };
+    };
+    let mut removed = 0;
+    for entry in expected {
+        if let Some(index) = current.iter().position(|candidate| candidate == entry) {
+            current.remove(index);
+            removed += 1;
+        }
+    }
+    if removed > 0 && current.is_empty() {
+        hooks.remove(event);
+    }
+    JsonEventArrayUpdate {
+        changed: removed > 0,
+        missing: expected.len() - removed,
+    }
+}
+
 /// Registry of target adapters, keyed by target root name.
 ///
 /// Constructed once per sync run. Adapters are registered at startup; no

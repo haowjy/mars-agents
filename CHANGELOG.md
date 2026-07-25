@@ -20,6 +20,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Preserve hand-edited Codex and Cursor hook files byte-for-byte when no
+  lock-recorded hook entry can be removed.
 - Allow OpenCode file hooks to sync without validating an unrelated
   `opencode.json`.
 - Make transitive hook precedence use deterministic longest-path depth, avoiding

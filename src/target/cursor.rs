@@ -146,23 +146,7 @@ fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pa
             })
         })?;
     for hook in hooks {
-        if hook.entries.is_empty() {
-            continue;
-        }
-        let event = hooks_map
-            .entry(hook.native_event.clone())
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or_else(|| {
-                MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!(
-                        "{}: hooks.{} is not an array",
-                        path.display(),
-                        hook.native_event
-                    ),
-                })
-            })?;
-        event.extend(hook.entries.iter().cloned());
+        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, &path)?;
     }
     crate::fs::atomic_write(
         &path,
@@ -187,11 +171,11 @@ fn remove_owned_cursor_hooks(
         return Ok(());
     }
     let mut root = super::parse_json_file(&path)?;
+    let mut changed = false;
     if let Some(hooks_map) = root
         .get_mut("hooks")
         .and_then(serde_json::Value::as_object_mut)
     {
-        let mut emptied = Vec::new();
         for (key, record) in records {
             let Some((event, name)) = key
                 .strip_prefix("hook:")
@@ -206,23 +190,9 @@ fn remove_owned_cursor_hooks(
             else {
                 continue;
             };
-            let mut missing = expected.len();
-            if let Some(entries) = hooks_map
-                .get_mut(event)
-                .and_then(serde_json::Value::as_array_mut)
-            {
-                let before = entries.len();
-                for owned in expected {
-                    if let Some(index) = entries.iter().position(|entry| entry == &owned) {
-                        entries.remove(index);
-                        missing -= 1;
-                    }
-                }
-                if before > 0 && entries.is_empty() {
-                    emptied.push(event.to_string());
-                }
-            }
-            if missing > 0 {
+            let update = super::remove_json_event_entries(hooks_map, event, &expected);
+            changed |= update.changed;
+            if update.missing > 0 {
                 diag.warn(
                     "config-divergence",
                     format!(
@@ -232,9 +202,17 @@ fn remove_owned_cursor_hooks(
                 );
             }
         }
-        for event in emptied {
-            hooks_map.remove(&event);
-        }
+    }
+    if changed
+        && root
+            .get("hooks")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(serde_json::Map::is_empty)
+    {
+        root.as_object_mut().unwrap().remove("hooks");
+    }
+    if !changed {
+        return Ok(());
     }
     crate::fs::atomic_write(
         &path,
@@ -426,5 +404,68 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(json["mcpServers"]["to-remove"].is_null());
         assert!(json["mcpServers"]["to-keep"].is_object());
+    }
+
+    #[test]
+    fn divergent_structural_removal_does_not_rewrite_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        let original =
+            br#"{"version":1,"hooks":{"sessionStart":[{"command":"edited"}]},"keep":true}"#;
+        std::fs::write(&path, original).unwrap();
+        let before_modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let records = std::collections::BTreeMap::from([(
+            "hook:sessionStart:audit".to_string(),
+            crate::lock::ConfigEntryRecord {
+                emitted_json: Some(serde_json::json!([{"command":"original"}]).to_string()),
+            },
+        )]);
+
+        remove_owned_cursor_hooks(
+            &records,
+            tmp.path(),
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before_modified
+        );
+    }
+
+    #[test]
+    fn removal_prunes_empty_hooks_object() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        let owned = serde_json::json!({"command":"owned"});
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "version": 1,
+                "hooks": {"sessionStart": [owned.clone()]}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let records = std::collections::BTreeMap::from([(
+            "hook:sessionStart:audit".to_string(),
+            crate::lock::ConfigEntryRecord {
+                emitted_json: Some(serde_json::json!([owned]).to_string()),
+            },
+        )]);
+
+        remove_owned_cursor_hooks(
+            &records,
+            tmp.path(),
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )
+        .unwrap();
+
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after, serde_json::json!({"version": 1}));
     }
 }

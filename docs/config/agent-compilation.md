@@ -1,6 +1,12 @@
 # Agent Compilation
 
-During `mars sync`, every agent is compiled to a canonical full-fidelity artifact in `.mars/agents/`. Native harness artifacts (`.claude/agents/`, `.codex/agents/`, etc.) are emitted when native agent emission policy allows them: normally for agents that declare `harness:`, or selectively through `[settings.meridian.agent_copy]`.
+During `mars sync`, every agent is compiled to a canonical full-fidelity
+artifact in `.mars/agents/`. Native harness artifacts
+(`.claude/agents/`, `.codex/agents/`, etc.) are emitted when native agent
+emission policy allows them. Standalone/default emission lowers every agent to
+every configured target harness; Meridian-managed mode suppresses them unless
+policy requests all or selective copies through
+`[settings.meridian.agent_copy]`.
 
 ## The Two Surfaces
 
@@ -18,7 +24,12 @@ When native emission selects an agent for a harness, a second artifact is emitte
 
 Harness-native artifacts are format-translated and field-stripped. They serve as agent discovery surfaces for harness-native invocation (e.g. `codex --agent coder`). Meridian always uses the `.mars/` artifact for its own spawn logic and applies all policy fields through its own projection layer.
 
-Universal agents (no `harness:`) are installed to `.mars/agents/` only by default and can be launched by Meridian against any harness. `[settings.meridian.agent_copy]` can still create a native copy when the agent qualifies through its `model:` alias or, with `include_fanout = true`, its `model-policies`.
+Universal agents (no `harness:`) are always installed to `.mars/agents/` and
+can be launched by Meridian against any harness. In standalone/default
+`EmitAll`, they are also lowered to every configured target harness. Under
+Meridian-managed suppression they remain canonical-only unless
+`[settings.meridian.agent_copy]` creates a qualifying native copy through the
+agent's `model:` alias or, with `include_fanout = true`, its `model-policies`.
 
 ## Emission Control
 
@@ -57,9 +68,11 @@ and, when `include_fanout = true`, matching `model-policies`. This is the
 intentional path for Claude-native `Agent()` copies while Meridian still owns
 normal delegation through `.mars/agents/`.
 
-When a native artifact is not emitted because emission is disabled or selective copy does not qualify it, mars removes the previously-emitted native artifact for agents currently in `.mars/agents/`.
-
-This cleanup only removes the native artifact for the agent's current `harness:` value. If an agent previously targeted a different harness, the old native artifact may remain stale; run `mars sync` after changing an agent's harness to clean up the previous target.
+When a native artifact is not emitted because emission is disabled or
+selective copy does not qualify it, Mars reconciles all harness shapes in
+scope for agents currently in `.mars/agents/`. Removal requires an exact prior
+lock ownership record, so changing an agent's `harness:` value does not leave
+the previously owned native artifact behind.
 
 ## Harness Override Passthrough
 

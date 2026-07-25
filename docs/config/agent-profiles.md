@@ -126,7 +126,12 @@ model: claude-opus-4-6  # concrete ID
 | Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi` |
 | Default | none (universal agent) |
 
-Execution target. When set, mars compiles a harness-native artifact in addition to the canonical `.mars/` artifact. Universal agents (no `harness:`) are installed to `.mars/agents/` only and launched by Meridian against any harness.
+Routing and model-selection hint. Native emission is controlled separately by
+the agent emission policy. In standalone/default `EmitAll`, every canonical
+agent is lowered to every configured target harness, whether or not
+`harness:` is set; a nonmatching model field is omitted from that native artifact.
+Meridian-managed `SuppressAll` keeps agents canonical-only, while
+`EmitSelective` emits only qualifying copies.
 
 ```yaml
 harness: claude
@@ -449,7 +454,11 @@ You produce structured plans from requirements.
 
 ### Universal agent (no harness)
 
-An agent without `harness:` is installed to `.mars/agents/` only. Meridian selects the harness at spawn time based on model resolution and project config.
+An agent without `harness:` remains routable to any harness. It is always
+installed to `.mars/agents/`; native copies depend on emission policy. The
+standalone default emits it to every configured target harness, while
+Meridian-managed suppression keeps it canonical-only. Meridian selects the
+harness at spawn time based on model resolution and project config.
 
 ```yaml
 ---

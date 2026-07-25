@@ -14,7 +14,7 @@ Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `
 
 When native emission selects an agent for a harness, a second artifact is emitted in the harness-native directory:
 
-| `harness:` value | Native artifact |
+| Target harness | Native artifact |
 |---|---|
 | `claude` | `.claude/agents/<name>.md` |
 | `codex` | `.codex/agents/<name>.toml` |

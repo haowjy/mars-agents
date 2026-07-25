@@ -57,10 +57,10 @@ impl TargetAdapter for CodexAdapter {
 
     fn write_config_entries(
         &self,
-        _permit: crate::surface_ownership::retention::WritePermit<'_>,
-        entries: &[ConfigEntry],
-        target_dir: &Path,
+        write: crate::surface_ownership::retention::ConfigWrite<'_>,
+        project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let (target_dir, entries) = write.into_parts(project_root);
         let mut written = Vec::new();
 
         let mcp_servers: Vec<&McpServerEntry> = entries
@@ -86,12 +86,12 @@ impl TargetAdapter for CodexAdapter {
             .collect();
 
         if !mcp_servers.is_empty() {
-            let path = write_codex_mcp_json(target_dir, &mcp_servers)?;
+            let path = (write_codex_mcp_json)(&target_dir, &mcp_servers)?;
             written.push(path);
         }
 
         if !hooks.is_empty() {
-            let path = write_hooks_json(target_dir, &hooks)?;
+            let path = (write_hooks_json)(&target_dir, &hooks)?;
             written.push(path);
         }
 
@@ -111,21 +111,27 @@ impl TargetAdapter for CodexAdapter {
 
     fn remove_owned_hook_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-        target_dir: &Path,
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
         diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> Result<(), MarsError> {
-        remove_owned_codex_hooks(records, target_dir, diag)
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        remove_owned_codex_hooks(&removal.prior_records, &target_dir, diag)
     }
 
     fn remove_config_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        entry_keys: &[String],
-        target_dir: &Path,
-    ) -> Result<(), MarsError> {
-        remove_codex_mcp_entries(entry_keys, target_dir)
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        match remove_codex_mcp_entries(&removal.keys_to_remove, &target_dir) {
+            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
+                error,
+                removal.prior_records.clone(),
+            ),
+        }
     }
 }
 
@@ -325,8 +331,12 @@ fn remove_owned_codex_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
     diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<(), MarsError> {
-    remove_owned_codex_hooks_from_file(records, &target_dir.join("hooks.json"), Some(diag))?;
+) -> crate::surface_ownership::retention::RemovalReport {
+    if let Err(error) =
+        remove_owned_codex_hooks_from_file(records, &target_dir.join("hooks.json"), Some(diag))
+    {
+        return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
+    }
     // Existing legacy-Codex sweep remains until #130's next-release cleanup.
     let legacy_records: std::collections::BTreeMap<_, _> = records
         .iter()
@@ -334,9 +344,18 @@ fn remove_owned_codex_hooks(
         .map(|(key, record)| (key.clone(), record.clone()))
         .collect();
     if legacy_records.is_empty() {
-        return Ok(());
+        return crate::surface_ownership::retention::RemovalReport::confirmed();
     }
-    remove_owned_codex_hooks_from_file(&legacy_records, &target_dir.join("codex_hooks.json"), None)
+    match remove_owned_codex_hooks_from_file(
+        &legacy_records,
+        &target_dir.join("codex_hooks.json"),
+        None,
+    ) {
+        Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+        Err(error) => {
+            crate::surface_ownership::retention::RemovalReport::failed(error, legacy_records)
+        }
+    }
 }
 
 fn remove_owned_codex_hooks_from_file(
@@ -426,10 +445,10 @@ fn remove_owned_codex_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{RemovalToken, Surface, WritePermit};
+    use crate::surface_ownership::retention::{Surface, WritePermit};
 
     fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test(".codex", entries[0].surface())
+        WritePermit::for_test("", entries[0].surface())
     }
     use indexmap::IndexMap;
     use tempfile::TempDir;
@@ -480,7 +499,12 @@ mod tests {
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry("context7")];
         let written = adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join("codex_mcp.json").exists());
@@ -496,7 +520,12 @@ mod tests {
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry_with_env("server")];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
@@ -513,7 +542,12 @@ mod tests {
         let adapter = CodexAdapter;
         let entries = vec![make_hook_entry("audit", "PreToolUse")];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
@@ -535,23 +569,25 @@ mod tests {
         let adapter = CodexAdapter;
         adapter
             .write_config_entries(
-                WritePermit::for_test(".codex", Surface::Hook),
-                &[make_hook_entry_with_path(
-                    "audit",
-                    "PreToolUse",
-                    "/old/hooks/audit/run.sh",
-                )],
+                WritePermit::for_test("", Surface::Hook)
+                    .bind_config_entries(vec![make_hook_entry_with_path(
+                        "audit",
+                        "PreToolUse",
+                        "/old/hooks/audit/run.sh",
+                    )])
+                    .unwrap(),
                 tmp.path(),
             )
             .unwrap();
         adapter
             .write_config_entries(
-                WritePermit::for_test(".codex", Surface::Hook),
-                &[make_hook_entry_with_path(
-                    "audit",
-                    "PreToolUse",
-                    "/new/hooks/audit/run.sh",
-                )],
+                WritePermit::for_test("", Surface::Hook)
+                    .bind_config_entries(vec![make_hook_entry_with_path(
+                        "audit",
+                        "PreToolUse",
+                        "/new/hooks/audit/run.sh",
+                    )])
+                    .unwrap(),
                 tmp.path(),
             )
             .unwrap();
@@ -574,16 +610,15 @@ mod tests {
         let adapter = CodexAdapter;
         let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
-            .unwrap();
-
-        adapter
-            .remove_config_entries(
-                RemovalToken::for_test(),
-                &["mcp:to-remove".to_string()],
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
                 tmp.path(),
             )
             .unwrap();
+
+        remove_codex_mcp_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();

@@ -43,10 +43,10 @@ impl TargetAdapter for OpencodeAdapter {
 
     fn write_config_entries(
         &self,
-        _permit: crate::surface_ownership::retention::WritePermit<'_>,
-        entries: &[ConfigEntry],
-        target_dir: &Path,
+        write: crate::surface_ownership::retention::ConfigWrite<'_>,
+        project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let (target_dir, entries) = write.into_parts(project_root);
         let mcp_servers: Vec<&McpServerEntry> = entries
             .iter()
             .filter_map(|e| {
@@ -62,7 +62,7 @@ impl TargetAdapter for OpencodeAdapter {
             return Ok(Vec::new());
         }
 
-        let path = write_opencode_config(target_dir, &mcp_servers)?;
+        let path = (write_opencode_config)(&target_dir, &mcp_servers)?;
         Ok(vec![path])
     }
 
@@ -76,22 +76,34 @@ impl TargetAdapter for OpencodeAdapter {
 
     fn remove_owned_hook_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-        target_dir: &Path,
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
         _diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> Result<(), MarsError> {
-        let keys: Vec<String> = records.keys().cloned().collect();
-        remove_opencode_entries(&keys, target_dir)
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        let keys: Vec<String> = removal.prior_records.keys().cloned().collect();
+        match remove_opencode_entries(&keys, &target_dir) {
+            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
+                error,
+                removal.prior_records.clone(),
+            ),
+        }
     }
 
     fn remove_config_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        entry_keys: &[String],
-        target_dir: &Path,
-    ) -> Result<(), MarsError> {
-        remove_opencode_entries(entry_keys, target_dir)
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        match remove_opencode_entries(&removal.keys_to_remove, &target_dir) {
+            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
+                error,
+                removal.prior_records.clone(),
+            ),
+        }
     }
 }
 
@@ -251,10 +263,10 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{RemovalToken, WritePermit};
+    use crate::surface_ownership::retention::WritePermit;
 
     fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test(".opencode", entries[0].surface())
+        WritePermit::for_test("", entries[0].surface())
     }
     use indexmap::IndexMap;
     use tempfile::TempDir;
@@ -276,7 +288,12 @@ mod tests {
         let adapter = OpencodeAdapter;
         let entries = vec![make_mcp_entry("context7")];
         let written = adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join("opencode.json").exists());
@@ -292,7 +309,12 @@ mod tests {
         let adapter = OpencodeAdapter;
         let entries = vec![make_mcp_entry("server")];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
@@ -307,16 +329,15 @@ mod tests {
         let adapter = OpencodeAdapter;
         let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
-            .unwrap();
-
-        adapter
-            .remove_config_entries(
-                RemovalToken::for_test(),
-                &["mcp:to-remove".to_string()],
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
                 tmp.path(),
             )
             .unwrap();
+
+        remove_opencode_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();

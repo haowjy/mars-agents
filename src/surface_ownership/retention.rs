@@ -1,23 +1,23 @@
-//! Config-entry removal outcomes and the permits derived from them.
+//! Config-entry removal outcomes and the operations derived from them.
 //!
-//! A removal outcome is recorded exactly once for each target/surface pair. Prior
-//! ownership can only leave this module through an unconfirmed outcome, and a
-//! replacement write can only proceed with a permit issued for a confirmed one.
+//! Removal and write operations carry their authorized pair and payload together.
+//! Mutation boundaries derive paths and records from those operations; callers
+//! cannot provide an independent target or surface.
 
 use std::collections::BTreeMap;
-use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
+use crate::target::ConfigEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Surface {
+pub enum Surface {
     Mcp,
     Hook,
 }
 
 impl Surface {
-    /// Total classification of a lock config-entry key.
     pub(crate) fn of_key(key: &str) -> Self {
         if key.starts_with("hook:") {
             Self::Hook
@@ -44,7 +44,6 @@ impl RemovalPlan {
     ) -> Self {
         let mut per_pair: BTreeMap<(String, Surface), SurfaceRemoval> = BTreeMap::new();
         let mut stale_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
         for (target_root, records) in previous {
             for (key, record) in records {
                 let surface = Surface::of_key(key);
@@ -56,7 +55,6 @@ impl RemovalPlan {
                     })
                     .prior_records
                     .insert(key.clone(), record.clone());
-
                 if desired
                     .get(target_root)
                     .is_none_or(|entries| !entries.contains_key(key))
@@ -75,14 +73,11 @@ impl RemovalPlan {
                 }
             }
         }
-
-        // Hook removal is sweep-then-rewrite, so all prior hook keys are work.
         for ((_, surface), removal) in &mut per_pair {
             if *surface == Surface::Hook {
                 removal.keys_to_remove = removal.prior_records.keys().cloned().collect();
             }
         }
-
         Self {
             per_pair,
             stale_keys,
@@ -95,16 +90,10 @@ impl RemovalPlan {
 
     pub(crate) fn execute(
         self,
-        mut remove: impl FnMut(
-            RemovalToken<'_>,
-            &str,
-            Surface,
-            &SurfaceRemoval,
-            &mut DiagnosticCollector,
-        ) -> Result<(), String>,
+        mut remove: impl FnMut(RemovalOperation<'_>, &mut DiagnosticCollector) -> RemovalReport,
         diag: &mut DiagnosticCollector,
     ) -> RetentionPlan {
-        let RemovalPlan {
+        let Self {
             per_pair,
             stale_keys,
         } = self;
@@ -113,21 +102,21 @@ impl RemovalPlan {
             let outcome = if removal.keys_to_remove.is_empty() {
                 RemovalOutcome::Confirmed
             } else {
-                match remove(RemovalToken::new(), &target_root, surface, &removal, diag) {
-                    Ok(()) => RemovalOutcome::Confirmed,
-                    Err(message) => {
+                let operation = RemovalOperation {
+                    target_root: &target_root,
+                    surface,
+                    removal: &removal,
+                };
+                match remove(operation, diag) {
+                    RemovalReport::Confirmed => RemovalOutcome::Confirmed,
+                    RemovalReport::Unconfirmed { message, retained } => {
                         diag.warn("config-entry-remove", message);
-                        RemovalOutcome::Unconfirmed {
-                            retained: removal.prior_records,
-                        }
+                        RemovalOutcome::Unconfirmed { retained }
                     }
                 }
             };
             outcomes.insert((target_root, surface), outcome);
         }
-        // Preserve the pre-seam diagnostic: it reported the target's complete
-        // previous-minus-desired set after the MCP cleanup step, including a
-        // vacuous MCP cleanup for hook-only stale state.
         for (target_root, keys) in stale_keys {
             if !matches!(
                 outcomes.get(&(target_root.clone(), Surface::Mcp)),
@@ -143,6 +132,64 @@ impl RemovalPlan {
             }
         }
         RetentionPlan { outcomes }
+    }
+}
+
+pub struct RemovalOperation<'a> {
+    target_root: &'a str,
+    surface: Surface,
+    removal: &'a SurfaceRemoval,
+}
+
+impl<'a> RemovalOperation<'a> {
+    pub(crate) fn target_root(&self) -> &str {
+        self.target_root
+    }
+    pub(crate) fn surface(&self) -> Surface {
+        self.surface
+    }
+    pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, &'a SurfaceRemoval) {
+        (project_root.join(self.target_root), self.removal)
+    }
+}
+
+pub enum RemovalReport {
+    Confirmed,
+    Unconfirmed {
+        message: String,
+        retained: BTreeMap<String, ConfigEntryRecord>,
+    },
+}
+
+impl RemovalReport {
+    pub(crate) fn confirmed() -> Self {
+        Self::Confirmed
+    }
+    pub(crate) fn failed(
+        error: impl std::fmt::Display,
+        retained: BTreeMap<String, ConfigEntryRecord>,
+    ) -> Self {
+        Self::Unconfirmed {
+            message: error.to_string(),
+            retained,
+        }
+    }
+
+    pub(crate) fn context(self, context: impl std::fmt::Display) -> Self {
+        match self {
+            Self::Confirmed => Self::Confirmed,
+            Self::Unconfirmed { message, retained } => Self::Unconfirmed {
+                message: format!("{context}: {message}"),
+                retained,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unwrap(self) {
+        if let Self::Unconfirmed { message, .. } = self {
+            panic!("removal was unconfirmed: {message}");
+        }
     }
 }
 
@@ -168,7 +215,6 @@ impl RetentionPlan {
             Some(RemovalOutcome::Confirmed) | None => Some(WritePermit {
                 target_root,
                 surface,
-                _sealed: (),
             }),
         }
     }
@@ -186,21 +232,47 @@ impl RetentionPlan {
     }
 }
 
-#[derive(Clone, Copy)]
 pub struct WritePermit<'p> {
     target_root: &'p str,
     surface: Surface,
-    _sealed: (),
 }
 
-#[allow(dead_code)]
+#[derive(Debug)]
+pub struct SurfaceMismatch;
+
+impl std::fmt::Display for SurfaceMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("write payload does not match permit surface")
+    }
+}
+
 impl<'p> WritePermit<'p> {
-    pub(crate) fn target_root(&self) -> &str {
-        self.target_root
+    pub fn bind_config_entries(
+        self,
+        entries: Vec<ConfigEntry>,
+    ) -> Result<ConfigWrite<'p>, SurfaceMismatch> {
+        if entries.iter().all(|entry| entry.surface() == self.surface) {
+            Ok(ConfigWrite {
+                target_root: self.target_root,
+                entries,
+            })
+        } else {
+            Err(SurfaceMismatch)
+        }
     }
 
-    pub(crate) fn surface(&self) -> Surface {
-        self.surface
+    pub(crate) fn bind_file_hooks(
+        self,
+        files: Vec<(String, String, String)>,
+    ) -> Result<FileHookWrite<'p>, SurfaceMismatch> {
+        if self.surface == Surface::Hook {
+            Ok(FileHookWrite {
+                target_root: self.target_root,
+                files,
+            })
+        } else {
+            Err(SurfaceMismatch)
+        }
     }
 
     #[cfg(test)]
@@ -208,30 +280,39 @@ impl<'p> WritePermit<'p> {
         WritePermit {
             target_root,
             surface,
-            _sealed: (),
         }
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct RemovalToken<'a> {
-    _sealed: PhantomData<&'a ()>,
+pub struct ConfigWrite<'p> {
+    target_root: &'p str,
+    entries: Vec<ConfigEntry>,
 }
-
-impl RemovalToken<'_> {
-    fn new() -> Self {
-        Self {
-            _sealed: PhantomData,
-        }
+impl<'p> ConfigWrite<'p> {
+    pub(crate) fn target_root(&self) -> &str {
+        self.target_root
+    }
+    pub(crate) fn entries(&self) -> &[ConfigEntry] {
+        &self.entries
+    }
+    pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, Vec<ConfigEntry>) {
+        (project_root.join(self.target_root), self.entries)
     }
 }
 
-#[cfg(test)]
-impl RemovalToken<'static> {
-    pub(crate) fn for_test() -> Self {
-        Self {
-            _sealed: PhantomData,
-        }
+pub(crate) struct FileHookWrite<'p> {
+    target_root: &'p str,
+    files: Vec<(String, String, String)>,
+}
+impl<'p> FileHookWrite<'p> {
+    pub(crate) fn target_root(&self) -> &str {
+        self.target_root
+    }
+    pub(crate) fn into_parts(
+        self,
+        project_root: &Path,
+    ) -> (PathBuf, Vec<(String, String, String)>) {
+        (project_root.join(self.target_root), self.files)
     }
 }
 
@@ -254,7 +335,7 @@ mod tests {
         let desired = previous.clone();
         let plan = RemovalPlan::build(&previous, &desired);
         let mut diag = DiagnosticCollector::new();
-        let retention = plan.execute(|_, _, _, _, _| panic!("closure must not run"), &mut diag);
+        let retention = plan.execute(|_, _| panic!("closure must not run"), &mut diag);
 
         assert!(retention.write_permit(".claude", Surface::Mcp).is_some());
         assert!(retention.into_retained_records().is_empty());
@@ -272,9 +353,12 @@ mod tests {
         let plan = RemovalPlan::build(&previous, &BTreeMap::new());
         let mut diag = DiagnosticCollector::new();
         let retention = plan.execute(
-            |_, _, surface, _, _| match surface {
-                Surface::Mcp => Err("mcp failed".to_owned()),
-                Surface::Hook => Ok(()),
+            |operation, _| match operation.surface() {
+                Surface::Mcp => {
+                    let (_, removal) = operation.into_parts(Path::new("."));
+                    RemovalReport::failed("mcp failed", removal.prior_records.clone())
+                }
+                Surface::Hook => RemovalReport::confirmed(),
             },
             &mut diag,
         );
@@ -294,7 +378,7 @@ mod tests {
     fn absent_pair_is_vacuously_confirmed() {
         let plan = RemovalPlan::build(&BTreeMap::new(), &BTreeMap::new());
         let mut diag = DiagnosticCollector::new();
-        let retention = plan.execute(|_, _, _, _, _| unreachable!(), &mut diag);
+        let retention = plan.execute(|_, _| unreachable!(), &mut diag);
         assert!(retention.write_permit(".claude", Surface::Hook).is_some());
     }
 
@@ -326,6 +410,19 @@ mod tests {
     }
 
     #[test]
+    fn binding_rejects_entries_from_another_surface() {
+        let entry = ConfigEntry::McpServer(crate::target::McpServerEntry {
+            name: "server".to_owned(),
+            command: "server".to_owned(),
+            args: Vec::new(),
+            env: indexmap::IndexMap::new(),
+        });
+        let result =
+            WritePermit::for_test(".opencode", Surface::Hook).bind_config_entries(vec![entry]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn fault_matrix_derives_retention_and_permits_from_each_pair_outcome() {
         for failed_target in [".claude", ".codex", ".cursor", ".opencode"] {
             for failed_surface in [Surface::Mcp, Surface::Hook] {
@@ -342,11 +439,17 @@ mod tests {
                 let plan = RemovalPlan::build(&previous, &BTreeMap::new());
                 let mut diag = DiagnosticCollector::new();
                 let retention = plan.execute(
-                    |_, target, surface, _, _| {
-                        if target == failed_target && surface == failed_surface {
-                            Err("injected removal failure".to_owned())
+                    |operation, _| {
+                        let failed = operation.target_root() == failed_target
+                            && operation.surface() == failed_surface;
+                        let (_, removal) = operation.into_parts(Path::new("."));
+                        if failed {
+                            RemovalReport::failed(
+                                "injected removal failure",
+                                removal.prior_records.clone(),
+                            )
                         } else {
-                            Ok(())
+                            RemovalReport::confirmed()
                         }
                     },
                     &mut diag,

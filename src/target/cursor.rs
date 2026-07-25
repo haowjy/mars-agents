@@ -66,10 +66,10 @@ impl TargetAdapter for CursorAdapter {
 
     fn write_config_entries(
         &self,
-        _permit: crate::surface_ownership::retention::WritePermit<'_>,
-        entries: &[ConfigEntry],
-        target_dir: &Path,
+        write: crate::surface_ownership::retention::ConfigWrite<'_>,
+        project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let (target_dir, entries) = write.into_parts(project_root);
         let mcp_servers: Vec<&McpServerEntry> = entries
             .iter()
             .filter_map(|e| {
@@ -90,10 +90,10 @@ impl TargetAdapter for CursorAdapter {
 
         let mut written = Vec::new();
         if !mcp_servers.is_empty() {
-            written.push(write_cursor_mcp_json(target_dir, &mcp_servers)?);
+            written.push((write_cursor_mcp_json)(&target_dir, &mcp_servers)?);
         }
         if !hooks.is_empty() {
-            written.push(write_cursor_hooks_json(target_dir, &hooks)?);
+            written.push((write_cursor_hooks_json)(&target_dir, &hooks)?);
         }
         Ok(written)
     }
@@ -107,21 +107,33 @@ impl TargetAdapter for CursorAdapter {
 
     fn remove_owned_hook_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-        target_dir: &Path,
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
         diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> Result<(), MarsError> {
-        remove_owned_cursor_hooks(records, target_dir, diag)
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        match remove_owned_cursor_hooks(&removal.prior_records, &target_dir, diag) {
+            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
+                error,
+                removal.prior_records.clone(),
+            ),
+        }
     }
 
     fn remove_config_entries(
         &self,
-        _token: crate::surface_ownership::retention::RemovalToken<'_>,
-        entry_keys: &[String],
-        target_dir: &Path,
-    ) -> Result<(), MarsError> {
-        remove_cursor_mcp_entries(entry_keys, target_dir)
+        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
+        project_root: &Path,
+    ) -> crate::surface_ownership::retention::RemovalReport {
+        let (target_dir, removal) = operation.into_parts(project_root);
+        match remove_cursor_mcp_entries(&removal.keys_to_remove, &target_dir) {
+            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
+            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
+                error,
+                removal.prior_records.clone(),
+            ),
+        }
     }
 }
 
@@ -342,10 +354,10 @@ fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{RemovalToken, WritePermit};
+    use crate::surface_ownership::retention::WritePermit;
 
     fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test(".cursor", entries[0].surface())
+        WritePermit::for_test("", entries[0].surface())
     }
     use crate::target::McpServerEntry;
     use indexmap::IndexMap;
@@ -370,7 +382,12 @@ mod tests {
         let adapter = CursorAdapter;
         let entries = vec![make_mcp_entry("context7", None)];
         let written = adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
         assert_eq!(written.len(), 1);
         assert!(tmp.path().join("mcp.json").exists());
@@ -386,7 +403,12 @@ mod tests {
         let adapter = CursorAdapter;
         let entries = vec![make_mcp_entry("server", Some(("API_KEY", "MY_SECRET")))];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
+                tmp.path(),
+            )
             .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
@@ -407,16 +429,15 @@ mod tests {
             make_mcp_entry("to-keep", None),
         ];
         adapter
-            .write_config_entries(write_permit(&entries), &entries, tmp.path())
-            .unwrap();
-
-        adapter
-            .remove_config_entries(
-                RemovalToken::for_test(),
-                &["mcp:to-remove".to_string()],
+            .write_config_entries(
+                write_permit(&entries)
+                    .bind_config_entries(entries.clone())
+                    .unwrap(),
                 tmp.path(),
             )
             .unwrap();
+
+        remove_cursor_mcp_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();

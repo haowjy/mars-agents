@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
-use crate::surface_ownership::retention::{RemovalToken, Surface, WritePermit};
+use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport, Surface};
 use crate::types::DestPath;
 use indexmap::IndexMap;
 
@@ -150,10 +150,10 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Default: no-op — targets that don't use a config file leave this as-is.
     fn write_config_entries(
         &self,
-        _permit: WritePermit<'_>,
-        _entries: &[ConfigEntry],
-        _target_dir: &Path,
+        write: ConfigWrite<'_>,
+        project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let (_target_dir, _entries) = write.into_parts(project_root);
         Ok(Vec::new())
     }
 
@@ -187,12 +187,12 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Remove hook entries recorded in the previous lock by structural equality.
     fn remove_owned_hook_entries(
         &self,
-        _token: RemovalToken<'_>,
-        _records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-        _target_dir: &Path,
+        operation: RemovalOperation<'_>,
+        project_root: &Path,
         _diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> Result<(), MarsError> {
-        Ok(())
+    ) -> RemovalReport {
+        let (_, _) = operation.into_parts(project_root);
+        RemovalReport::confirmed()
     }
 
     /// Remove stale config entries from this target's config file.
@@ -201,11 +201,11 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Default: no-op.
     fn remove_config_entries(
         &self,
-        _token: RemovalToken<'_>,
-        _entry_keys: &[String],
-        _target_dir: &Path,
-    ) -> Result<(), MarsError> {
-        Ok(())
+        operation: RemovalOperation<'_>,
+        project_root: &Path,
+    ) -> RemovalReport {
+        let (_, _) = operation.into_parts(project_root);
+        RemovalReport::confirmed()
     }
 }
 

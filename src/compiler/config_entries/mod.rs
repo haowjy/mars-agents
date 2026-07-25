@@ -677,24 +677,27 @@ pub(crate) fn compile_config_entries(
 
     use crate::surface_ownership::retention::Surface;
     let retention = removal_plan.execute(
-        |token, target_root, surface, removal, diag| {
-            let adapter = registry
-                .get(target_root)
-                .ok_or_else(|| format!("no adapter registered for `{target_root}`"))?;
-            let target_dir = ctx.project_root.join(target_root);
+        |operation, diag| {
+            let target_root = operation.target_root().to_owned();
+            let surface = operation.surface();
+            let Some(adapter) = registry.get(&target_root) else {
+                let (_, removal) = operation.into_parts(&ctx.project_root);
+                return crate::surface_ownership::retention::RemovalReport::failed(
+                    format!("no adapter registered for `{target_root}`"),
+                    removal.prior_records.clone(),
+                );
+            };
             match surface {
                 Surface::Hook => adapter
-                    .remove_owned_hook_entries(token, &removal.prior_records, &target_dir, diag)
-                    .map_err(|error| {
-                        format!("failed to remove prior hook entries from `{target_root}`: {error}")
-                    }),
+                    .remove_owned_hook_entries(operation, &ctx.project_root, diag)
+                    .context(format!(
+                        "failed to remove prior hook entries from `{target_root}`"
+                    )),
                 Surface::Mcp => adapter
-                    .remove_config_entries(token, &removal.keys_to_remove, &target_dir)
-                    .map_err(|error| {
-                        format!(
-                            "failed to remove stale config entries from `{target_root}`: {error}"
-                        )
-                    }),
+                    .remove_config_entries(operation, &ctx.project_root)
+                    .context(format!(
+                        "failed to remove stale config entries from `{target_root}`"
+                    )),
             }
         },
         diag,
@@ -776,17 +779,24 @@ fn apply_replacement_writes(
             );
             continue;
         };
-        let Some(adapter) = registry.get(&target_root) else {
+        let write = match permit.bind_config_entries(entries) {
+            Ok(write) => write,
+            Err(error) => {
+                diag.warn("config-entry-write", error.to_string());
+                continue;
+            }
+        };
+        let authorized_target = write.target_root().to_owned();
+        let Some(adapter) = registry.get(write.target_root()) else {
             continue;
         };
-        let target_dir = ctx.project_root.join(&target_root);
-        match adapter.write_config_entries(permit, &entries, &target_dir) {
+        let written_keys: std::collections::BTreeSet<_> =
+            write.entries().iter().map(ConfigEntry::key).collect();
+        match adapter.write_config_entries(write, &ctx.project_root) {
             Ok(_) => {
-                if let Some(records) = desired_records.get(&target_root) {
-                    let written_keys: std::collections::BTreeSet<_> =
-                        entries.iter().map(ConfigEntry::key).collect();
+                if let Some(records) = desired_records.get(&authorized_target) {
                     written_records
-                        .entry(target_root.clone())
+                        .entry(authorized_target.clone())
                         .or_default()
                         .extend(
                             records
@@ -798,7 +808,7 @@ fn apply_replacement_writes(
             }
             Err(error) => diag.warn(
                 "config-entry-write",
-                format!("failed to write config entries to `{target_root}`: {error}"),
+                format!("failed to write config entries to `{authorized_target}`: {error}"),
             ),
         }
     }
@@ -811,13 +821,14 @@ fn apply_replacement_writes(
             );
             continue;
         };
+        let write = permit
+            .bind_file_hooks(files)
+            .expect("Hook permit accepts file-hook payloads");
         write_file_hook_outputs(
-            permit,
+            write,
             ctx,
             old_lock,
             ownership_lock,
-            &target_root,
-            files,
             force,
             diag,
             &mut emitted_outputs,
@@ -840,29 +851,29 @@ fn apply_replacement_writes(
 
 #[allow(clippy::too_many_arguments)]
 fn write_file_hook_outputs(
-    _permit: crate::surface_ownership::retention::WritePermit<'_>,
+    write: crate::surface_ownership::retention::FileHookWrite<'_>,
     ctx: &MarsContext,
     old_lock: &crate::lock::LockFile,
     ownership_lock: &mut crate::lock::LockFile,
-    target_root: &str,
-    files: Vec<(String, String, String)>,
     force: bool,
     diag: &mut DiagnosticCollector,
     emitted_outputs: &mut Vec<crate::lock::CompiledNativeOutput>,
 ) {
+    let target_root = write.target_root().to_owned();
+    let (target_dir, files) = write.into_parts(&ctx.project_root);
     for (owner_canonical_dest_path, relative, content) in files {
-        let path = ctx.project_root.join(target_root).join(&relative);
+        let path = target_dir.join(&relative);
         let dest_exists = crate::surface_ownership::target_dest_exists(&path);
         match crate::surface_ownership::copy_decision(
             old_lock,
-            target_root,
+            &target_root,
             &relative,
             dest_exists,
             force,
         ) {
             crate::surface_ownership::SurfaceCopyDecision::SkipUnmanagedCollision => {
                 crate::surface_ownership::warn_unmanaged_collision(
-                    target_root,
+                    &target_root,
                     &relative,
                     crate::surface_ownership::CollisionAdoptHint::SyncForce,
                     diag,
@@ -870,9 +881,9 @@ fn write_file_hook_outputs(
                 continue;
             }
             crate::surface_ownership::SurfaceCopyDecision::Proceed => {
-                if dest_exists && force && !old_lock.contains_output(target_root, &relative) {
+                if dest_exists && force && !old_lock.contains_output(&target_root, &relative) {
                     crate::surface_ownership::warn_unmanaged_adopted(
-                        target_root,
+                        &target_root,
                         &relative,
                         crate::surface_ownership::CollisionAdoptHint::SyncForce,
                         diag,
@@ -909,7 +920,7 @@ fn write_file_hook_outputs(
         }
         let output = crate::lock::CompiledNativeOutput {
             owner_canonical_dest_path,
-            target_root: target_root.to_owned(),
+            target_root: target_root.clone(),
             dest_path: relative,
             installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
                 content.as_bytes(),

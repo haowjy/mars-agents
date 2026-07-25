@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- **Breaking:** remove unused public helpers, wrappers, re-exports, and unread
+  fields from the library API.
 - `discover_installed` now scans only installed item identity and path instead of
   parsing every installed agent and skill frontmatter document.
 - `mars doctor` conflict detection now matches `mars list --status` and `mars resolve`.

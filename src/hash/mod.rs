@@ -47,7 +47,7 @@ pub fn hash_bytes(content: &[u8]) -> String {
 /// 3. Sorting lexicographically by path
 /// 4. Concatenating "path:hash\n" strings
 /// 5. SHA-256 of the concatenated result
-fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
+pub(crate) fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
     compute_dir_hash_filtered(dir, &[])
 }
 

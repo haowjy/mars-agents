@@ -322,6 +322,72 @@ fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
 }
 
 #[test]
+fn sync_promotes_matching_v2_linked_skill_as_installed() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let lock_path = project.child("mars.lock");
+    let mut lock: toml::Value =
+        toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
+    lock["version"] = toml::Value::Integer(2);
+    for (_, item) in lock["items"].as_table_mut().unwrap().iter_mut() {
+        for output in item["outputs"].as_array_mut().unwrap() {
+            output.as_table_mut().unwrap().remove("state");
+        }
+    }
+    lock_path
+        .write_str(&toml::to_string(&lock).unwrap())
+        .unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+
+    let promoted = mars_agents::lock::load(project.path()).unwrap();
+    let linked = promoted.items["skill/planning"]
+        .outputs
+        .iter()
+        .find(|output| {
+            output.target_root == ".claude" && output.dest_path.as_str() == "skills/planning"
+        })
+        .expect("linked skill output should remain recorded");
+    assert!(
+        matches!(
+            linked.state,
+            mars_agents::lock::OutputState::Installed { .. }
+        ),
+        "matching linked skill must retain overwrite authority after v2 promotion"
+    );
+}
+
+#[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();
     let source = create_source(

@@ -37,10 +37,10 @@ paths match.
 - **Unscoped `dest_path` views are broad views only.** Use them for listing,
   diagnostics, or legacy compatibility, not for deciding whether a concrete
   target path is owned or unchanged.
-- **V2 promotion is the only legacy lifecycle inference seam.** A matching
-  regular file becomes installed; absent, non-file, or mismatched paths become
-  pending deletion. Delete the promotion after the release following lock v3,
-  together with the #130 legacy-hook sweeps.
+- **V2 promotion is the only legacy lifecycle inference seam.** Matching regular
+  files and directory manifests become installed. Absent, mismatched, symlinked,
+  unreadable, or unsupported paths become pending deletion. Delete the promotion
+  after the release following lock v3, together with the #130 legacy-hook sweeps.
 - **Do not change the lock schema for lookup fixes.** `LockIndex` is the
   ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash

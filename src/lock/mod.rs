@@ -565,10 +565,10 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
 
 /// Cross the untyped v2 output boundary exactly once.
 ///
-/// A v2 checksum could describe either installed bytes or a retry tombstone left
-/// after failed removal. Only an on-disk regular file whose bytes still match the
-/// checksum is promoted as installed; every other path retains deletion authority
-/// without asserting ghost content.
+/// A v2 checksum could describe either installed content or a retry tombstone left
+/// after failed removal. The output's actual disk shape selects the canonical file
+/// or directory hash. Only matching regular content is promoted as installed;
+/// every other path retains deletion authority without asserting ghost content.
 fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
     let items = wire
         .items
@@ -581,11 +581,8 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
                     let path = root
                         .join(&output.target_root)
                         .join(output.dest_path.as_str());
-                    let matches_disk = std::fs::symlink_metadata(&path)
-                        .is_ok_and(|metadata| metadata.file_type().is_file())
-                        && std::fs::read(&path).is_ok_and(|bytes| {
-                            crate::hash::hash_bytes(&bytes) == output.installed_checksum.as_ref()
-                        });
+                    let matches_disk = v2_output_checksum(&path)
+                        .is_some_and(|checksum| checksum == output.installed_checksum.as_ref());
                     if matches_disk {
                         OutputRecord::installed(
                             output.target_root,
@@ -617,6 +614,23 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
         config_entries: wire.config_entries,
         dependency_model_aliases: wire.dependency_model_aliases,
     }
+}
+
+fn v2_output_checksum(path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return None;
+    }
+    if file_type.is_file() {
+        return std::fs::read(path)
+            .ok()
+            .map(|bytes| crate::hash::hash_bytes(&bytes));
+    }
+    if file_type.is_dir() {
+        return crate::hash::compute_dir_hash(path).ok();
+    }
+    None
 }
 
 /// Write the lock file atomically to the given root directory (always current format).
@@ -1475,6 +1489,94 @@ installed_checksum = "sha256:old"
             lock.items["hook/audit"].outputs[0].state,
             OutputState::PendingDeletion
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_promotion_classifies_outputs_by_disk_shape_and_checksum() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let outputs = root.join(".mars/outputs");
+        std::fs::create_dir_all(&outputs).unwrap();
+
+        std::fs::write(outputs.join("file-match"), "managed").unwrap();
+        std::fs::write(outputs.join("file-mismatch"), "changed").unwrap();
+        std::fs::create_dir(outputs.join("dir-match")).unwrap();
+        std::fs::write(outputs.join("dir-match/SKILL.md"), "# Managed").unwrap();
+        std::fs::create_dir(outputs.join("dir-mismatch")).unwrap();
+        std::fs::write(outputs.join("dir-mismatch/SKILL.md"), "# Changed").unwrap();
+        std::fs::write(outputs.join("symlink-target"), "managed").unwrap();
+        symlink("symlink-target", outputs.join("symlink")).unwrap();
+        std::fs::write(outputs.join("unreadable"), "managed").unwrap();
+        std::fs::set_permissions(
+            outputs.join("unreadable"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+
+        let file_checksum = crate::hash::hash_bytes(b"managed");
+        let directory_checksum =
+            crate::hash::compute_hash(&outputs.join("dir-match"), ItemKind::Skill).unwrap();
+        let cases = [
+            ("file-match", &file_checksum),
+            ("file-mismatch", &file_checksum),
+            ("dir-match", &directory_checksum),
+            ("dir-mismatch", &directory_checksum),
+            ("absent", &file_checksum),
+            ("symlink", &file_checksum),
+            ("unreadable", &file_checksum),
+        ];
+        let mut lock = String::from("version = 2\n");
+        for (name, checksum) in cases {
+            lock.push_str(&format!(
+                r#"
+[items."agent/{name}"]
+source = "_self"
+kind = "agent"
+source_checksum = "{checksum}"
+
+[[items."agent/{name}".outputs]]
+target_root = ".mars"
+dest_path = "outputs/{name}"
+installed_checksum = "{checksum}"
+"#
+            ));
+        }
+        std::fs::write(root.join("mars.lock"), lock).unwrap();
+
+        let promoted = load(root).unwrap();
+        std::fs::set_permissions(
+            outputs.join("unreadable"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+
+        for name in ["file-match", "dir-match"] {
+            assert!(
+                matches!(
+                    promoted.items[&format!("agent/{name}")].outputs[0].state,
+                    OutputState::Installed { .. }
+                ),
+                "{name} should retain installed-content authority"
+            );
+        }
+        for name in [
+            "file-mismatch",
+            "dir-mismatch",
+            "absent",
+            "symlink",
+            "unreadable",
+        ] {
+            assert!(
+                matches!(
+                    promoted.items[&format!("agent/{name}")].outputs[0].state,
+                    OutputState::PendingDeletion
+                ),
+                "{name} should retain deletion authority only"
+            );
+        }
     }
 
     #[test]

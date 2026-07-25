@@ -235,15 +235,13 @@ fn sync_one_target(
                                             continue;
                                         }
                                     };
-                                let previous_target_hash = dest_exists
-                                    .then(|| crate::hash::compute_hash(&dest, outcome.item_id.kind))
-                                    .transpose()
-                                    .ok()
-                                    .flatten()
-                                    .map(ContentHash::from);
-                                if previous_target_hash.as_ref()
-                                    == Some(&projection.installed_checksum)
-                                {
+                                let target_projection_matches =
+                                    crate::compiler::variants::prepared_native_skill_projection_matches(
+                                        &dest,
+                                        &projection,
+                                    )
+                                    .unwrap_or(false);
+                                if target_projection_matches {
                                     synced_outputs.push(TargetSyncedOutput {
                                         dest_path: dest_rel.to_string(),
                                         installed_checksum: projection.installed_checksum,
@@ -265,7 +263,7 @@ fn sync_one_target(
                                                 .installed_checksum
                                                 .clone(),
                                         });
-                                        if previous_target_hash.is_some() {
+                                        if dest_exists {
                                             diag.warn(
                                                 "target-native-projection-repaired",
                                                 format!(

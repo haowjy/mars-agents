@@ -236,6 +236,7 @@ pub fn project_skill_for_target(
 #[derive(Debug)]
 pub(crate) struct NativeSkillProjection {
     overrides: std::collections::BTreeMap<String, Vec<u8>>,
+    expected_tree: crate::platform::fs::DirectoryTreeSnapshot,
     pub(crate) installed_checksum: crate::types::ContentHash,
 }
 
@@ -265,20 +266,27 @@ pub(crate) fn prepare_native_skill_projection(
         }
     }
 
-    let mut entries = Vec::new();
-    collect_native_projection_hashes(source, source, &mut entries)?;
-    let mut hashes: std::collections::BTreeMap<_, _> = entries.into_iter().collect();
+    let mut expected_tree = crate::platform::fs::DirectoryTreeSnapshot::new();
+    collect_native_projection_hashes(source, source, &mut expected_tree)?;
     for (rel_path, bytes) in &overrides {
-        hashes.insert(rel_path.clone(), crate::hash::hash_bytes(bytes));
+        expected_tree.insert_file_hash(rel_path.clone(), crate::hash::hash_bytes(bytes));
     }
     let installed_checksum = crate::types::ContentHash::from(crate::hash::hash_file_manifest(
-        hashes.into_iter().collect(),
+        expected_tree.file_hash_manifest_entries(),
     ));
 
     Ok(NativeSkillProjection {
         overrides,
+        expected_tree,
         installed_checksum,
     })
+}
+
+pub(crate) fn prepared_native_skill_projection_matches(
+    dest: &Path,
+    projection: &NativeSkillProjection,
+) -> Result<bool, MarsError> {
+    crate::platform::fs::directory_tree_matches_snapshot(dest, &projection.expected_tree)
 }
 
 pub(crate) fn project_prepared_skill_for_target(
@@ -414,7 +422,7 @@ fn lower_projected_skill_for_harness(
 fn collect_native_projection_hashes(
     root: &Path,
     current: &Path,
-    entries: &mut Vec<(String, String)>,
+    snapshot: &mut crate::platform::fs::DirectoryTreeSnapshot,
 ) -> Result<(), MarsError> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
@@ -428,15 +436,16 @@ fn collect_native_projection_hashes(
             continue;
         }
         let metadata = fs::metadata(&path)?;
+        let rel_path = rel
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         if metadata.is_dir() {
-            collect_native_projection_hashes(root, &path, entries)?;
+            snapshot.insert_directory(rel_path);
+            collect_native_projection_hashes(root, &path, snapshot)?;
         } else if metadata.is_file() {
-            let rel_path = rel
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            entries.push((rel_path, crate::hash::hash_bytes(&fs::read(path)?)));
+            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

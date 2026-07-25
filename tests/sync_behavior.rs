@@ -387,6 +387,103 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn sync_replaces_symlinked_native_skill_projection() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let native_skill = project.path().join(".claude/skills/planning");
+    let external_skill = dir.path().join("external-planning");
+    fs::rename(&native_skill, &external_skill).unwrap();
+    std::os::unix::fs::symlink(&external_skill, &native_skill).unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        !fs::symlink_metadata(&native_skill)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "managed copied projection must replace user-controlled indirection"
+    );
+    assert!(native_skill.is_dir());
+}
+
+#[test]
+fn sync_removes_extra_empty_directory_from_native_skill_projection() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
+    let project = dir.child("project");
+
+    mars()
+        .args([
+            "init",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    mars()
+        .args([
+            "add",
+            source.to_str().unwrap(),
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let unexpected = project
+        .path()
+        .join(".claude/skills/planning/unexpected-empty");
+    fs::create_dir(&unexpected).unwrap();
+
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        !unexpected.exists(),
+        "complete projection structure must be restored, including empty directories"
+    );
+}
+
 #[test]
 fn conflict_flow_with_resolve() {
     let dir = TempDir::new().unwrap();

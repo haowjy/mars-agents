@@ -174,66 +174,97 @@ pub fn file_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> 
 /// non-regular type, directory structure differs (including empty directories), or
 /// any regular file's bytes differ.
 pub fn directory_trees_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
-    let left_meta = match fs::symlink_metadata(left) {
-        Ok(m) => m,
-        Err(_) => return Ok(false),
-    };
-    let right_meta = match fs::symlink_metadata(right) {
-        Ok(m) => m,
-        Err(_) => return Ok(false),
-    };
-    if left_meta.file_type().is_symlink() || right_meta.file_type().is_symlink() {
+    let Some(left) = strict_directory_tree_snapshot(left)? else {
         return Ok(false);
-    }
-    if !left_meta.is_dir() || !right_meta.is_dir() {
+    };
+    let Some(right) = strict_directory_tree_snapshot(right)? else {
         return Ok(false);
-    }
+    };
+    Ok(left == right)
+}
 
-    let left_entries = match collect_relative_tree_entries(left, left)? {
-        TreeCollectOutcome::Reject => return Ok(false),
-        TreeCollectOutcome::Entries(entries) => entries,
-    };
-    let right_entries = match collect_relative_tree_entries(right, right)? {
-        TreeCollectOutcome::Reject => return Ok(false),
-        TreeCollectOutcome::Entries(entries) => entries,
-    };
-    if left_entries != right_entries {
-        return Ok(false);
-    }
-    for entry in &left_entries {
-        if entry.kind == TreeEntryKind::File
-            && fs::read(left.join(&entry.rel_path))? != fs::read(right.join(&entry.rel_path))?
-        {
-            return Ok(false);
+/// Complete regular-directory structure and file content hashes.
+///
+/// The snapshot includes empty directories. Construction from disk rejects
+/// symlinks and unsupported entry types so copied projections cannot compare
+/// equal to user-controlled indirection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DirectoryTreeSnapshot {
+    entries: std::collections::BTreeMap<String, TreeEntryKind>,
+}
+
+impl DirectoryTreeSnapshot {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: std::collections::BTreeMap::new(),
         }
     }
-    Ok(true)
+
+    pub(crate) fn insert_directory(&mut self, rel_path: String) {
+        self.entries.insert(rel_path, TreeEntryKind::Directory);
+    }
+
+    pub(crate) fn insert_file_hash(&mut self, rel_path: String, hash: String) {
+        let mut parent = Path::new(&rel_path).parent();
+        while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
+            let normalized = path
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            self.entries
+                .entry(normalized)
+                .or_insert(TreeEntryKind::Directory);
+            parent = path.parent();
+        }
+        self.entries.insert(rel_path, TreeEntryKind::File(hash));
+    }
+
+    pub(crate) fn file_hash_manifest_entries(&self) -> Vec<(String, String)> {
+        self.entries
+            .iter()
+            .filter_map(|(path, kind)| match kind {
+                TreeEntryKind::Directory => None,
+                TreeEntryKind::File(hash) => Some((path.clone(), hash.clone())),
+            })
+            .collect()
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TreeEntryKind {
     Directory,
-    File,
+    File(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct TreeEntry {
-    rel_path: String,
-    kind: TreeEntryKind,
+pub(crate) fn directory_tree_matches_snapshot(
+    path: &Path,
+    expected: &DirectoryTreeSnapshot,
+) -> Result<bool, MarsError> {
+    Ok(strict_directory_tree_snapshot(path)?.as_ref() == Some(expected))
 }
 
-/// Outcome of walking a directory tree for equality comparison.
-enum TreeCollectOutcome {
-    /// Symlink or other non-regular entry — trees must be considered unequal.
-    Reject,
-    Entries(Vec<TreeEntry>),
+fn strict_directory_tree_snapshot(root: &Path) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
+    let metadata = match fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(None),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Ok(None);
+    }
+    let mut snapshot = DirectoryTreeSnapshot::new();
+    if collect_relative_tree_entries(root, root, &mut snapshot)? {
+        Ok(Some(snapshot))
+    } else {
+        Ok(None)
+    }
 }
 
 fn collect_relative_tree_entries(
     root: &Path,
     current: &Path,
-) -> Result<TreeCollectOutcome, MarsError> {
-    let mut entries = Vec::new();
+    snapshot: &mut DirectoryTreeSnapshot,
+) -> Result<bool, MarsError> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -246,28 +277,20 @@ fn collect_relative_tree_entries(
             .join("/");
 
         if file_type.is_symlink() {
-            return Ok(TreeCollectOutcome::Reject);
+            return Ok(false);
         }
         if file_type.is_dir() {
-            entries.push(TreeEntry {
-                rel_path: rel_path.clone(),
-                kind: TreeEntryKind::Directory,
-            });
-            match collect_relative_tree_entries(root, &path)? {
-                TreeCollectOutcome::Reject => return Ok(TreeCollectOutcome::Reject),
-                TreeCollectOutcome::Entries(mut nested) => entries.append(&mut nested),
+            snapshot.insert_directory(rel_path);
+            if !collect_relative_tree_entries(root, &path, snapshot)? {
+                return Ok(false);
             }
         } else if file_type.is_file() {
-            entries.push(TreeEntry {
-                rel_path,
-                kind: TreeEntryKind::File,
-            });
+            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
         } else {
-            return Ok(TreeCollectOutcome::Reject);
+            return Ok(false);
         }
     }
-    entries.sort();
-    Ok(TreeCollectOutcome::Entries(entries))
+    Ok(true)
 }
 
 /// Recursively copy a directory, following symlinks on the source side.

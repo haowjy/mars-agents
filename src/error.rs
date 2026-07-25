@@ -300,8 +300,6 @@ impl From<std::io::Error> for MarsError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, MarsError>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,10 +43,6 @@ impl LossinessMode {
     pub fn surfaces_lossiness(self) -> bool {
         matches!(self, LossinessMode::Surface | LossinessMode::Verbose)
     }
-
-    pub fn shows_meridian_only_detail(self) -> bool {
-        matches!(self, LossinessMode::Verbose)
-    }
 }
 
 /// One launch-time field omitted from a native artifact but enforced by Meridian at spawn.
@@ -108,14 +104,6 @@ impl DiagnosticCollector {
             target: target.to_string(),
             field: field.to_string(),
         });
-    }
-
-    pub fn lossiness_mode(&self) -> LossinessMode {
-        self.lossiness_mode
-    }
-
-    pub fn set_lossiness_mode(&mut self, lossiness_mode: LossinessMode) {
-        self.lossiness_mode = lossiness_mode;
     }
 
     fn should_emit_lossiness(&self) -> bool {
@@ -285,17 +273,6 @@ impl DiagnosticCollector {
         }
         self.meridian_only_records.clear();
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.diagnostics.is_empty()
-    }
-
-    /// Returns true if any Error-level diagnostic has been collected.
-    pub fn has_errors(&self) -> bool {
-        self.diagnostics
-            .iter()
-            .any(|d| d.level == DiagnosticLevel::Error)
-    }
 }
 
 impl Default for DiagnosticCollector {
@@ -439,16 +416,6 @@ mod tests {
     fn unparseable_requirement_produces_warning() {
         let diag = compatibility_preflight("1.0.0", Some("latest")).unwrap();
         assert_eq!(diag.level, DiagnosticLevel::Warning);
-    }
-
-    #[test]
-    fn collector_has_errors_detects_error_level() {
-        let mut coll = DiagnosticCollector::new();
-        assert!(!coll.has_errors());
-        coll.warn("w", "a warning");
-        assert!(!coll.has_errors());
-        coll.error("e", "an error");
-        assert!(coll.has_errors());
     }
 
     #[test]

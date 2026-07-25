@@ -212,25 +212,6 @@ impl TargetMcpEntry {
     }
 }
 
-/// Lower all MCP items for a specific target root.
-///
-/// Filters to items that apply to the given target (empty target list = all targets).
-#[cfg(test)]
-pub fn lower_for_target<'a>(items: &'a [ParsedMcpItem], target_root: &str) -> Vec<TargetMcpEntry> {
-    let mut applicable: Vec<(usize, &'a ParsedMcpItem)> = items
-        .iter()
-        .enumerate()
-        .filter(|item| {
-            item.1.def.targets.is_empty() || item.1.def.targets.iter().any(|t| t == target_root)
-        })
-        .collect();
-    applicable.sort_by_key(|(original_index, item)| (item.decl_order, *original_index));
-    applicable
-        .into_iter()
-        .map(|(_, item)| TargetMcpEntry::from_parsed(item))
-        .collect()
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -353,26 +334,6 @@ KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
         let mut diag = DiagnosticCollector::new();
         let result = check_env_refs(&items, true, &mut diag);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn lower_for_target_filters_by_target() {
-        let tmp = TempDir::new().unwrap();
-        make_mcp_toml_dir(
-            tmp.path(),
-            "claude-only",
-            "command = \"npx\"\ntargets = [\".claude\"]",
-        );
-        make_mcp_toml_dir(tmp.path(), "all-targets", "command = \"node\"");
-
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
-
-        let claude_entries = lower_for_target(&items, ".claude");
-        assert_eq!(claude_entries.len(), 2);
-
-        let codex_entries = lower_for_target(&items, ".codex");
-        assert_eq!(codex_entries.len(), 1);
-        assert_eq!(codex_entries[0].name, "all-targets");
     }
 
     #[test]

@@ -120,6 +120,64 @@ fn two_sources_no_deps() {
 }
 
 #[test]
+fn transitive_override_does_not_collapse_conflicting_declared_identities() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let replacement = dir.path().join("replacement");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(&tree_b).unwrap();
+    std::fs::create_dir_all(&replacement).unwrap();
+
+    let manifest_with_shared = |name: &str, relative_path: &str| Manifest {
+        package: PackageInfo {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+        },
+        dependencies: IndexMap::from([(
+            "shared".to_string(),
+            ManifestDep {
+                url: None,
+                path: Some(relative_path.into()),
+                subpath: None,
+                version: None,
+                filter: crate::config::FilterConfig::default(),
+            },
+        )]),
+        models: IndexMap::new(),
+    };
+
+    let mut provider = MockProvider::new();
+    provider.add_source(
+        "a",
+        tree_a.clone(),
+        Some(manifest_with_shared("a", "../shared-a")),
+    );
+    provider.add_source(
+        "b",
+        tree_b.clone(),
+        Some(manifest_with_shared("b", "../shared-b")),
+    );
+    provider.add_source("shared", replacement.clone(), None);
+
+    let config = make_config(vec![
+        ("a", SourceSpec::Path(tree_a)),
+        ("b", SourceSpec::Path(tree_b)),
+    ]);
+    let options = default_options()
+        .with_source_overrides(IndexMap::from([(SourceName::from("shared"), replacement)]));
+
+    let error = resolve(&config, &provider, None, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("conflicting identities") && error.contains("shared"),
+        "override must not erase conflicting declared provenance: {error}"
+    );
+}
+
+#[test]
 fn source_with_transitive_dep() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");

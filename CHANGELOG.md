@@ -43,6 +43,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that remain; normal sync, including `sync --force`, continues to reject them.
 - Apply local overrides to transitive dependencies, allowing a broken
   transitive package to be replaced without first declaring it directly.
+- Reject conflicting same-name transitive source declarations even when a
+  project override supplies one effective replacement path.
 - Preserve installed-content authority for matching skill and hook directories
   when promoting version 2 locks.
 - Reject version 2 directory outputs containing symlinks or special entries

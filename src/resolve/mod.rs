@@ -214,6 +214,7 @@ pub fn resolve(
             };
             reqs.push(PendingSource {
                 name: name.clone(),
+                declared_source_id: source.id.clone(),
                 source_id: source.id.clone(),
                 spec: source.spec.clone(),
                 subpath: source.subpath.clone(),

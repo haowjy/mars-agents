@@ -36,7 +36,9 @@ Convergence is guaranteed — versions only move upward toward the lock-preferre
 All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
-name to both direct and manifest-discovered transitive dependencies. Recovery
+name to both direct and manifest-discovered transitive dependencies. Declared
+source identity remains separate from the effective override identity, so an
+override cannot collapse conflicting same-name declarations. Recovery
 commands can also mark a removed-schema package hook surface as frozen while
 omitting it from the derived staged tree. `ResolvedGraph.frozen_hook_sources`
 carries that state to every persistence lane; normal sync leaves the surface in

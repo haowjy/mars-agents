@@ -23,6 +23,9 @@ use super::version::resolve_single_source;
 #[derive(Debug, Clone)]
 pub(crate) struct PendingSource {
     pub(crate) name: SourceName,
+    /// Identity declared by the requesting manifest, before any local override.
+    pub(crate) declared_source_id: SourceId,
+    /// Effective identity fetched for this run (possibly a local override).
     pub(crate) source_id: SourceId,
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
@@ -43,6 +46,7 @@ pub(crate) enum PackageResolutionState {
 #[derive(Debug, Clone)]
 pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
+    pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
     pub(crate) constraint: VersionConstraint,
     pub(crate) is_local: bool,
@@ -96,12 +100,12 @@ pub(crate) fn resolve_package_bottom_up(
     }
 
     if let Some(existing_package) = ctx.registry().get(&pending_src.name)
-        && existing_package.node.source_id != pending_src.source_id
+        && existing_package.declared_source_id != pending_src.declared_source_id
     {
         return Err(ResolutionError::SourceIdentityMismatch {
             name: pending_src.name.to_string(),
-            existing: existing_package.node.source_id.to_string(),
-            incoming: pending_src.source_id.to_string(),
+            existing: existing_package.declared_source_id.to_string(),
+            incoming: pending_src.declared_source_id.to_string(),
         }
         .into());
     }
@@ -295,6 +299,7 @@ pub(crate) fn resolve_package_bottom_up(
                 manifest,
                 deps,
             },
+            declared_source_id: pending_src.declared_source_id.clone(),
             items,
             constraint: pending_src.constraint.clone(),
             is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
@@ -490,50 +495,51 @@ pub(crate) fn collect_manifest_requests(
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
 
+        let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
+            (Some(url), None) => (
+                SourceSpec::Git(GitSpec {
+                    url: url.clone(),
+                    version: dep_spec.version.clone(),
+                }),
+                parse_version_constraint(dep_spec.version.as_deref()),
+            ),
+            (None, Some(path)) => {
+                let resolved_path = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    package_root.join(path)
+                };
+                (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
+            }
+            (Some(_), Some(_)) => {
+                return Err(ConfigError::Invalid {
+                    message: format!("source `{dep_name}` has both `url` and `path` — pick one"),
+                }
+                .into());
+            }
+            (None, None) => {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "source `{dep_name}` has neither `url` nor `path` — one is required"
+                    ),
+                }
+                .into());
+            }
+        };
+        let declared_source_id =
+            source_id_for_pending_spec(package_root, &declared_spec, dep_subpath.clone());
         let (dep_spec_resolved, dep_constraint) =
             if let Some(path) = options.source_overrides.get(&dep_name_typed) {
                 (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
             } else {
-                match (&dep_spec.url, &dep_spec.path) {
-                    (Some(url), None) => (
-                        SourceSpec::Git(GitSpec {
-                            url: url.clone(),
-                            version: dep_spec.version.clone(),
-                        }),
-                        parse_version_constraint(dep_spec.version.as_deref()),
-                    ),
-                    (None, Some(path)) => {
-                        let resolved_path = if path.is_absolute() {
-                            path.clone()
-                        } else {
-                            package_root.join(path)
-                        };
-                        (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
-                    }
-                    (Some(_), Some(_)) => {
-                        return Err(ConfigError::Invalid {
-                            message: format!(
-                                "source `{dep_name}` has both `url` and `path` — pick one"
-                            ),
-                        }
-                        .into());
-                    }
-                    (None, None) => {
-                        return Err(ConfigError::Invalid {
-                            message: format!(
-                                "source `{dep_name}` has neither `url` nor `path` — one is required"
-                            ),
-                        }
-                        .into());
-                    }
-                }
+                (declared_spec, declared_constraint)
             };
-
-        let dep_source_id =
+        let effective_source_id =
             source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
         requests.push(PendingSource {
             name: dep_name_typed,
-            source_id: dep_source_id,
+            declared_source_id,
+            source_id: effective_source_id,
             spec: dep_spec_resolved,
             subpath: dep_subpath,
             constraint: dep_constraint,

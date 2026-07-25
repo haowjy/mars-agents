@@ -46,12 +46,20 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
             manifest: None,
             deps: Vec::new(),
         },
+        declared_source_id: SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/dep.git"),
+            None,
+        ),
         items: package_items,
         constraint: VersionConstraint::Latest,
         is_local: false,
     };
     let pending = PendingSource {
         name: "dep".into(),
+        declared_source_id: SourceId::git_with_subpath(
+            SourceUrl::from("https://example.com/dep.git"),
+            None,
+        ),
         source_id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/dep.git"), None),
         spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
         subpath: None,

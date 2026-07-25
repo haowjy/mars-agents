@@ -59,14 +59,34 @@ pub(crate) fn preflight_hooks(
             }
         }
     }
-    let mut mcp_items = crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0)?;
+    let mut mcp_items =
+        match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0) {
+            Ok(items) => items,
+            Err(error) => {
+                diag.warn(
+                    "mcp-discover",
+                    format!("failed to scan local MCP items: {error}"),
+                );
+                Vec::new()
+            }
+        };
     for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
-        if let Some(node) = resolved.graph.nodes.get(source_name) {
-            mcp_items.extend(crate::compiler::mcp::discover_mcp_items(
-                &node.rooted_ref.package_root,
-                source_name.as_str(),
-                decl_order,
-            )?);
+        let Some(node) = resolved.graph.nodes.get(source_name) else {
+            continue;
+        };
+        if !source_may_emit_mcp(&resolved.graph, source_name) {
+            continue;
+        }
+        match crate::compiler::mcp::discover_mcp_items(
+            &node.rooted_ref.package_root,
+            source_name.as_str(),
+            decl_order,
+        ) {
+            Ok(items) => mcp_items.extend(items),
+            Err(error) => diag.warn(
+                "mcp-discover",
+                format!("failed to scan MCP items in `{source_name}`: {error}"),
+            ),
         }
     }
     for item in mcp_items {
@@ -169,22 +189,12 @@ pub(crate) fn preflight_hooks(
                     .old_lock
                     .contains_output(target_name, &format!("hooks/{}", item.def.name))
             {
-                let disk_matches =
-                    crate::hash::compute_hash(&installed, crate::lock::ItemKind::Hook)
-                        .ok()
-                        .zip(
-                            crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook)
-                                .ok(),
-                        )
-                        .is_some_and(|(disk, source)| disk == source);
-                if !disk_matches {
-                    errors.push(format!(
-                        "unmanaged target hook directory `{}` blocks hook `{}`",
-                        installed.display(),
-                        item.def.name
-                    ));
-                    continue;
-                }
+                errors.push(format!(
+                    "unmanaged target hook directory `{}` blocks hook `{}`",
+                    installed.display(),
+                    item.def.name
+                ));
+                continue;
             }
             let result = match mode {
                 Some(HookFragmentMode::MergeJson) => {
@@ -342,13 +352,15 @@ pub(crate) fn compile_config_entries(
             .copied()
             .unwrap_or(effective.dependencies.len() + graph.order.len() + 1);
 
-        match discover_mcp_items(package_root, source_name.as_str(), decl_order) {
-            Ok(items) => all_mcp.extend(items),
-            Err(e) => {
-                diag.warn(
-                    "mcp-discover",
-                    format!("failed to scan MCP items in `{source_name}`: {e}"),
-                );
+        if source_may_emit_mcp(graph, source_name) {
+            match discover_mcp_items(package_root, source_name.as_str(), decl_order) {
+                Ok(items) => all_mcp.extend(items),
+                Err(e) => {
+                    diag.warn(
+                        "mcp-discover",
+                        format!("failed to scan MCP items in `{source_name}`: {e}"),
+                    );
+                }
             }
         }
 
@@ -784,6 +796,16 @@ pub(crate) fn compile_config_entries(
     }
 
     current_records
+}
+
+fn source_may_emit_mcp(graph: &crate::resolve::ResolvedGraph, source_name: &SourceName) -> bool {
+    use crate::config::FilterMode;
+
+    graph.filters.get(source_name).is_none_or(|filters| {
+        filters
+            .iter()
+            .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
+    })
 }
 
 fn hook_directory_is_installed(

@@ -105,6 +105,101 @@ fn hook_identity_and_materialization_are_scoped_per_target() {
 }
 
 #[test]
+fn same_name_hooks_keep_target_scoped_ownership_when_removed_independently() {
+    let dir = TempDir::new().unwrap();
+    let claude_source = dir.child("claude-source");
+    let codex_source = dir.child("codex-source");
+    claude_source.create_dir_all().unwrap();
+    codex_source.create_dir_all().unwrap();
+    write_dependency_hook(
+        &claude_source,
+        "audit",
+        ".claude",
+        "SessionStart",
+        "printf claude",
+    );
+    write_dependency_hook(
+        &codex_source,
+        "audit",
+        ".codex",
+        "SessionStart",
+        "printf codex",
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    let config = project.child("mars.toml");
+    let write_config = |claude: bool, codex: bool| {
+        let mut raw = String::from("[settings]\ntargets = [\".claude\", \".codex\"]\n");
+        if claude || codex {
+            raw.push_str("[dependencies]\n");
+        }
+        if claude {
+            raw.push_str(&format!(
+                "claude-source = {{ path = \"{}\" }}\n",
+                claude_source.path().display()
+            ));
+        }
+        if codex {
+            raw.push_str(&format!(
+                "codex-source = {{ path = \"{}\" }}\n",
+                codex_source.path().display()
+            ));
+        }
+        config.write_str(&raw).unwrap();
+    };
+
+    write_config(true, true);
+    sync(&project).success();
+    assert_hook_target_owner(&project, "hooks/claude/audit", ".claude");
+    assert_hook_target_owner(&project, "hooks/codex/audit", ".codex");
+
+    write_config(false, true);
+    sync(&project).success();
+    project
+        .child(".claude/hooks/audit")
+        .assert(predicate::path::missing());
+    project
+        .child(".codex/hooks/audit/run.sh")
+        .assert("#!/bin/sh\n");
+    assert_hook_target_owner(&project, "hooks/codex/audit", ".codex");
+
+    write_config(false, false);
+    sync(&project).success();
+    project
+        .child(".codex/hooks/audit")
+        .assert(predicate::path::missing());
+}
+
+fn assert_hook_target_owner(
+    project: &assert_fs::fixture::ChildPath,
+    canonical_path: &str,
+    target_root: &str,
+) {
+    let lock: Value =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    let owner = lock["items"]
+        .as_table()
+        .unwrap()
+        .values()
+        .find(|item| {
+            item["outputs"].as_array().is_some_and(|outputs| {
+                outputs.iter().any(|output| {
+                    output["target_root"].as_str() == Some(".mars")
+                        && output["dest_path"].as_str() == Some(canonical_path)
+                })
+            })
+        })
+        .expect("canonical hook owner missing");
+    assert!(
+        owner["outputs"].as_array().unwrap().iter().any(|output| {
+            output["target_root"].as_str() == Some(target_root)
+                && output["dest_path"].as_str() == Some("hooks/audit")
+        }),
+        "{target_root} output was attached to the wrong scoped hook owner"
+    );
+}
+
+#[test]
 fn unmanaged_target_hook_directory_fails_before_emission_or_canonical_mutation() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
@@ -182,7 +277,7 @@ fn blocking_hook_parent_fails_preflight_without_partial_state() {
 }
 
 #[test]
-fn identical_unmanaged_hook_is_adopted_and_later_removed() {
+fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -209,17 +304,68 @@ fn identical_unmanaged_hook_is_adopted_and_later_removed() {
         .write_str(r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#)
         .unwrap();
 
-    sync(&project).success();
-    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-    assert!(lock.contains("target_root = \".claude\""));
-    assert!(lock.contains("dest_path = \"hooks/audit\""));
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("unmanaged"))
+        .stderr(predicate::str::contains(".claude/hooks/audit"));
+    installed.child("run.sh").assert("#!/bin/sh\n");
     project
         .child(".claude/settings.local.json")
-        .assert(predicate::str::contains("SessionStart"));
+        .assert(predicate::path::missing());
 
     fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
     sync(&project).success();
-    installed.assert(predicate::path::missing());
+    installed.child("run.sh").assert("#!/bin/sh\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_managed_hook_recovers_after_transient_copy_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"old"}]}]}"#,
+    );
+    project
+        .child("hooks/audit/run.sh")
+        .write_str("#!/bin/sh\nprintf old\n")
+        .unwrap();
+    sync(&project).success();
+
+    project
+        .child("hooks/audit/run.sh")
+        .write_str("#!/bin/sh\nprintf new\n")
+        .unwrap();
+    let hooks_dir = project.child(".claude/hooks");
+    let original_permissions = fs::metadata(hooks_dir.path()).unwrap().permissions();
+    fs::set_permissions(hooks_dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = sync(&project);
+    fs::set_permissions(hooks_dir.path(), original_permissions).unwrap();
+    failed
+        .success()
+        .stderr(predicate::str::contains("failed to copy"));
+    project
+        .child(".claude/hooks/audit/run.sh")
+        .assert("#!/bin/sh\nprintf old\n");
+
+    sync(&project).success();
+    project
+        .child(".claude/hooks/audit/run.sh")
+        .assert("#!/bin/sh\nprintf new\n");
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::str::contains("SessionStart"));
 }
 
 #[test]
@@ -270,11 +416,14 @@ fn skill_only_sync_ignores_unrelated_malformed_config() {
         &[("demo", "---\nname: demo\ndescription: demo\n---\n")],
     );
     let project = dir.child("project");
+    let malformed_mcp = source.join("mcp").join("broken");
+    fs::create_dir_all(&malformed_mcp).unwrap();
+    fs::write(malformed_mcp.join("mcp.toml"), "this is not = valid = toml").unwrap();
     project.create_dir_all().unwrap();
     project
         .child("mars.toml")
         .write_str(&format!(
-            "[settings]\ntargets = [\".claude\"]\n[dependencies]\nsource = {{ path = \"{}\" }}\n",
+            "[settings]\ntargets = [\".claude\"]\n[dependencies]\nsource = {{ path = \"{}\", only_skills = true }}\n",
             source.display()
         ))
         .unwrap();

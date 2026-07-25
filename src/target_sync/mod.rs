@@ -203,17 +203,22 @@ fn sync_one_target(
                         == crate::lock::ItemKind::Skill
                         && native_skill_variant_key.is_some();
                     let dest_exists = surface_ownership::target_dest_exists(&dest);
-                    let wants_copy = force || !dest_exists || should_refresh_native_skill;
-                    if wants_copy {
-                        if should_copy_to_target(
-                            &source,
+                    let managed_dest_is_current_or_stale = dest_exists
+                        && old_lock.contains_output(target_name, dest_rel)
+                        && disk_matches_recorded_or_desired(
                             &dest,
                             outcome.item_id.kind,
                             target_name,
                             dest_rel,
-                            ctx,
-                            diag,
-                        ) {
+                            old_lock,
+                            outcome.installed_checksum.as_ref(),
+                        );
+                    let wants_copy = force
+                        || !dest_exists
+                        || should_refresh_native_skill
+                        || managed_dest_is_current_or_stale;
+                    if wants_copy {
+                        if should_copy_to_target(&dest, target_name, dest_rel, ctx, diag) {
                             let previous_target_hash = if should_refresh_native_skill && dest_exists
                             {
                                 crate::hash::compute_hash(&dest, outcome.item_id.kind).ok()
@@ -300,15 +305,7 @@ fn sync_one_target(
                 let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
                 if (source.exists() || source.symlink_metadata().is_ok())
-                    && should_copy_to_target(
-                        &source,
-                        &dest,
-                        outcome.item_id.kind,
-                        target_name,
-                        dest_rel,
-                        ctx,
-                        diag,
-                    )
+                    && should_copy_to_target(&dest, target_name, dest_rel, ctx, diag)
                 {
                     match copy_item_to_target(
                         &source,
@@ -370,9 +367,7 @@ fn sync_one_target(
 }
 
 fn should_copy_to_target(
-    source: &Path,
     dest: &Path,
-    kind: crate::lock::ItemKind,
     target_name: &str,
     dest_rel: &str,
     ctx: &TargetSyncContext<'_>,
@@ -398,13 +393,6 @@ fn should_copy_to_target(
             true
         }
         SurfaceCopyDecision::SkipUnmanagedCollision => {
-            let desired_is_in_place = crate::hash::compute_hash(source, kind)
-                .ok()
-                .zip(crate::hash::compute_hash(dest, kind).ok())
-                .is_some_and(|(source, dest)| source == dest);
-            if desired_is_in_place {
-                return true;
-            }
             surface_ownership::warn_unmanaged_collision(
                 target_name,
                 dest_rel,
@@ -414,6 +402,29 @@ fn should_copy_to_target(
             false
         }
     }
+}
+
+fn disk_matches_recorded_or_desired(
+    dest: &Path,
+    kind: crate::lock::ItemKind,
+    target_name: &str,
+    dest_rel: &str,
+    old_lock: &LockFile,
+    desired_checksum: Option<&ContentHash>,
+) -> bool {
+    let Ok(actual) = crate::hash::compute_hash(dest, kind).map(ContentHash::from) else {
+        return false;
+    };
+    if desired_checksum.is_some_and(|desired| desired == &actual) {
+        return true;
+    }
+    old_lock.items.values().any(|item| {
+        item.outputs.iter().any(|recorded| {
+            recorded.target_root == target_name
+                && crate::target::dest_paths_equivalent(recorded.dest_path.as_str(), dest_rel)
+                && recorded.installed_checksum == actual
+        })
+    })
 }
 
 fn remove_target_path_if_managed(

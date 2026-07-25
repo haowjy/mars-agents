@@ -1072,17 +1072,19 @@ fn upsert_target_output(
         )
     });
     for item in lock.items.values_mut() {
-        let owns_output = item.outputs.iter().any(|output| {
-            crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
-                || (item.kind == ItemKind::Hook
-                    && scoped_hook_owner.as_deref().is_some_and(|owner| {
-                        output.target_root == CANONICAL_TARGET_ROOT
-                            && crate::target::dest_paths_equivalent(
-                                output.dest_path.as_str(),
-                                owner,
-                            )
-                    }))
-        });
+        let owns_output = if item.kind == ItemKind::Hook {
+            item.outputs.iter().any(|output| {
+                scoped_hook_owner.as_deref().is_some_and(|owner| {
+                    output.target_root == CANONICAL_TARGET_ROOT
+                        && crate::target::dest_paths_equivalent(output.dest_path.as_str(), owner)
+                })
+            })
+        } else {
+            item.outputs.iter().any(|output| {
+                (output.target_root == target_root || output.target_root == CANONICAL_TARGET_ROOT)
+                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path)
+            })
+        };
         if !owns_output {
             continue;
         }

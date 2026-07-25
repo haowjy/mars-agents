@@ -132,4 +132,3 @@ compatibility while making the read model match the schema model.
 - Use the configured target name when checking a linked/native target.
 - Use `canonical_flat_items()` for `.mars`-only orphan scans.
 - Use `flat_items_for_target(target_root)` for target-scoped listing.
-- Use `flat_items()` only when the caller deliberately wants every output.

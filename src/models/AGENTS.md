@@ -21,11 +21,9 @@ auto_resolve() ← AutoResolve spec          harness detection
 
 consumer > deps (declaration order, first-dep wins) > builtins
 
-Builtins exist for bare convenience (opus, sonnet, haiku, codex, gpt, gemini) — packages layer descriptions on top.
-
-### No Builtins Invariant
-
-The mars binary ships zero hardcoded model aliases. All aliases come from packages (via `[models]` in their `mars.toml`) or consumer config. Builtins are a minimal fallback layer for out-of-box usability.
+Builtins exist for bare convenience (opus, sonnet, haiku, codex, gpt, gemini).
+They are used only when both dependency and consumer alias sets are empty;
+any configured alias set suppresses the builtin set rather than layering over it.
 
 ## Catalog Lifecycle
 

@@ -203,6 +203,7 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
         write_old_staging_fixture(&project);
 
         let assertion = mars()
+            .env_remove("MERIDIAN_MANAGED")
             .args(args)
             .args(["--root", project.path().to_str().unwrap()])
             .assert();
@@ -308,6 +309,7 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
     write_old_staging_fixture(&project);
 
     mars()
+        .env_remove("MERIDIAN_MANAGED")
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .failure()

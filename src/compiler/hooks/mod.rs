@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
+use crate::types::managed_cmd;
 
 pub(crate) const REMOVED_HOOK_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); \
      migrate to per-target native fragment files with `fragment = \"<target>.json\"`";
@@ -209,7 +210,9 @@ fn contextualize_dependency_error(
     ConfigError::Invalid {
         message: format!(
             "source package `{source_name}` version `{version}` {message}; \
-             suggested: `mars upgrade {source_name} --bump` or `mars remove {source_name}`"
+             suggested: `{cmd_upgrade}` or `{cmd_remove}`",
+            cmd_upgrade = managed_cmd(&format!("mars upgrade {source_name} --bump")),
+            cmd_remove = managed_cmd(&format!("mars remove {source_name}")),
         ),
     }
     .into()

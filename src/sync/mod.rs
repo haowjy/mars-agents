@@ -250,43 +250,45 @@ fn build_recovery_halt(
                             "removed direct dependency `{name}`, but `{source_name}` is still required by {} and remains legacy; override it",
                             parents.join(", ")
                         ),
-                        format!("mars override {source_name} --path <path>"),
+                        managed_cmd(&format!("mars override {source_name} --path <path>")).into_owned(),
                     )
                 }
-                None if matches!(
-                    request.resolution,
-                    ResolutionMode::Maximize { bump: false, .. }
-                ) =>
-                {
-                    (
-                        format!(
-                            "newest compatible `{source_name}@{version}` still uses the removed hook schema; try --bump to escape the version constraint, or override/remove"
-                        ),
-                        format!("mars upgrade {source_name} --bump"),
-                    )
+                None if matches!(request.resolution, ResolutionMode::Maximize { .. }) => {
+                    let bump = matches!(
+                        request.resolution,
+                        ResolutionMode::Maximize { bump: true, .. }
+                    );
+                    if bump {
+                        (
+                            format!(
+                                "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
+                            ),
+                            format!(
+                                "{cmd_override} --path <path> or {cmd_remove}",
+                                cmd_override = managed_cmd(&format!("mars override {source_name}")),
+                                cmd_remove = managed_cmd(&format!("mars remove {source_name}")),
+                            ),
+                        )
+                    } else {
+                        (
+                            format!(
+                                "newest compatible `{source_name}@{version}` still uses the removed hook schema; try --bump to escape the version constraint, or override/remove"
+                            ),
+                            managed_cmd(&format!("mars upgrade {source_name} --bump")).into_owned(),
+                        )
+                    }
                 }
-                None if matches!(
-                    request.resolution,
-                    ResolutionMode::Maximize { bump: true, .. }
-                ) => (
-                    format!(
-                        "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
-                    ),
-                    format!(
-                        "mars override {source_name} --path <path> or mars remove {source_name}"
-                    ),
-                ),
                 None if request.options.force => (
                     format!(
                         "cannot repair while `{source_name}@{version}` uses the removed hook schema; upgrade, override, or remove it"
                     ),
-                    format!("mars upgrade {source_name}"),
+                    managed_cmd(&format!("mars upgrade {source_name}")).into_owned(),
                 ),
                 _ => (
                     format!(
                         "`{source_name}@{version}` still uses the removed hook schema; upgrade, override, or remove it"
                     ),
-                    format!("mars upgrade {source_name}"),
+                    managed_cmd(&format!("mars upgrade {source_name}")).into_owned(),
                 ),
             };
             RecoveryBlocker {

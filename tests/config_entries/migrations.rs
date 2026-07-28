@@ -176,16 +176,34 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
     let legacy = write_legacy_hook_source(&dir, "base");
     let migrated = write_migrated_hook_source(&dir, "base-migrated");
 
-    for (name, args, converges) in [
-        ("upgrade", vec!["upgrade"], false),
-        ("repair", vec!["repair"], false),
+    // (label, cli args, converges, halt_guidance_fragment, halt_command_fragment)
+    let cases: Vec<(_, Vec<&str>, _, Option<&str>, Option<&str>)> = vec![
+        (
+            "upgrade",
+            vec!["upgrade"],
+            false,
+            Some("newest compatible"),
+            Some("mars upgrade base --bump"),
+        ),
+        (
+            "upgrade-bump",
+            vec!["upgrade", "--bump"],
+            false,
+            Some("newest available"),
+            Some("mars override base --path <path> or mars remove base"),
+        ),
+        ("repair", vec!["repair"], false, None, None),
         (
             "override",
             vec!["override", "base", "--path", migrated.to_str().unwrap()],
             true,
+            None,
+            None,
         ),
-        ("remove", vec!["remove", "base"], true),
-    ] {
+        ("remove", vec!["remove", "base"], true, None, None),
+    ];
+
+    for (name, args, converges, halt_guidance, halt_command) in cases {
         let project = dir.child(format!("project-{name}"));
         project.create_dir_all().unwrap();
         project
@@ -202,6 +220,7 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
         write_old_staging_fixture(&project);
 
         let assertion = mars()
+            .env_remove("MERIDIAN_MANAGED")
             .args(args)
             .args(["--root", project.path().to_str().unwrap()])
             .assert();
@@ -210,13 +229,20 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
             let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
             assert!(lock.contains("version = 3"));
         } else {
-            assertion
+            let mut assertion = assertion
                 .code(2)
                 .stderr(predicate::str::contains(
                     "recovery halted before materialization",
                 ))
                 .stderr(predicate::str::contains("base@0.8.9"))
                 .stderr(predicate::str::contains("then run"));
+            if let Some(guidance) = halt_guidance {
+                assertion = assertion.stderr(predicate::str::contains(guidance));
+            }
+            if let Some(command) = halt_command {
+                assertion = assertion.stderr(predicate::str::contains(command));
+            }
+            let _ = assertion;
             assert_eq!(
                 fs::read_to_string(project.child("mars.lock").path()).unwrap(),
                 "version = 2\n"
@@ -293,6 +319,7 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
     write_old_staging_fixture(&project);
 
     mars()
+        .env_remove("MERIDIAN_MANAGED")
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .failure()
@@ -300,6 +327,9 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
             "source package `base` version `0.8.9`",
         ))
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
+        .stderr(predicate::str::contains(
+            "suggested: `mars upgrade base --bump` or `mars remove base`",
+        ))
         .stderr(predicate::str::contains(".mars/staging").not());
 }
 

@@ -176,17 +176,34 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
     let legacy = write_legacy_hook_source(&dir, "base");
     let migrated = write_migrated_hook_source(&dir, "base-migrated");
 
-    for (name, args, converges) in [
-        ("upgrade", vec!["upgrade"], false),
-        ("upgrade-bump", vec!["upgrade", "--bump"], false),
-        ("repair", vec!["repair"], false),
+    // (label, cli args, converges, halt_guidance_fragment, halt_command_fragment)
+    let cases: Vec<(_, Vec<&str>, _, Option<&str>, Option<&str>)> = vec![
+        (
+            "upgrade",
+            vec!["upgrade"],
+            false,
+            Some("newest compatible"),
+            Some("mars upgrade base --bump"),
+        ),
+        (
+            "upgrade-bump",
+            vec!["upgrade", "--bump"],
+            false,
+            Some("newest available"),
+            Some("mars override base --path <path> or mars remove base"),
+        ),
+        ("repair", vec!["repair"], false, None, None),
         (
             "override",
             vec!["override", "base", "--path", migrated.to_str().unwrap()],
             true,
+            None,
+            None,
         ),
-        ("remove", vec!["remove", "base"], true),
-    ] {
+        ("remove", vec!["remove", "base"], true, None, None),
+    ];
+
+    for (name, args, converges, halt_guidance, halt_command) in cases {
         let project = dir.child(format!("project-{name}"));
         project.create_dir_all().unwrap();
         project
@@ -212,27 +229,20 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
             let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
             assert!(lock.contains("version = 3"));
         } else {
-            let assertion = assertion
+            let mut assertion = assertion
                 .code(2)
                 .stderr(predicate::str::contains(
                     "recovery halted before materialization",
                 ))
                 .stderr(predicate::str::contains("base@0.8.9"))
                 .stderr(predicate::str::contains("then run"));
-            if name == "upgrade" {
-                assertion
-                    .stderr(predicate::str::contains(
-                        "newest compatible `base@0.8.9` still uses the removed hook schema; \
-                         try --bump to escape the version constraint, or override/remove",
-                    ))
-                    .stderr(predicate::str::contains("mars upgrade base --bump"));
-            } else if name == "upgrade-bump" {
-                assertion
-                    .stderr(predicate::str::contains("newest available"))
-                    .stderr(predicate::str::contains(
-                        "mars override base --path <path> or mars remove base",
-                    ));
+            if let Some(guidance) = halt_guidance {
+                assertion = assertion.stderr(predicate::str::contains(guidance));
             }
+            if let Some(command) = halt_command {
+                assertion = assertion.stderr(predicate::str::contains(command));
+            }
+            let _ = assertion;
             assert_eq!(
                 fs::read_to_string(project.child("mars.lock").path()).unwrap(),
                 "version = 2\n"

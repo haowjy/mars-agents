@@ -241,6 +241,8 @@ fn build_recovery_halt(
                 .filter(|candidate| candidate.deps.contains(source_name))
                 .map(|candidate| candidate.source_name.to_string())
                 .collect();
+            let upgrade_cmd =
+                managed_cmd(&format!("mars upgrade {source_name}")).into_owned();
             let (guidance, suggested_command) = match &request.mutation {
                 Some(ConfigMutation::RemoveDependency { name })
                     if name == source_name && !parents.is_empty() =>
@@ -282,13 +284,13 @@ fn build_recovery_halt(
                     format!(
                         "cannot repair while `{source_name}@{version}` uses the removed hook schema; upgrade, override, or remove it"
                     ),
-                    managed_cmd(&format!("mars upgrade {source_name}")).into_owned(),
+                    upgrade_cmd.clone(),
                 ),
                 _ => (
                     format!(
                         "`{source_name}@{version}` still uses the removed hook schema; upgrade, override, or remove it"
                     ),
-                    managed_cmd(&format!("mars upgrade {source_name}")).into_owned(),
+                    upgrade_cmd,
                 ),
             };
             RecoveryBlocker {

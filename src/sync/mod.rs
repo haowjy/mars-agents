@@ -253,7 +253,22 @@ fn build_recovery_halt(
                         format!("mars override {source_name} --path <path>"),
                     )
                 }
-                None if matches!(request.resolution, ResolutionMode::Maximize { .. }) => (
+                None if matches!(
+                    request.resolution,
+                    ResolutionMode::Maximize { bump: false, .. }
+                ) =>
+                {
+                    (
+                        format!(
+                            "newest compatible `{source_name}@{version}` still uses the removed hook schema; try --bump to escape the version constraint, or override/remove"
+                        ),
+                        format!("mars upgrade {source_name} --bump"),
+                    )
+                }
+                None if matches!(
+                    request.resolution,
+                    ResolutionMode::Maximize { bump: true, .. }
+                ) => (
                     format!(
                         "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
                     ),

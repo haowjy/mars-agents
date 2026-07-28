@@ -207,7 +207,10 @@ fn contextualize_dependency_error(
         })
         .unwrap_or("unknown");
     ConfigError::Invalid {
-        message: format!("source package `{source_name}` version `{version}` {message}"),
+        message: format!(
+            "source package `{source_name}` version `{version}` {message}; \
+             suggested: `mars upgrade {source_name} --bump` or `mars remove {source_name}`"
+        ),
     }
     .into()
 }

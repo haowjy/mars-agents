@@ -178,6 +178,7 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
 
     for (name, args, converges) in [
         ("upgrade", vec!["upgrade"], false),
+        ("upgrade-bump", vec!["upgrade", "--bump"], false),
         ("repair", vec!["repair"], false),
         (
             "override",
@@ -210,13 +211,27 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
             let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
             assert!(lock.contains("version = 3"));
         } else {
-            assertion
+            let assertion = assertion
                 .code(2)
                 .stderr(predicate::str::contains(
                     "recovery halted before materialization",
                 ))
                 .stderr(predicate::str::contains("base@0.8.9"))
                 .stderr(predicate::str::contains("then run"));
+            if name == "upgrade" {
+                assertion
+                    .stderr(predicate::str::contains(
+                        "newest compatible `base@0.8.9` still uses the removed hook schema; \
+                         try --bump to escape the version constraint, or override/remove",
+                    ))
+                    .stderr(predicate::str::contains("mars upgrade base --bump"));
+            } else if name == "upgrade-bump" {
+                assertion
+                    .stderr(predicate::str::contains("newest available"))
+                    .stderr(predicate::str::contains(
+                        "mars override base --path <path> or mars remove base",
+                    ));
+            }
             assert_eq!(
                 fs::read_to_string(project.child("mars.lock").path()).unwrap(),
                 "version = 2\n"
@@ -300,6 +315,9 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
             "source package `base` version `0.8.9`",
         ))
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
+        .stderr(predicate::str::contains(
+            "suggested: `mars upgrade base --bump` or `mars remove base`",
+        ))
         .stderr(predicate::str::contains(".mars/staging").not());
 }
 

@@ -37,6 +37,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Guide consumers to use `upgrade --bump` when removed hook schemas remain
+  behind a package version constraint.
 - Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
   hook source; the lock is now rebuilt in memory and replaced only after a
   complete repair.

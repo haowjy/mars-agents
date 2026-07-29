@@ -41,6 +41,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Reject a malformed `MERIDIAN_VERSION` instead of silently disabling
+  `requires-meridian` enforcement.
 - Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
   hook source; the lock is now rebuilt in memory and replaced only after a
   complete repair.

@@ -86,12 +86,33 @@ fn mars_version(options: &ResolveOptions) -> Version {
     })
 }
 
-fn meridian_version(options: &ResolveOptions) -> Option<Version> {
-    options.meridian_version.clone().or_else(|| {
-        std::env::var("MERIDIAN_VERSION")
-            .ok()
-            .and_then(|raw| Version::parse(&raw).ok())
-    })
+fn parse_meridian_version(
+    raw: Option<std::ffi::OsString>,
+) -> Result<Option<Version>, ResolutionError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let raw = raw
+        .into_string()
+        .map_err(|raw| ResolutionError::InvalidRunningEngineVersion {
+            engine: "meridian".to_string(),
+            version: raw.to_string_lossy().into_owned(),
+            message: "value is not valid Unicode".to_string(),
+        })?;
+    Version::parse(&raw)
+        .map(Some)
+        .map_err(|error| ResolutionError::InvalidRunningEngineVersion {
+            engine: "meridian".to_string(),
+            version: raw,
+            message: error.to_string(),
+        })
+}
+
+fn meridian_version(options: &ResolveOptions) -> Result<Option<Version>, ResolutionError> {
+    if let Some(version) = &options.meridian_version {
+        return Ok(Some(version.clone()));
+    }
+    parse_meridian_version(std::env::var_os("MERIDIAN_VERSION"))
 }
 
 pub(crate) fn check_package_requirements(
@@ -114,7 +135,7 @@ pub(crate) fn check_package_requirements(
             &package.name,
             "meridian",
             package.requires_meridian.as_deref(),
-            meridian_version(options),
+            meridian_version(options)?,
         )?
     {
         failures.push(failure);
@@ -200,6 +221,21 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn absent_meridian_version_is_the_only_silent_skip() {
+        assert_eq!(parse_meridian_version(None).unwrap(), None);
+    }
+
+    #[test]
+    fn malformed_meridian_version_is_an_error() {
+        let error = parse_meridian_version(Some("not-semver".into())).unwrap_err();
+        assert!(matches!(
+            error,
+            ResolutionError::InvalidRunningEngineVersion { engine, version, .. }
+                if engine == "meridian" && version == "not-semver"
+        ));
     }
 
     #[test]

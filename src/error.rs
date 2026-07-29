@@ -62,6 +62,13 @@ pub enum ResolutionError {
         message: String,
     },
 
+    #[error("invalid running {engine} version `{version}`: {message}")]
+    InvalidRunningEngineVersion {
+        engine: String,
+        version: String,
+        message: String,
+    },
+
     #[error("engine requirements are unsatisfiable for `{name}`: {message}")]
     RequiresMarsUnsatisfiable { name: String, message: String },
 

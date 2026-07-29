@@ -32,6 +32,11 @@ and before manifest dependency collection. Semver sources walk down to the
 newest compatible candidate; path, ref-pinned, and untagged sources hard-error
 because they have no alternate candidate.
 
+Resolution-summary diagnostics (e.g. `engine_fallbacks`) are reconciled
+against the final `ResolvedGraph` after the restart loop settles — never
+trust state accumulated during passes, since a restart can change which
+sources and versions appear in the final graph.
+
 ## Staging Seam
 
 `ResolveOptions.staging_root` (resolve/types.rs:304) enables per-dependency canonical source staging.

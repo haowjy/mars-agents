@@ -414,10 +414,6 @@ pub(crate) fn resolve_package_bottom_up(
             engines,
         });
     }
-    diag.update_engine_fallback_selection(
-        pending_src.name.as_ref(),
-        candidate_version_label(&resolved_ref),
-    );
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
     let deps = manifest_requests

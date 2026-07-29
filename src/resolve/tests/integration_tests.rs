@@ -1712,6 +1712,102 @@ fn restart_fresh_context_drops_removed_transitive_dependency_and_lock_entry() {
 }
 
 #[test]
+fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_b = dir.path().join("b");
+    let tree_shared_v1 = dir.path().join("shared-v1");
+    let tree_shared_v2 = dir.path().join("shared-v2");
+    let tree_x_v1 = dir.path().join("x-v1");
+    let tree_x_v2 = dir.path().join("x-v2");
+    for tree in [
+        &tree_a,
+        &tree_b,
+        &tree_shared_v1,
+        &tree_shared_v2,
+        &tree_x_v1,
+        &tree_x_v2,
+    ] {
+        std::fs::create_dir_all(tree).unwrap();
+    }
+
+    // A resolves shared@v1 first; that version depends on X, whose newest version
+    // is engine-incompatible. B then contributes Latest for shared, restarting at
+    // shared@v2, which no longer depends on X.
+    let manifest_a = make_manifest(
+        "a",
+        "1.0.0",
+        vec![(
+            "shared",
+            "https://example.com/shared.git",
+            ">=1.0.0, <3.0.0",
+        )],
+    );
+    let manifest_b = make_manifest(
+        "b",
+        "1.0.0",
+        vec![("shared", "https://example.com/shared.git", "")],
+    );
+    let manifest_shared_v1 = make_manifest(
+        "shared",
+        "1.0.0",
+        vec![("x", "https://example.com/x.git", "")],
+    );
+    let manifest_shared_v2 = make_manifest("shared", "2.0.0", vec![]);
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_versions("https://example.com/x.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("b", tree_b, Some(manifest_b));
+    provider.add_versioned_source("shared", "v1.0.0", tree_shared_v1, Some(manifest_shared_v1));
+    provider.add_versioned_source("shared", "v2.0.0", tree_shared_v2, Some(manifest_shared_v2));
+    provider.add_versioned_source(
+        "x",
+        "v1.0.0",
+        tree_x_v1,
+        Some(make_engine_manifest("x", "1.0.0", None, None)),
+    );
+    provider.add_versioned_source(
+        "x",
+        "v2.0.0",
+        tree_x_v2,
+        Some(make_engine_manifest("x", "2.0.0", Some(">=99"), None)),
+    );
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "shared".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/shared.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: None,
+        },
+    );
+
+    let (result, fallbacks) =
+        resolve_with_report_details(&config, &provider, Some(&lock), &options);
+    let graph = result.unwrap();
+    assert!(!graph.nodes.contains_key("x"));
+    assert!(
+        fallbacks.is_empty(),
+        "fallback report must not retain X from the abandoned resolution pass"
+    );
+}
+
+#[test]
 fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
     let dir = TempDir::new().unwrap();
     let tree_a_v1 = dir.path().join("a-v1");

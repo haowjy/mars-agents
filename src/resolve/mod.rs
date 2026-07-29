@@ -416,6 +416,7 @@ pub fn resolve(
     let graph = ctx.into_graph();
 
     validate_all_constraints(&graph.nodes, &version_constraints)?;
+    diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
 }

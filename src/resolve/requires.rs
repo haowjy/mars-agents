@@ -121,6 +121,7 @@ pub(crate) fn check_package_requirements(
 ) -> Result<Vec<EngineRequirementFailure>, ResolutionError> {
     let mut failures = Vec::new();
     if !options.ignore_requires_mars
+        && package.requires_mars.is_some()
         && let Some(failure) = check_engine_requirement(
             &package.name,
             "mars",
@@ -131,6 +132,7 @@ pub(crate) fn check_package_requirements(
         failures.push(failure);
     }
     if !options.ignore_requires_meridian
+        && package.requires_meridian.is_some()
         && let Some(failure) = check_engine_requirement(
             &package.name,
             "meridian",
@@ -170,6 +172,31 @@ pub(crate) fn check_consumer_package_requirements(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    struct MeridianVersionEnv(Option<std::ffi::OsString>);
+
+    impl MeridianVersionEnv {
+        fn set(value: &str) -> Self {
+            let previous = std::env::var_os("MERIDIAN_VERSION");
+            // SAFETY: tests that mutate MERIDIAN_VERSION are serialized.
+            unsafe { std::env::set_var("MERIDIAN_VERSION", value) };
+            Self(previous)
+        }
+    }
+
+    impl Drop for MeridianVersionEnv {
+        fn drop(&mut self) {
+            // SAFETY: tests that mutate MERIDIAN_VERSION are serialized.
+            unsafe {
+                if let Some(previous) = self.0.take() {
+                    std::env::set_var("MERIDIAN_VERSION", previous);
+                } else {
+                    std::env::remove_var("MERIDIAN_VERSION");
+                }
+            }
+        }
+    }
 
     fn package(requirement: Option<&str>) -> PackageInfo {
         PackageInfo {
@@ -235,6 +262,30 @@ mod tests {
             error,
             ResolutionError::InvalidRunningEngineVersion { engine, version, .. }
                 if engine == "meridian" && version == "not-semver"
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn absent_meridian_requirement_does_not_parse_ambient_version() {
+        let _env = MeridianVersionEnv::set("not-semver");
+        assert!(
+            check_package_requirements(&package(None), &ResolveOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn present_meridian_requirement_rejects_malformed_ambient_version() {
+        let _env = MeridianVersionEnv::set("not-semver");
+        let mut package = package(None);
+        package.requires_meridian = Some(">=1".into());
+        assert!(matches!(
+            check_package_requirements(&package, &ResolveOptions::default()),
+            Err(ResolutionError::InvalidRunningEngineVersion { engine, .. })
+                if engine == "meridian"
         ));
     }
 

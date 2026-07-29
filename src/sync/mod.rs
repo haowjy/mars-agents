@@ -53,6 +53,8 @@ pub struct SyncReport {
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
+    /// Version fallbacks caused by package engine requirements.
+    pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
 }
 
 /// A source package preventing a recovery command from entering the compiler.
@@ -202,6 +204,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             recovery_halt: Some(recovery_halt),
+            engine_fallbacks: diag.take_engine_fallbacks(),
         });
     }
     crate::compiler::compile(ctx, ir, request, &mut diag)
@@ -357,6 +360,23 @@ pub(crate) fn load_config(
         crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
     diag.extend(config_diagnostics);
 
+    if request.options.ignore_requires_mars {
+        diag.warn(
+            "requires-mars-disabled",
+            "`requires-mars` compatibility checks are disabled by --ignore-requires-mars",
+        );
+    }
+    if request.options.ignore_requires_meridian {
+        diag.warn(
+            "requires-meridian-disabled",
+            "`requires-meridian` compatibility checks are disabled by --ignore-requires-meridian",
+        );
+    }
+    if let Some(package) = config.package.as_ref() {
+        let options = to_resolve_options(&request.resolution, &request.options);
+        crate::resolve::check_consumer_package_requirements(package, &options)?;
+    }
+
     // Load existing lock file, routing load diagnostics through sync diagnostics.
     let (old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
         Ok(loaded) => loaded,
@@ -407,7 +427,7 @@ pub(crate) fn resolve_graph(
             (name.clone(), path)
         })
         .collect();
-    let resolve_options = to_resolve_options(&request.resolution, request.options.frozen)
+    let resolve_options = to_resolve_options(&request.resolution, &request.options)
         .with_staging_root(ctx.project_root.join(".mars/staging"))
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
@@ -1083,6 +1103,7 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
         recovery_halt: None,
+        engine_fallbacks: diag.take_engine_fallbacks(),
     })
 }
 
@@ -1198,17 +1219,20 @@ fn validate_targets(
     Ok(())
 }
 
-fn to_resolve_options(mode: &ResolutionMode, frozen: bool) -> ResolveOptions {
-    if frozen {
-        return ResolveOptions::frozen();
-    }
-
-    match mode {
-        ResolutionMode::Normal => ResolveOptions::sync(),
-        ResolutionMode::Maximize { targets, bump } => {
-            ResolveOptions::upgrade(targets.clone(), *bump)
+fn to_resolve_options(mode: &ResolutionMode, options: &SyncOptions) -> ResolveOptions {
+    let mut resolve_options = if options.frozen {
+        ResolveOptions::frozen()
+    } else {
+        match mode {
+            ResolutionMode::Normal => ResolveOptions::sync(),
+            ResolutionMode::Maximize { targets, bump } => {
+                ResolveOptions::upgrade(targets.clone(), *bump)
+            }
         }
-    }
+    };
+    resolve_options.ignore_requires_mars = options.ignore_requires_mars;
+    resolve_options.ignore_requires_meridian = options.ignore_requires_meridian;
+    resolve_options
 }
 
 fn planned_bump_entries(

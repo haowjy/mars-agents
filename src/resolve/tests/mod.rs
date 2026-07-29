@@ -371,10 +371,24 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
             name: name.to_string(),
             version: version.to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies,
         models: indexmap::IndexMap::new(),
     }
+}
+
+fn make_engine_manifest(
+    name: &str,
+    version: &str,
+    requires_mars: Option<&str>,
+    requires_meridian: Option<&str>,
+) -> Manifest {
+    let mut manifest = make_manifest(name, version, vec![]);
+    manifest.package.requires_mars = requires_mars.map(str::to_string);
+    manifest.package.requires_meridian = requires_meridian.map(str::to_string);
+    manifest
 }
 
 fn make_manifest_with_filters(
@@ -400,6 +414,8 @@ fn make_manifest_with_filters(
             name: name.to_string(),
             version: version.to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies,
         models: indexmap::IndexMap::new(),
@@ -431,6 +447,20 @@ fn resolve_with_diagnostics(
     let mut diag = DiagnosticCollector::new();
     let result = super::resolve(config, provider, locked, options, &mut diag);
     (result, diag.drain())
+}
+
+fn resolve_with_report_details(
+    config: &EffectiveConfig,
+    provider: &dyn SourceProvider,
+    locked: Option<&LockFile>,
+    options: &ResolveOptions,
+) -> (
+    Result<ResolvedGraph, MarsError>,
+    Vec<crate::resolve::EngineFallback>,
+) {
+    let mut diag = DiagnosticCollector::new();
+    let result = super::resolve(config, provider, locked, options, &mut diag);
+    (result, diag.take_engine_fallbacks())
 }
 
 fn write_minimal_package_marker(tree: &Path) {

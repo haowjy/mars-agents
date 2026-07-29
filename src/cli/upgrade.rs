@@ -19,6 +19,14 @@ pub struct UpgradeArgs {
     /// Show per-item detail for launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
+
+    /// Ignore package `requires-mars` version constraints.
+    #[arg(long)]
+    pub ignore_requires_mars: bool,
+
+    /// Ignore package `requires-meridian` version constraints.
+    #[arg(long)]
+    pub ignore_requires_meridian: bool,
 }
 
 /// Run `mars upgrade`.
@@ -33,7 +41,11 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             bump: args.bump,
         },
         mutation: None,
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            ignore_requires_mars: args.ignore_requires_mars,
+            ignore_requires_meridian: args.ignore_requires_meridian,
+            ..SyncOptions::default()
+        },
         recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose

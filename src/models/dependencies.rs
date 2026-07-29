@@ -163,6 +163,8 @@ mod tests {
                 name: name.to_string(),
                 version: "1.0.0".to_string(),
                 description: None,
+                requires_mars: None,
+                requires_meridian: None,
             },
             dependencies: IndexMap::new(),
             models,

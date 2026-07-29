@@ -52,6 +52,29 @@ pub enum LockError {
 /// Resolution errors
 #[derive(Debug, thiserror::Error)]
 pub enum ResolutionError {
+    #[error(
+        "invalid {engine} version requirement `{requirement}` in package `{package}`: {message}"
+    )]
+    InvalidEngineRequirement {
+        package: String,
+        engine: String,
+        requirement: String,
+        message: String,
+    },
+
+    #[error("invalid running {engine} version `{version}`: {message}")]
+    InvalidRunningEngineVersion {
+        engine: String,
+        version: String,
+        message: String,
+    },
+
+    #[error("engine requirements are unsatisfiable for `{name}`: {message}")]
+    RequiresMarsUnsatisfiable { name: String, message: String },
+
+    #[error("source `{name}` is incompatible with the running engine: {message}")]
+    RequiresEngineIncompatible { name: String, message: String },
+
     #[error("version conflict for `{name}`: {message}")]
     VersionConflict { name: String, message: String },
 

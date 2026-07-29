@@ -1480,3 +1480,54 @@ fn pipeline_only_agents_no_agents_source() {
     // No agents means nothing gets installed
     assert_eq!(target.items.len(), 0);
 }
+
+#[test]
+fn sync_options_reach_resolver_engine_ignore_knobs() {
+    let options = SyncOptions {
+        ignore_requires_mars: true,
+        ignore_requires_meridian: true,
+        ..SyncOptions::default()
+    };
+    let resolved = super::to_resolve_options(&ResolutionMode::Normal, &options);
+    assert!(resolved.ignore_requires_mars);
+    assert!(resolved.ignore_requires_meridian);
+}
+
+#[test]
+fn consumer_package_requirement_is_hard_and_ignore_flag_bypasses_it() {
+    let fixture = TestFixture::new();
+    fs::write(
+        fixture.project_root().join("mars.toml"),
+        "[package]\nname = \"consumer\"\nversion = \"1.0.0\"\nrequires-mars = \">=99\"\n",
+    )
+    .unwrap();
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: None,
+        options: SyncOptions::default(),
+        recovery: Default::default(),
+        lossiness_mode: LossinessMode::Hidden,
+    };
+    let error = match load_config(&ctx, &request, &mut DiagnosticCollector::new()) {
+        Ok(_) => panic!("incompatible consumer requirement should fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("consumer package requires mars"));
+
+    let ignored = SyncRequest {
+        options: SyncOptions {
+            ignore_requires_mars: true,
+            ..SyncOptions::default()
+        },
+        ..request
+    };
+    let mut diagnostics = DiagnosticCollector::new();
+    load_config(&ctx, &ignored, &mut diagnostics).unwrap();
+    assert!(
+        diagnostics
+            .drain()
+            .iter()
+            .any(|diagnostic| diagnostic.code == "requires-mars-disabled")
+    );
+}

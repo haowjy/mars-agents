@@ -450,6 +450,7 @@ mars check [path]
 | `path` | Directory to validate (default: current directory) |
 
 Does not require a mars project (no `mars.toml` needed). Validates:
+- `requires-mars` and `requires-meridian` syntax when `[package]` is present
 - Package structure: convention folders named `agents/`, `skills/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package

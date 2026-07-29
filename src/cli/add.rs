@@ -40,6 +40,14 @@ pub struct AddArgs {
     /// Install only agents (plus their transitive skill deps) from this source.
     #[arg(long)]
     pub only_agents: bool,
+
+    /// Ignore package `requires-mars` version constraints.
+    #[arg(long)]
+    pub ignore_requires_mars: bool,
+
+    /// Ignore package `requires-meridian` version constraints.
+    #[arg(long)]
+    pub ignore_requires_meridian: bool,
 }
 
 /// Parsed dependency specifier.
@@ -102,7 +110,11 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 name: name.clone(),
                 entry,
             }),
-            options: SyncOptions::default(),
+            options: SyncOptions {
+                ignore_requires_mars: args.ignore_requires_mars,
+                ignore_requires_meridian: args.ignore_requires_meridian,
+                ..SyncOptions::default()
+            },
             recovery: Default::default(),
             lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
         };
@@ -121,7 +133,11 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            ignore_requires_mars: args.ignore_requires_mars,
+            ignore_requires_meridian: args.ignore_requires_meridian,
+            ..SyncOptions::default()
+        },
         recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };

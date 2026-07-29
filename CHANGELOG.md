@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Package manifests can declare strict `requires-mars` and
+  `requires-meridian` engine version constraints. Sync, upgrade, add, and
+  repair enforce them with explicit ignore flags; `mars check` validates their
+  syntax, and JSON sync reports describe engine-driven version fallbacks. A
+  present but malformed `MERIDIAN_VERSION` fails closed when a package
+  declares `requires-meridian`; engine remediation hints are
+  direction-neutral.
+
 ## [0.12.1] - 2026-07-28
 
 ## [0.12.0] - 2026-07-25

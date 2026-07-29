@@ -69,6 +69,7 @@ pub enum DiagnosticCategory {
 /// Collects diagnostics during pipeline execution.
 pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
+    engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
@@ -82,9 +83,57 @@ impl DiagnosticCollector {
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
+            engine_fallbacks: Vec::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
         }
+    }
+
+    pub(crate) fn record_engine_fallback(&mut self, fallback: crate::resolve::EngineFallback) {
+        if let Some(existing) = self
+            .engine_fallbacks
+            .iter_mut()
+            .find(|existing| existing.source == fallback.source)
+        {
+            for skipped in fallback.skipped {
+                if let Some(recorded) = existing
+                    .skipped
+                    .iter_mut()
+                    .find(|recorded| recorded.version == skipped.version)
+                {
+                    *recorded = skipped;
+                } else {
+                    existing.skipped.push(skipped);
+                }
+            }
+            for engine in fallback.engines {
+                if !existing.engines.contains(&engine) {
+                    existing.engines.push(engine);
+                }
+            }
+        } else {
+            self.engine_fallbacks.push(fallback);
+        }
+    }
+
+    pub(crate) fn reconcile_engine_fallbacks(&mut self, graph: &crate::resolve::ResolvedGraph) {
+        self.engine_fallbacks.retain_mut(|fallback| {
+            let Some(node) = graph.nodes.get(fallback.source.as_str()) else {
+                return false;
+            };
+            fallback.selected_version = node
+                .resolved_ref
+                .version
+                .as_ref()
+                .map(ToString::to_string)
+                .or_else(|| node.resolved_ref.version_tag.clone())
+                .unwrap_or_else(|| "HEAD/path".to_string());
+            true
+        });
+    }
+
+    pub(crate) fn take_engine_fallbacks(&mut self) -> Vec<crate::resolve::EngineFallback> {
+        std::mem::take(&mut self.engine_fallbacks)
     }
 
     /// Record a launch-time field mapping for meridian-only summary or verbose detail.
@@ -435,6 +484,61 @@ mod tests {
             DiagnosticCategory::Lossiness,
         );
         assert_eq!(coll.drain().len(), 1);
+    }
+
+    #[test]
+    fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
+        use crate::resolve::{
+            EngineFallback, EngineFallbackRequirement, EngineFallbackSkippedVersion,
+        };
+
+        let mut coll = DiagnosticCollector::new();
+        coll.record_engine_fallback(EngineFallback {
+            source: "pkg".to_string(),
+            skipped: vec![EngineFallbackSkippedVersion {
+                version: "3.0.0".to_string(),
+                requirements: vec![EngineFallbackRequirement {
+                    engine: "mars".to_string(),
+                    requirement: ">=3".to_string(),
+                }],
+            }],
+            selected_version: "2.0.0".to_string(),
+            engines: vec!["mars".to_string()],
+        });
+        coll.record_engine_fallback(EngineFallback {
+            source: "pkg".to_string(),
+            skipped: vec![
+                EngineFallbackSkippedVersion {
+                    version: "3.0.0".to_string(),
+                    requirements: vec![EngineFallbackRequirement {
+                        engine: "mars".to_string(),
+                        requirement: ">=4".to_string(),
+                    }],
+                },
+                EngineFallbackSkippedVersion {
+                    version: "2.0.0".to_string(),
+                    requirements: vec![EngineFallbackRequirement {
+                        engine: "meridian".to_string(),
+                        requirement: ">=2".to_string(),
+                    }],
+                },
+            ],
+            selected_version: "1.0.0".to_string(),
+            engines: vec!["mars".to_string(), "meridian".to_string()],
+        });
+
+        let fallbacks = coll.take_engine_fallbacks();
+        assert_eq!(fallbacks.len(), 1);
+        assert_eq!(
+            fallbacks[0]
+                .skipped
+                .iter()
+                .map(|skipped| skipped.version.as_str())
+                .collect::<Vec<_>>(),
+            vec!["3.0.0", "2.0.0"]
+        );
+        assert_eq!(fallbacks[0].skipped[0].requirements[0].requirement, ">=4");
+        assert_eq!(fallbacks[0].engines, vec!["mars", "meridian"]);
     }
 
     #[test]

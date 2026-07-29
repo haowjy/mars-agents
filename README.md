@@ -99,6 +99,10 @@ flowchart TD
 
 Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files. Each linked target gets harness-native artifacts — agents, skills, MCP servers, and hooks compiled to match what that tool expects.
 
+Published packages can declare `requires-mars` and `requires-meridian` under
+`[package]`. Mars automatically falls back to the newest compatible package
+release; see the [`mars.toml` reference](docs/config/mars-toml.md#package-optional).
+
 Use `mars adopt` to bring an existing unmanaged file into `.mars-src/` in one step.
 
 ## Docs

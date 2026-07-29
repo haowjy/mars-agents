@@ -112,6 +112,13 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
+    if let Ok(config) = crate::config::load(base)
+        && let Some(package) = config.package.as_ref()
+        && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
+    {
+        errors.push(error.to_string());
+    }
+
     let discovered = discover::discover_resolved_source(base, None)?;
     let dialect = Dialect::resolve_local(None, base);
 

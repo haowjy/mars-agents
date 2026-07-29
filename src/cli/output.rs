@@ -173,6 +173,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
+        engine_fallbacks: Vec<crate::resolve::EngineFallback>,
         #[serde(skip_serializing_if = "Option::is_none")]
         recovery_halt: Option<crate::sync::RecoveryHalt>,
     }
@@ -217,6 +218,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
+        engine_fallbacks: report.engine_fallbacks.clone(),
         recovery_halt: report.recovery_halt.clone(),
     })
     .unwrap_or_else(|_| serde_json::json!({}))
@@ -552,4 +554,63 @@ pub fn print_error(msg: &str) {
 /// Print an info message.
 pub fn print_info(msg: &str) {
     println!("  {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(engine_fallbacks: Vec<crate::resolve::EngineFallback>) -> SyncReport {
+        SyncReport {
+            applied: crate::sync::apply::ApplyResult {
+                outcomes: Vec::new(),
+            },
+            diagnostics: Vec::new(),
+            dependency_changes: Vec::new(),
+            upgrades_available: 0,
+            target_outcomes: Vec::new(),
+            dry_run: false,
+            native_emitted: Vec::new(),
+            native_removed: Vec::new(),
+            recovery_halt: None,
+            engine_fallbacks,
+        }
+    }
+
+    #[test]
+    fn sync_json_reports_engine_fallback_details() {
+        let fallback = crate::resolve::EngineFallback {
+            source: "base".into(),
+            skipped: vec![crate::resolve::EngineFallbackSkippedVersion {
+                version: "2.0.0".into(),
+                requirements: vec![crate::resolve::EngineFallbackRequirement {
+                    engine: "mars".into(),
+                    requirement: ">=0.12".into(),
+                }],
+            }],
+            selected_version: "1.5.0".into(),
+            engines: vec!["mars".into()],
+        };
+
+        assert_eq!(
+            sync_report_json(&report(vec![fallback]))["engine_fallbacks"],
+            serde_json::json!([{
+                "source": "base",
+                "skipped": [{
+                    "version": "2.0.0",
+                    "requirements": [{"engine": "mars", "requirement": ">=0.12"}]
+                }],
+                "selected_version": "1.5.0",
+                "engines": ["mars"]
+            }])
+        );
+    }
+
+    #[test]
+    fn sync_json_has_empty_engine_fallbacks_without_fallback() {
+        assert_eq!(
+            sync_report_json(&report(Vec::new()))["engine_fallbacks"],
+            serde_json::json!([])
+        );
+    }
 }

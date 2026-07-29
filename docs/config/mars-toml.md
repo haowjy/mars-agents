@@ -47,6 +47,8 @@ To keep project-local agents and skills without publishing, use `.mars-src/` ins
 name = "meridian-base"
 version = "1.2.0"
 description = "Core agents and skills for meridian"  # optional
+requires-mars = ">=0.11.0"                           # optional
+requires-meridian = ">=0.20.0"                       # optional
 ```
 
 | Field | Type | Required | Description |
@@ -54,6 +56,19 @@ description = "Core agents and skills for meridian"  # optional
 | `name` | string | yes | Package name, used for dependency resolution |
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
+| `requires-mars` | semver requirement | no | Mars versions that can consume this package |
+| `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
+
+Bare engine versions such as `"0.11"` mean a minimum (`">=0.11.0"`).
+Full semver ranges are also accepted. During dependency resolution Mars skips
+incompatible releases and selects the newest compatible older release. If no
+release is compatible, sync stops before writing. The consumer project's own
+`[package]` requirements are hard errors because there is no version to fall
+back to. `mars check` validates both fields before publishing.
+
+`--ignore-requires-mars` and `--ignore-requires-meridian` disable the
+corresponding check for `sync`, `upgrade`, `add`, and `repair`, and always emit
+a warning.
 
 Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
 

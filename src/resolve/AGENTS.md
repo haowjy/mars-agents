@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 11 files, ~8000 lines.
+Dependency resolution with semver constraints. 11 source files + tests, ~9500 lines.
 
 ## Mental Model
 
@@ -22,7 +22,20 @@ The bottom-up phase can discover that an already-resolved package would select a
 2. Carries it as override into a fresh `ResolverContext`
 3. Restarts bottom-up from scratch
 
-Convergence is guaranteed — versions only move upward toward the lock-preferred/latest-compatible optimum. Oscillation detection reports true per-package ref cycles.
+Convergence is guaranteed by two monotones: constraint-driven selections move
+toward the lock-preferred/latest-compatible optimum, while engine-incompatible
+`(source, version)` exclusions only accumulate across restarts and move that
+optimum downward. Oscillation detection reports true per-package ref cycles.
+
+Package `requires-mars` and `requires-meridian` checks run after manifest read
+and before manifest dependency collection. Semver sources walk down to the
+newest compatible candidate; path, ref-pinned, and untagged sources hard-error
+because they have no alternate candidate.
+
+Resolution-summary diagnostics (e.g. `engine_fallbacks`) are reconciled
+against the final `ResolvedGraph` after the restart loop settles — never
+trust state accumulated during passes, since a restart can change which
+sources and versions appear in the final graph.
 
 ## Staging Seam
 

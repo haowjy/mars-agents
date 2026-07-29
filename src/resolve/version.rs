@@ -9,6 +9,7 @@ use crate::lock::{LockFile, LockedSource};
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::{SourceId, SourceName, SourceUrl};
 
+use super::EngineExclusions;
 use super::SourceProvider;
 use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy};
@@ -20,6 +21,7 @@ pub(crate) fn resolve_single_source(
     locked: Option<&LockFile>,
     options: &ResolveOptions,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let selection_policy = options.version_selection_policy(&pending.name);
@@ -47,6 +49,7 @@ pub(crate) fn resolve_single_source(
                 provider,
                 locked_source,
                 selection_policy,
+                exclusions,
                 diag,
             )
         }
@@ -331,6 +334,7 @@ pub(crate) fn resolve_git_source(
     provider: &dyn SourceProvider,
     locked_source: Option<&LockedSource>,
     selection_policy: VersionSelectionPolicy,
+    exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let has_latest_constraint = constraints
@@ -376,6 +380,9 @@ pub(crate) fn resolve_git_source(
             let v = v.strip_prefix('v').unwrap_or(v);
             Version::parse(v).ok()
         });
+    let locked_is_excluded = locked_version
+        .as_ref()
+        .is_some_and(|version| exclusions.contains_key(&(name.clone(), version.clone())));
 
     if selection_policy == VersionSelectionPolicy::LockOnly
         && (locked_version_raw.is_some() || !semver_reqs.is_empty())
@@ -401,6 +408,13 @@ pub(crate) fn resolve_git_source(
             return Err(MarsError::FrozenViolation {
                 message: format!(
                     "--frozen lock version {locked_version} for `{name}` is incompatible with current constraints"
+                ),
+            });
+        }
+        if exclusions.contains_key(&(name.clone(), locked_version.clone())) {
+            return Err(MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen locked version {locked_version} for `{name}` is incompatible with its engine requirements"
                 ),
             });
         }
@@ -434,6 +448,7 @@ pub(crate) fn resolve_git_source(
     let mut locked_commit_unreachable = false;
     if selection_policy == VersionSelectionPolicy::PreferLockThenLatest
         && !has_latest_constraint
+        && !locked_is_excluded
         && let (Some(locked_version), Some(locked_commit)) =
             (locked_version.as_ref(), locked_commit)
         && semver_constraints_satisfied(locked_version, &semver_reqs)
@@ -492,6 +507,7 @@ pub(crate) fn resolve_git_source(
         &semver_reqs,
         locked_version.as_ref(),
         select_policy,
+        exclusions,
     )?;
 
     let should_try_locked_commit = !locked_commit_unreachable
@@ -541,11 +557,15 @@ pub(crate) fn select_version<'a>(
     constraints: &[(&str, &VersionReq)],
     locked: Option<&Version>,
     selection_policy: VersionSelectionPolicy,
+    exclusions: &EngineExclusions,
 ) -> Result<&'a AvailableVersion, MarsError> {
     // Find all versions satisfying all constraints
     let satisfying: Vec<&AvailableVersion> = available
         .iter()
         .filter(|av| {
+            if exclusions.contains_key(&(source_name.clone(), av.version.clone())) {
+                return false;
+            }
             if constraints.is_empty() {
                 return true;
             }

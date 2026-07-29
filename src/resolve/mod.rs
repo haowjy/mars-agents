@@ -14,6 +14,7 @@ mod context;
 mod filter;
 mod package;
 mod path;
+mod requires;
 mod skill;
 mod types;
 mod version;
@@ -26,6 +27,9 @@ use indexmap::IndexMap;
 
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
+pub(crate) use requires::{
+    check_consumer_package_requirements, validate_package_requirement_syntax,
+};
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -43,6 +47,9 @@ use filter::is_item_excluded;
 use package::resolve_package_bottom_up;
 use skill::{parse_pending_item_skill_deps, resolve_skill_ref};
 use version::validate_all_constraints;
+
+type EngineExclusions =
+    HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
 
 #[derive(Debug)]
 enum VersionAction {
@@ -238,6 +245,7 @@ pub fn resolve(
     > = HashMap::new();
     // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
+    let mut exclusions = EngineExclusions::new();
 
     // Restart loop: normally executes once. Restarts only when a package would
     // resolve differently under the full constraint set than it did at first-resolution
@@ -253,7 +261,15 @@ pub fn resolve(
                 .filter(|request| filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, config, diag, &mut ctx,
+                    request,
+                    true,
+                    provider,
+                    locked,
+                    options,
+                    config,
+                    diag,
+                    &mut ctx,
+                    &mut exclusions,
                 )?;
             }
             for request in direct_requests
@@ -261,7 +277,15 @@ pub fn resolve(
                 .filter(|request| !filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, config, diag, &mut ctx,
+                    request,
+                    true,
+                    provider,
+                    locked,
+                    options,
+                    config,
+                    diag,
+                    &mut ctx,
+                    &mut exclusions,
                 )?;
             }
             Ok(())
@@ -269,6 +293,7 @@ pub fn resolve(
 
         match bottom_up_result {
             Err(MarsError::ResolutionRestartNeeded { package }) => {
+                version_overrides = ctx.version_overrides().clone();
                 // Read the override info before discarding ctx.
                 let Some((pkg_name, new_ref, new_rooted, hook_surface)) =
                     ctx.take_pending_restart()
@@ -390,6 +415,7 @@ pub fn resolve(
     let graph = ctx.into_graph();
 
     validate_all_constraints(&graph.nodes, &version_constraints)?;
+    diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
 }

@@ -95,7 +95,6 @@ impl DiagnosticCollector {
             .iter_mut()
             .find(|existing| existing.source == fallback.source)
         {
-            existing.selected_version = fallback.selected_version;
             for skipped in fallback.skipped {
                 if let Some(recorded) = existing
                     .skipped
@@ -530,7 +529,6 @@ mod tests {
 
         let fallbacks = coll.take_engine_fallbacks();
         assert_eq!(fallbacks.len(), 1);
-        assert_eq!(fallbacks[0].selected_version, "1.0.0");
         assert_eq!(
             fallbacks[0]
                 .skipped

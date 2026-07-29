@@ -6,10 +6,10 @@ use crate::error::ResolutionError;
 use super::ResolveOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EngineRequirementFailure {
-    pub(crate) engine: &'static str,
-    pub(crate) requirement: String,
-    pub(crate) running: Version,
+pub(super) struct EngineRequirementFailure {
+    pub(super) engine: &'static str,
+    pub(super) requirement: String,
+    pub(super) running: Version,
 }
 
 fn parse_requirement(
@@ -115,7 +115,7 @@ fn meridian_version(options: &ResolveOptions) -> Result<Option<Version>, Resolut
     parse_meridian_version(std::env::var_os("MERIDIAN_VERSION"))
 }
 
-pub(crate) fn check_package_requirements(
+pub(super) fn check_package_requirements(
     package: &PackageInfo,
     options: &ResolveOptions,
 ) -> Result<Vec<EngineRequirementFailure>, ResolutionError> {

@@ -28,8 +28,7 @@ use indexmap::IndexMap;
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
 pub(crate) use requires::{
-    EngineRequirementFailure, check_consumer_package_requirements, check_package_requirements,
-    validate_package_requirement_syntax,
+    check_consumer_package_requirements, validate_package_requirement_syntax,
 };
 pub use types::*;
 
@@ -49,8 +48,8 @@ use package::resolve_package_bottom_up;
 use skill::{parse_pending_item_skill_deps, resolve_skill_ref};
 use version::validate_all_constraints;
 
-pub(crate) type EngineExclusions =
-    HashMap<(SourceName, semver::Version), Vec<EngineRequirementFailure>>;
+type EngineExclusions =
+    HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
 
 #[derive(Debug)]
 enum VersionAction {

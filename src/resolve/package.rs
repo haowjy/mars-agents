@@ -11,14 +11,15 @@ use crate::staging;
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
 use indexmap::IndexMap;
 
+use super::EngineExclusions;
 use super::SourceProvider;
 use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
 use super::filter::is_unfiltered_request;
 use super::path::{apply_subpath, source_id_for_pending_spec};
+use super::requires::{EngineRequirementFailure, check_package_requirements};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
-use super::{EngineExclusions, EngineRequirementFailure, check_package_requirements};
 
 /// Internal: a source waiting to be resolved.
 #[derive(Debug, Clone)]

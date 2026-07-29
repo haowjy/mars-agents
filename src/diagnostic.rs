@@ -69,6 +69,7 @@ pub enum DiagnosticCategory {
 /// Collects diagnostics during pipeline execution.
 pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
+    engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
@@ -82,9 +83,26 @@ impl DiagnosticCollector {
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
+            engine_fallbacks: Vec::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
         }
+    }
+
+    pub(crate) fn record_engine_fallback(&mut self, fallback: crate::resolve::EngineFallback) {
+        if let Some(existing) = self
+            .engine_fallbacks
+            .iter_mut()
+            .find(|existing| existing.source == fallback.source)
+        {
+            *existing = fallback;
+        } else {
+            self.engine_fallbacks.push(fallback);
+        }
+    }
+
+    pub(crate) fn take_engine_fallbacks(&mut self) -> Vec<crate::resolve::EngineFallback> {
+        std::mem::take(&mut self.engine_fallbacks)
     }
 
     /// Record a launch-time field mapping for meridian-only summary or verbose detail.

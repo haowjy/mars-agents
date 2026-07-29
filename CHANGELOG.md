@@ -32,7 +32,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Package manifests can declare strict `requires-mars` and
-  `requires-meridian` engine version constraints.
+  `requires-meridian` engine version constraints. Sync, upgrade, add, and
+  repair enforce them with explicit ignore flags; `mars check` validates their
+  syntax, and JSON sync reports describe engine-driven version fallbacks.
 - Cursor native hook fragments emit flat entries under a Mars-owned version 1
   wrapper with strict validation against its 21 camelCase events.
 - OpenCode and Pi hooks place substituted TypeScript file fragments at

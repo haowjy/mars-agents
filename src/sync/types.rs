@@ -15,6 +15,10 @@ pub struct SyncOptions {
     pub no_refresh_models: bool,
     /// Fetch version metadata so sync can report available upgrades.
     pub check_upgrades: bool,
+    /// Skip package `requires-mars` compatibility checks.
+    pub ignore_requires_mars: bool,
+    /// Skip package `requires-meridian` compatibility checks.
+    pub ignore_requires_meridian: bool,
 }
 
 #[cfg(test)]

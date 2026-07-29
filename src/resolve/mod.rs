@@ -27,7 +27,10 @@ use indexmap::IndexMap;
 
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
-pub(crate) use requires::{EngineRequirementFailure, check_package_requirements};
+pub(crate) use requires::{
+    EngineRequirementFailure, check_consumer_package_requirements, check_package_requirements,
+    validate_package_requirement_syntax,
+};
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};

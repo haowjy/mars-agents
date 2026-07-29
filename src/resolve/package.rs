@@ -349,6 +349,37 @@ pub(crate) fn resolve_package_bottom_up(
             ),
         );
     }
+    if !rejected.is_empty() {
+        let mut engines = Vec::new();
+        let skipped = rejected
+            .iter()
+            .map(|(version, failures)| {
+                let requirements = failures
+                    .iter()
+                    .map(|failure| {
+                        let engine = failure.engine.to_string();
+                        if !engines.contains(&engine) {
+                            engines.push(engine.clone());
+                        }
+                        super::EngineFallbackRequirement {
+                            engine,
+                            requirement: failure.requirement.clone(),
+                        }
+                    })
+                    .collect();
+                super::EngineFallbackSkippedVersion {
+                    version: version.clone(),
+                    requirements,
+                }
+            })
+            .collect();
+        diag.record_engine_fallback(super::EngineFallback {
+            source: pending_src.name.to_string(),
+            skipped,
+            selected_version: candidate_version_label(&resolved_ref),
+            engines,
+        });
+    }
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
     let deps = manifest_requests

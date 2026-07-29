@@ -35,6 +35,14 @@ pub struct SyncArgs {
     /// Show per-item detail for launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
+
+    /// Ignore package `requires-mars` version constraints.
+    #[arg(long)]
+    pub ignore_requires_mars: bool,
+
+    /// Ignore package `requires-meridian` version constraints.
+    #[arg(long)]
+    pub ignore_requires_meridian: bool,
 }
 
 /// Run `mars sync`.
@@ -50,6 +58,8 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             refresh_models: args.refresh_models,
             no_refresh_models: args.no_refresh_models,
             check_upgrades: !no_upgrade_hint,
+            ignore_requires_mars: args.ignore_requires_mars,
+            ignore_requires_meridian: args.ignore_requires_meridian,
         },
         recovery: Default::default(),
         lossiness_mode: if args.verbose {
@@ -120,5 +130,36 @@ mod tests {
             panic!("expected sync command");
         };
         assert!(args.verbose);
+    }
+
+    #[test]
+    fn engine_ignore_flags_parse_on_all_syncing_commands() {
+        for command in ["sync", "upgrade", "add", "repair"] {
+            let mut argv = vec!["mars", command];
+            if command == "add" {
+                argv.push("owner/repo");
+            }
+            argv.extend(["--ignore-requires-mars", "--ignore-requires-meridian"]);
+            let cli = Cli::try_parse_from(argv).unwrap();
+            match cli.command {
+                Command::Sync(args) => {
+                    assert!(args.ignore_requires_mars);
+                    assert!(args.ignore_requires_meridian);
+                }
+                Command::Upgrade(args) => {
+                    assert!(args.ignore_requires_mars);
+                    assert!(args.ignore_requires_meridian);
+                }
+                Command::Add(args) => {
+                    assert!(args.ignore_requires_mars);
+                    assert!(args.ignore_requires_meridian);
+                }
+                Command::Repair(args) => {
+                    assert!(args.ignore_requires_mars);
+                    assert!(args.ignore_requires_meridian);
+                }
+                _ => panic!("unexpected command"),
+            }
+        }
     }
 }

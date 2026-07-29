@@ -33,6 +33,26 @@ pub struct ResolvedGraph {
         std::collections::BTreeMap<SourceName, std::collections::BTreeSet<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct EngineFallbackSkippedVersion {
+    pub version: String,
+    pub requirements: Vec<EngineFallbackRequirement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct EngineFallbackRequirement {
+    pub engine: String,
+    pub requirement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct EngineFallback {
+    pub source: String,
+    pub skipped: Vec<EngineFallbackSkippedVersion>,
+    pub selected_version: String,
+    pub engines: Vec<String>,
+}
+
 /// A single node in the resolved graph.
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {

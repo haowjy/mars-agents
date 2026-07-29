@@ -4,6 +4,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Package manifests can declare strict `requires-mars` and
+  `requires-meridian` engine version constraints. Sync, upgrade, add, and
+  repair enforce them with explicit ignore flags; `mars check` validates their
+  syntax, and JSON sync reports describe engine-driven version fallbacks. A
+  present but malformed `MERIDIAN_VERSION` fails closed when a package
+  declares `requires-meridian`; engine remediation hints are
+  direction-neutral.
+
+## [0.12.1] - 2026-07-28
+
+## [0.12.0] - 2026-07-25
+
 ### Changed
 - **Breaking:** `mars.lock` version 3 distinguishes installed outputs from
   pending-deletion ownership records. Version 2 locks are promoted for one release
@@ -31,24 +44,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Same-name hook collisions are scoped per target.
 
 ### Added
-- Package manifests can declare strict `requires-mars` and
-  `requires-meridian` engine version constraints. Sync, upgrade, add, and
-  repair enforce them with explicit ignore flags; `mars check` validates their
-  syntax, and JSON sync reports describe engine-driven version fallbacks.
 - Cursor native hook fragments emit flat entries under a Mars-owned version 1
   wrapper with strict validation against its 21 camelCase events.
 - OpenCode and Pi hooks place substituted TypeScript file fragments at
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
-- Report the final selected package version after an engine fallback triggers
-  further constraint-driven resolution restarts.
-- Ignore a malformed ambient `MERIDIAN_VERSION` when a package does not declare
-  `requires-meridian`.
-- Reject a malformed `MERIDIAN_VERSION` instead of silently disabling
-  `requires-meridian` enforcement.
-- Give direction-neutral engine-version remediation when a package requirement
-  may require upgrading or downgrading the running engine.
+- Guide consumers to use `upgrade --bump` when removed hook schemas remain
+  behind a package version constraint.
 - Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
   hook source; the lock is now rebuilt in memory and replaced only after a
   complete repair.

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
@@ -18,7 +18,7 @@ use super::filter::is_unfiltered_request;
 use super::path::{apply_subpath, source_id_for_pending_spec};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
-use super::{EngineRequirementFailure, check_package_requirements};
+use super::{EngineExclusions, EngineRequirementFailure, check_package_requirements};
 
 /// Internal: a source waiting to be resolved.
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ pub(crate) fn resolve_package_bottom_up(
     effective_config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
     ctx: &mut ResolverContext,
-    exclusions: &mut HashSet<(SourceName, semver::Version)>,
+    exclusions: &mut EngineExclusions,
 ) -> Result<(), MarsError> {
     if let Some(existing_name) = ctx.id_index().get(&pending_src.source_id)
         && existing_name != &pending_src.name
@@ -160,7 +160,7 @@ pub(crate) fn resolve_package_bottom_up(
             };
 
             if !skip {
-                let new_ref = resolve_single_source(
+                let new_ref = match resolve_single_source(
                     pending_src,
                     provider,
                     locked,
@@ -168,7 +168,19 @@ pub(crate) fn resolve_package_bottom_up(
                     ctx.version_constraints(),
                     exclusions,
                     diag,
-                )?;
+                ) {
+                    Ok(resolved) => resolved,
+                    Err(error @ MarsError::Resolution(ResolutionError::VersionConflict { .. })) => {
+                        return Err(engine_unsatisfiable_error(
+                            &pending_src.name,
+                            exclusions,
+                            ctx.version_constraints(),
+                        )
+                        .map(MarsError::Resolution)
+                        .unwrap_or(error));
+                    }
+                    Err(error) => return Err(error),
+                };
 
                 // Compare version AND commit (N3: same semver, different commit when
                 // maximize policy changes after a locked-commit first-pass).
@@ -250,7 +262,13 @@ pub(crate) fn resolve_package_bottom_up(
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
     let mut rejected: Vec<(String, Vec<EngineRequirementFailure>)> = Vec::new();
-    let mut override_candidate = ctx.version_override(&pending_src.name);
+    let mut override_candidate =
+        ctx.version_override(&pending_src.name)
+            .filter(|(resolved, _, _)| {
+                resolved.version.as_ref().is_none_or(|version| {
+                    !exclusions.contains_key(&(pending_src.name.clone(), version.clone()))
+                })
+            });
     let (resolved_ref, rooted_ref, hook_surface, manifest) = loop {
         let candidate = if let Some(value) = override_candidate.take() {
             value
@@ -282,7 +300,13 @@ pub(crate) fn resolve_package_bottom_up(
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
                     if !rejected.is_empty() =>
                 {
-                    return Err(engine_unsatisfiable_error(&pending_src.name, &rejected).into());
+                    return Err(engine_unsatisfiable_error(
+                        &pending_src.name,
+                        exclusions,
+                        ctx.version_constraints(),
+                    )
+                    .expect("the just-rejected candidate is persisted")
+                    .into());
                 }
                 Err(error) => return Err(error),
             }
@@ -320,7 +344,7 @@ pub(crate) fn resolve_package_bottom_up(
             }
             .into());
         };
-        exclusions.insert((pending_src.name.clone(), version));
+        exclusions.insert((pending_src.name.clone(), version), failures.clone());
         diag.warn(
             "requires-mars-fallback",
             format!(
@@ -332,6 +356,16 @@ pub(crate) fn resolve_package_bottom_up(
         );
         rejected.push((label, failures));
     };
+    if !rejected.is_empty() {
+        ctx.set_version_override(
+            pending_src.name.clone(),
+            (
+                resolved_ref.clone(),
+                rooted_ref.clone(),
+                hook_surface.clone(),
+            ),
+        );
+    }
     ctx.set_hook_surface(&pending_src.name, hook_surface);
     if let Some((locked_version, failures)) = rejected.first()
         && locked
@@ -513,17 +547,36 @@ fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
 
 fn engine_unsatisfiable_error(
     name: &SourceName,
-    rejected: &[(String, Vec<EngineRequirementFailure>)],
-) -> ResolutionError {
-    let candidates = rejected
+    exclusions: &EngineExclusions,
+    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+) -> Option<ResolutionError> {
+    let mut rejected = exclusions
         .iter()
+        .filter(|((source, version), _)| {
+            source == name
+                && constraints.get(name).is_none_or(|constraints| {
+                    constraints.iter().all(|(_, constraint)| match constraint {
+                        VersionConstraint::Semver(requirement) => requirement.matches(version),
+                        VersionConstraint::Latest => true,
+                        VersionConstraint::RefPin(_) => false,
+                    })
+                })
+        })
+        .map(|((_, version), failures)| (version, failures))
+        .collect::<Vec<_>>();
+    rejected.sort_by(|(left, _), (right, _)| right.cmp(left));
+    if rejected.is_empty() {
+        return None;
+    }
+    let candidates = rejected
+        .into_iter()
         .map(|(version, failures)| format!("  {version}: {}", describe_engine_failures(failures)))
         .collect::<Vec<_>>()
         .join("\n");
-    ResolutionError::RequiresMarsUnsatisfiable {
+    Some(ResolutionError::RequiresMarsUnsatisfiable {
         name: name.to_string(),
         message: format!("no compatible candidate remains:\n{candidates}"),
-    }
+    })
 }
 
 fn stage_rooted_package(

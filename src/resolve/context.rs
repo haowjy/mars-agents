@@ -101,6 +101,31 @@ impl ResolverContext {
         self.version_overrides.get(name).cloned()
     }
 
+    pub(super) fn set_version_override(
+        &mut self,
+        name: SourceName,
+        value: (
+            ResolvedRef,
+            RootedSourceRef,
+            crate::staging::HookSurfaceState,
+        ),
+    ) {
+        self.version_overrides.insert(name, value);
+    }
+
+    pub(super) fn version_overrides(
+        &self,
+    ) -> &HashMap<
+        SourceName,
+        (
+            ResolvedRef,
+            RootedSourceRef,
+            crate::staging::HookSurfaceState,
+        ),
+    > {
+        &self.version_overrides
+    }
+
     /// Record the restart info: the package that triggered a restart and the ref
     /// it should be resolved to on the next pass. Called by `resolve_package_bottom_up`
     /// just before returning `ResolutionRestartNeeded`.

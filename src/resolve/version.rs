@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use semver::{Version, VersionReq};
@@ -9,6 +9,7 @@ use crate::lock::{LockFile, LockedSource};
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::{SourceId, SourceName, SourceUrl};
 
+use super::EngineExclusions;
 use super::SourceProvider;
 use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy};
@@ -20,7 +21,7 @@ pub(crate) fn resolve_single_source(
     locked: Option<&LockFile>,
     options: &ResolveOptions,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
-    exclusions: &HashSet<(SourceName, Version)>,
+    exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let selection_policy = options.version_selection_policy(&pending.name);
@@ -333,7 +334,7 @@ pub(crate) fn resolve_git_source(
     provider: &dyn SourceProvider,
     locked_source: Option<&LockedSource>,
     selection_policy: VersionSelectionPolicy,
-    exclusions: &HashSet<(SourceName, Version)>,
+    exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let has_latest_constraint = constraints
@@ -381,7 +382,7 @@ pub(crate) fn resolve_git_source(
         });
     let locked_is_excluded = locked_version
         .as_ref()
-        .is_some_and(|version| exclusions.contains(&(name.clone(), version.clone())));
+        .is_some_and(|version| exclusions.contains_key(&(name.clone(), version.clone())));
 
     if selection_policy == VersionSelectionPolicy::LockOnly
         && (locked_version_raw.is_some() || !semver_reqs.is_empty())
@@ -410,7 +411,7 @@ pub(crate) fn resolve_git_source(
                 ),
             });
         }
-        if exclusions.contains(&(name.clone(), locked_version.clone())) {
+        if exclusions.contains_key(&(name.clone(), locked_version.clone())) {
             return Err(MarsError::FrozenViolation {
                 message: format!(
                     "--frozen locked version {locked_version} for `{name}` is incompatible with its engine requirements"
@@ -556,13 +557,13 @@ pub(crate) fn select_version<'a>(
     constraints: &[(&str, &VersionReq)],
     locked: Option<&Version>,
     selection_policy: VersionSelectionPolicy,
-    exclusions: &HashSet<(SourceName, Version)>,
+    exclusions: &EngineExclusions,
 ) -> Result<&'a AvailableVersion, MarsError> {
     // Find all versions satisfying all constraints
     let satisfying: Vec<&AvailableVersion> = available
         .iter()
         .filter(|av| {
-            if exclusions.contains(&(source_name.clone(), av.version.clone())) {
+            if exclusions.contains_key(&(source_name.clone(), av.version.clone())) {
                 return false;
             }
             if constraints.is_empty() {

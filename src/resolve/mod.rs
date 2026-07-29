@@ -19,7 +19,7 @@ mod skill;
 mod types;
 mod version;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 #[cfg(test)]
@@ -48,6 +48,9 @@ use filter::is_item_excluded;
 use package::resolve_package_bottom_up;
 use skill::{parse_pending_item_skill_deps, resolve_skill_ref};
 use version::validate_all_constraints;
+
+pub(crate) type EngineExclusions =
+    HashMap<(SourceName, semver::Version), Vec<EngineRequirementFailure>>;
 
 #[derive(Debug)]
 enum VersionAction {
@@ -243,7 +246,7 @@ pub fn resolve(
     > = HashMap::new();
     // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
-    let mut exclusions: HashSet<(SourceName, semver::Version)> = HashSet::new();
+    let mut exclusions = EngineExclusions::new();
 
     // Restart loop: normally executes once. Restarts only when a package would
     // resolve differently under the full constraint set than it did at first-resolution
@@ -291,6 +294,7 @@ pub fn resolve(
 
         match bottom_up_result {
             Err(MarsError::ResolutionRestartNeeded { package }) => {
+                version_overrides = ctx.version_overrides().clone();
                 // Read the override info before discarding ctx.
                 let Some((pkg_name, new_ref, new_rooted, hook_surface)) =
                     ctx.take_pending_restart()

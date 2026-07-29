@@ -2054,6 +2054,61 @@ fn engine_walk_down_error_lists_every_rejected_candidate() {
 }
 
 #[test]
+fn tightened_constraint_reports_persisted_engine_rejection() {
+    let dir = TempDir::new().unwrap();
+    let a_old = dir.path().join("a-old");
+    let a_new = dir.path().join("a-new");
+    let b_tree = dir.path().join("b");
+    for tree in [&a_old, &a_new, &b_tree] {
+        std::fs::create_dir_all(tree).unwrap();
+    }
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versioned_source(
+        "a",
+        "v1.0.0",
+        a_old,
+        Some(make_engine_manifest("a", "1.0.0", None, None)),
+    );
+    provider.add_versioned_source(
+        "a",
+        "v2.0.0",
+        a_new,
+        Some(make_engine_manifest("a", "2.0.0", Some(">=99"), None)),
+    );
+    provider.add_source(
+        "b",
+        b_tree,
+        Some(make_manifest(
+            "b",
+            "1.0.0",
+            vec![("a", "https://example.com/a.git", ">=2")],
+        )),
+    );
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some(">=1"))),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+
+    let error = resolve(&config, &provider, None, &options).unwrap_err();
+    match error {
+        MarsError::Resolution(ResolutionError::RequiresMarsUnsatisfiable { name, message }) => {
+            assert_eq!(name, "a");
+            assert!(message.contains("2.0.0"), "{message}");
+            assert!(message.contains("requires-mars `>=99`"), "{message}");
+            assert!(message.contains("running 1.0.0"), "{message}");
+        }
+        other => panic!("expected persisted engine incompatibility, got {other:?}"),
+    }
+}
+
+#[test]
 fn frozen_rejects_engine_incompatible_lock() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("a");
@@ -2287,12 +2342,16 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
     let a_old = dir.path().join("a-old");
     let a_new = dir.path().join("a-new");
     let b_tree = dir.path().join("b");
-    for tree in [&a_old, &a_new, &b_tree] {
+    let c_tree = dir.path().join("c");
+    let d_tree = dir.path().join("d");
+    for tree in [&a_old, &a_new, &b_tree, &c_tree, &d_tree] {
         std::fs::create_dir_all(tree).unwrap();
     }
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
     provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/c.git", vec![(1, 0, 0), (1, 5, 0)]);
+    provider.add_versions("https://example.com/d.git", vec![(1, 0, 0)]);
     let old_manifest = make_engine_manifest("a", "1.0.0", None, None);
     provider.add_source("a", a_old.clone(), Some(old_manifest.clone()));
     provider.add_versioned_source("a", "v1.0.0", a_old, Some(old_manifest));
@@ -2311,9 +2370,21 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             vec![("a", "https://example.com/a.git", "")],
         )),
     );
+    provider.add_source("c", c_tree, None);
+    provider.add_source(
+        "d",
+        d_tree,
+        Some(make_manifest(
+            "d",
+            "1.0.0",
+            vec![("c", "https://example.com/c.git", "")],
+        )),
+    );
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some(">=1"))),
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+        ("c", git_spec("https://example.com/c.git", Some(">=1, <2"))),
+        ("d", git_spec("https://example.com/d.git", Some("v1.0.0"))),
     ]);
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
@@ -2326,6 +2397,16 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             commit: Some("locked-a".into()),
         },
     );
+    lock.dependencies.insert(
+        "c".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/c.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: Some("locked-c".into()),
+        },
+    );
     let options = ResolveOptions {
         mars_version: Some(Version::new(1, 0, 0)),
         ..default_options()
@@ -2335,9 +2416,12 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
         result.unwrap().nodes["a"].resolved_ref.version,
         Some(Version::new(1, 0, 0))
     );
-    assert!(
+    assert_eq!(
         diagnostics
             .iter()
-            .any(|d| d.code == "requires-mars-fallback")
+            .filter(|d| d.code == "requires-mars-fallback" && d.message.contains("`a` 2.0.0"))
+            .count(),
+        1,
+        "a known-incompatible restart override must not be proposed again"
     );
 }

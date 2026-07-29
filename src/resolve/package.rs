@@ -18,6 +18,7 @@ use super::filter::is_unfiltered_request;
 use super::path::{apply_subpath, source_id_for_pending_spec};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
+use super::{EngineRequirementFailure, check_package_requirements};
 
 /// Internal: a source waiting to be resolved.
 #[derive(Debug, Clone)]
@@ -87,6 +88,7 @@ pub(crate) fn resolve_package_bottom_up(
     effective_config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
     ctx: &mut ResolverContext,
+    exclusions: &mut HashSet<(SourceName, semver::Version)>,
 ) -> Result<(), MarsError> {
     if let Some(existing_name) = ctx.id_index().get(&pending_src.source_id)
         && existing_name != &pending_src.name
@@ -164,6 +166,7 @@ pub(crate) fn resolve_package_bottom_up(
                     locked,
                     options,
                     ctx.version_constraints(),
+                    exclusions,
                     diag,
                 )?;
 
@@ -246,32 +249,105 @@ pub(crate) fn resolve_package_bottom_up(
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
-    let (resolved_ref, rooted_ref, hook_surface) =
-        if let Some((override_ref, override_rooted, hook_surface)) =
-            ctx.version_override(&pending_src.name)
-        {
-            // Use the pre-computed ref from the prior pass.
-            (override_ref, override_rooted, hook_surface)
+    let mut rejected: Vec<(String, Vec<EngineRequirementFailure>)> = Vec::new();
+    let mut override_candidate = ctx.version_override(&pending_src.name);
+    let (resolved_ref, rooted_ref, hook_surface, manifest) = loop {
+        let candidate = if let Some(value) = override_candidate.take() {
+            value
         } else {
-            let ref_ = resolve_single_source(
+            match resolve_single_source(
                 pending_src,
                 provider,
                 locked,
                 options,
                 ctx.version_constraints(),
+                exclusions,
                 diag,
-            )?;
-            let rooted = apply_subpath(
-                &pending_src.name,
-                &ref_.tree_path,
-                pending_src.subpath.as_ref(),
-            )?;
-            let staged =
-                stage_rooted_package(&pending_src.name, rooted, effective_config, options, diag)?;
-            (ref_, staged.rooted, staged.hook_surface)
+            ) {
+                Ok(ref_) => {
+                    let rooted = apply_subpath(
+                        &pending_src.name,
+                        &ref_.tree_path,
+                        pending_src.subpath.as_ref(),
+                    )?;
+                    let staged = stage_rooted_package(
+                        &pending_src.name,
+                        rooted,
+                        effective_config,
+                        options,
+                        diag,
+                    )?;
+                    (ref_, staged.rooted, staged.hook_surface)
+                }
+                Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
+                    if !rejected.is_empty() =>
+                {
+                    return Err(engine_unsatisfiable_error(&pending_src.name, &rejected).into());
+                }
+                Err(error) => return Err(error),
+            }
         };
+        let manifest = provider.read_manifest(&candidate.1.package_root, diag)?;
+        let failures = manifest
+            .as_ref()
+            .map(|manifest| check_package_requirements(&manifest.package, options))
+            .transpose()?
+            .unwrap_or_default();
+        if failures.is_empty() {
+            break (candidate.0, candidate.1, candidate.2, manifest);
+        }
+
+        let label = candidate_version_label(&candidate.0);
+        if options.version_selection_policy(&pending_src.name)
+            == super::types::VersionSelectionPolicy::LockOnly
+        {
+            return Err(MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen locked source `{}` version {label} is incompatible: {}",
+                    pending_src.name,
+                    describe_engine_failures(&failures)
+                ),
+            });
+        }
+        let Some(version) = candidate.0.version.clone() else {
+            return Err(ResolutionError::RequiresEngineIncompatible {
+                name: pending_src.name.to_string(),
+                message: format!(
+                    "version {label} requires {}; required by {}",
+                    describe_engine_failures(&failures),
+                    pending_src.required_by
+                ),
+            }
+            .into());
+        };
+        exclusions.insert((pending_src.name.clone(), version));
+        diag.warn(
+            "requires-mars-fallback",
+            format!(
+                "skipping `{}` {label}: {}; required by {}",
+                pending_src.name,
+                describe_engine_failures(&failures),
+                pending_src.required_by
+            ),
+        );
+        rejected.push((label, failures));
+    };
     ctx.set_hook_surface(&pending_src.name, hook_surface);
-    let manifest = provider.read_manifest(&rooted_ref.package_root, diag)?;
+    if let Some((locked_version, _)) = rejected.first()
+        && locked
+            .and_then(|lock| lock.dependencies.get(&pending_src.name))
+            .and_then(|source| source.version.as_deref())
+            .is_some_and(|version| version.trim_start_matches('v') == locked_version)
+    {
+        diag.warn(
+            "requires-mars-lock-fallback",
+            format!(
+                "locked `{}` {locked_version} is engine-incompatible; selected {} instead",
+                pending_src.name,
+                candidate_version_label(&resolved_ref)
+            ),
+        );
+    }
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
     let deps = manifest_requests
@@ -327,6 +403,7 @@ pub(crate) fn resolve_package_bottom_up(
             effective_config,
             diag,
             ctx,
+            exclusions,
         )?;
     }
     for request in manifest_requests
@@ -342,6 +419,7 @@ pub(crate) fn resolve_package_bottom_up(
             effective_config,
             diag,
             ctx,
+            exclusions,
         )?;
     }
 
@@ -377,6 +455,43 @@ pub(crate) fn resolve_package_bottom_up(
     }
 
     Ok(())
+}
+
+fn candidate_version_label(resolved: &crate::source::ResolvedRef) -> String {
+    resolved
+        .version
+        .as_ref()
+        .map(ToString::to_string)
+        .or_else(|| resolved.version_tag.clone())
+        .unwrap_or_else(|| "HEAD/path".to_string())
+}
+
+fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
+    failures
+        .iter()
+        .map(|failure| {
+            format!(
+                "requires-{} `{}` (running {}; upgrade {} to a matching version)",
+                failure.engine, failure.requirement, failure.running, failure.engine
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn engine_unsatisfiable_error(
+    name: &SourceName,
+    rejected: &[(String, Vec<EngineRequirementFailure>)],
+) -> ResolutionError {
+    let candidates = rejected
+        .iter()
+        .map(|(version, failures)| format!("  {version}: {}", describe_engine_failures(failures)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    ResolutionError::RequiresMarsUnsatisfiable {
+        name: name.to_string(),
+        message: format!("no compatible candidate remains:\n{candidates}"),
+    }
 }
 
 fn stage_rooted_package(

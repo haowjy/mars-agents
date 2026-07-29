@@ -134,6 +134,8 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: IndexMap::from([(
             "shared".to_string(),
@@ -308,6 +310,8 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             name: "a".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: manifest_deps,
         models: IndexMap::new(),
@@ -395,6 +399,8 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
             name: "a".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: manifest_deps,
         models: IndexMap::new(),
@@ -725,6 +731,8 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
             name: "a".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: deps_a,
         models: IndexMap::new(),
@@ -1116,6 +1124,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
             name: "foo".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: IndexMap::new(),
         models: IndexMap::new(),
@@ -1284,6 +1294,8 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
             name: "a".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            requires_mars: None,
+            requires_meridian: None,
         },
         dependencies: manifest_deps,
         models: IndexMap::new(),
@@ -1971,4 +1983,215 @@ fn oscillating_ref_selection_errors_with_ref_cycle() {
         }
         other => panic!("expected oscillation VersionConflict, got {other:?}"),
     }
+}
+
+#[test]
+fn engine_walk_down_selects_newest_compatible_version() {
+    let dir = TempDir::new().unwrap();
+    let old = dir.path().join("old");
+    let new = dir.path().join("new");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&new).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_versioned_source(
+        "a",
+        "v1.0.0",
+        old,
+        Some(make_engine_manifest("a", "1.0.0", Some(">=0.1"), None)),
+    );
+    provider.add_versioned_source(
+        "a",
+        "v2.0.0",
+        new,
+        Some(make_engine_manifest("a", "2.0.0", Some(">=99"), None)),
+    );
+    let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+
+    let (result, diagnostics) = resolve_with_diagnostics(&config, &provider, None, &options);
+    assert_eq!(
+        result.unwrap().nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 0, 0))
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "requires-mars-fallback" && d.message.contains("2.0.0"))
+    );
+}
+
+#[test]
+fn engine_walk_down_error_lists_every_rejected_candidate() {
+    let dir = TempDir::new().unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    for version in ["1.0.0", "2.0.0"] {
+        let tree = dir.path().join(version);
+        std::fs::create_dir_all(&tree).unwrap();
+        provider.add_versioned_source(
+            "a",
+            &format!("v{version}"),
+            tree,
+            Some(make_engine_manifest("a", version, Some(">=99"), None)),
+        );
+    }
+    let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+    let error = resolve(&config, &provider, None, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("1.0.0") && error.contains("2.0.0") && error.contains("upgrade mars"),
+        "{error}"
+    );
+}
+
+#[test]
+fn frozen_rejects_engine_incompatible_lock() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_source(
+        "a",
+        tree,
+        Some(make_engine_manifest("a", "1.0.0", Some(">=99"), None)),
+    );
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("^1")),
+    )]);
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: Some("locked".into()),
+        },
+    );
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..ResolveOptions::frozen()
+    };
+    assert!(matches!(
+        resolve(&config, &provider, Some(&lock), &options),
+        Err(MarsError::FrozenViolation { .. })
+    ));
+}
+
+#[test]
+fn incompatible_locked_version_warns_and_falls_back() {
+    let dir = TempDir::new().unwrap();
+    let locked_tree = dir.path().join("locked");
+    let old_tree = dir.path().join("old");
+    std::fs::create_dir_all(&locked_tree).unwrap();
+    std::fs::create_dir_all(&old_tree).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (2, 0, 0)]);
+    provider.add_source(
+        "a",
+        locked_tree,
+        Some(make_engine_manifest("a", "2.0.0", Some(">=99"), None)),
+    );
+    provider.add_versioned_source(
+        "a",
+        "v1.0.0",
+        old_tree,
+        Some(make_engine_manifest("a", "1.0.0", None, None)),
+    );
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some(">=1")),
+    )]);
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v2.0.0".into()),
+            commit: Some("locked".into()),
+        },
+    );
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+    let (result, diagnostics) = resolve_with_diagnostics(&config, &provider, Some(&lock), &options);
+    assert_eq!(
+        result.unwrap().nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 0, 0))
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "requires-mars-lock-fallback")
+    );
+}
+
+#[test]
+fn refpin_engine_incompatibility_is_a_hard_error() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_source(
+        "a",
+        tree,
+        Some(make_engine_manifest("a", "1.0.0", Some(">=99"), None)),
+    );
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("main")),
+    )]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+    assert!(matches!(
+        resolve(&config, &provider, None, &options),
+        Err(MarsError::Resolution(
+            ResolutionError::RequiresEngineIncompatible { .. }
+        ))
+    ));
+}
+
+#[test]
+fn either_engine_constraint_excludes_candidate_and_ignore_knobs_bypass_checks() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_source(
+        "a",
+        tree,
+        Some(make_engine_manifest(
+            "a",
+            "1.0.0",
+            Some(">=99"),
+            Some(">=99"),
+        )),
+    );
+    let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        meridian_version: Some(Version::new(1, 0, 0)),
+        ignore_requires_mars: true,
+        ignore_requires_meridian: true,
+        ..default_options()
+    };
+    assert!(resolve(&config, &provider, None, &options).is_ok());
 }

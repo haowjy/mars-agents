@@ -14,11 +14,12 @@ mod context;
 mod filter;
 mod package;
 mod path;
+mod requires;
 mod skill;
 mod types;
 mod version;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[cfg(test)]
@@ -26,6 +27,7 @@ use indexmap::IndexMap;
 
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
+pub(crate) use requires::{EngineRequirementFailure, check_package_requirements};
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -238,6 +240,7 @@ pub fn resolve(
     > = HashMap::new();
     // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
+    let mut exclusions: HashSet<(SourceName, semver::Version)> = HashSet::new();
 
     // Restart loop: normally executes once. Restarts only when a package would
     // resolve differently under the full constraint set than it did at first-resolution
@@ -253,7 +256,15 @@ pub fn resolve(
                 .filter(|request| filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, config, diag, &mut ctx,
+                    request,
+                    true,
+                    provider,
+                    locked,
+                    options,
+                    config,
+                    diag,
+                    &mut ctx,
+                    &mut exclusions,
                 )?;
             }
             for request in direct_requests
@@ -261,7 +272,15 @@ pub fn resolve(
                 .filter(|request| !filter::is_unfiltered_request(&request.filter))
             {
                 resolve_package_bottom_up(
-                    request, true, provider, locked, options, config, diag, &mut ctx,
+                    request,
+                    true,
+                    provider,
+                    locked,
+                    options,
+                    config,
+                    diag,
+                    &mut ctx,
+                    &mut exclusions,
                 )?;
             }
             Ok(())

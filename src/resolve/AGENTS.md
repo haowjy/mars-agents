@@ -22,7 +22,15 @@ The bottom-up phase can discover that an already-resolved package would select a
 2. Carries it as override into a fresh `ResolverContext`
 3. Restarts bottom-up from scratch
 
-Convergence is guaranteed — versions only move upward toward the lock-preferred/latest-compatible optimum. Oscillation detection reports true per-package ref cycles.
+Convergence is guaranteed by two monotones: constraint-driven selections move
+toward the lock-preferred/latest-compatible optimum, while engine-incompatible
+`(source, version)` exclusions only accumulate across restarts and move that
+optimum downward. Oscillation detection reports true per-package ref cycles.
+
+Package `requires-mars` and `requires-meridian` checks run after manifest read
+and before manifest dependency collection. Semver sources walk down to the
+newest compatible candidate; path, ref-pinned, and untagged sources hard-error
+because they have no alternate candidate.
 
 ## Staging Seam
 

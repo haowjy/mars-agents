@@ -298,6 +298,12 @@ pub enum ResolveMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
+    /// Running mars version override. Production uses the crate version.
+    pub mars_version: Option<semver::Version>,
+    /// Running meridian version override. Production reads `MERIDIAN_VERSION`.
+    pub meridian_version: Option<semver::Version>,
+    pub ignore_requires_mars: bool,
+    pub ignore_requires_meridian: bool,
     /// Per-project directory for dependency-scoped canonical source staging.
     pub staging_root: Option<std::path::PathBuf>,
     /// Local source substitutions, including names first introduced transitively.
@@ -308,6 +314,10 @@ impl Default for ResolveOptions {
     fn default() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            mars_version: None,
+            meridian_version: None,
+            ignore_requires_mars: false,
+            ignore_requires_meridian: false,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
         }
@@ -329,6 +339,10 @@ impl ResolveOptions {
     pub fn sync() -> Self {
         Self {
             mode: ResolveMode::Sync,
+            mars_version: None,
+            meridian_version: None,
+            ignore_requires_mars: false,
+            ignore_requires_meridian: false,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
         }
@@ -337,6 +351,10 @@ impl ResolveOptions {
     pub fn frozen() -> Self {
         Self {
             mode: ResolveMode::Frozen,
+            mars_version: None,
+            meridian_version: None,
+            ignore_requires_mars: false,
+            ignore_requires_meridian: false,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
         }
@@ -348,6 +366,10 @@ impl ResolveOptions {
                 targets,
                 bump_direct_constraints,
             },
+            mars_version: None,
+            meridian_version: None,
+            ignore_requires_mars: false,
+            ignore_requires_meridian: false,
             staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
         }

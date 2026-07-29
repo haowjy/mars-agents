@@ -57,6 +57,18 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(
+        default,
+        rename = "requires-mars",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requires_mars: Option<String>,
+    #[serde(
+        default,
+        rename = "requires-meridian",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requires_meridian: Option<String>,
 }
 
 mod toml_path_serde {

@@ -43,6 +43,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Reject a malformed `MERIDIAN_VERSION` instead of silently disabling
   `requires-meridian` enforcement.
+- Give direction-neutral engine-version remediation when a package requirement
+  may require upgrading or downgrading the running engine.
 - Preserve corrupt `mars.lock` bytes when repair halts on an unreadable legacy
   hook source; the lock is now rebuilt in memory and replaced only after a
   complete repair.

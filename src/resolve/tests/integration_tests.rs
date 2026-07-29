@@ -2036,7 +2036,7 @@ fn engine_walk_down_error_lists_every_rejected_candidate() {
             "a",
             &format!("v{version}"),
             tree,
-            Some(make_engine_manifest("a", version, Some(">=99"), None)),
+            Some(make_engine_manifest("a", version, Some("<1"), None)),
         );
     }
     let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
@@ -2048,7 +2048,9 @@ fn engine_walk_down_error_lists_every_rejected_candidate() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("1.0.0") && error.contains("2.0.0") && error.contains("upgrade mars"),
+        error.contains("1.0.0")
+            && error.contains("2.0.0")
+            && error.contains("use a mars version matching `<1`"),
         "{error}"
     );
 }

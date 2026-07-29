@@ -537,8 +537,12 @@ fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
         .iter()
         .map(|failure| {
             format!(
-                "requires-{} `{}` (running {}; upgrade {} to a matching version)",
-                failure.engine, failure.requirement, failure.running, failure.engine
+                "requires-{} `{}` (running {}; use a {} version matching `{}`)",
+                failure.engine,
+                failure.requirement,
+                failure.running,
+                failure.engine,
+                failure.requirement
             )
         })
         .collect::<Vec<_>>()

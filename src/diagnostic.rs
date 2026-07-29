@@ -95,9 +95,39 @@ impl DiagnosticCollector {
             .iter_mut()
             .find(|existing| existing.source == fallback.source)
         {
-            *existing = fallback;
+            existing.selected_version = fallback.selected_version;
+            for skipped in fallback.skipped {
+                if let Some(recorded) = existing
+                    .skipped
+                    .iter_mut()
+                    .find(|recorded| recorded.version == skipped.version)
+                {
+                    *recorded = skipped;
+                } else {
+                    existing.skipped.push(skipped);
+                }
+            }
+            for engine in fallback.engines {
+                if !existing.engines.contains(&engine) {
+                    existing.engines.push(engine);
+                }
+            }
         } else {
             self.engine_fallbacks.push(fallback);
+        }
+    }
+
+    pub(crate) fn update_engine_fallback_selection(
+        &mut self,
+        source: &str,
+        selected_version: String,
+    ) {
+        if let Some(existing) = self
+            .engine_fallbacks
+            .iter_mut()
+            .find(|existing| existing.source == source)
+        {
+            existing.selected_version = selected_version;
         }
     }
 

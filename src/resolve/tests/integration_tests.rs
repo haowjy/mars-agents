@@ -2427,3 +2427,68 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
         "a known-incompatible restart override must not be proposed again"
     );
 }
+
+#[test]
+fn engine_fallback_report_tracks_final_selection_after_constraint_restart() {
+    let dir = TempDir::new().unwrap();
+    let a_v1 = dir.path().join("a-v1");
+    let a_v2 = dir.path().join("a-v2");
+    let a_v3 = dir.path().join("a-v3");
+    let b_tree = dir.path().join("b");
+    for tree in [&a_v1, &a_v2, &a_v3, &b_tree] {
+        std::fs::create_dir_all(tree).unwrap();
+    }
+
+    let mut provider = MockProvider::new();
+    provider.add_versions(
+        "https://example.com/a.git",
+        vec![(1, 0, 0), (2, 0, 0), (3, 0, 0)],
+    );
+    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
+    provider.add_versioned_source(
+        "a",
+        "v1.0.0",
+        a_v1,
+        Some(make_engine_manifest("a", "1.0.0", None, None)),
+    );
+    provider.add_versioned_source(
+        "a",
+        "v2.0.0",
+        a_v2,
+        Some(make_engine_manifest("a", "2.0.0", None, None)),
+    );
+    provider.add_versioned_source(
+        "a",
+        "v3.0.0",
+        a_v3,
+        Some(make_engine_manifest("a", "3.0.0", Some(">=99"), None)),
+    );
+    provider.add_source(
+        "b",
+        b_tree,
+        Some(make_manifest(
+            "b",
+            "1.0.0",
+            vec![("a", "https://example.com/a.git", "<2")],
+        )),
+    );
+
+    let config = make_config(vec![
+        ("a", git_spec("https://example.com/a.git", Some(">=1"))),
+        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
+    ]);
+    let options = ResolveOptions {
+        mars_version: Some(Version::new(1, 0, 0)),
+        ..default_options()
+    };
+
+    let (result, fallbacks) = resolve_with_report_details(&config, &provider, None, &options);
+    assert_eq!(
+        result.unwrap().nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 0, 0))
+    );
+    assert_eq!(fallbacks.len(), 1);
+    assert_eq!(fallbacks[0].source, "a");
+    assert_eq!(fallbacks[0].selected_version, "1.0.0");
+    assert_eq!(fallbacks[0].skipped[0].version, "3.0.0");
+}

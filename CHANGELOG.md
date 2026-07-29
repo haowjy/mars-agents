@@ -41,6 +41,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `plugins/mars-<name>.ts` and `extensions/mars-<name>.ts`, respectively.
 
 ### Fixed
+- Report the final selected package version after an engine fallback triggers
+  further constraint-driven resolution restarts.
 - Reject a malformed `MERIDIAN_VERSION` instead of silently disabling
   `requires-meridian` enforcement.
 - Give direction-neutral engine-version remediation when a package requirement

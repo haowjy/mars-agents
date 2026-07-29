@@ -449,6 +449,20 @@ fn resolve_with_diagnostics(
     (result, diag.drain())
 }
 
+fn resolve_with_report_details(
+    config: &EffectiveConfig,
+    provider: &dyn SourceProvider,
+    locked: Option<&LockFile>,
+    options: &ResolveOptions,
+) -> (
+    Result<ResolvedGraph, MarsError>,
+    Vec<crate::resolve::EngineFallback>,
+) {
+    let mut diag = DiagnosticCollector::new();
+    let result = super::resolve(config, provider, locked, options, &mut diag);
+    (result, diag.take_engine_fallbacks())
+}
+
 fn write_minimal_package_marker(tree: &Path) {
     std::fs::write(
         tree.join("mars.toml"),

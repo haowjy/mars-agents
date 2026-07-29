@@ -333,7 +333,7 @@ pub(crate) fn resolve_package_bottom_up(
         rejected.push((label, failures));
     };
     ctx.set_hook_surface(&pending_src.name, hook_surface);
-    if let Some((locked_version, _)) = rejected.first()
+    if let Some((locked_version, failures)) = rejected.first()
         && locked
             .and_then(|lock| lock.dependencies.get(&pending_src.name))
             .and_then(|source| source.version.as_deref())
@@ -342,8 +342,9 @@ pub(crate) fn resolve_package_bottom_up(
         diag.warn(
             "requires-mars-lock-fallback",
             format!(
-                "locked `{}` {locked_version} is engine-incompatible; selected {} instead",
+                "locked `{}` {locked_version} is engine-incompatible ({}); selected {} instead",
                 pending_src.name,
+                describe_engine_failures(failures),
                 candidate_version_label(&resolved_ref)
             ),
         );

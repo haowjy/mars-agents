@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-29
+
 ### Added
 - Package manifests can declare strict `requires-mars` and
   `requires-meridian` engine version constraints. Sync, upgrade, add, and

@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 11 files, ~8000 lines.
+Dependency resolution with semver constraints. 11 source files + tests, ~9500 lines.
 
 ## Mental Model
 

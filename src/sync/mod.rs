@@ -1028,20 +1028,29 @@ pub(crate) fn finalize(
         // new aliases we're about to persist. Sync never aborts on refresh
         // failure — warn and continue.
         let mars_path = ctx.project_root.join(".mars");
-        let ttl = state
+        let settings = &state
             .applied
             .planned
             .targeted
             .resolved
             .loaded
             .effective
-            .settings
-            .models_cache_ttl_hours;
+            .settings;
+        let ttl = settings.models_cache_ttl_hours;
+        let providers = settings
+            .catalog_providers
+            .clone()
+            .unwrap_or_else(crate::models::default_catalog_providers);
         let refresh = crate::models::resolve_models_refresh_control(
             request.options.refresh_models,
             request.options.no_refresh_models,
         )?;
-        match crate::models::ensure_fresh(&mars_path, ttl, refresh.catalog_mode) {
+        match crate::models::ensure_fresh_with_catalog_providers(
+            &mars_path,
+            ttl,
+            refresh.catalog_mode,
+            &providers,
+        ) {
             Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
                 diag.warn(
                     "models-cache-refresh",

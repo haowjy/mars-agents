@@ -23,7 +23,8 @@ use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
 use super::models_common::{
-    load_merged_aliases, load_project_config_layers_optional, models_cache_ttl_hours,
+    catalog_providers, load_merged_aliases, load_project_config_layers_optional,
+    models_cache_ttl_hours,
 };
 pub use super::models_prompting::PromptingArgs;
 
@@ -138,9 +139,15 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars = mars_dir(ctx);
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
     let ttl = models_cache_ttl_hours(project_config.as_ref());
+    let providers = catalog_providers(project_config.as_ref());
     eprint!("Fetching models catalog... ");
 
-    let (cache, outcome) = models::ensure_fresh(&mars, ttl, models::RefreshMode::Force)?;
+    let (cache, outcome) = models::ensure_fresh_with_catalog_providers(
+        &mars,
+        ttl,
+        models::RefreshMode::Force,
+        &providers,
+    )?;
     let count = cache.models.len();
     let cache_warning = cache_warning(&outcome);
 
@@ -201,7 +208,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         .then(|| load_merged_aliases(&ctx.project_root, project_config.as_ref()))
         .transpose()?;
 
-    let (cache, outcome) = match ensure_fresh_or_json_error(&mars, ttl, mode, json)? {
+    let providers = catalog_providers(project_config.as_ref());
+    let (cache, outcome) = match ensure_fresh_or_json_error(&mars, ttl, mode, json, &providers)? {
         FreshOrJsonError::Fresh(cache, outcome) => (cache, outcome),
         FreshOrJsonError::JsonError(error_message) => {
             let mut out = serde_json::json!({
@@ -1643,7 +1651,8 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 
     // Cache is enrichment, not a gate. If unavailable, skip to passthrough.
     let mut cache_error = None;
-    let cache_result = match ensure_fresh_or_json_error(&mars, ttl, mode, json)? {
+    let providers = catalog_providers(project_config.as_ref());
+    let cache_result = match ensure_fresh_or_json_error(&mars, ttl, mode, json, &providers)? {
         FreshOrJsonError::Fresh(cache, outcome) => Some((cache, outcome)),
         FreshOrJsonError::JsonError(error_message) => {
             cache_error = Some(error_message);
@@ -1861,8 +1870,9 @@ fn ensure_fresh_or_json_error(
     ttl: u32,
     mode: models::RefreshMode,
     json: bool,
+    providers: &[String],
 ) -> Result<FreshOrJsonError, MarsError> {
-    match models::ensure_fresh(mars, ttl, mode) {
+    match models::ensure_fresh_with_catalog_providers(mars, ttl, mode, providers) {
         Ok((cache, outcome)) => Ok(FreshOrJsonError::Fresh(cache, outcome)),
         Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
             Ok(FreshOrJsonError::JsonError(format!("{err}")))

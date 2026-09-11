@@ -25,6 +25,14 @@ Builtins exist for bare convenience (opus, sonnet, haiku, codex, gpt, gemini).
 They are used only when both dependency and consumer alias sets are empty;
 any configured alias set suppresses the builtin set rather than layering over it.
 
+## Catalog ingest
+
+`fetch_models` keeps only models.dev providers on the catalog allowlist.
+Default: `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`,
+`openrouter`. Override with `[settings] catalog_providers`; `["*"]` keeps
+every provider. Pinned aliases do not need this catalog — they resolve
+through harness probes.
+
 ## Catalog Lifecycle
 
 - `mars models refresh` — explicit catalog fetch (`RefreshMode::Force`); does not accept refresh flags

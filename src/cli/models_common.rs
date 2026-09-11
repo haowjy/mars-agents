@@ -21,6 +21,14 @@ pub(super) fn models_cache_ttl_hours(
         .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours)
 }
 
+pub(super) fn catalog_providers(
+    project_config: Option<&crate::config::LoadedProjectConfig>,
+) -> Vec<String> {
+    project_config
+        .and_then(|loaded| loaded.effective.settings.catalog_providers.clone())
+        .unwrap_or_else(models::default_catalog_providers)
+}
+
 /// Load model aliases by combining lock-persisted dependency aliases with effective
 /// project/local consumer aliases.
 pub(super) fn load_merged_aliases(

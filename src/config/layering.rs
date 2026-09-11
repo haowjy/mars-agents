@@ -51,6 +51,7 @@ impl LocalSettings {
             && self.default_model.is_none()
             && self.harness_order.is_none()
             && self.provider_order.is_none()
+            && self.catalog_providers.is_none()
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
@@ -85,6 +86,9 @@ impl LocalSettings {
         }
         if let Some(value) = &self.provider_order {
             merged.provider_order = Some(value.clone());
+        }
+        if let Some(value) = &self.catalog_providers {
+            merged.catalog_providers = Some(value.clone());
         }
         if let Some(value) = &self.agent_emission {
             merged.agent_emission = Some(value.clone());

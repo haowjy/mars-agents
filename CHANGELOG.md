@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `[settings] catalog_providers` replaces the models.dev ingest allowlist. `["*"]` keeps every provider.
+
+### Changed
+- Default catalog ingest is now `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Mistral and Cohere are no longer ingested unless listed.
+
 ## [0.13.0] - 2026-07-29
 
 ### Added

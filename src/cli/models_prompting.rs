@@ -4,7 +4,8 @@ use clap::Parser;
 use indexmap::IndexMap;
 
 use super::models_common::{
-    load_merged_aliases, load_project_config_layers_optional, models_cache_ttl_hours,
+    catalog_providers, load_merged_aliases, load_project_config_layers_optional,
+    models_cache_ttl_hours,
 };
 use crate::build::policy::{PolicyInput, resolve_policy};
 use crate::compiler::agents::{AgentProfile, parse_agent_content};
@@ -326,7 +327,8 @@ fn prompt_model_cache(
 ) -> models::ModelsCache {
     let mars_dir = ctx.project_root.join(".mars");
     let ttl = models_cache_ttl_hours(project_config);
-    models::ensure_fresh(&mars_dir, ttl, refresh.catalog_mode)
+    let providers = catalog_providers(project_config);
+    models::ensure_fresh_with_catalog_providers(&mars_dir, ttl, refresh.catalog_mode, &providers)
         .map(|(cache, _)| cache)
         .or_else(|_| models::read_cache(&mars_dir))
         .unwrap_or(models::ModelsCache {

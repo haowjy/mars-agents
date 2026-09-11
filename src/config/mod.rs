@@ -532,6 +532,8 @@ pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_providers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_emission: Option<AgentEmission>,
     #[serde(default, skip_serializing_if = "MeridianSettings::is_empty")]
     pub meridian: MeridianSettings,
@@ -599,6 +601,14 @@ pub struct Settings {
     /// preserve harness-reported model order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_order: Option<Vec<String>>,
+    /// models.dev provider keys ingested into the models cache.
+    ///
+    /// Unset uses the built-in default (`anthropic`, `openai`, `google`, `meta`,
+    /// `deepseek`, `xai`, `openrouter`). Set replaces that list. `["*"]` ingests
+    /// every provider. Catalog-only: a pinned alias still works if the harness
+    /// can resolve the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_providers: Option<Vec<String>>,
     /// Controls whether harness-bound agents are emitted to native harness dirs.
     ///
     /// `auto` (the default when unset) emits for standalone mars syncs and
@@ -677,6 +687,7 @@ impl Default for Settings {
             default_model: None,
             harness_order: None,
             provider_order: None,
+            catalog_providers: None,
             agent_emission: None,
             meridian: MeridianSettings::default(),
             model_policies: Vec::new(),
@@ -1320,6 +1331,15 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.provider_order changed during roundtrip ({:?} -> {:?})",
                 original.settings.provider_order, reparsed.settings.provider_order
+            ),
+        }
+        .into());
+    }
+    if reparsed.settings.catalog_providers != original.settings.catalog_providers {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "refusing to save config: settings.catalog_providers changed during roundtrip ({:?} -> {:?})",
+                original.settings.catalog_providers, reparsed.settings.catalog_providers
             ),
         }
         .into());
@@ -2016,6 +2036,27 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
             Some(vec!["cursor".to_string(), "pi".to_string()])
         );
         assert_eq!(merged.provider_order, Some(vec!["openai".to_string()]));
+    }
+
+    #[test]
+    fn merged_settings_replaces_catalog_providers() {
+        let settings = Settings {
+            catalog_providers: Some(vec!["anthropic".to_string()]),
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                catalog_providers: Some(vec!["xai".to_string(), "openrouter".to_string()]),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(
+            merged.catalog_providers,
+            Some(vec!["xai".to_string(), "openrouter".to_string()])
+        );
     }
 
     #[test]

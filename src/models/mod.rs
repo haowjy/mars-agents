@@ -566,7 +566,19 @@ pub fn ensure_fresh(
     ttl_hours: u32,
     mode: RefreshMode,
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
-    ensure_fresh_with_fetcher(mars_dir, ttl_hours, mode, fetch_models)
+    ensure_fresh_with_catalog_providers(mars_dir, ttl_hours, mode, &default_catalog_providers())
+}
+
+pub fn ensure_fresh_with_catalog_providers(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    mode: RefreshMode,
+    providers: &[String],
+) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
+    let providers = providers.to_vec();
+    ensure_fresh_with_fetcher(mars_dir, ttl_hours, mode, move || {
+        fetch_models_with_providers(&providers)
+    })
 }
 
 fn ensure_fresh_with_fetcher<F>(
@@ -722,11 +734,32 @@ pub fn write_cache(mars_dir: &Path, cache: &ModelsCache) -> Result<(), MarsError
     Ok(())
 }
 
+pub fn default_catalog_providers() -> Vec<String> {
+    DEFAULT_CATALOG_PROVIDERS
+        .iter()
+        .map(|provider| (*provider).to_string())
+        .collect()
+}
+
+const DEFAULT_CATALOG_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "google",
+    "meta",
+    "deepseek",
+    "xai",
+    "openrouter",
+];
+
 /// Fetch models from the models.dev API.
 ///
 /// Returns a list of cached model entries. On network failure, returns an error
 /// (callers should fall back to existing cache or explicit pinned IDs).
 pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
+    fetch_models_with_providers(&default_catalog_providers())
+}
+
+pub fn fetch_models_with_providers(providers: &[String]) -> Result<Vec<CachedModel>, MarsError> {
     let url = models_api_url();
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(15)))
@@ -760,14 +793,17 @@ pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
             message: format!("failed to parse models API response: {e}"),
         })?;
 
-    parse_models_dev_catalog(&raw)
+    parse_models_dev_catalog_with_providers(&raw, providers)
 }
 
 fn models_api_url() -> String {
     std::env::var("MARS_MODELS_API_URL").unwrap_or_else(|_| "https://models.dev/api.json".into())
 }
 
-fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>, MarsError> {
+fn parse_models_dev_catalog_with_providers(
+    raw: &serde_json::Value,
+    allowlist: &[String],
+) -> Result<Vec<CachedModel>, MarsError> {
     let providers = raw
         .as_object()
         .ok_or_else(|| crate::error::ConfigError::Invalid {
@@ -777,7 +813,7 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
     let mut models = Vec::new();
 
     for (provider_key, provider_obj) in providers {
-        if !is_major_provider(provider_key) {
+        if !is_catalog_provider_allowed(provider_key, allowlist) {
             continue;
         }
 
@@ -837,19 +873,25 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
     Ok(models)
 }
 
-fn is_major_provider(provider_key: &str) -> bool {
-    matches!(
-        provider_key,
-        "anthropic"
-            | "openai"
-            | "google"
-            | "meta-llama"
-            | "meta"
-            | "mistralai"
-            | "mistral"
-            | "deepseek"
-            | "cohere"
-    )
+fn is_catalog_provider_allowed(provider_key: &str, allowlist: &[String]) -> bool {
+    if allowlist.iter().any(|provider| provider.trim() == "*") {
+        return true;
+    }
+    allowlist
+        .iter()
+        .any(|allowed| catalog_providers_match(allowed, provider_key))
+}
+
+fn catalog_providers_match(allowed: &str, provider_key: &str) -> bool {
+    catalog_provider_canonical(allowed) == catalog_provider_canonical(provider_key)
+}
+
+fn catalog_provider_canonical(key: &str) -> String {
+    match key.trim().to_ascii_lowercase().as_str() {
+        "meta-llama" => "meta".to_string(),
+        "mistralai" => "mistral".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Normalize models.dev provider keys to canonical names.
@@ -862,6 +904,8 @@ fn normalize_provider(slug: &str) -> String {
         "mistralai" | "mistral" => "Mistral".to_string(),
         "deepseek" => "DeepSeek".to_string(),
         "cohere" => "Cohere".to_string(),
+        "xai" => "xAI".to_string(),
+        "openrouter" => "OpenRouter".to_string(),
         _ => slug.to_string(),
     }
 }
@@ -1807,7 +1851,8 @@ mod tests {
             }
         });
 
-        let models = parse_models_dev_catalog(&raw).unwrap();
+        let models =
+            parse_models_dev_catalog_with_providers(&raw, &default_catalog_providers()).unwrap();
         assert_eq!(models.len(), 2);
 
         let opus = models
@@ -1844,8 +1889,62 @@ mod tests {
     #[test]
     fn parse_models_dev_catalog_requires_object_root() {
         let raw = serde_json::json!(["not", "an", "object"]);
-        let err = parse_models_dev_catalog(&raw).unwrap_err();
+        let err = parse_models_dev_catalog_with_providers(&raw, &[]).unwrap_err();
         assert!(err.to_string().contains("keyed by provider"));
+    }
+
+    fn catalog_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "anthropic": { "models": { "claude-opus-4-6": { "id": "claude-opus-4-6", "name": "Claude Opus 4.6" } } },
+            "xai": { "models": { "grok-4.6": { "id": "grok-4.6", "name": "Grok 4.6" } } },
+            "mistral": { "models": { "mistral-large": { "id": "mistral-large", "name": "Mistral Large" } } },
+            "openrouter": { "models": { "x-ai/grok-4.6": { "id": "x-ai/grok-4.6", "name": "Grok 4.6" } } },
+            "random-host": { "models": { "foo": { "id": "foo" } } }
+        })
+    }
+
+    #[test]
+    fn default_catalog_drops_mistral_and_keeps_xai() {
+        let models = parse_models_dev_catalog_with_providers(
+            &catalog_fixture(),
+            &default_catalog_providers(),
+        )
+        .unwrap();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"claude-opus-4-6"));
+        assert!(ids.contains(&"grok-4.6"));
+        assert!(ids.contains(&"x-ai/grok-4.6"));
+        assert!(!ids.contains(&"mistral-large"));
+        assert!(!ids.contains(&"foo"));
+        assert_eq!(
+            models.iter().find(|m| m.id == "grok-4.6").unwrap().provider,
+            "xAI"
+        );
+        assert_eq!(
+            models
+                .iter()
+                .find(|m| m.id == "x-ai/grok-4.6")
+                .unwrap()
+                .provider,
+            "OpenRouter"
+        );
+    }
+
+    #[test]
+    fn catalog_allowlist_replaces_default() {
+        let models =
+            parse_models_dev_catalog_with_providers(&catalog_fixture(), &["mistral".to_string()])
+                .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "mistral-large");
+    }
+
+    #[test]
+    fn catalog_wildcard_ingests_all_providers() {
+        let models =
+            parse_models_dev_catalog_with_providers(&catalog_fixture(), &["*".to_string()])
+                .unwrap();
+        assert_eq!(models.len(), 5);
     }
 
     // -- glob_match tests --

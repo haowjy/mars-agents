@@ -215,20 +215,29 @@ pub fn resolve_policy(
         .unwrap_or(default_harness_order.as_slice());
     let mars_dir = input.project_root.join(".mars");
     let ttl_hours = effective_config.settings.models_cache_ttl_hours;
-    let (cache, catalog_outcome) =
-        match models::ensure_fresh(&mars_dir, ttl_hours, input.models_refresh.catalog_mode) {
-            Ok(pair) => pair,
-            Err(err) => {
-                warnings.push(format!("models cache unavailable: {err}"));
-                (
-                    model::load_models_cache(input.project_root).unwrap_or(models::ModelsCache {
-                        models: Vec::new(),
-                        fetched_at: None,
-                    }),
-                    models::RefreshOutcome::Offline,
-                )
-            }
-        };
+    let providers = effective_config
+        .settings
+        .catalog_providers
+        .clone()
+        .unwrap_or_else(models::default_catalog_providers);
+    let (cache, catalog_outcome) = match models::ensure_fresh_with_catalog_providers(
+        &mars_dir,
+        ttl_hours,
+        input.models_refresh.catalog_mode,
+        &providers,
+    ) {
+        Ok(pair) => pair,
+        Err(err) => {
+            warnings.push(format!("models cache unavailable: {err}"));
+            (
+                model::load_models_cache(input.project_root).unwrap_or(models::ModelsCache {
+                    models: Vec::new(),
+                    fetched_at: None,
+                }),
+                models::RefreshOutcome::Offline,
+            )
+        }
+    };
     if let models::RefreshOutcome::StaleFallback { reason } = catalog_outcome {
         warnings.push(format!("models cache: {reason}"));
     }

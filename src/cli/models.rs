@@ -1,6 +1,7 @@
 //! CLI handlers for `mars models` subcommands.
 #![allow(clippy::print_literal)]
 
+use crate::routing::report::{RouteDecisionReport, SelectionOutcome};
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 use std::collections::HashSet;
@@ -197,7 +198,11 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         .as_ref()
         .map(|loaded| &loaded.effective.settings)
         .unwrap_or(&default_settings);
-    let routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    let mut routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    routing_settings.target_source = project_config
+        .as_ref()
+        .map(|config| config.effective.target_source.clone())
+        .unwrap_or_default();
     let routing_diagnostics = routing_settings.diagnostic_messages();
     let visibility = effective_visibility(project_config.as_ref(), args);
     if !json {
@@ -216,7 +221,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         FreshOrJsonError::Fresh(cache, outcome) => (cache, outcome),
         FreshOrJsonError::JsonError(error_message) => {
             let mut out = serde_json::json!({
-                "error": error_message,
+                "error": {"code": "model_cache_unavailable", "message": error_message},
             });
             add_routing_diagnostics_json(&mut out, &routing_diagnostics);
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -321,7 +326,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         is_offline,
         routing_settings: &routing_settings,
     };
-    apply_routing_settings_to_resolved_aliases(&mut resolved, &merged, availability_ctx);
+    let reports =
+        apply_routing_settings_to_resolved_aliases(&mut resolved, &merged, availability_ctx);
     if !args.unavailable {
         prune_unavailable(&mut resolved);
     }
@@ -360,6 +366,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 if let Some(model) = cache.models.iter().find(|model| model.id == r.model_id) {
                     add_cost_json_fields(&mut obj, model);
                 }
+                add_route_json_fields(&mut obj, &reports[&r.name]);
                 add_availability_json_fields(&mut obj, r.availability.as_ref());
                 obj
             })
@@ -409,6 +416,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
 
 #[derive(Debug, Clone)]
 struct ListModelEntry {
+    route_report: Option<RouteDecisionReport>,
     id: String,
     provider: String,
     release_date: Option<String>,
@@ -551,6 +559,7 @@ struct OutputResolvedInput<'a> {
     resolved: &'a models::ResolvedAlias,
     source: &'a str,
     route_trace: &'a crate::routing::RoutingTrace,
+    routing_settings: &'a ResolvedRoutingSettings,
     outcome: &'a models::RefreshOutcome,
     cache_outcome: &'a CachedProbeOutcome,
     probe_refresh: ProbeRefreshMode,
@@ -604,6 +613,9 @@ fn run_list_all(
                     "cost_reasoning": model.cost_reasoning,
                     "matched_aliases": model.matched_aliases,
                 });
+                if let Some(report) = &model.route_report {
+                    add_route_json_fields(&mut obj, report);
+                }
                 add_availability_json_fields(&mut obj, model.availability.as_ref());
                 obj
             })
@@ -868,6 +880,9 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
                     "cost_cache_write": model.cost_cache_write,
                     "cost_reasoning": model.cost_reasoning,
                 });
+                if let Some(report) = &model.route_report {
+                    add_route_json_fields(&mut obj, report);
+                }
                 add_availability_json_fields(&mut obj, model.availability.as_ref());
                 obj
             })
@@ -1186,6 +1201,13 @@ where
         cost_reasoning: model.cost_reasoning,
         matched_aliases: Vec::new(),
         availability: Some(availability_ctx.classify(&model.id, &model.provider, &trace)),
+        route_report: Some(model_report(
+            &model.id,
+            &model.id,
+            "catalog",
+            availability_ctx.routing_settings,
+            &trace,
+        )),
     }
 }
 
@@ -1224,6 +1246,13 @@ fn model_entry_for_pinned(
         cost_reasoning: None,
         matched_aliases: Vec::new(),
         availability: Some(availability_ctx.classify(model_id, &provider, &trace)),
+        route_report: Some(model_report(
+            model_id,
+            model_id,
+            "pinned",
+            availability_ctx.routing_settings,
+            &trace,
+        )),
     }
 }
 
@@ -1243,6 +1272,7 @@ fn model_entry_for_cached_static(model: &models::CachedModel) -> ListModelEntry 
         cost_reasoning: model.cost_reasoning,
         matched_aliases: Vec::new(),
         availability: None,
+        route_report: None,
     }
 }
 
@@ -1270,6 +1300,7 @@ fn model_entry_for_pinned_static(
         cost_reasoning: None,
         matched_aliases: Vec::new(),
         availability: None,
+        route_report: None,
     }
 }
 
@@ -1375,17 +1406,22 @@ fn apply_routing_settings_to_resolved_aliases(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
     aliases: &IndexMap<String, ModelAlias>,
     context: AvailabilityContext<'_>,
-) {
-    for alias in resolved.values_mut() {
-        apply_routing_settings_to_resolved_alias(alias, aliases.get(&alias.name), context);
-    }
+) -> IndexMap<String, RouteDecisionReport> {
+    resolved
+        .values_mut()
+        .map(|alias| {
+            let report =
+                apply_routing_settings_to_resolved_alias(alias, aliases.get(&alias.name), context);
+            (alias.name.clone(), report)
+        })
+        .collect()
 }
 
 fn apply_routing_settings_to_resolved_alias(
     alias: &mut models::ResolvedAlias,
     source_alias: Option<&ModelAlias>,
     context: AvailabilityContext<'_>,
-) {
+) -> RouteDecisionReport {
     let AvailabilityContext {
         installed,
         opencode_probe_result,
@@ -1413,6 +1449,13 @@ fn apply_routing_settings_to_resolved_alias(
     };
     let trace = route_trace_for_resolved_model(&route_input);
     apply_route_to_resolved_alias(alias, &trace, context);
+    model_report(
+        &alias.name,
+        &alias.model_id,
+        "alias",
+        routing_settings,
+        &trace,
+    )
 }
 
 fn prune_unavailable(resolved: &mut IndexMap<String, models::ResolvedAlias>) {
@@ -1560,29 +1603,46 @@ fn print_availability_text(availability: Option<&ModelAvailability>) {
     }
 }
 
-fn add_route_json_fields(out: &mut serde_json::Value, trace: &crate::routing::RoutingTrace) {
-    let report = trace.to_report();
-    out["route"] = serde_json::json!(report.compact_summary());
-    out["route_trace"] = serde_json::json!(report);
+fn model_report(
+    name: &str,
+    model: &str,
+    source: &str,
+    settings: &ResolvedRoutingSettings,
+    trace: &crate::routing::RoutingTrace,
+) -> RouteDecisionReport {
+    let mut report =
+        RouteDecisionReport::new(&settings.harness_scope, &settings.target_source, &[]);
+    report.push(name, model, source, trace);
+    report.select(0);
+    report
 }
 
-fn print_route_text(trace: &crate::routing::RoutingTrace) {
-    let report = trace.to_report();
-    println!(
-        "Route:    {} ({}, {}, {})",
-        trace.selected_harness(),
-        trace.source.label(),
-        trace.selected_selection_kind().label(),
-        trace.selected_match_evidence().label()
+fn add_route_json_fields(out: &mut serde_json::Value, report: &RouteDecisionReport) {
+    out["route"] = serde_json::json!(
+        report
+            .selected_attempt()
+            .map(|attempt| attempt.compact_summary())
     );
-    if !report.candidates_tried.is_empty() {
-        println!("Tried:    {}", report.candidates_tried.join(", "));
+    out["route_trace"] = serde_json::json!(report);
+    if report.selected.is_none() {
+        let message = out
+            .get("error")
+            .and_then(|error| error.as_str())
+            .unwrap_or("no permitted route for requested model")
+            .to_string();
+        out["error"] =
+            serde_json::json!({"code": "model_candidates_exhausted", "message": message});
     }
-    for assessment in report.assessments {
-        if let Some(skip_reason) = assessment.skip_reason {
-            println!("Skip:     {} ({})", assessment.harness, skip_reason);
-        }
+}
+
+fn print_route_text(report: &RouteDecisionReport) {
+    if let Some(attempt) = report.selected_attempt() {
+        println!(
+            "Route:    {} ({}, {}, {})",
+            attempt.harness, attempt.source, attempt.selection_kind, attempt.match_evidence
+        );
     }
+    println!("{report}");
 }
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -1599,7 +1659,11 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .as_ref()
         .map(|loaded| &loaded.effective.settings)
         .unwrap_or(&default_settings);
-    let routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    let mut routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    routing_settings.target_source = project_config
+        .as_ref()
+        .map(|config| config.effective.target_source.clone())
+        .unwrap_or_default();
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
         emit_routing_settings_warnings(&routing_diagnostics);
@@ -1727,6 +1791,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             resolved: &resolved,
             source: "alias_prefix",
             route_trace: &route_trace,
+            routing_settings: &routing_settings,
             outcome,
             cache_outcome: &cache_outcome,
             probe_refresh: refresh.probe_refresh,
@@ -1913,6 +1978,18 @@ fn run_resolve_exact_alias(
             );
         }
     }
+    let report = route_trace
+        .as_ref()
+        .zip(resolved_entry.as_ref())
+        .map(|(trace, resolved)| {
+            model_report(
+                name,
+                &resolved.model_id,
+                &source,
+                runtime.routing_settings,
+                trace,
+            )
+        });
     let diagnostics = diag.drain();
     let probe_outcome = capability_session
         .loaded_opencode_outcome()
@@ -1954,13 +2031,13 @@ fn run_resolve_exact_alias(
                 out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
             }
             add_routing_diagnostics_json(&mut out, routing_diagnostics);
-            if let Some(trace) = route_trace.as_ref() {
-                add_route_json_fields(&mut out, trace);
+            if let Some(report) = report.as_ref() {
+                add_route_json_fields(&mut out, report);
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
             let mut out = serde_json::json!({
-                "error": format!("alias `{}` did not resolve to a model ID", name),
+                "error": {"code": "model_unresolved", "message": format!("alias `{}` did not resolve to a model ID", name)},
             });
             if let Some(warning) = cache_warning.as_deref() {
                 out["cache_warning"] = serde_json::json!(warning);
@@ -2030,8 +2107,8 @@ fn run_resolve_exact_alias(
         if let Some(desc) = &r.description {
             println!("Desc:     {}", desc);
         }
-        if let Some(trace) = route_trace.as_ref() {
-            print_route_text(trace);
+        if let Some(report) = report.as_ref() {
+            print_route_text(report);
         }
         emit_drained_text_diagnostics(&diagnostics);
     }
@@ -2074,7 +2151,7 @@ fn run_auto_resolve_alias_cache_unavailable(
             "name": name,
             "source": source,
             "spec": format_spec(&alias.spec),
-            "error": error,
+            "error": {"code": "model_unresolved", "message": error},
         });
         if let Some(cache_error) = cache_error {
             out["cache_error"] = serde_json::json!(cache_error);
@@ -2094,12 +2171,20 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         resolved,
         source,
         route_trace,
+        routing_settings,
         outcome,
         cache_outcome,
         probe_refresh,
         routing_diagnostics,
         json,
     } = input;
+    let report = model_report(
+        name,
+        &resolved.model_id,
+        source,
+        routing_settings,
+        route_trace,
+    );
     let cache_warning = cache_warning(outcome);
     if let Some(warning) = cache_warning.as_deref()
         && !json
@@ -2137,7 +2222,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
             out["cache_warning"] = serde_json::json!(warning);
         }
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        add_route_json_fields(&mut out, route_trace);
+        add_route_json_fields(&mut out, &report);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if probe_refresh == ProbeRefreshMode::Background
@@ -2162,7 +2247,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         if let Some(desc) = &resolved.description {
             println!("Desc:     {}", desc);
         }
-        print_route_text(route_trace);
+        print_route_text(&report);
     }
 
     Ok(i32::from(route_trace.selected_harness().is_empty()))
@@ -2185,7 +2270,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     if name.trim().is_empty() {
         if json {
             let mut out = serde_json::json!({
-                "error": "model name cannot be empty",
+                "error": {"code": "invalid_request", "message": "model name cannot be empty"},
             });
             if let Some(cache_error) = cache_error {
                 out["cache_error"] = serde_json::json!(cache_error);
@@ -2235,6 +2320,13 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             |harness| auth.state(harness),
         )
     };
+    let mut report = model_report(
+        name,
+        &passthrough_model_id,
+        "passthrough",
+        routing_settings,
+        &trace,
+    );
     let availability = AvailabilityContext {
         auth,
         installed,
@@ -2251,6 +2343,8 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         installed,
         crate::routing::acceptance::MatchPolicy::RequireSlugEvidence,
     ) {
+        report.selected = None;
+        report.outcome = SelectionOutcome::Exhausted;
         let message = passthrough_rejection_message(name, &rejection_reason);
         if json {
             let mut out = serde_json::json!({
@@ -2262,7 +2356,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
                 "harnesses_tried": trace.candidates_tried,
                 "route_rejection": route_rejection_json(&rejection_reason),
             });
-            add_route_json_fields(&mut out, &trace);
+            add_route_json_fields(&mut out, &report);
             add_availability_json_fields(&mut out, Some(&availability));
             if !trace.selected_diagnostics().is_empty() {
                 out["diagnostics"] = serde_json::json!(trace.selected_diagnostics());
@@ -2277,7 +2371,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         } else {
             eprintln!("error: {message}");
-            print_route_text(&trace);
+            print_route_text(&report);
             print_availability_text(Some(&availability));
         }
         return Ok(1);
@@ -2307,7 +2401,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             out["warning"] = serde_json::json!(warning);
         }
         add_availability_json_fields(&mut out, Some(&availability));
-        add_route_json_fields(&mut out, &trace);
+        add_route_json_fields(&mut out, &report);
         if let Some(warning) = cache_warning.as_deref() {
             out["cache_warning"] = serde_json::json!(warning);
         }
@@ -2330,7 +2424,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         if !harness_candidates.is_empty() {
             println!("Candidates: {}", harness_candidates.join(", "));
         }
-        print_route_text(&trace);
+        print_route_text(&report);
     }
 
     Ok(0)

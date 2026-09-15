@@ -194,7 +194,7 @@ fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
         Some("route_unverified")
     );
     assert_eq!(stdout["runnable_paths"], json!([]));
-    let assessment = stdout["route_trace"]["assessments"]
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .unwrap()
         .iter()
@@ -270,7 +270,7 @@ fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
     assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
     assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
-    let assessments = stdout["route_trace"]["assessments"]
+    let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route assessments should be array");
     let opencode = assessments
@@ -319,7 +319,7 @@ fn resolve_alias_prefix_uses_loaded_live_probe_for_unverified_availability() {
         Some("route_unverified")
     );
     assert_eq!(stdout["runnable_paths"], json!([]));
-    let assessment = stdout["route_trace"]["assessments"]
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .unwrap()
         .iter()
@@ -369,7 +369,7 @@ harness_order = ["opencode"]
         Some("route_unverified")
     );
     assert_eq!(stdout["runnable_paths"], json!([]));
-    let assessment = stdout["route_trace"]["assessments"]
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .unwrap()
         .iter()

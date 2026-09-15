@@ -216,7 +216,7 @@ fn caller_exclusions_do_not_unpin_an_explicit_model() {
     assert!(calls.is_empty(), "{calls}");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("no linked harness available for model `primary`"),
+        error.contains("model fallback candidates exhausted for `primary`"),
         "{error}"
     );
 }

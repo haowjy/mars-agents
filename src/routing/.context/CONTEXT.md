@@ -66,7 +66,7 @@ Empty catalog falls back to provider-native affinity + auth gate only.
 | Value | Meaning |
 |---|---|
 | `Auto` | Selected by candidate evaluation loop (first acceptable harness) |
-| `Fixed` | Caller committed to a specific harness (CLI/profile/alias) |
+| `Fixed` | Caller pinned a specific harness (CLI) |
 
 ### `MatchEvidence` semantics
 
@@ -113,8 +113,12 @@ merely because a matching slug and an installed binary exist.
 **Consumers serialize `RouteDecisionReport`, never `RoutingTrace` directly.**
 `RouteDecisionReport` uses string labels for all enum fields — decouples JSON shape from internal enum changes.
 
-- **Do not construct `RouteDecisionReport` by hand** — use `RouteDecisionReport::from_trace(trace)`.
-- `RouteSummaryReport` is a compact subset for CLI JSON output.
+Report version 2 aggregates `ModelAttemptReport` records, target scope/provenance,
+caller exclusions, and a selected assessment pointer. Build policy owns cross-model
+history; standalone resolution contributes one attempt. `new`/`push`/`select`
+project existing decisions, never evaluate candidates. An exhausted report has no
+selected pointer; a deferred winner can point to an earlier attempt.
+`RouteSummaryReport` is a compact view of the selected attempt only.
 
 ### Link filtering rule
 
@@ -175,9 +179,7 @@ confidence.
 Route facts (`Passthrough` evidence, `provider-match` source, `unknown`
 harness_model_confidence) are **not warnings**. They belong in routing/provenance
 fields. Warnings are for unexpected user-actionable degraded states — e.g., "linked
-harness constraints left no eligible candidates." The distinction is enforced by
-`build/policy/runnable.rs::resolve_routing()` returning `warnings: Vec::new()` always;
-the caller layer owns warning promotion.
+harness constraints left no eligible candidates." Build policy owns warning promotion; final routing projection does not emit warnings.
 
 ## Patterns
 
@@ -219,7 +221,11 @@ accept_assessment(&assessment)?;
 **Serialize for CLI output:**
 
 ```rust
-let report = trace.to_report(); // or RouteDecisionReport::from_trace(&trace)
+let mut report = RouteDecisionReport::new(scope, target_source, excluded);
+let attempt = report.model_attempts.len();
+report.push(token, canonical_model, model_source, &trace);
+// Only after the caller accepts this route:
+report.select(attempt);
 let json = serde_json::to_string(&report)?;
 ```
 

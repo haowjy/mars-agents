@@ -3,7 +3,7 @@ use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::harness_model::{HarnessModelInput, resolve_harness_model};
 use crate::models::probes::cursor::{CursorEffortResolutionError, resolve_cursor_effort_slug};
 use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
-use crate::routing::{MatchEvidence, RoutingTrace};
+use crate::routing::{MatchEvidence, report::RouteDecisionReport};
 
 pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
@@ -18,7 +18,7 @@ pub(super) struct RoutingInput<'a> {
     pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub(super) pi_probe_result: Option<&'a PiProbeResult>,
     pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
-    pub(super) route_trace: RoutingTrace,
+    pub(super) route_report: RouteDecisionReport,
 }
 
 pub(super) struct RoutingResolution {
@@ -52,7 +52,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         opencode_probe_result,
         pi_probe_result,
         cursor_probe_result,
-        route_trace,
+        route_report,
     } = input;
 
     let runnable = resolve_harness_model(HarnessModelInput {
@@ -65,9 +65,10 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         pi_probe: pi_probe_result,
     });
 
-    let candidate_slugs = route_trace
-        .assessments
-        .iter()
+    let candidate_slugs = route_report
+        .selected_attempt()
+        .into_iter()
+        .flat_map(|attempt| &attempt.assessments)
         .find(|assessment| assessment.harness == harness)
         .map(|assessment| assessment.candidate_slugs.clone())
         .unwrap_or_default();
@@ -82,7 +83,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         harness_model_source: runnable.source.label().to_string(),
         harness_model_confidence: runnable.confidence.label().to_string(),
         candidate_slugs,
-        route_trace: route_trace.to_report(),
+        route_trace: route_report,
     };
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
@@ -142,7 +143,18 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    use crate::routing::SelectionKind;
+    use crate::routing::{RoutingTrace, SelectionKind};
+
+    fn report(trace: RoutingTrace) -> RouteDecisionReport {
+        let mut report = RouteDecisionReport::new(
+            &crate::config::targets::HarnessScope::Unrestricted,
+            &Default::default(),
+            &[],
+        );
+        report.push("test", "test", "cli", &trace);
+        report.select(0);
+        report
+    }
 
     fn trace_with_assessment(evidence: MatchEvidence) -> RoutingTrace {
         RoutingTrace {
@@ -188,7 +200,7 @@ mod tests {
             opencode_probe_result: Some(&opencode_probe),
             pi_probe_result: None,
             cursor_probe_result: None,
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert_eq!(
@@ -216,7 +228,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
-            route_trace: trace_with_assessment(MatchEvidence::Passthrough),
+            route_report: report(trace_with_assessment(MatchEvidence::Passthrough)),
         });
 
         assert_eq!(resolution.routing.harness_model, "gpt-5.4-mini".to_string());
@@ -265,7 +277,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
-            route_trace: trace,
+            route_report: report(trace),
         });
 
         assert_eq!(
@@ -297,7 +309,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert!(resolution.effort_consumed);
@@ -332,7 +344,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert!(resolution.effort_consumed);
@@ -362,7 +374,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert!(resolution.effort_consumed);
@@ -396,7 +408,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert!(resolution.effort_consumed);
@@ -426,7 +438,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert!(!resolution.effort_consumed);
@@ -452,7 +464,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert_eq!(
@@ -480,7 +492,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert_eq!(
@@ -508,7 +520,7 @@ mod tests {
                 model_probe_success: false,
                 error: Some("model probe failed: timeout".to_string()),
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert_eq!(
@@ -538,7 +550,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: trace_with_assessment(MatchEvidence::Confirmed),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
 
         assert_eq!(
@@ -566,7 +578,7 @@ mod tests {
                 model_probe_success: true,
                 error: None,
             }),
-            route_trace: RoutingTrace {
+            route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Cli,
                 selection_kind: SelectionKind::Fixed,
                 match_evidence: MatchEvidence::Passthrough,
@@ -576,7 +588,7 @@ mod tests {
                 assessments: Vec::new(),
                 diagnostics: Vec::new(),
                 exhaustion_reason: None,
-            },
+            }),
         });
 
         assert!(!resolution.effort_consumed);
@@ -603,7 +615,7 @@ mod tests {
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: None,
-            route_trace: RoutingTrace {
+            route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Provider,
                 selection_kind: SelectionKind::Auto,
                 match_evidence: MatchEvidence::Passthrough,
@@ -613,7 +625,7 @@ mod tests {
                 assessments: Vec::new(),
                 diagnostics: Vec::new(),
                 exhaustion_reason: None,
-            },
+            }),
         });
 
         assert_eq!(resolution.routing.model, "");

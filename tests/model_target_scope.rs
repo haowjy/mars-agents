@@ -146,7 +146,10 @@ fn live_models_do_not_advertise_auth_rejected_routes() {
                     assert_eq!(opus["runnable_paths"], serde_json::json!([]), "{opus}");
                     assert_ne!(opus["harness"], "", "{opus}");
                     assert!(
-                        !opus["error"].as_str().unwrap().contains("not installed"),
+                        !opus["error"]["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("not installed"),
                         "{opus}"
                     );
                 } else {
@@ -166,7 +169,10 @@ fn live_models_do_not_advertise_auth_rejected_routes() {
                     );
                     assert!(result["route_rejection"]["harness"].is_null(), "{result}");
                     assert!(
-                        !result["error"].as_str().unwrap().contains("not installed"),
+                        !result["error"]["message"]
+                            .as_str()
+                            .unwrap()
+                            .contains("not installed"),
                         "{result}"
                     );
                     let text = test_common::mars_cmd(root, root, "http://127.0.0.1:1")

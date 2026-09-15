@@ -26,6 +26,12 @@ settings. An eligible route wins immediately; retain the first whole unverified
 attempt only when no attempt has an eligible route. Do not reconstruct that attempt
 from the last iteration's state. Native auth observations are shared across attempts.
 
+The loop also owns the aggregate `RouteDecisionReport`: append each trace before
+moving to a backup and retain it on selection errors. Final routing projection
+receives that report intact; it must not reconstruct history from the winning trace.
+A configuration rejection before harness assessment records an unassessed model
+attempt, not a fabricated verdict.
+
 ## Related docs
 
 - [Policy overview](../AGENTS.md)

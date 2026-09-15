@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Launch bundle schema 4 and routing report schema 2 retain target provenance and every attempted model; JSON failures carry structured errors and available selection history.
+
 ### Fixed
 - Preserve named Pi models and unresolved-alias provider constraints in final executable-model projection.
 - Route standalone aliases through harness preferences; preserve base-alias provider constraints on prefix resolution.

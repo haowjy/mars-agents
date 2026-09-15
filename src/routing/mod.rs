@@ -200,9 +200,6 @@ impl RoutingTrace {
     pub fn selected_harness_order_position(&self) -> Option<usize> {
         self.harness_order_position
     }
-    pub fn to_report(&self) -> report::RouteDecisionReport {
-        report::RouteDecisionReport::from_trace(self)
-    }
 }
 
 /// Input to the routing engine.
@@ -1170,9 +1167,11 @@ mod tests {
             );
             assert_eq!(accepted.is_ok(), verdict != Eligibility::Blocked);
             assert!(
-                !serde_json::to_string(&trace.to_report())
-                    .unwrap()
-                    .contains("PRIVATE_AUTH_DETAIL")
+                !serde_json::to_string(&report::ModelAttemptReport::from_trace(
+                    "model", "model", "cli", &trace
+                ))
+                .unwrap()
+                .contains("PRIVATE_AUTH_DETAIL")
             );
         }
     }

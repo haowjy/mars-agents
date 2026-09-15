@@ -14,6 +14,7 @@ pub struct ResolvedRoutingSettings {
     pub provider_order: Option<ParsedProviderOrder>,
     pub default_harness: Option<ParsedHarnessValue>,
     pub harness_scope: HarnessScope,
+    pub target_source: super::targets::TargetSource,
     pub diagnostics: Vec<RoutingConfigDiagnostic>,
 }
 
@@ -185,6 +186,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         provider_order,
         default_harness,
         harness_scope,
+        target_source: Default::default(),
         diagnostics,
     }
 }

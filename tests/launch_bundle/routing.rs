@@ -1,7 +1,7 @@
 // qa-validated: harness-order-settings-audit
 // qa-validated: capability-cache-resolver-routing-gaps
 
-use super::common::setup_bundle_project;
+use super::common::{selected_attempt, setup_bundle_project};
 use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;
 use assert_fs::fixture::PathChild;
@@ -513,10 +513,10 @@ default_harness = "claude""#;
     );
     assert!(bundle["routing"]["route_trace"].is_object());
     assert_eq!(
-        bundle["routing"]["route_trace"]["harness"].as_str(),
+        selected_attempt(&bundle)["harness"].as_str(),
         Some("opencode")
     );
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -686,7 +686,7 @@ model = "gpt-5.4-mini""#;
         Some("openai/gpt-5.4-mini")
     );
 
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -757,7 +757,7 @@ model = "gpt-5.4-mini""#;
         Some("confirmed")
     );
 
-    let diagnostics = bundle["routing"]["route_trace"]["diagnostics"]
+    let diagnostics = selected_attempt(&bundle)["diagnostics"]
         .as_array()
         .expect("route_trace.diagnostics should be array");
     assert!(diagnostics.iter().any(|diagnostic| {
@@ -813,7 +813,7 @@ model = "gpt-5.4-mini""#;
         Some("openai/gpt-5.4-mini")
     );
 
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -876,11 +876,11 @@ harness_order = ["pi", "opencode"]"#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        selected_attempt(&bundle)["selection_kind"].as_str(),
         Some("fixed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -938,15 +938,15 @@ harness_order = ["codex", "opencode"]"#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        selected_attempt(&bundle)["selection_kind"].as_str(),
         Some("auto")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["candidates_tried"],
+        selected_attempt(&bundle)["candidates_tried"],
         json!(["claude"])
     );
     assert_eq!(
@@ -1027,11 +1027,11 @@ provider = "openai""#;
     );
 
     assert_eq!(
-        bundle["routing"]["route_trace"]["assessments"][0]["harness"],
+        selected_attempt(&bundle)["assessments"][0]["harness"],
         "claude"
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["assessments"][0]["reason"],
+        selected_attempt(&bundle)["assessments"][0]["reason"],
         "not_installed"
     );
 }
@@ -1059,9 +1059,7 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(bundle["routing"]["model"], "claude-opus-4-6");
     assert_eq!(bundle["routing"]["harness"], "opencode");
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
-        .as_array()
-        .unwrap();
+    let assessments = selected_attempt(&bundle)["assessments"].as_array().unwrap();
     let selected = assessments
         .iter()
         .find(|a| a["harness"] == "opencode")
@@ -1128,7 +1126,7 @@ Review code changes."#;
     let stderr = String::from_utf8(output.stderr).unwrap();
 
     assert!(stderr.contains("cli harness `claude` is not installed"));
-    assert!(stderr.contains("installed harnesses: codex, opencode"));
+    assert!(stderr.contains("Skip: claude (not_installed)"));
     assert!(
         !stderr.contains("pivoting via model-policies"),
         "explicit CLI harness must not auto-pivot: {stderr}"
@@ -1232,15 +1230,15 @@ harness = "codex""#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        selected_attempt(&bundle)["selection_kind"].as_str(),
         Some("auto")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["candidates_tried"],
+        selected_attempt(&bundle)["candidates_tried"],
         json!(["codex"])
     );
     assert_eq!(
@@ -1398,9 +1396,7 @@ default_harness = "claude""#;
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
-        .as_array()
-        .unwrap();
+    let assessments = selected_attempt(&bundle)["assessments"].as_array().unwrap();
     for harness in ["pi", "opencode", "claude"] {
         let rejected = assessments
             .iter()
@@ -1792,7 +1788,7 @@ Review code changes."#;
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("claude,codex,pi,cursor,opencode")
     );
-    let selected = bundle["routing"]["route_trace"]["assessments"]
+    let selected = selected_attempt(&bundle)["assessments"]
         .as_array()
         .unwrap()
         .iter()
@@ -2165,7 +2161,7 @@ fn build_launch_bundle_cursor_unmatched_model_fails_before_effort_projection() {
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("no harness available for model `gpt-5`"),
+        stderr.contains("model fallback candidates exhausted for `gpt-5`"),
         "an unsupported route must fail before effort projection: {stderr}"
     );
     assert!(
@@ -2256,7 +2252,7 @@ harness_order = ["opencode", "cursor"]"#;
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("opencode,cursor,claude,codex,pi")
     );
-    let selected = bundle["routing"]["route_trace"]["assessments"]
+    let selected = selected_attempt(&bundle)["assessments"]
         .as_array()
         .unwrap()
         .iter()
@@ -2746,8 +2742,8 @@ model = "gpt-5.4-mini""#;
     let stderr = String::from_utf8(output.stderr).unwrap();
 
     assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
-    assert!(stderr.contains("tried: gpt55 ("), "{stderr}");
-    assert!(stderr.find("tried: gpt55 (").unwrap() < stderr.find("gptmini (").unwrap());
+    assert!(stderr.contains("Model: gpt55 ("), "{stderr}");
+    assert!(stderr.find("Model: gpt55 (").unwrap() < stderr.find("gptmini (").unwrap());
 }
 
 #[test]
@@ -2841,7 +2837,7 @@ model = "claude-opus-4-6""#;
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert!(stderr.contains("no linked harness available for model `gpt55`"));
+    assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
     assert!(!stderr.contains("fell back to `sonnet`"));
 }
 
@@ -3300,12 +3296,9 @@ override = { harness = "opencode", effort = "low" }"#;
         bundle["provenance"]["matched_policy_rule"].as_str(),
         Some("overlay:0")
     );
+    assert_eq!(selected_attempt(&bundle)["assessments"][0]["harness"], "pi");
     assert_eq!(
-        bundle["routing"]["route_trace"]["assessments"][0]["harness"],
-        "pi"
-    );
-    assert_eq!(
-        bundle["routing"]["route_trace"]["assessments"][0]["verdict"],
+        selected_attempt(&bundle)["assessments"][0]["verdict"],
         "unverified"
     );
 }

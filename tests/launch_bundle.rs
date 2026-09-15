@@ -8,6 +8,8 @@ mod test_common;
 mod common;
 #[path = "launch_bundle/cursor.rs"]
 mod cursor;
+#[path = "launch_bundle/decision_report.rs"]
+mod decision_report;
 #[path = "launch_bundle/errors.rs"]
 mod errors;
 #[path = "launch_bundle/execution_policy.rs"]

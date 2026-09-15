@@ -404,14 +404,19 @@ harness = "opencode"
         .code(2)
         .get_output()
         .clone();
-    let stderr = String::from_utf8(output.stderr).unwrap();
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["code"], "model_candidates_exhausted");
     assert!(
-        stderr.contains("model fallback candidates exhausted for `gpt55`"),
-        "{stderr}"
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("model fallback candidates exhausted for `gpt55`")
     );
-    assert!(stderr.contains("no_model_match"), "{stderr}");
+    assert_eq!(value["route_trace"]["outcome"], "exhausted");
+    assert!(value["route_trace"]["selected"].is_null());
+    assert!(value["route_trace"].to_string().contains("no_model_match"));
     assert!(
-        output.stdout.is_empty(),
+        value.get("prompting").is_none(),
         "must not return default-model prompting"
     );
 }

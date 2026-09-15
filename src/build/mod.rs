@@ -17,7 +17,7 @@ use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
 
-pub const LAUNCH_BUNDLE_VERSION: u32 = 3;
+pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
@@ -115,9 +115,18 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(policy.warnings);
+    let with_selection_report = |err: MarsError| match err {
+        MarsError::Config(_) => MarsError::Selection {
+            code: "invalid_config",
+            message: err.to_string(),
+            report: Box::new(policy.routing.route_trace.clone()),
+        },
+        _ => err,
+    };
 
     let mars_dir = ctx.project_root.join(".mars");
-    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)?;
+    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)
+        .map_err(with_selection_report)?;
 
     let prompt = compile_prompt_surface(
         &mars_dir,
@@ -129,10 +138,12 @@ pub fn build_launch_bundle(
         &policy.routing.model,
         &profile.subagents,
         effective_project_config.settings.meridian_fanout_agents(),
-    )?;
+    )
+    .map_err(with_selection_report)?;
 
     warnings.extend(prompt.warnings);
-    let (resolved_tools, tool_warnings) = resolve_bundle_tools(&profile, &policy.routing.harness)?;
+    let (resolved_tools, tool_warnings) =
+        resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
     warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {

@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
 };
@@ -18,9 +16,13 @@ pub(super) struct HarnessResolution {
     pub(super) warnings: Vec<String>,
 }
 
+pub(super) enum HarnessAttempt {
+    Selected(HarnessResolution),
+    Exhausted(routing::RoutingTrace),
+}
+
 pub(super) struct HarnessEvidence<'a> {
     pub(super) routing: routing::RoutingEvidence<'a>,
-    pub(super) model_token: &'a str,
 }
 
 pub(super) fn resolve_harness<F>(
@@ -31,7 +33,7 @@ pub(super) fn resolve_harness<F>(
     evidence: HarnessEvidence<'_>,
     probe_resolver: &mut dyn routing::ProbeResolver,
     auth_check: F,
-) -> Result<HarnessResolution, MarsError>
+) -> Result<HarnessAttempt, MarsError>
 where
     F: Fn(&str) -> crate::harness::host::AuthState,
 {
@@ -78,20 +80,6 @@ where
         .as_ref()
         .filter(|field| field.source == PolicySource::Cli)
     {
-        if routing::permission_denial(
-            &evidence.routing.harness_scope,
-            input.excluded_harnesses,
-            &pin.value,
-        )
-        .is_some()
-        {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
-                    pin.value
-                ),
-            }));
-        }
         routing_input.provider_for_order = routing::provider_for_order_for_fixed_harness(
             evidence.routing.provider_for_order,
             &pin.value,
@@ -119,11 +107,7 @@ where
                     rejection.skip_reason().unwrap_or("unavailable")
                 )
             });
-            return Err(no_harness_available_error(
-                evidence.model_token,
-                &trace,
-                evidence.routing.installed_harnesses,
-            ));
+            return Ok(HarnessAttempt::Exhausted(trace));
         }
         trace
     } else {
@@ -136,11 +120,7 @@ where
         routing::evaluate_candidates(&routing_input, probe_resolver, auth_check)
     };
     if trace.harness.is_empty() {
-        return Err(no_harness_available_error(
-            evidence.model_token,
-            &trace,
-            evidence.routing.installed_harnesses,
-        ));
+        return Ok(HarnessAttempt::Exhausted(trace));
     }
     warnings.extend(trace.selected_diagnostics().iter().cloned());
     let harness = preference
@@ -150,13 +130,13 @@ where
             source: trace.source.into(),
             matched_rule: None,
         });
-    Ok(HarnessResolution {
+    Ok(HarnessAttempt::Selected(HarnessResolution {
         harness,
         harness_order_position: trace.harness_order_position,
         candidates_tried: trace.candidates_tried.clone(),
         route_trace: trace,
         warnings,
-    })
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -221,50 +201,6 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
     }
 }
 
-fn no_harness_available_error(
-    model_token: &str,
-    route_trace: &routing::RoutingTrace,
-    installed_harnesses: &HashSet<String>,
-) -> MarsError {
-    let mut detail = route_trace
-        .diagnostics
-        .last()
-        .cloned()
-        .unwrap_or_else(|| "candidate routing produced no selectable harness".to_string());
-    for assessment in &route_trace.assessments {
-        if let Some(reason) = assessment.eligibility_reason() {
-            detail.push_str(&format!("; {}: {reason}", assessment.harness));
-        }
-    }
-    if route_trace.exhaustion_reason == Some(routing::ExhaustionReason::LinkedHarnessConstraints) {
-        MarsError::LinkedHarnessExhausted {
-            model_token: model_token.to_string(),
-            detail,
-            installed_harnesses: format_installed_harnesses(installed_harnesses),
-        }
-    } else {
-        MarsError::HarnessUnavailable {
-            model_token: model_token.to_string(),
-            detail,
-            installed_harnesses: format_installed_harnesses(installed_harnesses),
-        }
-    }
-}
-
-fn format_installed_harnesses(installed_harnesses: &HashSet<String>) -> String {
-    let mut names = installed_harnesses
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    names.sort_unstable();
-
-    if names.is_empty() {
-        "(none)".to_string()
-    } else {
-        names.join(", ")
-    }
-}
-
 pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
     crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
@@ -272,6 +208,7 @@ pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     use indexmap::IndexMap;
     use std::path::Path;
@@ -375,7 +312,7 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn evidence_for_model<'a>(
         model_id: &'a str,
-        model_token: &'a str,
+        _model_token: &'a str,
         provider_for_order: Option<&'a str>,
         provider_constraint: Option<&'a str>,
         installed_harnesses: &'a HashSet<String>,
@@ -398,7 +335,6 @@ mod tests {
                 cursor_probe_result: None,
                 catalog_model_slugs: None,
             },
-            model_token,
         }
     }
 
@@ -440,7 +376,7 @@ mod tests {
         matched_policy: Option<&MatchedModelPolicy>,
         evidence: HarnessEvidence<'_>,
         probe_resolver: &mut dyn routing::ProbeResolver,
-    ) -> Result<HarnessResolution, MarsError> {
+    ) -> Result<HarnessResolution, String> {
         resolve_harness(
             input,
             alias,
@@ -450,6 +386,11 @@ mod tests {
             probe_resolver,
             |_| crate::harness::host::AuthState::Authenticated,
         )
+        .map_err(|error| error.to_string())
+        .and_then(|attempt| match attempt {
+            HarnessAttempt::Selected(resolution) => Ok(resolution),
+            HarnessAttempt::Exhausted(trace) => Err(format!("{trace:?}")),
+        })
     }
 
     #[test]
@@ -633,7 +574,7 @@ mod tests {
         let message = error.to_string();
 
         assert!(message.contains("cli harness `claude` is not installed"));
-        assert!(message.contains("installed harnesses: codex, opencode"));
+        assert!(message.contains("installed: false"));
     }
 
     #[test]
@@ -830,15 +771,14 @@ mod tests {
                 cursor_probe_result: Some(&cursor_probe),
                 catalog_model_slugs: None,
             },
-            model_token: "deepseekflash",
         };
 
         let error = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
             .expect_err("empty harness route should fail before HarnessKind validation");
 
         let message = error.to_string();
-        assert!(message.contains("no linked harness available for model `deepseekflash`"));
-        assert!(message.contains("known linked harness constraints"));
+        assert!(message.contains("LinkedHarnessConstraints"));
+        assert!(message.contains("no_model_match"));
     }
 
     #[test]

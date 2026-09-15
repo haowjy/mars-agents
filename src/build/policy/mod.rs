@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 use crate::routing;
@@ -168,13 +168,6 @@ impl MatchedModelPolicy {
     }
 }
 
-fn is_harness_exhaustion(err: &MarsError) -> bool {
-    matches!(
-        err,
-        MarsError::LinkedHarnessExhausted { .. } | MarsError::HarnessUnavailable { .. }
-    )
-}
-
 fn selected_alias_token<'a, 'm>(resolved_model: &'a model::ResolvedModel<'m>) -> Option<&'a str> {
     resolved_model
         .alias
@@ -273,12 +266,18 @@ pub fn resolve_policy(
     let native_auth = crate::harness::host::NativeAuthCache::default();
     let mut first_unverified = None;
     let mut selected = None;
-    let mut tried = Vec::new();
-    let mut linked_exhaustion = false;
+    let mut report = routing::report::RouteDecisionReport::new(
+        &harness_scope,
+        &effective_config.target_source,
+        input.excluded_harnesses,
+    );
+    let linked_exhaustion = !matches!(
+        harness_scope,
+        crate::config::targets::HarnessScope::Unrestricted
+    );
 
     for (attempt_index, candidate) in model_candidates.enumerate() {
         let candidate = candidate?;
-        tried.push(candidate.model_token.clone());
         let matched_policy = match_model_policy(
             effective_policies(
                 overlay,
@@ -312,13 +311,18 @@ pub fn resolve_policy(
                     cursor_probe_result: None,
                     catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 },
-                model_token: &candidate.model_token,
             },
             &mut probe_resolver,
             |harness| native_auth.state(harness),
         );
         match result {
-            Ok(resolution) => {
+            Ok(harness::HarnessAttempt::Selected(resolution)) => {
+                report.push(
+                    &candidate.model_token,
+                    &candidate.model,
+                    candidate.model_source.label(),
+                    &resolution.route_trace,
+                );
                 let eligible = resolution.route_trace.assessments.iter().any(|assessment| {
                     assessment.harness == resolution.route_trace.harness
                         && assessment.eligibility() == routing::Eligibility::Eligible
@@ -332,34 +336,65 @@ pub fn resolve_policy(
                 // the deferred model's settings, provider constraints or provenance.
                 first_unverified.get_or_insert(attempt);
             }
-            Err(err) if is_harness_exhaustion(&err) => {
-                if input.model_override.is_some() {
-                    return Err(err);
-                }
-                tried[attempt_index] = format!("{} ({err})", candidate.model_token);
-                if attempt_index == 0 {
-                    linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
+            Ok(harness::HarnessAttempt::Exhausted(trace)) => {
+                let excluded_pin = input.harness_override.is_some()
+                    && trace.assessments.iter().any(|assessment| {
+                        matches!(
+                            assessment.skip_reason,
+                            Some("disabled_target" | "excluded_by_caller")
+                        )
+                    });
+                report.push(
+                    &candidate.model_token,
+                    &candidate.model,
+                    candidate.model_source.label(),
+                    &trace,
+                );
+                if excluded_pin {
+                    report.outcome = routing::report::SelectionOutcome::ExplicitConstraintError;
+                    return Err(MarsError::Selection {
+                        code: "explicit_harness_excluded",
+                        message: format!(
+                            "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
+                            input.harness_override.unwrap()
+                        ),
+                        report: Box::new(report),
+                    });
                 }
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                report.push_unassessed(
+                    &candidate.model_token,
+                    &candidate.model,
+                    candidate.model_source.label(),
+                );
+                report.outcome = routing::report::SelectionOutcome::ExplicitConstraintError;
+                return Err(MarsError::Selection {
+                    code: "invalid_config",
+                    message: err.to_string(),
+                    report: Box::new(report),
+                });
+            }
         }
     }
 
-    let (selected_index, resolved_model, matched_policy, harness_resolution) =
-        selected.or(first_unverified).ok_or_else(|| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "model fallback candidates exhausted for `{}`{}; tried: {}",
-                    primary_model_token,
-                    if linked_exhaustion {
-                        " on linked harnesses"
-                    } else {
-                        ""
-                    },
-                    tried.join(", ")
-                ),
-            })
-        })?;
+    let Some((selected_index, resolved_model, matched_policy, harness_resolution)) =
+        selected.or(first_unverified)
+    else {
+        return Err(MarsError::Selection {
+            code: "model_candidates_exhausted",
+            message: format!(
+                "model fallback candidates exhausted for `{primary_model_token}`{}",
+                if linked_exhaustion {
+                    " on linked harnesses"
+                } else {
+                    ""
+                }
+            ),
+            report: Box::new(report),
+        });
+    };
+    report.select(selected_index);
     let model_fallback = (selected_index != 0).then(|| {
         warnings.extend(resolved_model.warnings.iter().cloned());
         warnings.push(format!(
@@ -512,7 +547,7 @@ pub fn resolve_policy(
         opencode_probe_result: opencode_probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
-        route_trace: harness_resolution.route_trace,
+        route_report: report,
     });
 
     let mut effort = execution_resolution.effort.value;
@@ -565,7 +600,11 @@ pub fn resolve_policy(
         };
 
         if let Some(message) = message {
-            return Err(MarsError::Config(ConfigError::Invalid { message }));
+            return Err(MarsError::Selection {
+                code: "invalid_execution_policy",
+                message,
+                report: Box::new(routing_resolution.routing.route_trace),
+            });
         }
     }
 

@@ -81,7 +81,7 @@ fn unknown_native_auth_preserves_an_unverified_model_route() {
     assert!(output.status.success(), "{value}");
     assert_eq!(value["harness"], "claude", "{value}");
     assert_eq!(value["availability"], "unknown", "{value}");
-    let assessment = &value["route_trace"]["assessments"][0];
+    let assessment = &value["route_trace"]["model_attempts"][0]["assessments"][0];
     assert_eq!(assessment["verdict"], "unverified", "{value}");
     assert_eq!(assessment["reason"], "auth_unknown", "{value}");
     assert!(assessment["skip_reason"].is_null(), "{value}");
@@ -341,7 +341,7 @@ fn explicit_harness_pin_allows_only_backup_models_on_that_harness() {
     assert_eq!(value["routing"]["harness"], "codex", "{value}");
     assert_eq!(value["provenance"]["harness_source"], "cli", "{value}");
     assert_eq!(
-        value["routing"]["route_trace"]["candidates_tried"],
+        value["routing"]["route_trace"]["model_attempts"][0]["candidates_tried"],
         serde_json::json!(["codex"]),
         "{value}"
     );
@@ -354,7 +354,7 @@ fn explicit_harness_pin_allows_only_backup_models_on_that_harness() {
     assert_eq!(value["routing"]["model_token"], "primary", "{value}");
     assert_eq!(value["routing"]["harness"], "opencode", "{value}");
     assert_eq!(
-        value["routing"]["route_trace"]["candidates_tried"],
+        value["routing"]["route_trace"]["model_attempts"][0]["candidates_tried"],
         serde_json::json!(["opencode"]),
         "{value}"
     );
@@ -431,7 +431,15 @@ fn invalid_authored_harness_preferences_are_fatal() {
             std::fs::write(path, config).unwrap();
         });
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if output.status.success() || !output.stdout.is_empty() || !stderr.contains("typo") {
+        let payload: Value = serde_json::from_slice(&output.stdout).expect("structured error");
+        if output.status.success()
+            || payload.get("routing").is_some()
+            || payload["error"]["code"] != "invalid_config"
+            || !payload["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("typo")
+        {
             failures.push(format!(
                 "{file}/{layer}: status={:?}, stderr={stderr}, stdout={}",
                 output.status.code(),
@@ -451,7 +459,7 @@ fn authored_harness_preference_is_normalized_before_assessment() {
     assert_eq!(value["routing"]["harness"], "codex", "{value}");
     assert_eq!(value["provenance"]["harness_source"], "overlay", "{value}");
     assert_eq!(
-        value["routing"]["route_trace"]["source"], "overlay",
+        value["routing"]["route_trace"]["model_attempts"][0]["source"], "overlay",
         "{value}"
     );
 }

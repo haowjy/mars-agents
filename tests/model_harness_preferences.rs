@@ -124,8 +124,14 @@ fn alias_prefix_retains_base_harness_preference() {
     assert_eq!(status, 0, "{value}");
     assert_eq!(value["model_id"], "gpt-5", "{value}");
     assert_eq!(value["harness"], "pi", "{value}");
-    assert_eq!(value["route_trace"]["source"], "alias", "{value}");
-    assert_eq!(value["route_trace"]["selection_kind"], "auto", "{value}");
+    assert_eq!(
+        value["route_trace"]["model_attempts"][0]["source"], "alias",
+        "{value}"
+    );
+    assert_eq!(
+        value["route_trace"]["model_attempts"][0]["selection_kind"], "auto",
+        "{value}"
+    );
     assert_eq!(value["availability"], "unknown", "{value}");
     assert!(calls.is_empty(), "{calls:?}");
 }
@@ -143,7 +149,8 @@ fn alias_prefix_preserves_provider_constraint_before_native_auth() {
     assert!(value["harness"].is_null(), "{value}");
     assert_eq!(value["availability"], "unavailable", "{value}");
     assert_eq!(
-        value["route_trace"]["assessments"][0]["reason"], "provider_constraint_unsatisfied",
+        value["route_trace"]["model_attempts"][0]["assessments"][0]["reason"],
+        "provider_constraint_unsatisfied",
         "{value}"
     );
     assert!(calls.is_empty(), "{calls:?}");

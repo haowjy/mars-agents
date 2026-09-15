@@ -11,7 +11,6 @@ pub mod slug;
 pub(crate) use probe_match::{SlugSelection, select_probe_slug};
 
 use crate::models;
-use crate::models::harness::HarnessOrderFailure;
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
@@ -23,8 +22,6 @@ pub use evidence::{RoutingEvidence, RoutingSettingsEvidence};
 pub enum SelectionKind {
     Auto,
     Fixed,
-    ConfigDefault,
-    LinkedFallback,
 }
 
 impl SelectionKind {
@@ -32,8 +29,6 @@ impl SelectionKind {
         match self {
             Self::Auto => "auto",
             Self::Fixed => "fixed",
-            Self::ConfigDefault => "config_default",
-            Self::LinkedFallback => "linked_fallback",
         }
     }
 }
@@ -311,249 +306,111 @@ where
     P: ProbeResolver + ?Sized,
 {
     let mut diagnostics = Vec::new();
-    let parsed_provider_order =
+    let provider_order =
         parse_settings_provider_order(input.settings_provider_order, &mut diagnostics);
-    let config_default_harness =
+    let default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
-    let enabled_harnesses = if input.excluded_harnesses.is_empty() {
-        input.harness_scope.harness_names()
-    } else {
-        Some(
-            crate::harness::registry::names()
-                .iter()
-                .filter(|harness| {
-                    permission_denial(&input.harness_scope, input.excluded_harnesses, harness)
-                        .is_none()
-                })
-                .map(|harness| (*harness).to_string())
-                .collect(),
-        )
-    };
-    let linked_harnesses = enabled_harnesses.as_deref();
-    let linked_harnesses_set = linked_harnesses
-        .map(|harnesses| harnesses.iter().map(String::as_str).collect::<HashSet<_>>());
-    let has_link_constraints = linked_harnesses_set.is_some();
-    let effective_config_default_harness = config_default_harness
-        .as_ref()
-        .filter(|harness| {
-            linked_harnesses_set
-                .as_ref()
-                .is_none_or(|known| known.contains(harness.as_str()))
-        })
-        .cloned();
-    if has_link_constraints
-        && config_default_harness.is_some()
-        && effective_config_default_harness.is_none()
-    {
-        diagnostics.push(
-            "settings.default_harness is excluded by known linked harness constraints; ignoring fallback"
-                .to_string(),
-        );
+    let constrained = !matches!(input.harness_scope, HarnessScope::Unrestricted)
+        || !input.excluded_harnesses.is_empty();
+    if default_harness.as_ref().is_some_and(|harness| {
+        permission_denial(&input.harness_scope, input.excluded_harnesses, harness).is_some()
+    }) {
+        diagnostics.push("settings.default_harness is excluded by known linked harness constraints; ignoring fallback".to_string());
     }
 
-    let mut harness_order_failure = None;
-
-    let mut candidate_source = RouteSource::Provider;
-
-    let candidates = if let Some(order) = input.settings_harness_order {
-        let parsed_order = models::harness::parse_settings_harness_order(order);
-        diagnostics.extend(parsed_order.warnings);
-
-        if parsed_order.failure == Some(HarnessOrderFailure::Empty) {
-            diagnostics.push(
-                "settings.harness_order is empty; falling through to provider candidate order"
-                    .to_string(),
-            );
-            let provider_for_order = input.provider_for_order.unwrap_or("unknown");
-            filter_candidates_by_links(
-                models::harness::harness_candidates_for_provider(provider_for_order),
-                linked_harnesses_set.as_ref(),
-            )
-            .into_iter()
-            .map(|harness| (harness, None))
-            .collect::<Vec<_>>()
-        } else {
-            candidate_source = RouteSource::ConfigOrder;
-            let mut candidate_pairs = parsed_order
+    // Ordering is preference, never permission. Every route is assessed once.
+    let mut candidates = Vec::new();
+    if let Some(order) = input.settings_harness_order {
+        let parsed = models::harness::parse_settings_harness_order(order);
+        diagnostics.extend(parsed.warnings);
+        if parsed.valid_candidates.is_empty() {
+            diagnostics.push("settings.harness_order has no candidates; trying default and remaining permitted harnesses".to_string());
+        }
+        candidates.extend(
+            parsed
                 .valid_candidates
                 .into_iter()
                 .enumerate()
-                .map(|(index, harness)| (harness, Some(index)))
-                .collect::<Vec<_>>();
-
-            filter_candidate_pairs_by_links(&mut candidate_pairs, linked_harnesses_set.as_ref());
-
-            let valid_candidates = candidate_pairs
-                .iter()
-                .map(|(harness, _)| harness.clone())
-                .collect::<Vec<_>>();
-
-            if !valid_candidates.is_empty()
-                && valid_candidates
-                    .iter()
-                    .all(|candidate| !input.installed_harnesses.contains(candidate))
-            {
-                harness_order_failure = Some(HarnessOrderFailure::NoneInstalled {
-                    valid_candidates: valid_candidates.clone(),
-                });
-            }
-
-            candidate_pairs
-        }
-    } else if input.model_id.trim().is_empty() {
-        filter_candidates_by_links(
-            crate::harness::registry::default_harness_order_names(),
-            linked_harnesses_set.as_ref(),
-        )
-        .into_iter()
-        .map(|harness| (harness, None))
-        .collect::<Vec<_>>()
+                .map(|(position, harness)| (harness, Some(position), RouteSource::ConfigOrder)),
+        );
     } else {
-        let provider_for_order = input.provider_for_order.unwrap_or("unknown");
-        filter_candidates_by_links(
-            models::harness::harness_candidates_for_provider(provider_for_order),
-            linked_harnesses_set.as_ref(),
-        )
-        .into_iter()
-        .map(|harness| (harness, None))
-        .collect::<Vec<_>>()
-    };
-
-    let mut candidates_tried = Vec::new();
-    let mut assessments = Vec::new();
-    let mut passthrough_selection: Option<(String, Option<usize>, MatchEvidence)> = None;
-
-    for (harness, harness_order_position) in candidates {
-        let assessment = candidate_match_evidence_with_auth(
-            input,
-            &harness,
-            Some(parsed_provider_order.as_slice()),
-            probe_resolver,
-            &auth_check,
+        candidates.extend(
+            crate::harness::registry::default_harness_order_names()
+                .into_iter()
+                .map(|harness| (harness, None, RouteSource::Provider)),
         );
-
-        candidates_tried.push(harness.clone());
-        let match_evidence = assessment.match_evidence;
-        assessments.push(assessment);
-
-        if let Some(match_evidence) = match_evidence {
-            match match_evidence {
-                MatchEvidence::Confirmed | MatchEvidence::Constrained => {
-                    return RoutingTrace {
-                        source: candidate_source,
-                        selection_kind: SelectionKind::Auto,
-                        match_evidence,
-                        harness,
-                        harness_order_position,
-                        candidates_tried,
-                        assessments,
-                        diagnostics,
-                        exhaustion_reason: None,
-                    };
-                }
-                MatchEvidence::Passthrough => {
-                    if passthrough_selection.is_none() {
-                        passthrough_selection =
-                            Some((harness, harness_order_position, match_evidence));
-                    }
-                }
-                MatchEvidence::None => {}
-            }
-        }
     }
-
-    if let Some((harness, harness_order_position, match_evidence)) = passthrough_selection {
-        return RoutingTrace {
-            source: candidate_source,
-            selection_kind: SelectionKind::Auto,
-            match_evidence,
-            harness,
-            harness_order_position,
-            candidates_tried,
-            assessments,
-            diagnostics,
-            exhaustion_reason: None,
-        };
+    if let Some(harness) = default_harness {
+        candidates.push((harness, None, RouteSource::ConfigDefault));
     }
-
-    if input.settings_harness_order.is_some()
-        && let Some(warning) = format_harness_order_fallback_warning(
-            harness_order_failure.as_ref(),
-            effective_config_default_harness.is_some(),
-            has_link_constraints,
-        )
-    {
-        diagnostics.push(warning);
-    }
-
-    if let Some(harness) = effective_config_default_harness {
-        return RoutingTrace {
-            source: RouteSource::ConfigDefault,
-            selection_kind: SelectionKind::ConfigDefault,
-            match_evidence: MatchEvidence::Passthrough,
-            harness,
-            harness_order_position: None,
-            candidates_tried,
-            assessments,
-            diagnostics,
-            exhaustion_reason: None,
-        };
-    }
-
-    if let Some(known_links) = linked_harnesses {
-        if let Some(harness) = select_linked_fallback_harness(input, known_links, &assessments) {
-            diagnostics.push(format!(
-                "known linked harness constraints left no eligible auto-routing candidates; selecting linked harness `{harness}` in harness order (skipped incompatible candidates)"
-            ));
-            candidates_tried.push(harness.clone());
-
-            return RoutingTrace {
-                source: candidate_source,
-                selection_kind: SelectionKind::LinkedFallback,
-                match_evidence: MatchEvidence::Passthrough,
-                harness,
-                harness_order_position: None,
-                candidates_tried,
-                assessments,
-                diagnostics,
-                exhaustion_reason: None,
-            };
-        }
-
-        diagnostics.push(
-            "known linked harness constraints left no linked harness eligible for this model after routing assessments"
-                .to_string(),
-        );
-
-        return RoutingTrace {
-            source: candidate_source,
-            selection_kind: SelectionKind::Auto,
-            match_evidence: MatchEvidence::None,
-            harness: String::new(),
-            harness_order_position: None,
-            candidates_tried,
-            assessments,
-            diagnostics,
-            exhaustion_reason: Some(ExhaustionReason::LinkedHarnessConstraints),
-        };
-    }
-
-    diagnostics.push(
-        "harness not set by CLI/profile/alias/provider/config and no fallback harness is available"
-            .to_string(),
+    candidates.extend(
+        crate::harness::registry::all()
+            .iter()
+            .map(|id| (id.as_str().to_string(), None, RouteSource::Provider)),
     );
+    let mut seen = HashSet::new();
+    candidates.retain(|(harness, _, _)| {
+        permission_denial(&input.harness_scope, input.excluded_harnesses, harness).is_none()
+            && seen.insert(harness.clone())
+    });
 
-    RoutingTrace {
-        source: candidate_source,
+    let mut trace = RoutingTrace {
+        source: if input.settings_harness_order.is_some() {
+            RouteSource::ConfigOrder
+        } else {
+            RouteSource::Provider
+        },
         selection_kind: SelectionKind::Auto,
         match_evidence: MatchEvidence::None,
         harness: String::new(),
         harness_order_position: None,
-        candidates_tried,
-        assessments,
+        candidates_tried: Vec::new(),
+        assessments: Vec::new(),
         diagnostics,
         exhaustion_reason: None,
+    };
+    let mut passthrough = None;
+    for (harness, position, source) in candidates {
+        let assessment = candidate_match_evidence_with_auth(
+            input,
+            &harness,
+            Some(&provider_order),
+            probe_resolver,
+            &auth_check,
+        );
+        let evidence = assessment.match_evidence;
+        trace.candidates_tried.push(harness.clone());
+        trace.assessments.push(assessment);
+        match evidence {
+            Some(evidence @ (MatchEvidence::Confirmed | MatchEvidence::Constrained)) => {
+                trace.harness = harness;
+                trace.harness_order_position = position;
+                trace.source = source;
+                trace.match_evidence = evidence;
+                return trace;
+            }
+            Some(MatchEvidence::Passthrough) if passthrough.is_none() => {
+                passthrough = Some((harness, position, source));
+            }
+            _ => {}
+        }
     }
+    if let Some((harness, position, source)) = passthrough {
+        trace.harness = harness;
+        trace.harness_order_position = position;
+        trace.source = source;
+        trace.match_evidence = MatchEvidence::Passthrough;
+    } else {
+        if constrained {
+            trace.exhaustion_reason = Some(ExhaustionReason::LinkedHarnessConstraints);
+            trace.diagnostics.push("known linked harness constraints left no linked harness eligible for this model after routing assessments".to_string());
+        } else {
+            trace
+                .diagnostics
+                .push("no fallback harness is available after routing assessments".to_string());
+        }
+    }
+    trace
 }
 
 /// Normalize and validate config default_harness. Returns normalized name or None with warning.
@@ -574,29 +431,6 @@ pub fn normalize_config_default_harness(
         },
         None => None,
     }
-}
-
-fn filter_candidate_pairs_by_links(
-    candidates: &mut Vec<(String, Option<usize>)>,
-    linked_harnesses: Option<&HashSet<&str>>,
-) {
-    if let Some(linked_harnesses) = linked_harnesses {
-        candidates.retain(|(harness, _)| linked_harnesses.contains(harness.as_str()));
-    }
-}
-
-fn filter_candidates_by_links(
-    candidates: Vec<String>,
-    linked_harnesses: Option<&HashSet<&str>>,
-) -> Vec<String> {
-    let Some(linked_harnesses) = linked_harnesses else {
-        return candidates;
-    };
-
-    candidates
-        .into_iter()
-        .filter(|harness| linked_harnesses.contains(harness.as_str()))
-        .collect()
 }
 
 fn candidate_match_evidence_with_auth<F, P>(
@@ -1134,76 +968,6 @@ where
     }
 }
 
-fn is_hard_assessment_skip(skip_reason: Option<&str>) -> bool {
-    matches!(
-        skip_reason,
-        Some(
-            "pi_incompatible"
-                | "no_model_match"
-                | "unsupported_candidate"
-                | "not_installed"
-                | "provider_constraint_unsatisfied"
-        )
-    )
-}
-
-fn select_linked_fallback_harness(
-    input: &RoutingInput<'_>,
-    linked_harnesses: &[String],
-    assessments: &[CandidateAssessment],
-) -> Option<String> {
-    let linked_set: HashSet<&str> = linked_harnesses.iter().map(String::as_str).collect();
-
-    let walk_order: Vec<String> = input
-        .settings_harness_order
-        .map(|order| {
-            order
-                .iter()
-                .filter(|harness| linked_set.contains(harness.as_str()))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_else(|| linked_harnesses.to_vec());
-
-    for harness in walk_order {
-        let rejected = assessments
-            .iter()
-            .find(|assessment| assessment.harness == harness)
-            .and_then(|assessment| assessment.skip_reason)
-            .is_some_and(|reason| is_hard_assessment_skip(Some(reason)));
-        if !rejected {
-            return Some(harness);
-        }
-    }
-
-    None
-}
-
-fn format_harness_order_fallback_warning(
-    harness_order_failure: Option<&HarnessOrderFailure>,
-    has_config_default_harness: bool,
-    has_link_constraints: bool,
-) -> Option<String> {
-    let mut warning = match harness_order_failure {
-        Some(HarnessOrderFailure::Empty) => "settings.harness_order is empty".to_string(),
-        Some(HarnessOrderFailure::NoneInstalled { valid_candidates }) => format!(
-            "settings.harness_order is set but none of [{}] are installed",
-            valid_candidates.join(", ")
-        ),
-        None => return None,
-    };
-
-    if has_config_default_harness {
-        warning.push_str("; falling through to settings.default_harness");
-    } else if has_link_constraints {
-        warning.push_str("; linked harness constraints prevent unrelated fallback");
-    } else {
-        warning.push_str("; settings.default_harness is unset, no fallback harness available");
-    }
-
-    Some(warning)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1395,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_fallback_skips_pi_incompatible() {
+    fn incompatible_and_unauthenticated_routes_both_exhaust() {
         let installed = installed(&["claude", "pi"]);
         let catalog = vec!["anthropic/claude-opus-4-6".to_string()];
         let harness_order = vec!["pi".to_string(), "claude".to_string()];
@@ -1418,13 +1182,19 @@ mod tests {
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
-        assert_eq!(trace.harness, "claude");
-        assert_eq!(trace.selection_kind, SelectionKind::LinkedFallback);
-        assert!(
+        assert!(trace.harness.is_empty());
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(
+            trace.exhaustion_reason,
+            Some(ExhaustionReason::LinkedHarnessConstraints)
+        );
+        assert_eq!(
             trace
-                .diagnostics
+                .assessments
                 .iter()
-                .any(|diagnostic| diagnostic.contains("skipped incompatible candidates"))
+                .find(|assessment| assessment.harness == "claude")
+                .and_then(|assessment| assessment.skip_reason),
+            Some("native_auth_unavailable")
         );
         assert_eq!(
             trace
@@ -1888,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_harness_order_falls_through_to_provider() {
+    fn empty_harness_order_uses_remaining_permitted_harnesses() {
         let installed = installed(&["codex"]);
         let order: Vec<String> = Vec::new();
         let input = routing_input(
@@ -1909,29 +1679,101 @@ mod tests {
             trace
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.contains("settings.harness_order is empty"))
+                .any(|diagnostic| diagnostic.contains("settings.harness_order has no candidates"))
         );
     }
 
     #[test]
-    fn uses_config_default_fallback() {
+    fn rejected_routes_are_not_retried_or_resurrected() {
+        for default in [None, Some("claude")] {
+            let installed = installed(&["claude"]);
+            let enabled = vec!["claude".to_string()];
+            let order = vec!["claude".to_string(), "claude".to_string()];
+            let input = routing_input(
+                "claude-opus-4-6",
+                Some("anthropic"),
+                Some(&order),
+                default,
+                &installed,
+                Some(&enabled),
+                (None, None, None),
+            );
+            let auth_calls = std::cell::Cell::new(0);
+            let trace = evaluate_candidates_with_auth(&input, |_| {
+                auth_calls.set(auth_calls.get() + 1);
+                false
+            });
+            assert!(trace.harness.is_empty(), "{trace:?}");
+            assert_eq!(trace.match_evidence, MatchEvidence::None);
+            assert_eq!(auth_calls.get(), 1);
+            assert_eq!(trace.assessments.len(), 1);
+            assert_eq!(
+                trace.assessments[0].skip_reason,
+                Some("native_auth_unavailable")
+            );
+        }
+    }
+
+    #[test]
+    fn configured_order_does_not_exclude_other_permitted_harnesses() {
+        let installed = installed(&["codex"]);
+        let order = vec!["claude".to_string()];
+        let enabled = vec!["codex".to_string()];
+        let input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            Some(&order),
+            None,
+            &installed,
+            Some(&enabled),
+            (None, None, None),
+        );
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+        assert_eq!(trace.harness, "codex");
+        assert_eq!(trace.assessments[0].chosen_model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn default_harness_requires_the_same_installation_evidence() {
         let installed = installed(&[]);
         let input = routing_input(
             "gpt-5",
             Some("openai"),
             None,
-            Some("Pi"),
+            Some("pi"),
             &installed,
             None,
             (None, None, None),
         );
-
         let trace = evaluate_candidates_with_auth(&input, never_authed);
+        assert!(trace.harness.is_empty(), "{trace:?}");
+        assert!(
+            trace
+                .assessments
+                .iter()
+                .all(|assessment| assessment.skip_reason == Some("not_installed"))
+        );
+    }
 
+    #[test]
+    fn default_harness_is_assessed_as_an_ordinary_candidate() {
+        let installed = installed(&["codex"]);
+        let order = Vec::new();
+        let input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            Some(&order),
+            Some("Codex"),
+            &installed,
+            None,
+            (None, None, None),
+        );
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
         assert_eq!(trace.source, RouteSource::ConfigDefault);
-        assert_eq!(trace.selection_kind, SelectionKind::ConfigDefault);
-        assert_eq!(trace.harness, "pi");
-        assert_eq!(trace.match_evidence, MatchEvidence::Passthrough);
+        assert_eq!(trace.selection_kind, SelectionKind::Auto);
+        assert_eq!(trace.harness, "codex");
+        assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
+        assert_eq!(trace.assessments.len(), 1);
     }
 
     #[test]
@@ -1962,62 +1804,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_constraints_apply_to_default_and_hardcoded_fallbacks() {
-        let installed = installed(&["claude"]);
-        let linked_harnesses = vec!["claude".to_string()];
-
-        let with_config_default = routing_input(
-            "claude-opus-4-7",
-            Some("anthropic"),
-            None,
-            Some("pi"),
-            &installed,
-            Some(&linked_harnesses),
-            (None, None, None),
-        );
-        let with_default_trace = evaluate_candidates_with_auth(&with_config_default, never_authed);
-        assert_eq!(with_default_trace.source, RouteSource::Provider);
-        assert_eq!(
-            with_default_trace.selection_kind,
-            SelectionKind::LinkedFallback
-        );
-        assert_eq!(with_default_trace.harness, "claude");
-        assert_eq!(
-            with_default_trace.candidates_tried,
-            vec!["claude", "claude"]
-        );
-        assert!(with_default_trace.diagnostics.iter().any(|diagnostic| {
-            diagnostic.contains(
-                "settings.default_harness is excluded by known linked harness constraints",
-            )
-        }));
-
-        let without_config_default = routing_input(
-            "claude-opus-4-7",
-            Some("anthropic"),
-            None,
-            None,
-            &installed,
-            Some(&linked_harnesses),
-            (None, None, None),
-        );
-        let hardcoded_trace = evaluate_candidates_with_auth(&without_config_default, never_authed);
-        assert_eq!(hardcoded_trace.source, RouteSource::Provider);
-        assert_eq!(
-            hardcoded_trace.selection_kind,
-            SelectionKind::LinkedFallback
-        );
-        assert_eq!(hardcoded_trace.harness, "claude");
-        assert!(
-            hardcoded_trace
-                .diagnostics
-                .iter()
-                .any(|diagnostic| { diagnostic.contains("selecting linked harness `claude`") })
-        );
-    }
-
-    #[test]
-    fn linked_constraints_block_hardcoded_pi_when_all_candidates_hard_rejected() {
+    fn scoped_exhaustion_cannot_select_unrelated_pi() {
         use crate::routing::acceptance::{MatchPolicy, accept_route};
 
         let installed = installed(&["claude", "cursor", "codex", "pi"]);
@@ -2044,26 +1831,19 @@ mod tests {
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
 
-        assert_ne!(trace.harness, "pi");
+        assert!(trace.harness.is_empty());
         assert_eq!(trace.selection_kind, SelectionKind::Auto);
         assert_eq!(trace.match_evidence, MatchEvidence::None);
-        assert!(trace.diagnostics.iter().any(|diagnostic| {
-            diagnostic.contains(
-                "known linked harness constraints left no linked harness eligible for this model after routing assessments",
-            )
-        }));
-        assert!(
-            !trace
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.contains("defaulting to `pi`"))
+        assert_eq!(
+            trace.exhaustion_reason,
+            Some(ExhaustionReason::LinkedHarnessConstraints)
         );
         assert!(accept_route(&trace, &installed, MatchPolicy::InstalledOnly).is_err());
     }
 
     #[test]
     fn linked_default_harness_is_allowed_when_linked() {
-        let installed = installed(&[]);
+        let installed = installed(&["pi"]);
         let linked_harnesses = vec!["pi".to_string()];
         let trace = evaluate_candidates_with_auth(
             &routing_input(
@@ -2078,7 +1858,7 @@ mod tests {
             never_authed,
         );
 
-        assert_eq!(trace.source, RouteSource::ConfigDefault);
+        assert_eq!(trace.source, RouteSource::Provider);
         assert_eq!(trace.harness, "pi");
     }
 }

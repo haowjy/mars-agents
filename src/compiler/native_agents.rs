@@ -310,13 +310,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             if trace.selected_harness() != target_name {
                 continue;
             }
-            if matches!(
-                trace.selected_selection_kind(),
-                crate::routing::SelectionKind::ConfigDefault
-                    | crate::routing::SelectionKind::LinkedFallback
-            ) {
-                continue;
-            }
             if crate::routing::acceptance::accept_route(
                 &trace,
                 &self.installed_for_native_targets,

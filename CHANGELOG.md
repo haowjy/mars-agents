@@ -5,6 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Mark rejected live model routes unavailable and prune them; never advertise unassessed harness paths as runnable.
+- Remove unchecked default/linked route fallback and no-binary route fabrication; assess each permitted harness once.
+- Treat harness order as preference, trying remaining permitted harnesses through the same evaluator.
 - Apply caller harness exclusions before route selection and probes; explicit pins cannot override them.
 - Enforce target scope for launches and standalone model commands; preserve empty scope and winning-file provenance.
 - Remove unrestricted alias pre-routing and excluded availability paths; fail model resolution when no route is selected.

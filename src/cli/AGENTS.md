@@ -37,7 +37,9 @@ Three bypass conditions:
 
 Resolve alias identity statically, then apply effective target scope before routing
 or probe collection. Availability output is limited to permitted installed routes;
-keep physical installation facts intact for routing diagnostics. Exact/prefix
+keep physical installation facts intact for routing diagnostics. Live model availability
+must honor route rejection and describe only the selected route, not other installed
+harnesses. Exact/prefix
 resolution with no selected route exits nonzero, even when the model ID resolved.
 
 ## Lossiness Gating

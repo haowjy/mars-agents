@@ -96,7 +96,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         if order.is_empty() {
             diagnostics.push(RoutingConfigDiagnostic {
                 message:
-                    "settings.harness_order is empty; falling through to provider candidate order"
+                    "settings.harness_order is empty; trying default and remaining permitted harnesses"
                         .to_string(),
             });
             return ParsedHarnessOrder {
@@ -126,7 +126,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         let failure = if candidates.is_empty() {
             diagnostics.push(RoutingConfigDiagnostic {
                 message:
-                    "settings.harness_order has no valid candidates; falling through to provider candidate order"
+                    "settings.harness_order has no valid candidates; trying default and remaining permitted harnesses"
                         .to_string(),
             });
             Some(HarnessOrderFailure::AllInvalid)

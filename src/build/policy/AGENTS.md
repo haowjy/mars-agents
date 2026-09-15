@@ -43,6 +43,8 @@ minus `PolicyInput.excluded_harnesses`. Caller exclusions narrow permission; the
 do not replace target configuration. Build CLI accepts repeatable `--exclude-harness`.
 Excluded CLI pins fail; excluded implicit preferences yield to permitted routes.
 The common routing assessor also rejects disabled candidates before auth probes.
+Automatic exhaustion returns an error; build never substitutes an uninstalled
+first candidate. Config defaults and remaining permitted harnesses use normal assessment.
 
 ## Profile Model Fallback
 

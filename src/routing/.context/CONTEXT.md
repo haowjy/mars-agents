@@ -26,18 +26,19 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | Field | Role |
 |---|---|
 | `model_id` | Resolved model identifier (used for OpenCode/Pi slug matching) |
-| `provider_for_order` | Optional provider name (determines native affinity and candidate order) |
+| `provider_for_order` | Optional provider name for native compatibility and model-slug preference |
 | `provider_constraint` | Alias/provider pin from model config — filters probe slug selection and native harness acceptance; shapes `harness_model` via [`resolve_harness_model`](../../models/harness_model.rs) (no blind `provider/model` prefix) |
 | `settings_provider_order` | Raw `provider_order` from config, if set |
 | `settings_harness_order` | Raw `harness_order` from config, if set |
 | `config_default_harness` | Raw `default_harness` from config, if set |
 | `installed_harnesses` | Set of harness names found on PATH |
+| `excluded_harnesses` | Caller restrictions, independent of configured target permission |
 | `harness_scope` | `Unrestricted` or `Only(BTreeSet<HarnessId>)`; empty denies all routes |
 | `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
 | `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
 | `catalog_model_slugs` | Cached models.dev `provider/model` slugs; native harnesses match here before auth-only fallback |
 
-When `settings.harness_order` is unset, `config/routing_settings` and `build/policy/config`
+When `settings.harness_order` is unset, `config/routing_settings` and `build/policy`
 inject [`default_harness_order_names()`](../../harness/registry.rs) — see
 [`src/harness/registry.rs`](../../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`) for the
 canonical ordered list.
@@ -45,7 +46,7 @@ canonical ordered list.
 ### Deferred passthrough
 
 In the auto-routing loop, `MatchEvidence::Passthrough` (Pi without compatible probe, Cursor,
-OpenCode unknown-provider paths) is **held** in `passthrough_selection` while later candidates
+OpenCode unknown-provider paths) is **held** in `passthrough` while later candidates
 run. `Confirmed` / `Constrained` return immediately. If the order exhausts without stronger
 evidence, Mars returns the first deferred passthrough harness. Without deferral, Pi/Cursor
 would win at their config position and block stronger native/probe matches later in order.
@@ -63,9 +64,6 @@ Empty catalog falls back to provider-native affinity + auth gate only.
 |---|---|
 | `Auto` | Selected by candidate evaluation loop (first acceptable harness) |
 | `Fixed` | Caller committed to a specific harness (CLI/profile/alias) |
-| `ConfigDefault` | Fell through to `settings.default_harness` |
-| `LinkedFallback` | No eligible candidates; linked harnesses selected themselves |
-| `HardcodedDefault` | Nothing else matched; defaulting to `pi` |
 
 ### `MatchEvidence` semantics
 
@@ -73,10 +71,13 @@ Empty catalog falls back to provider-native affinity + auth gate only.
 |---|---|
 | `Confirmed` | Native provider match + authenticated, OR compatible Pi probe, OR positive OpenCode probe |
 | `Constrained` | Same as Confirmed, but a `provider_constraint` was active |
-| `Passthrough` | Universal harness (Cursor), Pi without fresh probe, OpenCode unknown-provider, config-default fallback |
+| `Passthrough` | Universal harness (Cursor), Pi without fresh probe, OpenCode unknown-provider |
 | `None` | No evidence — candidate was rejected |
 
-`RouteSource` records **who** chose the route. `SelectionKind` records **how** the harness was selected. `MatchEvidence` records **what slug evidence exists**. These are orthogonal dimensions — a `ConfigDefault` source is always `ConfigDefault` kind with `Passthrough` evidence; a `Provider` source can be `Auto` kind with `Confirmed`, `Constrained`, or `Passthrough` evidence depending on what matched.
+`RouteSource` records preference provenance, `SelectionKind` distinguishes automatic
+from fixed selection, and `MatchEvidence` describes support evidence. A config-default
+candidate is assessed in the same automatic loop; its source gives it no authority
+to bypass a failed assessment.
 
 ### `slug.rs` contracts
 
@@ -118,21 +119,18 @@ add no harnesses; an explicitly empty scope must not become unrestricted. Fixed
 and automatic assessments reject disabled routes before any auth/support probes.
 Build rejects excluded CLI harness pins and skips excluded implicit preferences.
 
-When target scope is restricted:
-- Auto-routing candidates are filtered to the linked set before evaluation
-- `settings.default_harness` outside the linked set is ignored (with diagnostic)
-- Hardcoded fallback is blocked (linked harnesses select themselves instead)
-- `select_linked_fallback_harness` walks `harness_order` (or link order), skipping harnesses
-  with hard `skip_reason` values (`is_hard_assessment_skip`) so a prior `pi_incompatible` or
-  `no_model_match` does not get selected again as linked fallback
+The automatic list starts with configured order (registry default if unset), then
+config default, then remaining registry harnesses. Permission filters and stable
+deduplication apply before assessment. No rejected candidate is retried or promoted;
+no installed executable means no selected route.
 
 ## Architecture
 
 ```
 RoutingInput
     │
-    ├─ settings_harness_order? → parse + link-filter → ConfigOrder candidates
-    ├─ (no order) → provider_candidate_order → link-filter → Provider candidates
+    ├─ configured order (registry default if unset)
+    ├─ config default + remaining registry harnesses → permission filter + dedup
     │
     └─ for each candidate:
            not installed              → skip (not_installed)
@@ -146,8 +144,7 @@ RoutingInput
            cursor                     → Passthrough ✓
            else                       → skip (unsupported_candidate)
 
-    exhausted candidates → config_default_harness → linked fallback → hardcoded pi
-                           (link constraints can block each of these)
+    exhausted candidates → first deferred passthrough, otherwise no selection
 
 Module boundaries:
     slug.rs       ← stable root: borrowed parsing, normalized matching
@@ -177,7 +174,7 @@ Borrowed `SlugParts` avoids allocation in hot scanning loops.
 labels so new evaluator variants don't break serialized output. Consumers
 serialize the report, never the internal `RoutingTrace`.
 
-Link constraints blocking hardcoded/config-default fallback is intentional:
+Permission applies to every ranked candidate:
 `settings.targets = [".opencode"]` signals project intent to use OpenCode.
 Silently routing to Claude as a fallback contradicts that intent.
 

@@ -373,15 +373,15 @@ mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--in
 
 #### Output
 
-Default view shows resolved aliases with availability pruning:
+With `--live`, the default alias view applies availability pruning:
 - `runnable` models are shown
 - `unknown` models are shown (conservative)
 - `unavailable` models are pruned unless `--unavailable` is set
 
-JSON output includes:
+Live JSON output includes:
 - `availability`: `runnable`, `unavailable`, or `unknown`
-- `availability_source`: `harness_installed`, `opencode_probe`, `opencode_probe_negative`, `opencode_probe_unknown`, `no_harness`, `offline`
-- `runnable_paths`: array of `{harness, mars_provider, harness_model_id}` tuples
+- `availability_source`: assessment source; `route_rejected` means routing rejected all permitted candidates (or the fixed harness)
+- `runnable_paths`: `{harness, mars_provider, harness_model_id}` tuples for the selected route; empty for rejected routes
 - `probe_results.opencode`: summary when OpenCode probing ran
 
 #### Visibility Patterns
@@ -574,13 +574,13 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 ```jsonc
 {
-  "version": 2,
+  "version": 3,
   "agent": "agent-name-or-null",
   "agent_body": "raw-agent-markdown-body",
   "routing": {
     "model": "...",
     "harness": "...",
-    "selection_kind": "auto|fixed|config_default|linked_fallback|hardcoded_default",
+    "selection_kind": "auto|fixed",
     "match_evidence": "confirmed|constrained|passthrough|none",
     "harness_model": "...",
     "harness_model_source": "provider-match|cached-probe|passthrough|synthesized",

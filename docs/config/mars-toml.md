@@ -210,7 +210,7 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
 | `models_cache_ttl_hours` | integer | `24` | Model catalog cache TTL; `0` forces refresh |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
-| `default_harness` | string | unset | Default harness for launch routing when profile/alias/provider cannot resolve one |
+| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 

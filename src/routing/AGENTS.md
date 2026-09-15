@@ -21,17 +21,21 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 
 ## Evaluation Flow
 
-1. Build candidate list from `settings_harness_order` (when unset, see default order below) or `provider_candidate_order`
-2. Apply `HarnessScope` before probes; empty `Only` means no candidates
-3. Per-candidate gate: installed → native catalog slug match + auth → OpenCode probe → Pi probe → Pi/Cursor passthrough (deferred)
-4. Fallback chain: config `default_harness` → linked fallback → no selection
-5. Link constraints block config-default fallback from routing outside known links
+1. Rank candidates by configured harness order (registry default when unset), then
+   `default_harness`, then remaining registry harnesses; deduplicate stably.
+2. Intersect candidates with target permission and caller exclusions before probes.
+3. Assess installation, model/provider support and native auth for each candidate.
+4. Prefer confirmed/constrained evidence; retain the first passthrough only if no
+   stronger candidate succeeds. Exhaustion returns no selection, never an unchecked route.
 
 ### Default `harness_order`
 
 When `settings.harness_order` is omitted, policy loaders supply
 `harness::registry::default_harness_order_names()` — canonical list and rationale live in
 [`src/harness/registry.rs`](../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`).
+
+Reported harness-order positions index the normalized valid-name list (invalid
+entries have already been removed), not the authored configuration array.
 
 ### Deferred passthrough (Pi, Cursor)
 
@@ -47,13 +51,6 @@ with the same `RoutingInput` shape: shared capability snapshot, probe caches, an
 `catalog_model_slugs` for native harness matching. Parity drift is a bug — see parity smoke
 in `.context/CONTEXT.md`.
 
-### Linked fallback and prior skips
-
-When auto-routing exhausts candidates under link constraints, `select_linked_fallback_harness`
-walks linked harnesses in `harness_order` (or link declaration order) and **skips** harnesses
-whose assessment has a hard `skip_reason` (`not_installed`, `pi_incompatible`, `no_model_match`,
-etc.). Soft passthrough deferrals do not block linked fallback the same way.
-
 ## Key Types
 
 ### `SelectionKind` (how selected)
@@ -61,15 +58,13 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 |---|---|
 | `Auto` | First acceptable from candidate loop |
 | `Fixed` | Caller committed to specific harness |
-| `ConfigDefault` | Fell through to `settings.default_harness` |
-| `LinkedFallback` | Linked harnesses selected themselves |
 
 ### `MatchEvidence` (what supports it)
 | Value | Meaning |
 |---|---|
 | `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
 | `Constrained` | Same as Confirmed, but provider_constraint was active (includes cursor with provider constraint when probe can't confirm) |
-| `Passthrough` | Universal harness, Pi without probe, config-default fallback |
+| `Passthrough` | Universal harness or Pi without probe |
 | `None` | Rejected candidate |
 
 ### `MatchPolicy` (acceptance strictness)

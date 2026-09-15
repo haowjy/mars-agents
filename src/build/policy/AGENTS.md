@@ -36,6 +36,14 @@ See `.context/CONTEXT.md` for precedence ranks and the soft-fail contract.
   routing must check this before using resolved model fields
 - Catalog refresh (`ensure_fresh`) runs before harness evaluation, not read-only
 
+## Profile Model Fallback
+
+Primary first, then all concrete profile policy entries in declaration order.
+`no-fallback` excludes only its entry, never the whole chain. Settings matching
+remains overlay → profile → settings, independent of candidate enumeration.
+`fallback_model_policy_entries()` is shared with backup inventory; native fanout
+keeps its broader flagged-entry/glob semantics and must not use this helper.
+
 ## Anti-Patterns
 
 - Do NOT add route-path facts to the warnings vector

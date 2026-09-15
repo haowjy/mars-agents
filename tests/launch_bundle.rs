@@ -12,6 +12,8 @@ mod cursor;
 mod errors;
 #[path = "launch_bundle/execution_policy.rs"]
 mod execution_policy;
+#[path = "launch_bundle/model_fallback.rs"]
+mod model_fallback;
 #[path = "launch_bundle/native_config.rs"]
 mod native_config;
 #[path = "launch_bundle/prompt_surface.rs"]

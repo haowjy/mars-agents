@@ -6,7 +6,7 @@ An agent profile is a markdown file with a YAML frontmatter block. The frontmatt
 ---
 name: coder
 description: Implementation agent for code changes
-model: gpt55
+model: opus
 harness: claude
 mode: subagent
 approval: auto
@@ -23,6 +23,7 @@ harness-overrides:
 model-policies:
   - match:
       alias: opus
+    no-fallback: true
     override:
       effort: high
 fanout:
@@ -385,7 +386,25 @@ Nested values are serializability-validated only. Mars preserves entries as targ
 
 ### `model-policies`
 
-Runtime routing rules consumed by Meridian. Each entry specifies a `match` condition and may specify an `override` to apply when the condition is true. Omit `override` or set `override: {}` when the entry exists only to declare fallback order.
+Conditional model settings and profile fallback candidates resolved by Mars.
+`match` selects an `alias`, a literal `model` ID, or a `model-glob`. Optional
+`override` settings apply to the first matching rule in overlay → profile → settings
+order. Omit `override` or use `{}` for a candidate-only entry.
+
+For an implicit model choice, launch fallback scans **all concrete profile rules**
+in declaration order after trying the primary. It does not depend on where the
+primary's settings matched. `no-fallback: true` excludes only that entry from
+fallback; it cannot stop later entries or prevent using the model as primary or
+explicitly. Flagged entries still supply settings when they match the chosen model.
+Explicit model requests do not use model backups.
+
+Fallback skips globs and deduplicates by selector kind/token. Distinct aliases are
+not merged because they resolve to the same model. Overlay/global rules provide
+settings, not additional profile fallback candidates. Empty overrides stay valid.
+
+Inventory labels these rules as declared backups, with `(model ID)` marking literal
+selectors. They describe automatic fallback, not equivalent explicit overrides:
+`--model TOKEN` resolves an alias named `TOKEN` before treating it as a model ID.
 
 ```yaml
 model-policies:
@@ -400,7 +419,10 @@ model-policies:
       effort: medium
 ```
 
-`model-policies` is Meridian-only — it is preserved in the `.mars/` artifact but stripped from all harness-native compiled outputs.
+The rule list is preserved in `.mars/` but not emitted as a harness-native field.
+Native agent materialization has separate `include_fanout` semantics: flagged rules
+and expanded globs can still participate. Launch fallback filtering does not change
+native emission or reconciliation.
 
 Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. `override` may be omitted or empty. Runtime consumers own the meaning and spelling of override keys.
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -174,12 +174,6 @@ impl MatchedModelPolicy {
     }
 }
 
-struct ModelFallbackCandidate {
-    token: String,
-    source: PolicySource,
-    match_type: ModelPolicyMatchType,
-}
-
 fn is_harness_exhaustion(err: &MarsError) -> bool {
     matches!(
         err,
@@ -311,21 +305,29 @@ pub fn resolve_policy(
         }
         Err(err) if is_harness_exhaustion(&err) => {
             let linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
-            let candidates = model_fallback_candidates(input.profile, matched_policy.as_ref());
+            let primary_kind = if resolved_model.alias.is_some() {
+                ModelPolicyMatchType::Alias
+            } else {
+                ModelPolicyMatchType::Model
+            };
+            let candidates = fallback_model_policy_entries(&input.profile.model_policies).filter(
+                |(kind, token)| (*kind, *token) != (primary_kind, primary_model_token.trim()),
+            );
             let mut exhausted_tokens = Vec::new();
             let mut resolved = None;
 
-            for candidate in candidates {
-                let fallback_model = match candidate.match_type {
+            for (match_type, token) in candidates {
+                let fallback_model = match match_type {
                     ModelPolicyMatchType::Alias => model::resolve_model_token(
-                        candidate.token.clone(),
-                        candidate.source,
+                        token.to_string(),
+                        PolicySource::ProfileModelPolicy,
                         aliases,
                         &cache,
                     )?,
-                    ModelPolicyMatchType::Model => {
-                        model::resolve_literal_model(candidate.token.clone(), candidate.source)
-                    }
+                    ModelPolicyMatchType::Model => model::resolve_literal_model(
+                        token.to_string(),
+                        PolicySource::ProfileModelPolicy,
+                    ),
                     ModelPolicyMatchType::ModelGlob => unreachable!(
                         "model-glob policies are filtered out of model fallback candidates"
                     ),
@@ -403,7 +405,7 @@ pub fn resolve_policy(
                         break;
                     }
                     Err(err) if is_harness_exhaustion(&err) => {
-                        exhausted_tokens.push(candidate.token);
+                        exhausted_tokens.push(token.to_string());
                     }
                     Err(err) => return Err(err),
                 }
@@ -755,50 +757,20 @@ fn effective_policies<'a>(
         )
 }
 
-fn model_fallback_candidates(
-    profile: &AgentProfile,
-    active_policy: Option<&MatchedModelPolicy>,
-) -> Vec<ModelFallbackCandidate> {
-    let Some(active_policy) = active_policy else {
-        return Vec::new();
-    };
-    if active_policy.layer != PolicyLayer::Profile || active_policy.rule.no_fallback {
-        return Vec::new();
-    }
-
-    let mut entries = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    seen.insert(model_fallback_seen_key(
-        active_policy.rule.match_type,
-        active_policy.rule.match_value.trim(),
-    ));
-
-    for policy in profile.model_policies.iter().skip(active_policy.index + 1) {
-        if policy.no_fallback {
-            continue;
-        }
-        if !matches!(
-            policy.match_type,
-            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model
-        ) {
-            continue;
+/// Concrete profile fallback entries in declaration order, independent of settings matching.
+/// Native fanout intentionally has different rules (including globs and flagged entries).
+pub(super) fn fallback_model_policy_entries(
+    policies: &[ModelPolicyRule],
+) -> impl Iterator<Item = (ModelPolicyMatchType, &str)> {
+    let mut seen = HashSet::new();
+    policies.iter().filter_map(move |policy| {
+        if policy.no_fallback || policy.match_type == ModelPolicyMatchType::ModelGlob {
+            return None;
         }
         let token = policy.match_value.trim();
-        if token.is_empty() || !seen.insert(model_fallback_seen_key(policy.match_type, token)) {
-            continue;
-        }
-        entries.push(ModelFallbackCandidate {
-            token: token.to_string(),
-            source: PolicySource::ProfileModelPolicy,
-            match_type: policy.match_type,
-        });
-    }
-
-    entries
-}
-
-fn model_fallback_seen_key(match_type: ModelPolicyMatchType, token: &str) -> String {
-    format!("{match_type:?}:{token}")
+        (!token.is_empty() && seen.insert((policy.match_type, token)))
+            .then_some((policy.match_type, token))
+    })
 }
 
 fn match_model_policy<'a>(

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Scan all concrete profile model-policy backups regardless of the active settings match; `no-fallback` excludes only its entry.
+- Share fallback enumeration with inventory and distinguish literal model IDs from alias labels.
+
 ## [0.13.2] - 2026-09-16
 
 ### Changed

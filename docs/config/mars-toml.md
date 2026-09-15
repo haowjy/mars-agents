@@ -239,7 +239,7 @@ approval = "confirm"
 sandbox = "read-only"
 model-invocable = false
 user-invocable = true
-model-policies = [{ match = "gpt-5*", no_fallback = true }]
+model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
 
 [agents.reviewer.tools]
 allowed = ["bash(git *)", "read", "write", "mcp(plugin:demo)"]
@@ -265,7 +265,12 @@ The removed `tools.mcp` overlay key is rejected at parse time — include MCP gr
 `tools.allowed` (e.g. `"mcp(plugin:demo)"`). See
 [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
-`model-policies` rules: each entry has `match` (glob pattern against model ID/alias), `no_fallback` (bool, optional). See `config/mod.rs` for the full `ModelPolicyRule` definition.
+Each `model-policies` rule has a `match` table with exactly one of `alias`, `model`,
+or `model-glob`, plus optional `override` and `no-fallback` fields. Overlay/settings
+rules supply conditional settings. Profile rules also declare launch backups:
+all concrete, unflagged entries participate in declaration order, independently of
+the primary's active settings match. `no-fallback` excludes only its entry; it never
+vetoes the rest of the chain. See [model policies](agent-profiles.md#model-policies).
 
 ### `[skills.<name>]` (overlay)
 

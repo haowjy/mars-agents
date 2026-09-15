@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::compiler::agents::{AgentMode, HarnessKind, ModelPolicyMatchType, parse_agent_content};
@@ -12,7 +11,7 @@ struct ParsedAgentInventory {
     name: String,
     description: String,
     model: Option<String>,
-    fanout: Vec<String>,
+    model_backups: Vec<String>,
     mode: AgentMode,
 }
 
@@ -131,6 +130,18 @@ pub fn build_inventory_prompt(
         "Use `/handoff` when passing control back to the user.".to_string(),
     ];
 
+    if meridian_subagent
+        .iter()
+        .chain(&meridian_primary)
+        .any(|agent| !agent.model_backups.is_empty())
+    {
+        lines.push(
+            "Declared backups are automatic fallback candidates, not native fanout. \
+             `(model ID)` entries are literal; `--model` resolves aliases first."
+                .to_string(),
+        );
+    }
+
     if !meridian_subagent.is_empty() {
         lines.extend(["".to_string(), "## Subagent".to_string()]);
         for agent in &meridian_subagent {
@@ -198,7 +209,7 @@ fn parse_inventory_agent(
         .and_then(|stem| stem.to_str())
         .unwrap_or("unknown-agent")
         .to_string();
-    let fanout = fallback_model_policies_for_inventory(&profile);
+    let model_backups = fallback_model_policies_for_inventory(&profile);
     let name = profile.name.unwrap_or(fallback_name);
     let description = profile.description.unwrap_or_default();
     let mode = profile.mode.clone().unwrap_or(AgentMode::Subagent);
@@ -208,7 +219,7 @@ fn parse_inventory_agent(
             name,
             description,
             model: profile.model,
-            fanout,
+            model_backups,
             mode,
         }),
         warnings,
@@ -218,31 +229,13 @@ fn parse_inventory_agent(
 fn fallback_model_policies_for_inventory(
     profile: &crate::compiler::agents::AgentProfile,
 ) -> Vec<String> {
-    let mut entries = Vec::new();
-    let mut seen = HashSet::new();
-
-    // Limitation: this deduplicates exact fallback labels only. Alias-to-model
-    // canonical dedupe requires alias catalog context not currently loaded here.
-    for policy in &profile.model_policies {
-        if policy.no_fallback {
-            continue;
-        }
-        if !matches!(
-            policy.match_type,
-            ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model
-        ) {
-            continue;
-        }
-        let value = policy.match_value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if seen.insert(value.to_string()) {
-            entries.push(value.to_string());
-        }
-    }
-
-    entries
+    super::policy::fallback_model_policy_entries(&profile.model_policies)
+        .map(|(kind, token)| match kind {
+            ModelPolicyMatchType::Alias => token.to_string(),
+            ModelPolicyMatchType::Model => format!("{token} (model ID)"),
+            ModelPolicyMatchType::ModelGlob => unreachable!("fallback entries exclude globs"),
+        })
+        .collect()
 }
 
 fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
@@ -260,9 +253,9 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
         line.push_str(model);
     }
 
-    if !agent.fanout.is_empty() {
-        line.push_str(" | Fan-out: ");
-        line.push_str(&agent.fanout.join(", "));
+    if !agent.model_backups.is_empty() {
+        line.push_str(" | Declared backups: ");
+        line.push_str(&agent.model_backups.join(", "));
     }
 
     line
@@ -356,6 +349,41 @@ mod tests {
             &canonical,
             harness,
         )
+    }
+
+    #[test]
+    fn inventory_preserves_fallback_selector_kind_and_entry_scoped_exclusion() {
+        let temp = TempDir::new().unwrap();
+        let mars_dir = temp.path().join(".mars");
+        write_agent(
+            &mars_dir,
+            "coder",
+            r#"---
+name: coder
+model: shared
+model-policies:
+  - match: {alias: excluded}
+    no-fallback: true
+  - match: {alias: shared}
+    no-fallback: true
+  - match: {alias: shared}
+    override: {}
+  - match: {model: shared}
+  - match: {alias: shared}
+  - match: {model: shared}
+  - match: {model-glob: '*'}
+  - match: {alias: later}
+---
+Implement changes.
+"#,
+        );
+        let mut warnings = Vec::new();
+        let inventory =
+            build_inventory_prompt(&mars_dir, &[], "codex", &[], &mut warnings).unwrap();
+
+        assert!(inventory.contains("| Declared backups: shared, shared (model ID), later"));
+        assert!(!inventory.contains("excluded"));
+        assert!(warnings.is_empty());
     }
 
     #[test]

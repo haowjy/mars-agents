@@ -579,7 +579,7 @@ fanout_agents = ["reviewer"]
 }
 
 #[test]
-fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
+fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_backups() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---
 name: reviewer
@@ -632,7 +632,7 @@ Hidden work."#;
         .as_str()
         .expect("inventory_prompt should be string");
     assert!(inventory_prompt.contains("`meridian spawn -a reviewer`: Review implementation"));
-    assert!(inventory_prompt.contains("Fan-out: gpt55, gpt-5"));
+    assert!(inventory_prompt.contains("Declared backups: gpt55, gpt-5 (model ID)"));
     assert!(!inventory_prompt.contains("hidden-worker"));
 }
 

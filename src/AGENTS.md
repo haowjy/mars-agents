@@ -12,7 +12,7 @@ mars.toml + mars.lock (committed, project root)
     targets: .agents/, .claude/, .cursor/ (committed, shared)
 ```
 
-- **`.mars/` is a cache, not the source of truth.** Committed targets + `mars.lock` are the authority. Fresh clone rebuilds `.mars/` from sources.
+- **Canonical content is derived, not authored truth.** Fresh clones rebuild `.mars/` content from sources. Retain `.mars/pending-canonical.json` after failed sync: it is write-intent evidence needed to recover ownership (see `sync/AGENTS.md`).
 - **Mars never deletes files it didn't create.** Per-target lock ownership — see root `AGENTS.md` Critical Invariants and `target_sync/.context/CONTEXT.md`.
 - **All writes are atomic** (tmp+rename). Crash mid-write leaves old file intact.
 

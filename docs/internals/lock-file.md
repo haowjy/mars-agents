@@ -207,7 +207,8 @@ Recovery stays in memory until finalization. On retry, the journal retains the
 verified current version alongside any planned replacement, so another failure
 on either side of the write remains recoverable. The lock is not checkpointed
 early: failed repair still preserves corrupt lock bytes. Successful finalization
-removes the journal after writing the lock. Dry-run does not publish recovery; no-op sync creates no journal.
+removes the journal after writing the lock. Dry-run does not publish recovery; `--frozen` refuses pending ownership recovery
+until an ordinary sync publishes it. No-op sync creates no journal.
 
 Keep the journal when retrying. If bytes have changed, inspect and relocate the
 conflicting output rather than forcing adoption. A corrupt journal or changed

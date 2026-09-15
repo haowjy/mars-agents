@@ -394,6 +394,11 @@ pub(crate) fn load_config(
     };
     diag.extend(lock_diagnostics);
     let recovered = recovery::recover(project_root, &mut old_lock)?;
+    if recovered > 0 && request.options.frozen {
+        return Err(MarsError::FrozenViolation {
+            message: "interrupted canonical writes require ownership recovery; run sync without --frozen first".into(),
+        });
+    }
     if recovered > 0 {
         diag.warn(
             "sync-recovered",

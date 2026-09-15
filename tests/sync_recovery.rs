@@ -316,3 +316,15 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
             .contains_output(".mars", "agents/muse.md")
     );
 }
+
+#[test]
+fn frozen_sync_does_not_publish_pending_ownership_even_when_bytes_are_complete() {
+    let dir = interrupted_package();
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    fs::remove_dir_all(dir.path().join("skills")).unwrap();
+    let intent = fs::read(dir.path().join(INTENT)).unwrap();
+    sync(dir.path()).arg("--frozen").assert().failure();
+    assert!(!dir.path().join("mars.lock").exists());
+    assert_eq!(fs::read(dir.path().join(INTENT)).unwrap(), intent);
+    sync(dir.path()).assert().success();
+}

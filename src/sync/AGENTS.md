@@ -67,7 +67,8 @@ On retry, intent retains the verified current version alongside any planned
 replacement until finalization publishes ownership. No early lock checkpoint:
 failed repair must preserve even corrupt lock bytes. Finalization removes intent
 after lock publication. Dry-run and resolution failure never publish recovery.
-No-op sync creates no journal. Existing installed claims remain authoritative.
+`--frozen` refuses uncommitted recovered claims even when output bytes need no
+changes. No-op sync creates no journal. Existing installed claims remain authoritative.
 This protects new canonical writes, not native/config emission (#149).
 
 ### Key Operations

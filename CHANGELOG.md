@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Keep flat `.mars-src` resources whose names resemble project output directories; exclusions follow the actual source root.
 - Flat self skills exclude native output trees including previously owned custom targets after configuration changes or when configured with absolute/dot-segment paths.
 - Document self-sync recovery and occupied-layer discovery, including nested fallback and the non-hidden output limitation.
 - Blocked self destinations fail before output writes, including identical bytes and `--force`. Unchanged-content source transitions refresh ownership without losing native output claims.

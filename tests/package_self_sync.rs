@@ -334,3 +334,35 @@ fn flat_package_does_not_import_previously_owned_custom_targets() {
     assert!(!dir.child(".mars/skills/demo/.old/native").exists());
     assert_noop(dir.path());
 }
+
+#[test]
+fn flat_override_keeps_authored_resources_named_like_project_outputs() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml")
+        .write_str("[settings]\ntargets = ['.native/custom']\n")
+        .unwrap();
+    dir.child(".mars-src/SKILL.md")
+        .write_str("# Local flat")
+        .unwrap();
+    for resource in [
+        ".native/custom/resource.txt",
+        ".codex/resource.txt",
+        ".mars-src/resource.txt",
+    ] {
+        dir.child(format!(".mars-src/{resource}"))
+            .write_str("authored resource")
+            .unwrap();
+    }
+    sync(dir.path()).assert().success();
+    for resource in [
+        ".native/custom/resource.txt",
+        ".codex/resource.txt",
+        ".mars-src/resource.txt",
+    ] {
+        assert_eq!(
+            read(dir.path(), &format!(".mars/skills/_self/{resource}")),
+            "authored resource"
+        );
+    }
+    assert_noop(dir.path());
+}

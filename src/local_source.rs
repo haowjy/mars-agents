@@ -90,15 +90,18 @@ pub(crate) fn flat_skill_excluded_paths(
         .iter()
         .map(PathBuf::from)
         .collect();
-    excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
-    excluded.extend(
-        crate::harness::registry::all()
-            .iter()
-            .map(|h| PathBuf::from(h.default_target())),
-    );
-
     let source_root = dunce::canonicalize(source_root)?;
     let project_root = dunce::canonicalize(project_root)?;
+    if source_root == project_root {
+        // These are project output/control roots, not reserved names inside
+        // an authored `.mars-src` resource tree.
+        excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
+        excluded.extend(
+            crate::harness::registry::all()
+                .iter()
+                .map(|h| PathBuf::from(h.default_target())),
+        );
+    }
     for target in targets {
         let path = std::path::absolute(project_root.join(target))?;
         if let Ok(relative) = path.strip_prefix(&source_root) {

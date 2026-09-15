@@ -4,6 +4,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep native agents present on the first successful retry after an interrupted destination move. Obsolete paths no longer erase surviving ownership.
+- Recover new canonical outputs after failed or interrupted sync using durable write intent. Repeated updates and destination moves retain ownership until finalization.
+- Preserve corrupt lock evidence through failed repair. Refuse changed outputs, links, malformed recovery records, and frozen recovery; no-op lock mtimes stay unchanged.
+- Reserve the recovery journal path, including portable case/dot/space aliases, so custom destinations cannot overwrite or delete recovery evidence.
+- Keep flat `.mars-src` resources whose names resemble project output directories; exclusions follow the actual source root.
+- Flat self skills exclude native output trees including previously owned custom targets after configuration changes or when configured with absolute/dot-segment paths.
+- Document self-sync recovery and occupied-layer discovery, including nested fallback and the non-hidden output limitation.
+- Blocked self destinations fail before output writes, including identical bytes and `--force`. Unchanged-content source transitions refresh ownership without losing native output claims.
+- Declared packages sync their own agents and skills as Mars-native sources. `.mars-src` wins before staging; dependency renames stay intact. Flat-root skills keep resources without copying generated output trees.
+
 ## [0.13.1] - 2026-09-11
 
 ### Added

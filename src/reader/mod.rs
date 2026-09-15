@@ -25,9 +25,13 @@ pub fn read(
 
     // Local package discovery — produces source paths only (no DestPath).
     // Dest-path assignment is the compiler's responsibility.
-    let local_source_name = crate::types::SourceOrigin::LocalPackage.to_string();
-    let local_items =
-        local_source::discover_local_items(&ctx.project_root, Some(local_source_name.as_str()))?;
+    let package_name = resolved
+        .loaded
+        .config
+        .package
+        .as_ref()
+        .map(|p| p.name.as_str());
+    let local_items = local_source::discover_local_items(&ctx.project_root, package_name, diag)?;
 
     Ok(ReaderIr {
         resolved,

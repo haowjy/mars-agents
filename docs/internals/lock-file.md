@@ -118,7 +118,7 @@ Checksums use the format `sha256:<hex>`. For agents (single files), this is the 
 
 ## The `_self` Source
 
-Project-local agents and skills in `.mars-src/` appear in the lock under `source = "_self"`. `_self` is the reserved synthetic source name for all items provided by the current project. The `_self` dependency entry uses `path = "."` to indicate the local project.
+Project-local items in `.mars-src/` and a declared package's own agents and skills appear in the lock under `source = "_self"`. `_self` is the reserved synthetic source name for all items provided by the current project. The `_self` dependency entry uses `path = "."` to indicate the local project.
 
 `[package]` is not required for `_self` items to appear in the lock — any project with content in `.mars-src/` will have them after sync.
 
@@ -189,3 +189,38 @@ If `mars.lock` fails to parse, Mars reports a `LockError::Corrupt` and suggests 
 ## Atomic Writes
 
 The lock file is written atomically via tmp+rename to prevent corruption from interrupted writes. Keys are sorted (by `IndexMap` insertion order, which the build function ensures is sorted) for deterministic output.
+
+## Interrupted Canonical Installs
+
+Before writing new canonical outputs, sync records their expected checksums and
+source provenance in `.mars/pending-canonical.json` (journal version 1). It also
+records a checksum of the prior `mars.lock`, or its absence. Entries are keyed
+by canonical output path, with at most current/planned versions per path. The
+same identity validation runs before writing and after reading intent. A custom
+output cannot equal, contain, or fall beneath the journal path, including its
+case and trailing-dot/space aliases on case-insensitive or Win32 filesystems.
+These spellings are reserved on every platform for checkout portability. The journal is
+write intent, not an installed ownership claim; `mars.lock` remains version 3.
+
+An apply error or process interruption can leave completed outputs without a
+final lock. On retry, Mars recovers only journaled regular outputs matching the
+recorded bytes and the corresponding old lock. It rejects changed outputs and
+symlinks, including ancestor links. Existing published lock claims take precedence
+when interruption happened after lock publication but before journal cleanup.
+
+Recovery stays in memory until finalization. On retry, the journal retains the
+verified current version alongside any planned replacement, so another failure
+on either side of the write remains recoverable. Repeated destination moves
+retain every unfinished output path, not just the most recent item name. Old
+canonical claims survive until removal is confirmed; finalized lock records
+exclude those removed paths even when the new path needs no rewrite. An installed
+recovery replaces same-path pending deletion without duplicating authority. The lock is not checkpointed
+early: failed repair still preserves corrupt lock bytes. Successful finalization
+removes the journal after writing the lock. Dry-run does not publish recovery; `--frozen` refuses pending ownership recovery
+until an ordinary sync publishes it. No-op sync creates no journal.
+
+Keep the journal when retrying. If bytes have changed, inspect and relocate the
+conflicting output rather than forcing adoption. A corrupt journal or changed
+lock requires preserving and inspecting the recovery evidence; do not delete
+the ownership registry. This does not retroactively recover pre-journal crashes
+or journal native/config writes; those remain separate recovery boundaries.

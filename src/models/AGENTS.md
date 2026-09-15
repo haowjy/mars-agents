@@ -7,9 +7,9 @@ Model aliases, catalog caching, auto-resolve against models.dev API, and depende
 ```
 [mars.toml] [deps] → merge_model_config() → merged aliases
      ↓                                          ↓
-models-cache.json ← fetch_models()   resolve_all_with_probe() → ResolvedAlias
+models-cache.json ← fetch_models()   resolve_all_static() → model identity
      ↓                                          ↓
-auto_resolve() ← AutoResolve spec          harness detection
+auto_resolve() ← AutoResolve spec          scoped CLI routing
 ```
 
 ### Two Alias Modes
@@ -87,15 +87,18 @@ Do not conflate env offline with flag-driven skip when debugging missing probe d
 
 ## Alias Prefix Resolution
 
-`resolve_with_alias_prefix_with_probe()` handles inputs like `opus-4-6` by:
+`resolve_with_alias_prefix_static()` handles inputs like `opus-4-6` by:
 1. Finding the longest matching base alias (e.g., `opus`)
 2. Building glob pattern `*{input}*`
 3. Matching against all alias filter candidates
 4. Returning best match by release date
 
-## Harness Detection
+## Identity Before Routing
 
-Resolved aliases include auto-detected harness based on installed binaries and probe results. Encapsulated in `resolve_harness()` — callers don't pass installed harnesses.
+Exact, bulk and prefix alias resolution are static: resolve IDs/provider/settings
+without executable discovery, auth or support probes. CLI consumers then assess
+routes with effective target scope. Never add an unrestricted preliminary routing
+pass; a later scoped assessment cannot undo an excluded auth command.
 
 ## Launch `harness_model` (argv model id)
 
@@ -109,15 +112,11 @@ Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
 **Test without real API:**
 ```rust
 let cache = ModelsCache { models: vec![...], fetched_at: None };
-let resolved = resolve_all_with_probe(
-    &aliases, &cache, &mut diag, opencode_probe, pi_probe, cursor_probe,
-);
+let resolved = resolve_all_static(&aliases, &cache);
 ```
 
-**Inject probe results:**
-```rust
-resolve_all_with_probe(&aliases, &cache, &mut diag, Some(&opencode_probe), Some(&pi_probe));
-```
+Inject runtime probe/auth evidence at the shared routing evaluator, not model
+identity resolution.
 
 ## See Also
 

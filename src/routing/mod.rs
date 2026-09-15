@@ -1,3 +1,4 @@
+use crate::config::targets::HarnessScope;
 use std::collections::HashSet;
 
 pub mod acceptance;
@@ -152,7 +153,7 @@ pub struct RoutingInput<'a> {
     pub settings_harness_order: Option<&'a [String]>,
     pub config_default_harness: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
-    pub linked_harnesses: Option<&'a [String]>,
+    pub harness_scope: HarnessScope,
     pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
@@ -207,6 +208,17 @@ pub fn evaluate_candidates(input: &RoutingInput<'_>) -> RoutingTrace {
         models::harness::native_harness_authenticated,
     )
 }
+/// Assess a fixed harness using only the supplied probe snapshot and scoped auth.
+pub fn evaluate_fixed_harness(input: &RoutingInput<'_>, harness: &str) -> CandidateAssessment {
+    let mut probes = StaticProbeResolver::from_input(input);
+    evaluate_fixed_harness_with_auth_and_probes(
+        input,
+        harness,
+        &mut probes,
+        models::harness::native_harness_authenticated,
+    )
+}
+
 pub fn evaluate_fixed_harness_with_auth_and_probes<F, P>(
     input: &RoutingInput<'_>,
     harness: &str,
@@ -285,9 +297,8 @@ where
         parse_settings_provider_order(input.settings_provider_order, &mut diagnostics);
     let config_default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
-    let linked_harnesses = input
-        .linked_harnesses
-        .filter(|harnesses| !harnesses.is_empty());
+    let enabled_harnesses = input.harness_scope.harness_names();
+    let linked_harnesses = enabled_harnesses.as_deref();
     let linked_harnesses_set = linked_harnesses
         .map(|harnesses| harnesses.iter().map(String::as_str).collect::<HashSet<_>>());
     let has_link_constraints = linked_harnesses_set.is_some();
@@ -568,6 +579,19 @@ where
     F: Fn(&str) -> bool,
     P: ProbeResolver + ?Sized,
 {
+    if !input.harness_scope.permits(harness) {
+        return CandidateAssessment {
+            harness: harness.to_string(),
+            installed: input.installed_harnesses.contains(harness),
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
+            match_evidence: None,
+            skip_reason: Some("disabled_target"),
+        };
+    }
+
     if !input.installed_harnesses.contains(harness) {
         return CandidateAssessment {
             harness: harness.to_string(),
@@ -1211,12 +1235,42 @@ mod tests {
             settings_harness_order,
             config_default_harness,
             installed_harnesses,
-            linked_harnesses,
+            harness_scope: match linked_harnesses {
+                None => HarnessScope::Unrestricted,
+                Some(names) => HarnessScope::Only(
+                    names
+                        .iter()
+                        .map(|name| crate::harness::registry::parse(name).unwrap())
+                        .collect(),
+                ),
+            },
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
             catalog_model_slugs,
         }
+    }
+
+    #[test]
+    fn disabled_fixed_harness_is_rejected_before_auth() {
+        let installed = installed(&["claude"]);
+        let enabled = vec!["codex".to_string()];
+        let input = routing_input(
+            "claude-opus-4-6",
+            Some("anthropic"),
+            None,
+            None,
+            &installed,
+            Some(&enabled),
+            (None, None, None),
+        );
+        let mut probes = StaticProbeResolver::from_input(&input);
+        let assessment =
+            evaluate_fixed_harness_with_auth_and_probes(&input, "claude", &mut probes, |_| {
+                panic!("disabled harness must not be auth-probed")
+            });
+        assert_eq!(assessment.skip_reason, Some("disabled_target"));
+        assert_eq!(assessment.match_evidence, None);
     }
 
     #[test]
@@ -1536,7 +1590,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
-            linked_harnesses: None,
+            harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: Some(&opencode_probe),
             pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
@@ -1573,7 +1627,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
-            linked_harnesses: None,
+            harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
@@ -1629,7 +1683,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
-            linked_harnesses: None,
+            harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: Some(&probe),
             pi_probe_result: None,
             cursor_probe_result: None,

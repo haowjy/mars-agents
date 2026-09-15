@@ -22,5 +22,7 @@ mod prompt_surface;
 mod routing;
 #[path = "launch_bundle/schema.rs"]
 mod schema;
+#[path = "launch_bundle/target_scope.rs"]
+mod target_scope;
 #[path = "launch_bundle/tool_policy.rs"]
 mod tool_policy;

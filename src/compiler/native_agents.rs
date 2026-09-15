@@ -276,7 +276,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     ) -> Option<String> {
         let resolved = self.resolve_candidate(token)?;
         let target_name = target_harness.to_harness_id().as_str().to_string();
-        let linked_harnesses = [target_name.clone()];
         let provider_order = self.routing_settings.provider_order_names();
         let harness_order = self.routing_settings.harness_order_names();
         let default_harness = self.routing_settings.default_harness_name();
@@ -291,7 +290,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 settings_harness_order: harness_order.as_deref(),
                 config_default_harness: default_harness.as_deref(),
                 installed_harnesses: &self.installed_for_native_targets,
-                linked_harnesses: Some(linked_harnesses.as_slice()),
+                harness_scope: crate::config::targets::HarnessScope::Only(
+                    [target_harness.to_harness_id()].into_iter().collect(),
+                ),
                 opencode_probe_result: None,
                 pi_probe_result: None,
                 cursor_probe_result: None,

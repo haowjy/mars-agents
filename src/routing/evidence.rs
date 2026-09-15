@@ -1,3 +1,4 @@
+use crate::config::targets::HarnessScope;
 use std::collections::HashSet;
 
 use crate::config::routing_settings::ResolvedRoutingSettings;
@@ -13,7 +14,7 @@ pub struct RoutingEvidence<'a> {
     pub settings_harness_order: Option<&'a [String]>,
     pub config_default_harness: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
-    pub linked_harnesses: Option<&'a [String]>,
+    pub harness_scope: HarnessScope,
     pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
@@ -33,7 +34,7 @@ impl<'a> RoutingEvidence<'a> {
             settings_harness_order: self.settings_harness_order,
             config_default_harness,
             installed_harnesses: self.installed_harnesses,
-            linked_harnesses: self.linked_harnesses,
+            harness_scope: self.harness_scope.clone(),
             opencode_probe_result: self.opencode_probe_result,
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,
@@ -54,7 +55,7 @@ pub struct RoutingSettingsEvidence<'a> {
     provider_order: Option<Vec<String>>,
     harness_order: Option<Vec<String>>,
     default_harness: Option<String>,
-    linked_harnesses: Vec<String>,
+    harness_scope: HarnessScope,
 }
 
 impl<'a> RoutingSettingsEvidence<'a> {
@@ -82,7 +83,7 @@ impl<'a> RoutingSettingsEvidence<'a> {
             provider_order: routing_settings.provider_order_names(),
             harness_order: routing_settings.harness_order_names(),
             default_harness: routing_settings.default_harness_name(),
-            linked_harnesses: routing_settings.linked_harness_names(),
+            harness_scope: routing_settings.harness_scope.clone(),
         }
     }
 
@@ -95,8 +96,7 @@ impl<'a> RoutingSettingsEvidence<'a> {
             settings_harness_order: self.harness_order.as_deref(),
             config_default_harness: self.default_harness.as_deref(),
             installed_harnesses: self.installed_harnesses,
-            linked_harnesses: (!self.linked_harnesses.is_empty())
-                .then_some(self.linked_harnesses.as_slice()),
+            harness_scope: self.harness_scope.clone(),
             opencode_probe_result: self.opencode_probe_result,
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,

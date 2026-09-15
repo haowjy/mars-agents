@@ -22,7 +22,7 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 ## Evaluation Flow
 
 1. Build candidate list from `settings_harness_order` (when unset, see default order below) or `provider_candidate_order`
-2. Filter by `linked_harnesses` — only `KnownHarness` links filter
+2. Apply `HarnessScope` before probes; empty `Only` means no candidates
 3. Per-candidate gate: installed → native catalog slug match + auth → OpenCode probe → Pi probe → Pi/Cursor passthrough (deferred)
 4. Fallback chain: config `default_harness` → linked fallback → no selection
 5. Link constraints block config-default fallback from routing outside known links
@@ -81,7 +81,10 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 
 ## Link Filtering
 
-Only `KnownHarness` links (from `config::targets::normalize_link`) filter routing candidates. Generic targets (`.agents`, unknown names) and path-like targets are **invisible** to routing.
+Configured targets permit only their known harnesses. Empty or generic/path-only
+configuration permits none; only absent targets and managed_root are unrestricted.
+The shared assessor rejects disabled fixed routes before installation/auth/support
+checks. Build policy rejects an excluded CLI pin and skips excluded preferences.
 
 ## Patterns
 
@@ -104,4 +107,4 @@ accept_route(&trace, &installed, MatchPolicy::RequireSlugEvidence)?;
 
 - `.context/CONTEXT.md` — detailed contracts, slug semantics, report serialization
 - `src/harness/.context/CONTEXT.md` — harness registry and capability snapshot
-- `src/config/AGENTS.md` — link normalization that produces `linked_harnesses`
+- `src/config/AGENTS.md` — target normalization and `HarnessScope`

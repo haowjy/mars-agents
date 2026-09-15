@@ -8,9 +8,7 @@ use std::collections::HashSet;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::harness::host::{
-    CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, collect_capability_snapshot,
-};
+use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot};
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
@@ -128,11 +126,13 @@ fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
 
 fn collect_models_capability_snapshot(
     refresh: &models::ModelsRefreshControl,
+    scope: &crate::config::targets::HarnessScope,
 ) -> CapabilitySnapshot {
-    collect_capability_snapshot(&CapabilityCollectionOptions {
+    CapabilitySession::collect(&CapabilityCollectionOptions {
         offline: models::is_mars_offline(),
         probe_refresh: refresh.probe_refresh,
     })
+    .into_scoped_snapshot(scope)
 }
 
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -230,7 +230,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 json,
             });
         }
-        let capability_snapshot = collect_models_capability_snapshot(&refresh);
+        let capability_snapshot =
+            collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
         return run_list_catalog(ListCatalogInput {
             cache: &cache,
             outcome: &outcome,
@@ -255,7 +256,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
                 json,
             );
         }
-        let capability_snapshot = collect_models_capability_snapshot(&refresh);
+        let capability_snapshot =
+            collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
         let installed = capability_snapshot.installed_harnesses();
         let is_offline = capability_snapshot.offline;
         let opencode_probe_result = capability_snapshot.opencode.result().cloned();
@@ -293,7 +295,8 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         );
     }
 
-    let capability_snapshot = collect_models_capability_snapshot(&refresh);
+    let capability_snapshot =
+        collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
     let installed = capability_snapshot.installed_harnesses();
     let is_offline = capability_snapshot.offline;
     let opencode_probe_result = capability_snapshot.opencode.result().cloned();
@@ -303,32 +306,18 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     let mut diag = DiagnosticCollector::new();
     let catalog_slugs = models::catalog_model_slugs(&cache);
 
-    let mut resolved = models::resolve_all_with_probe(
-        &merged,
-        &cache,
-        &mut diag,
-        opencode_probe_result.as_ref(),
-        pi_probe_result.as_ref(),
-        cursor_probe_result.as_ref(),
-    );
-    apply_routing_settings_to_resolved_aliases(
-        &mut resolved,
-        &merged,
-        &installed,
-        opencode_probe_result.as_ref(),
-        pi_probe_result.as_ref(),
-        cursor_probe_result.as_ref(),
-        Some(catalog_slugs.as_slice()),
-        &routing_settings,
-    );
-    annotate_resolved_availability(
-        &mut resolved,
-        &installed,
-        opencode_probe_result.as_ref(),
-        pi_probe_result.as_ref(),
-        cursor_probe_result.as_ref(),
+    let mut resolved = models::resolve_all_static(&merged, &cache);
+    let availability_ctx = AvailabilityContext {
+        installed: &installed,
+        opencode_probe_result: opencode_probe_result.as_ref(),
+        pi_probe_result: pi_probe_result.as_ref(),
+        cursor_probe_result: cursor_probe_result.as_ref(),
+        catalog_model_slugs: Some(catalog_slugs.as_slice()),
         is_offline,
-    );
+        routing_settings: &routing_settings,
+    };
+    apply_routing_settings_to_resolved_aliases(&mut resolved, &merged, availability_ctx);
+    annotate_resolved_availability(&mut resolved, availability_ctx);
     if !args.unavailable {
         prune_unavailable(&mut resolved);
     }
@@ -441,6 +430,26 @@ struct AvailabilityContext<'a> {
     catalog_model_slugs: Option<&'a [String]>,
     is_offline: bool,
     routing_settings: &'a ResolvedRoutingSettings,
+}
+
+impl AvailabilityContext<'_> {
+    fn classify(self, model_id: &str, provider: &str) -> ModelAvailability {
+        let permitted_installed = self
+            .installed
+            .iter()
+            .filter(|harness| self.routing_settings.harness_scope.permits(harness))
+            .cloned()
+            .collect();
+        models::availability::classify_model(
+            model_id,
+            provider,
+            &permitted_installed,
+            self.opencode_probe_result,
+            self.pi_probe_result,
+            self.cursor_probe_result,
+            self.is_offline,
+        )
+    }
 }
 
 struct ResolveRuntime<'a> {
@@ -1133,15 +1142,7 @@ where
         cost_cache_write: model.cost_cache_write,
         cost_reasoning: model.cost_reasoning,
         matched_aliases: Vec::new(),
-        availability: Some(models::availability::classify_model(
-            &model.id,
-            &model.provider,
-            availability_ctx.installed,
-            availability_ctx.opencode_probe_result,
-            availability_ctx.pi_probe_result,
-            availability_ctx.cursor_probe_result,
-            availability_ctx.is_offline,
-        )),
+        availability: Some(availability_ctx.classify(&model.id, &model.provider)),
     }
 }
 
@@ -1172,15 +1173,7 @@ fn model_entry_for_pinned(
         cost_cache_write: None,
         cost_reasoning: None,
         matched_aliases: Vec::new(),
-        availability: Some(models::availability::classify_model(
-            model_id,
-            &provider,
-            availability_ctx.installed,
-            availability_ctx.opencode_probe_result,
-            availability_ctx.pi_probe_result,
-            availability_ctx.cursor_probe_result,
-            availability_ctx.is_offline,
-        )),
+        availability: Some(availability_ctx.classify(model_id, &provider)),
     }
 }
 
@@ -1378,51 +1371,37 @@ fn effective_visibility(
         .unwrap_or_default()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_routing_settings_to_resolved_aliases(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
     aliases: &IndexMap<String, ModelAlias>,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
-    catalog_model_slugs: Option<&[String]>,
-    routing_settings: &ResolvedRoutingSettings,
+    context: AvailabilityContext<'_>,
 ) {
     for alias in resolved.values_mut() {
-        let has_explicit_harness = aliases
-            .get(&alias.name)
-            .is_some_and(|source_alias| source_alias.harness.is_some());
-        if has_explicit_harness {
-            continue;
-        }
-        apply_routing_settings_to_resolved_alias(
-            alias,
-            installed,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            catalog_model_slugs,
-            routing_settings,
-        );
+        apply_routing_settings_to_resolved_alias(alias, aliases.get(&alias.name), context);
     }
 }
 
 fn apply_routing_settings_to_resolved_alias(
     alias: &mut models::ResolvedAlias,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
-    catalog_model_slugs: Option<&[String]>,
-    routing_settings: &ResolvedRoutingSettings,
+    source_alias: Option<&ModelAlias>,
+    context: AvailabilityContext<'_>,
 ) {
+    let AvailabilityContext {
+        installed,
+        opencode_probe_result,
+        pi_probe_result,
+        cursor_probe_result,
+        catalog_model_slugs,
+        routing_settings,
+        ..
+    } = context;
     let provider_for_order =
         models::infer_provider_from_model_id(&alias.model_id).unwrap_or(alias.provider.as_str());
+    let provider_constraint = source_alias.and_then(provider_constraint_for_alias);
     let route_input = RouteTraceInput {
         model_id: &alias.model_id,
         provider_for_order,
-        provider_constraint: None,
+        provider_constraint: provider_constraint.as_deref(),
         installed,
         opencode_probe_result,
         pi_probe_result,
@@ -1430,13 +1409,30 @@ fn apply_routing_settings_to_resolved_alias(
         catalog_model_slugs,
         routing_settings,
     };
-    let trace = route_trace_for_resolved_model(&route_input);
+    let explicit_harness = source_alias.and_then(|source| source.harness.as_deref());
+    let trace = if let Some(harness) = explicit_harness {
+        let evidence = routing_settings_evidence(&route_input);
+        let assessment = crate::routing::evaluate_fixed_harness(&evidence.routing_input(), harness);
+        crate::routing::trace_for_fixed_harness(
+            crate::routing::RouteSource::Alias,
+            harness,
+            assessment,
+            Vec::new(),
+        )
+    } else {
+        route_trace_for_resolved_model(&route_input)
+    };
     alias.harness = Some(trace.harness.clone());
+    alias.harness_candidates = models::harness::harness_candidates_for_provider(&alias.provider)
+        .into_iter()
+        .filter(|harness| routing_settings.harness_scope.permits(harness))
+        .collect();
     alias.harness_source = match crate::routing::acceptance::accept_route(
         &trace,
         installed,
-        crate::routing::acceptance::MatchPolicy::InstalledOnly,
+        crate::routing::acceptance::MatchPolicy::AllowPassthrough,
     ) {
+        Ok(()) if explicit_harness.is_some() => HarnessSource::Explicit,
         Ok(()) => HarnessSource::AutoDetected,
         Err(_) => HarnessSource::Unavailable,
     };
@@ -1444,22 +1440,10 @@ fn apply_routing_settings_to_resolved_alias(
 
 fn annotate_resolved_availability(
     resolved: &mut IndexMap<String, models::ResolvedAlias>,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
-    is_offline: bool,
+    context: AvailabilityContext<'_>,
 ) {
     for alias in resolved.values_mut() {
-        alias.availability = Some(models::availability::classify_model(
-            &alias.model_id,
-            &alias.provider,
-            installed,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            is_offline,
-        ));
+        annotate_one_availability(alias, context);
     }
 }
 
@@ -1569,22 +1553,9 @@ fn availability_status_label(availability: Option<&ModelAvailability>) -> &'stat
 
 fn annotate_one_availability(
     resolved: &mut models::ResolvedAlias,
-    args: &ResolveAliasArgs,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
+    context: AvailabilityContext<'_>,
 ) {
-    let is_offline = models::is_mars_offline() || args.no_refresh_models;
-    resolved.availability = Some(models::availability::classify_model(
-        &resolved.model_id,
-        &resolved.provider,
-        installed,
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
-        is_offline,
-    ));
+    resolved.availability = Some(context.classify(&resolved.model_id, &resolved.provider));
 }
 
 fn print_availability_text(availability: Option<&ModelAvailability>) {
@@ -1721,9 +1692,8 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 
     // Step 2: alias-prefix resolution
     if let Some((cache, outcome)) = &cache_result
-        && let Some(mut resolved) = models::resolve_with_alias_prefix_with_probe(
-            &args.name, &merged, cache, None, None, None,
-        )
+        && let Some(mut resolved) =
+            models::resolve_with_alias_prefix_static(&args.name, &merged, cache)
     {
         let catalog_slugs = models::catalog_model_slugs(cache);
         let route_input = RouteTraceInput {
@@ -1745,6 +1715,11 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             route_trace_for_resolved_model_with_probes(&route_input, &mut probe_resolver)
         };
         resolved.harness = Some(route_trace.selected_harness().to_string());
+        resolved.harness_candidates =
+            models::harness::harness_candidates_for_provider(&resolved.provider)
+                .into_iter()
+                .filter(|harness| routing_settings.harness_scope.permits(harness))
+                .collect();
         resolved.harness_source = match crate::routing::acceptance::accept_route(
             &route_trace,
             &installed,
@@ -1755,11 +1730,15 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         };
         annotate_one_availability(
             &mut resolved,
-            args,
-            &installed,
-            capability_session.loaded_opencode_probe_result(),
-            capability_session.loaded_pi_probe_result(),
-            capability_session.loaded_cursor_probe_result(),
+            AvailabilityContext {
+                installed: &installed,
+                opencode_probe_result: capability_session.loaded_opencode_probe_result(),
+                pi_probe_result: capability_session.loaded_pi_probe_result(),
+                cursor_probe_result: capability_session.loaded_cursor_probe_result(),
+                catalog_model_slugs: None,
+                is_offline: models::is_mars_offline() || args.no_refresh_models,
+                routing_settings: &routing_settings,
+            },
         );
         let cache_outcome = capability_session
             .loaded_opencode_outcome()
@@ -1914,8 +1893,7 @@ fn run_resolve_exact_alias(
     let name = &args.name;
     let source = determine_source(name, project_config);
     let mut diag = DiagnosticCollector::new();
-    let mut resolved_entry =
-        models::resolve_one_with_probe(name, merged, runtime.cache, &mut diag, None, None, None);
+    let mut resolved_entry = models::resolve_one_static(name, merged, runtime.cache);
     let mut route_trace = None;
     let mut fixed_harness_route_rejection = None;
     if let Some(r) = resolved_entry.as_mut() {
@@ -1964,6 +1942,10 @@ fn run_resolve_exact_alias(
         });
         if let Some(trace) = route_trace.as_ref() {
             r.harness = Some(trace.selected_harness().to_string());
+            r.harness_candidates = models::harness::harness_candidates_for_provider(&r.provider)
+                .into_iter()
+                .filter(|harness| runtime.routing_settings.harness_scope.permits(harness))
+                .collect();
             r.harness_source = match crate::routing::acceptance::accept_route(
                 trace,
                 runtime.installed,
@@ -1978,11 +1960,15 @@ fn run_resolve_exact_alias(
         }
         annotate_one_availability(
             r,
-            args,
-            runtime.installed,
-            capability_session.loaded_opencode_probe_result(),
-            capability_session.loaded_pi_probe_result(),
-            capability_session.loaded_cursor_probe_result(),
+            AvailabilityContext {
+                installed: runtime.installed,
+                opencode_probe_result: capability_session.loaded_opencode_probe_result(),
+                pi_probe_result: capability_session.loaded_pi_probe_result(),
+                cursor_probe_result: capability_session.loaded_cursor_probe_result(),
+                catalog_model_slugs: None,
+                is_offline: models::is_mars_offline() || args.no_refresh_models,
+                routing_settings: runtime.routing_settings,
+            },
         );
     }
     let diagnostics = diag.drain();
@@ -2128,7 +2114,11 @@ fn run_resolve_exact_alias(
         emit_drained_text_diagnostics(&diagnostics);
     }
 
-    Ok(0)
+    Ok(i32::from(
+        route_trace
+            .as_ref()
+            .is_none_or(|trace| trace.selected_harness().is_empty()),
+    ))
 }
 
 struct ResolveFixedHarnessFailureInput<'a> {
@@ -2315,7 +2305,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         print_route_text(route_trace);
     }
 
-    Ok(0)
+    Ok(i32::from(route_trace.selected_harness().is_empty()))
 }
 
 fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, MarsError> {
@@ -2424,15 +2414,16 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         .then_some(trace.selected_harness().to_string());
     let harness_source = "pattern_guess";
     let harness_candidates = models::harness::harness_candidates_for_provider(provider_for_order);
-    let availability = models::availability::classify_model(
-        &passthrough_model_id,
-        provider_for_classification,
+    let availability = AvailabilityContext {
         installed,
-        capability_session.loaded_opencode_probe_result(),
-        capability_session.loaded_pi_probe_result(),
-        capability_session.loaded_cursor_probe_result(),
+        opencode_probe_result: capability_session.loaded_opencode_probe_result(),
+        pi_probe_result: capability_session.loaded_pi_probe_result(),
+        cursor_probe_result: capability_session.loaded_cursor_probe_result(),
+        catalog_model_slugs,
         is_offline,
-    );
+        routing_settings,
+    }
+    .classify(&passthrough_model_id, provider_for_classification);
 
     let warning = passthrough_catalog_warning(name, &trace);
 

@@ -32,7 +32,7 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | `settings_harness_order` | Raw `harness_order` from config, if set |
 | `config_default_harness` | Raw `default_harness` from config, if set |
 | `installed_harnesses` | Set of harness names found on PATH |
-| `linked_harnesses` | Known harness names from `config::targets` link normalization |
+| `harness_scope` | `Unrestricted` or `Only(BTreeSet<HarnessId>)`; empty denies all routes |
 | `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
 | `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
 | `catalog_model_slugs` | Cached models.dev `provider/model` slugs; native harnesses match here before auth-only fallback |
@@ -113,11 +113,12 @@ Both share the `RejectionReason` type.
 
 ### Link filtering rule
 
-Only `KnownHarness` links (from `config::targets::normalize_link`) filter routing candidates.
-Generic targets (`.agents`, `agents`, unknown names) and path-like targets are **invisible**
-to routing — they are materialization-only. See `config::targets` for normalization details.
+Target permission comes from `config::targets::HarnessScope`. Generic/path targets
+add no harnesses; an explicitly empty scope must not become unrestricted. Fixed
+and automatic assessments reject disabled routes before any auth/support probes.
+Build rejects excluded CLI harness pins and skips excluded implicit preferences.
 
-When known linked harnesses exist:
+When target scope is restricted:
 - Auto-routing candidates are filtered to the linked set before evaluation
 - `settings.default_harness` outside the linked set is ignored (with diagnostic)
 - Hardcoded fallback is blocked (linked harnesses select themselves instead)

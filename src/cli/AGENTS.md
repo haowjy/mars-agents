@@ -33,6 +33,13 @@ Three bypass conditions:
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |
 
+## Model Command Boundaries
+
+Resolve alias identity statically, then apply effective target scope before routing
+or probe collection. Availability output is limited to permitted installed routes;
+keep physical installation facts intact for routing diagnostics. Exact/prefix
+resolution with no selected route exits nonzero, even when the model ID resolved.
+
 ## Lossiness Gating
 
 `SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Hidden`) is applied when the

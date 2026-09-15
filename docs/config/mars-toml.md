@@ -216,6 +216,17 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
+Targets also govern launch permission. `targets = [".codex", ".opencode"]` permits
+only those harnesses, regardless of what is installed or logged in. Explicit empty
+or generic/path-only targets permit no harnesses. When targets are absent,
+managed_root supplies the scope; with neither field supplied, routing may discover
+installed harnesses. Physical target directories are not an eligibility check.
+
+Local targets replace project targets, even with an empty list. A local
+managed_root does not override project targets. An explicit `--harness` cannot
+expand target permission; a disabled profile/alias preference is skipped.
+
+
 `[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 
 | Field | Type | Default | Description |

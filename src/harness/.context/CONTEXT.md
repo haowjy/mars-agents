@@ -27,6 +27,9 @@ plus registration in `all()` and `names()`. Nothing else needs updating.
 Re-collecting mid-command risks probe inconsistency and unnecessary subprocess spawns.
 
 - `collect_capability_snapshot(options)` — collects for all known harnesses
+- `CapabilitySession::into_scoped_snapshot(scope)` — collects probe outcomes only
+  for permitted harnesses, retaining all physical executable facts; routing-aware
+  list consumers use this instead of eager unrestricted collection.
 - `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
 - `CapabilityCollectionOptions { offline, probe_refresh }` — `offline` from `MARS_OFFLINE` (`is_mars_offline()`); `probe_refresh` from `ModelsRefreshControl` at CLI/build call sites (see [probe refresh modes](../../models/probes/.context/CONTEXT.md))
 - `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl

@@ -788,6 +788,7 @@ pub struct EffectiveConfig {
 #[derive(Debug, Clone, Default)]
 pub struct EffectiveProjectConfig {
     pub settings: Settings,
+    pub target_source: targets::TargetSource,
     pub models: IndexMap<String, crate::models::ModelAlias>,
     pub agents: IndexMap<String, AgentOverlay>,
 }
@@ -958,9 +959,20 @@ pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), Mars
     Ok((config, local))
 }
 
-fn effective_project_config(config: &Config, local: &LocalConfig) -> EffectiveProjectConfig {
+fn effective_project_config(
+    config: &Config,
+    local: &LocalConfig,
+    root: &Path,
+) -> EffectiveProjectConfig {
+    let (settings, mut target_source) = local.settings.overlay_settings(&config.settings);
+    target_source.path = match target_source.origin {
+        targets::TargetOrigin::Project => Some(root.join("mars.toml")),
+        targets::TargetOrigin::Local => Some(root.join("mars.local.toml")),
+        targets::TargetOrigin::Unset => None,
+    };
     EffectiveProjectConfig {
-        settings: merged_settings(&config.settings, local),
+        settings,
+        target_source,
         models: overlay_models_replace_by_key(&config.models, local),
         agents: overlay_agent_overlays_replace_by_key(&config.agents, local),
     }
@@ -972,7 +984,7 @@ pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConf
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
     let (config, local) = load_config_with_local(root)?;
-    let effective = effective_project_config(&config, &local);
+    let effective = effective_project_config(&config, &local, root);
     Ok(LoadedProjectConfig {
         config,
         local,

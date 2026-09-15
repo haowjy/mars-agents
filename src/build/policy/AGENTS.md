@@ -36,6 +36,12 @@ See `.context/CONTEXT.md` for precedence ranks and the soft-fail contract.
   routing must check this before using resolved model fields
 - Catalog refresh (`ensure_fresh`) runs before harness evaluation, not read-only
 
+## Target Permission
+
+Every fixed harness preference must remain inside the configured `HarnessScope`.
+Excluded CLI pins fail; excluded implicit preferences yield to permitted routes.
+The common routing assessor also rejects disabled candidates before auth probes.
+
 ## Profile Model Fallback
 
 Primary first, then all concrete profile policy entries in declaration order.

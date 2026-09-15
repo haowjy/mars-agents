@@ -41,11 +41,12 @@ pipeline operates on EffectiveConfig only
 
 | Kind | Examples | Effect on routing |
 |---|---|---|
-| `KnownHarness` | `claude`, `.claude`, `codex`, etc. | Produces `linked_harnesses` — filters candidates |
-| `GenericTarget` | `agents`, `.agents`, `.foo` | Materialization only — invisible to routing |
-| `PathLike` | `path/to/dir`, `C:\foo` | Materialization only — invisible to routing |
+| `KnownHarness` | `claude`, `.claude`, `codex`, etc. | Adds permission to the configured `HarnessScope` |
+| `GenericTarget` | `agents`, `.agents`, `.foo` | Materialization only — adds no harness permission |
+| `PathLike` | `path/to/dir`, `C:\foo` | Materialization only — adds no harness permission |
 
-**Invariant:** Adding `.agents` to `settings.targets` must never change harness routing.
+`HarnessScope::Only` preserves empty target scope; generic/path-only targets permit
+no harness. Only absent targets and managed_root yield `Unrestricted`.
 
 ## Routing Settings (`routing_settings.rs`)
 
@@ -73,7 +74,7 @@ let (effective, diagnostics) = merge_with_root(config, local, project_root)?;
 **Link inspection:**
 ```rust
 let links = config.settings.effective_links();
-let linked = links.linked_harnesses();  // routing constraints
+let scope = links.harness_scope();     // permission, preserving empty/unset
 let targets = links.managed_targets();  // materialization paths
 ```
 

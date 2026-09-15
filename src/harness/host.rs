@@ -1,3 +1,4 @@
+use crate::config::targets::HarnessScope;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -164,16 +165,32 @@ impl CapabilitySession {
         self.cursor_outcome().result().cloned()
     }
 
-    pub fn into_snapshot(mut self) -> CapabilitySnapshot {
-        let opencode = self.opencode.take().unwrap_or_else(|| {
-            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
-        let pi = self.pi.take().unwrap_or_else(|| {
-            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
-        let cursor = self.cursor.take().unwrap_or_else(|| {
-            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
+    pub fn into_snapshot(self) -> CapabilitySnapshot {
+        self.into_scoped_snapshot(&HarnessScope::Unrestricted)
+    }
+
+    pub fn into_scoped_snapshot(mut self, scope: &HarnessScope) -> CapabilitySnapshot {
+        let opencode = if scope.permits("opencode") {
+            self.opencode.take().unwrap_or_else(|| {
+                cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedProbeOutcome::Unavailable
+        };
+        let pi = if scope.permits("pi") {
+            self.pi.take().unwrap_or_else(|| {
+                cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedPiProbeOutcome::Unavailable
+        };
+        let cursor = if scope.permits("cursor") {
+            self.cursor.take().unwrap_or_else(|| {
+                cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedCursorProbeOutcome::Unavailable
+        };
 
         CapabilitySnapshot {
             executable: self.executable,

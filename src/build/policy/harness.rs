@@ -79,6 +79,28 @@ where
         settings_policy_harness,
         alias_harness,
     );
+    let fixed_harness_selection = match fixed_harness_selection {
+        Some(selection)
+            if crate::harness::registry::is_known(&selection.value)
+                && !evidence.routing.harness_scope.permits(&selection.value) =>
+        {
+            if selection.source == PolicySource::Cli {
+                return Err(MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "explicit_harness_excluded: harness `{}` is not enabled by configured targets",
+                        selection.value
+                    ),
+                }));
+            }
+            warnings.push(format!(
+                "{} harness `{}` is disabled by configured targets; trying permitted routes",
+                selection.source.label(),
+                selection.value
+            ));
+            None
+        }
+        selection => selection,
+    };
     let (mut harness, candidates_tried, mut route_trace, mut unavailable_profile_harness) =
         if let Some(selection) = fixed_harness_selection.clone() {
             let fixed_provider_for_order = routing::provider_for_order_for_fixed_harness(
@@ -675,7 +697,7 @@ mod tests {
                 config_default_harness,
                 settings_harness_order: harness_order,
                 installed_harnesses,
-                linked_harnesses: None,
+                harness_scope: crate::config::targets::HarnessScope::Unrestricted,
                 opencode_probe_result: None,
                 pi_probe_result: None,
                 cursor_probe_result: None,
@@ -1073,7 +1095,7 @@ mod tests {
     #[test]
     fn empty_linked_constraint_route_errors_instead_of_invalid_harness() {
         let installed = installed(&["claude", "cursor", "codex", "pi"]);
-        let linked_harnesses = vec![
+        let linked_harnesses = [
             "claude".to_string(),
             "cursor".to_string(),
             "codex".to_string(),
@@ -1098,7 +1120,12 @@ mod tests {
                 config_default_harness: None,
                 settings_harness_order: None,
                 installed_harnesses: &installed,
-                linked_harnesses: Some(&linked_harnesses),
+                harness_scope: crate::config::targets::HarnessScope::Only(
+                    linked_harnesses
+                        .iter()
+                        .map(|name| crate::harness::registry::parse(name).unwrap())
+                        .collect(),
+                ),
                 opencode_probe_result: None,
                 pi_probe_result: None,
                 cursor_probe_result: Some(&cursor_probe),

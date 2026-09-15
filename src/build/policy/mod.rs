@@ -200,7 +200,7 @@ pub fn resolve_policy(
         .agent
         .and_then(|name| effective_config.agents.get(name));
     let settings_model_policies = &effective_config.settings.model_policies;
-    let linked_harnesses = effective_config.settings.linked_harnesses();
+    let harness_scope = effective_config.settings.effective_links().harness_scope();
     let default_harness_order = crate::harness::registry::default_harness_order_names();
     let harness_order = effective_config
         .settings
@@ -283,8 +283,7 @@ pub fn resolve_policy(
                     config_default_harness: effective_config.settings.default_harness.as_deref(),
                     settings_harness_order: Some(harness_order),
                     installed_harnesses: &installed_harnesses,
-                    linked_harnesses: (!linked_harnesses.is_empty())
-                        .then_some(linked_harnesses.as_slice()),
+                    harness_scope: harness_scope.clone(),
                     opencode_probe_result: None,
                     pi_probe_result: None,
                     cursor_probe_result: None,
@@ -365,8 +364,7 @@ pub fn resolve_policy(
                                     .as_deref(),
                                 settings_harness_order: Some(harness_order),
                                 installed_harnesses: &installed_harnesses,
-                                linked_harnesses: (!linked_harnesses.is_empty())
-                                    .then_some(linked_harnesses.as_slice()),
+                                harness_scope: harness_scope.clone(),
                                 opencode_probe_result: None,
                                 pi_probe_result: None,
                                 cursor_probe_result: None,

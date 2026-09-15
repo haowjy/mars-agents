@@ -1,5 +1,5 @@
+use super::targets::HarnessScope;
 use crate::harness::registry::HarnessId;
-use std::collections::BTreeSet;
 
 use super::Settings;
 
@@ -13,7 +13,7 @@ pub struct ResolvedRoutingSettings {
     pub harness_order: Option<ParsedHarnessOrder>,
     pub provider_order: Option<ParsedProviderOrder>,
     pub default_harness: Option<ParsedHarnessValue>,
-    pub linked_harnesses: BTreeSet<HarnessId>,
+    pub harness_scope: HarnessScope,
     pub diagnostics: Vec<RoutingConfigDiagnostic>,
 }
 
@@ -42,13 +42,6 @@ impl ResolvedRoutingSettings {
         self.provider_order
             .as_ref()
             .map(|order| order.providers.clone())
-    }
-
-    pub fn linked_harness_names(&self) -> Vec<String> {
-        self.linked_harnesses
-            .iter()
-            .map(|harness| harness.to_string())
-            .collect()
     }
 
     pub fn diagnostic_messages(&self) -> Vec<String> {
@@ -185,13 +178,13 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
             .collect(),
     });
 
-    let linked_harnesses = settings.effective_links().linked_harnesses_set();
+    let harness_scope = settings.effective_links().harness_scope();
 
     ResolvedRoutingSettings {
         harness_order,
         provider_order,
         default_harness,
-        linked_harnesses,
+        harness_scope,
         diagnostics,
     }
 }
@@ -271,7 +264,7 @@ mod tests {
         let settings = settings_with_links(Some(vec![".opencode", ".agents", "foo/bar"]));
         let resolved = resolve(&settings);
 
-        assert!(resolved.linked_harnesses.contains(&HarnessId::OpenCode));
-        assert!(!resolved.linked_harnesses.contains(&HarnessId::Codex));
+        assert!(resolved.harness_scope.permits("opencode"));
+        assert!(!resolved.harness_scope.permits("codex"));
     }
 }

@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Enforce target scope for launches and standalone model commands; preserve empty scope and winning-file provenance.
+- Remove unrestricted alias pre-routing and excluded availability paths; fail model resolution when no route is selected.
 - Scan all concrete profile model-policy backups regardless of the active settings match; `no-fallback` excludes only its entry.
 - Share fallback enumeration with inventory and distinguish literal model IDs from alias labels.
 

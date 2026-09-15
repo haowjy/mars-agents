@@ -29,6 +29,7 @@ impl<'a> RoutingEvidence<'a> {
         config_default_harness: Option<&'a str>,
     ) -> RoutingInput<'a> {
         RoutingInput {
+            preferred_harness: None,
             model_id: self.model_id,
             provider_for_order: self.provider_for_order,
             provider_constraint: self.provider_constraint,
@@ -92,6 +93,7 @@ impl<'a> RoutingSettingsEvidence<'a> {
 
     pub fn routing_input(&self) -> RoutingInput<'_> {
         RoutingInput {
+            preferred_harness: None,
             model_id: self.model_id,
             provider_for_order: self.provider_for_order,
             provider_constraint: self.provider_constraint,

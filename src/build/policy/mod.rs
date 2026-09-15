@@ -89,23 +89,16 @@ impl PolicySource {
             Self::Unset => "unset",
         }
     }
-
-    pub(super) fn precedence_rank(self) -> u8 {
-        match self {
-            Self::Cli => 5,
-            Self::Overlay | Self::OverlayModelPolicy => 4,
-            Self::Profile | Self::ProfileModelPolicy => 3,
-            Self::SettingsModelPolicy | Self::Project | Self::Config => 2,
-            Self::Alias => 1,
-            Self::Unset | Self::ConfigOrder | Self::Provider => 0,
-        }
-    }
 }
 
 impl From<crate::routing::RouteSource> for PolicySource {
     fn from(source: crate::routing::RouteSource) -> Self {
         match source {
             crate::routing::RouteSource::Cli => Self::Cli,
+            crate::routing::RouteSource::Overlay => Self::Overlay,
+            crate::routing::RouteSource::OverlayModelPolicy => Self::OverlayModelPolicy,
+            crate::routing::RouteSource::ProfileModelPolicy => Self::ProfileModelPolicy,
+            crate::routing::RouteSource::SettingsModelPolicy => Self::SettingsModelPolicy,
             crate::routing::RouteSource::Profile => Self::Profile,
             crate::routing::RouteSource::Alias => Self::Alias,
             crate::routing::RouteSource::ConfigOrder => Self::ConfigOrder,
@@ -237,50 +230,77 @@ pub fn resolve_policy(
         warnings.push(format!("models cache: {reason}"));
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
-    let mut resolved_model = model::resolve_model(
+    let primary_model = model::resolve_model(
         &input,
         effective_config.settings.default_model.as_deref(),
         overlay,
         aliases,
         &cache,
     )?;
-
-    warnings.extend(resolved_model.warnings.iter().cloned());
-    provenance.insert(
-        "model_source".to_string(),
-        resolved_model.model_source.label().to_string(),
-    );
-    let primary_model_token = resolved_model.model_token.clone();
-    let mut matched_policy = match_model_policy(
-        effective_policies(
-            overlay,
-            &input.profile.model_policies,
-            settings_model_policies,
-        ),
-        &resolved_model.model,
-        selected_alias_token(&resolved_model),
-    );
-
+    warnings.extend(primary_model.warnings.iter().cloned());
+    let primary_model_token = primary_model.model_token.clone();
+    let primary_kind = if primary_model.alias.is_some() {
+        ModelPolicyMatchType::Alias
+    } else {
+        ModelPolicyMatchType::Model
+    };
+    let backup_models = fallback_model_policy_entries(&input.profile.model_policies)
+        .filter(|(kind, token)| {
+            input.model_override.is_none()
+                && (*kind, *token) != (primary_kind, primary_model_token.trim())
+        })
+        .map(|(match_type, token)| match match_type {
+            ModelPolicyMatchType::Alias => model::resolve_model_token(
+                token.to_string(),
+                PolicySource::ProfileModelPolicy,
+                aliases,
+                &cache,
+            ),
+            ModelPolicyMatchType::Model => Ok(model::resolve_literal_model(
+                token.to_string(),
+                PolicySource::ProfileModelPolicy,
+            )),
+            ModelPolicyMatchType::ModelGlob => {
+                unreachable!("model-glob policies are filtered out of model fallback candidates")
+            }
+        });
+    let model_candidates = std::iter::once(Ok(primary_model)).chain(backup_models);
     let mut capability_session = CapabilitySession::collect(&CapabilityCollectionOptions {
         offline: crate::models::is_mars_offline(),
         probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_session.installed_harnesses();
     let native_auth = crate::harness::host::NativeAuthCache::default();
-    let harness_result = {
+    let mut first_unverified = None;
+    let mut selected = None;
+    let mut tried = Vec::new();
+    let mut linked_exhaustion = false;
+
+    for (attempt_index, candidate) in model_candidates.enumerate() {
+        let candidate = candidate?;
+        tried.push(candidate.model_token.clone());
+        let matched_policy = match_model_policy(
+            effective_policies(
+                overlay,
+                &input.profile.model_policies,
+                settings_model_policies,
+            ),
+            &candidate.model,
+            selected_alias_token(&candidate),
+        );
         let mut probe_resolver = SessionProbeResolver {
             session: &mut capability_session,
         };
-        harness::resolve_harness(
+        let result = harness::resolve_harness(
             &input,
-            resolved_model.alias,
+            candidate.alias,
             overlay,
             matched_policy.as_ref(),
             harness::HarnessEvidence {
                 routing: routing::RoutingEvidence {
-                    model_id: &resolved_model.model,
-                    provider_for_order: resolved_model.provider_for_order.as_deref(),
-                    provider_constraint: resolved_model.provider_constraint.as_deref(),
+                    model_id: &candidate.model,
+                    provider_for_order: candidate.provider_for_order.as_deref(),
+                    provider_constraint: candidate.provider_constraint.as_deref(),
                     settings_provider_order: effective_config.settings.provider_order.as_deref(),
                     config_default_harness: effective_config.settings.default_harness.as_deref(),
                     settings_harness_order: Some(harness_order),
@@ -292,150 +312,75 @@ pub fn resolve_policy(
                     cursor_probe_result: None,
                     catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 },
-                model_token: &resolved_model.model_token,
-                model_source: resolved_model.model_source,
+                model_token: &candidate.model_token,
             },
             &mut probe_resolver,
             |harness| native_auth.state(harness),
-        )
-    };
-    let mut model_fallback: Option<(String, String)> = None;
-    let harness_resolution = match harness_result {
-        Ok(resolution) => resolution,
-        Err(err) if is_harness_exhaustion(&err) && input.model_override.is_some() => {
-            return Err(err);
-        }
-        Err(err) if is_harness_exhaustion(&err) => {
-            let linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
-            let primary_kind = if resolved_model.alias.is_some() {
-                ModelPolicyMatchType::Alias
-            } else {
-                ModelPolicyMatchType::Model
-            };
-            let candidates = fallback_model_policy_entries(&input.profile.model_policies).filter(
-                |(kind, token)| (*kind, *token) != (primary_kind, primary_model_token.trim()),
-            );
-            let mut exhausted_tokens = Vec::new();
-            let mut resolved = None;
-
-            for (match_type, token) in candidates {
-                let fallback_model = match match_type {
-                    ModelPolicyMatchType::Alias => model::resolve_model_token(
-                        token.to_string(),
-                        PolicySource::ProfileModelPolicy,
-                        aliases,
-                        &cache,
-                    )?,
-                    ModelPolicyMatchType::Model => model::resolve_literal_model(
-                        token.to_string(),
-                        PolicySource::ProfileModelPolicy,
-                    ),
-                    ModelPolicyMatchType::ModelGlob => unreachable!(
-                        "model-glob policies are filtered out of model fallback candidates"
-                    ),
-                };
-                let fallback_policy = match_model_policy(
-                    effective_policies(
-                        overlay,
-                        &input.profile.model_policies,
-                        settings_model_policies,
-                    ),
-                    &fallback_model.model,
-                    selected_alias_token(&fallback_model),
-                );
-                let fallback_result = {
-                    let mut probe_resolver = SessionProbeResolver {
-                        session: &mut capability_session,
-                    };
-                    harness::resolve_harness(
-                        &input,
-                        fallback_model.alias,
-                        overlay,
-                        fallback_policy.as_ref(),
-                        harness::HarnessEvidence {
-                            routing: routing::RoutingEvidence {
-                                model_id: &fallback_model.model,
-                                provider_for_order: fallback_model.provider_for_order.as_deref(),
-                                provider_constraint: fallback_model.provider_constraint.as_deref(),
-                                settings_provider_order: effective_config
-                                    .settings
-                                    .provider_order
-                                    .as_deref(),
-                                config_default_harness: effective_config
-                                    .settings
-                                    .default_harness
-                                    .as_deref(),
-                                settings_harness_order: Some(harness_order),
-                                installed_harnesses: &installed_harnesses,
-                                harness_scope: harness_scope.clone(),
-                                excluded_harnesses: input.excluded_harnesses,
-                                opencode_probe_result: None,
-                                pi_probe_result: None,
-                                cursor_probe_result: None,
-                                catalog_model_slugs: Some(catalog_slugs.as_slice()),
-                            },
-                            model_token: &fallback_model.model_token,
-                            model_source: fallback_model.model_source,
-                        },
-                        &mut probe_resolver,
-                        |harness| native_auth.state(harness),
-                    )
-                };
-
-                match fallback_result {
-                    Ok(harness_resolution) => {
-                        warnings.extend(fallback_model.warnings.iter().cloned());
-                        warnings.push(format!(
-                            "model `{primary_model_token}` unavailable{}; fell back to `{}` on `{}`",
-                            if linked_exhaustion {
-                                " on linked harnesses"
-                            } else {
-                                ""
-                            },
-                            fallback_model.model_token,
-                            harness_resolution.harness.value
-                        ));
-                        provenance.insert(
-                            "model_source".to_string(),
-                            fallback_model.model_source.label().to_string(),
-                        );
-                        model_fallback = Some((
-                            primary_model_token.clone(),
-                            fallback_model.model_token.clone(),
-                        ));
-                        resolved = Some((fallback_model, fallback_policy, harness_resolution));
-                        break;
-                    }
-                    Err(err) if is_harness_exhaustion(&err) => {
-                        exhausted_tokens.push(token.to_string());
-                    }
-                    Err(err) => return Err(err),
+        );
+        match result {
+            Ok(resolution) => {
+                let eligible = resolution.route_trace.assessments.iter().any(|assessment| {
+                    assessment.harness == resolution.route_trace.harness
+                        && assessment.eligibility() == routing::Eligibility::Eligible
+                });
+                let attempt = (attempt_index, candidate, matched_policy, resolution);
+                if eligible {
+                    selected = Some(attempt);
+                    break;
+                }
+                // Preserve the whole attempt: later candidates must not overwrite
+                // the deferred model's settings, provider constraints or provenance.
+                first_unverified.get_or_insert(attempt);
+            }
+            Err(err) if is_harness_exhaustion(&err) => {
+                if input.model_override.is_some() {
+                    return Err(err);
+                }
+                tried[attempt_index] = format!("{} ({err})", candidate.model_token);
+                if attempt_index == 0 {
+                    linked_exhaustion = matches!(err, MarsError::LinkedHarnessExhausted { .. });
                 }
             }
-
-            let Some((fallback_model, fallback_policy, harness_resolution)) = resolved else {
-                let mut tried = vec![primary_model_token.clone()];
-                tried.extend(exhausted_tokens);
-                return Err(MarsError::Config(ConfigError::Invalid {
-                    message: format!(
-                        "model fallback candidates exhausted for `{}`{}; tried: {}",
-                        primary_model_token,
-                        if linked_exhaustion {
-                            " on linked harnesses"
-                        } else {
-                            ""
-                        },
-                        tried.join(", ")
-                    ),
-                }));
-            };
-
-            resolved_model = fallback_model;
-            matched_policy = fallback_policy;
-            harness_resolution
+            Err(err) => return Err(err),
         }
-        Err(err) => return Err(err),
-    };
+    }
+
+    let (selected_index, resolved_model, matched_policy, harness_resolution) =
+        selected.or(first_unverified).ok_or_else(|| {
+            MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "model fallback candidates exhausted for `{}`{}; tried: {}",
+                    primary_model_token,
+                    if linked_exhaustion {
+                        " on linked harnesses"
+                    } else {
+                        ""
+                    },
+                    tried.join(", ")
+                ),
+            })
+        })?;
+    let model_fallback = (selected_index != 0).then(|| {
+        warnings.extend(resolved_model.warnings.iter().cloned());
+        warnings.push(format!(
+            "no eligible route for model `{primary_model_token}`{}; fell back to `{}` on `{}`",
+            if linked_exhaustion {
+                " on linked harnesses"
+            } else {
+                ""
+            },
+            resolved_model.model_token,
+            harness_resolution.harness.value
+        ));
+        (
+            primary_model_token.clone(),
+            resolved_model.model_token.clone(),
+        )
+    });
+    provenance.insert(
+        "model_source".to_string(),
+        resolved_model.model_source.label().to_string(),
+    );
 
     warnings.extend(harness_resolution.warnings);
     provenance.insert(
@@ -546,25 +491,9 @@ pub fn resolve_policy(
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
-    let (
-        effective_model,
-        effective_model_token,
-        effective_provider_constraint,
-        effective_provider_for_order,
-    ) = if harness_resolution.model_override.is_some() {
-        (String::new(), String::new(), None::<String>, None::<String>)
-    } else {
-        (
-            resolved_model.model.clone(),
-            resolved_model.model_token.clone(),
-            resolved_model.provider_constraint.clone(),
-            resolved_model.provider_for_order.clone(),
-        )
-    };
-
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
-        model: effective_model,
-        model_token: effective_model_token,
+        model: resolved_model.model.clone(),
+        model_token: resolved_model.model_token.clone(),
         harness: selected_harness.clone(),
         selection_kind: harness_resolution
             .route_trace
@@ -576,8 +505,8 @@ pub fn resolve_policy(
             .selected_match_evidence()
             .label()
             .to_string(),
-        provider_constraint: effective_provider_constraint.as_deref(),
-        provider_for_order: effective_provider_for_order.as_deref(),
+        provider_constraint: resolved_model.provider_constraint.as_deref(),
+        provider_for_order: resolved_model.provider_for_order.as_deref(),
         settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
         opencode_probe_result: opencode_probe_result.as_ref(),

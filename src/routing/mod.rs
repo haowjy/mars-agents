@@ -62,6 +62,10 @@ pub enum ExhaustionReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteSource {
     Cli,
+    Overlay,
+    OverlayModelPolicy,
+    ProfileModelPolicy,
+    SettingsModelPolicy,
     Profile,
     Alias,
     ConfigOrder,
@@ -73,6 +77,10 @@ impl RouteSource {
     pub fn label(self) -> &'static str {
         match self {
             Self::Cli => "cli",
+            Self::Overlay => "overlay",
+            Self::OverlayModelPolicy => "overlay-model-policy",
+            Self::ProfileModelPolicy => "profile-model-policy",
+            Self::SettingsModelPolicy => "settings-model-policy",
             Self::Profile => "profile",
             Self::Alias => "alias",
             Self::ConfigOrder => "config-order",
@@ -199,6 +207,7 @@ impl RoutingTrace {
 
 /// Input to the routing engine.
 pub struct RoutingInput<'a> {
+    pub preferred_harness: Option<(&'a str, RouteSource)>,
     pub model_id: &'a str,
     pub provider_for_order: Option<&'a str>,
     pub provider_constraint: Option<&'a str>,
@@ -370,6 +379,9 @@ where
 
     // Ordering is preference, never permission. Every route is assessed once.
     let mut candidates = Vec::new();
+    if let Some((harness, source)) = input.preferred_harness {
+        candidates.push((harness.to_string(), None, source));
+    }
     if let Some(order) = input.settings_harness_order {
         let parsed = models::harness::parse_settings_harness_order(order);
         diagnostics.extend(parsed.warnings);
@@ -1092,6 +1104,7 @@ mod tests {
     ) -> RoutingInput<'a> {
         let (opencode_probe_result, pi_probe_result, cursor_probe_result) = probe_inputs;
         RoutingInput {
+            preferred_harness: None,
             model_id,
             provider_for_order,
             provider_constraint: None,
@@ -1557,6 +1570,7 @@ mod tests {
             error: None,
         };
         let input = RoutingInput {
+            preferred_harness: None,
             model_id: "gpt-5.4-mini",
             provider_for_order: Some("openai"),
             provider_constraint: Some("openai"),
@@ -1595,6 +1609,7 @@ mod tests {
             ..PiProbeResult::default()
         };
         let input = RoutingInput {
+            preferred_harness: None,
             model_id: "gpt-5.4",
             provider_for_order: None,
             provider_constraint: None,
@@ -1652,6 +1667,7 @@ mod tests {
             error: None,
         };
         let input = RoutingInput {
+            preferred_harness: None,
             model_id: "gpt-5.4-mini",
             provider_for_order: Some("openai"),
             provider_constraint: None,

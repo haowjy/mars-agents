@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Treat launch profile/overlay/alias harnesses as preferences; preserve independent CLI pins and remove model-clearing recovery.
+- Prefer an eligible backup over unverified primary or earlier backups; retain the first unverified attempt only when no model has an eligible route.
 - Preserve unknown native auth as unverified; check auth for harness-default launches and cache observations per command.
 - Separate runtime eligibility from model support; prefer eligible routes over unverified support and reject blocked fixed assessments.
 - Mark rejected live model routes unavailable and prune them; never advertise unassessed harness paths as runnable.

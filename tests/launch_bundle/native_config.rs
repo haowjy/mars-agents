@@ -64,7 +64,7 @@ fn build_launch_bundle_native_config_shape_is_passthrough() {
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
-model: claude-opus-4-6
+model: gpt-5
 harness-overrides:
   codex:
     native-config: [1, 2]

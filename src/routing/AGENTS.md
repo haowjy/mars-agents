@@ -21,7 +21,8 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 
 ## Evaluation Flow
 
-1. Rank candidates by configured harness order (registry default when unset), then
+1. Rank the supplied harness preference first, then configured harness order
+   (registry default when unset), then
    `default_harness`, then remaining registry harnesses; deduplicate stably.
 2. Intersect candidates with target permission and caller exclusions before probes.
 3. Assess installation and support, then applicable native auth. Auth callbacks

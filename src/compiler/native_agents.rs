@@ -283,6 +283,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
         for route_model_id in route_model_ids {
             let input = crate::routing::RoutingInput {
+                preferred_harness: None,
                 model_id: &route_model_id,
                 provider_for_order: resolved.provider_for_order.as_deref(),
                 provider_constraint: resolved.provider_constraint.as_deref(),

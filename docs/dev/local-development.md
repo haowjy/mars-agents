@@ -187,7 +187,12 @@ filtering does not change discovery. This layout limitation also applies to
 nested convention inputs; no distribution directory is permanently excluded.
 The output-discovery limitation is tracked in [issue #161](https://github.com/haowjy/mars-agents/issues/161).
 
-If an unowned canonical destination blocks a selected self item, sync fails before
+After an interrupted canonical install, ordinary sync recovers completed writes
+from `.mars/pending-canonical.json` when their bytes and the prior lock match.
+Keep that journal; no force or output relocation is needed for unchanged writes.
+Changed content or links are refused. See [write recovery](../internals/lock-file.md#interrupted-canonical-installs).
+
+If an unowned canonical destination without valid write intent blocks a selected self item, sync fails before
 output or lock changes. This includes identical bytes, symlinks, `--diff`,
 `--frozen`, and `--force`. Inspect and relocate the conflicting destination, then
 retry. Do not delete authored sources or remove the lock to recover. Native target

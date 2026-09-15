@@ -581,7 +581,7 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
                     let path = root
                         .join(&output.target_root)
                         .join(output.dest_path.as_str());
-                    let matches_disk = v2_output_checksum(&path)
+                    let matches_disk = regular_output_checksum(&path)
                         .is_some_and(|checksum| checksum == output.installed_checksum.as_ref());
                     if matches_disk {
                         OutputRecord::installed(
@@ -616,7 +616,9 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
     }
 }
 
-fn v2_output_checksum(path: &Path) -> Option<String> {
+/// Hash regular installed content without following root or nested symlinks.
+/// Callers inspecting write intent must also validate the path ancestors.
+pub(crate) fn regular_output_checksum(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
@@ -1530,7 +1532,7 @@ installed_checksum = "sha256:old"
         std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
         symlink("missing.md", output.join("reference.md")).unwrap();
 
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
     }
 
     #[cfg(unix)]
@@ -1547,7 +1549,7 @@ installed_checksum = "sha256:old"
         std::fs::write(external.join("reference.md"), "# Reference").unwrap();
         symlink(&external, output.join("references")).unwrap();
 
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
     }
 
     #[cfg(unix)]
@@ -1564,7 +1566,7 @@ installed_checksum = "sha256:old"
         assert!(status.success());
 
         let started = std::time::Instant::now();
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1),
             "shape validation must not open and block on the FIFO"

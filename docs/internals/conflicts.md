@@ -133,3 +133,11 @@ If conflict markers are still present, `mars resolve` reports the file as still 
 ## Exit Codes
 
 `mars resolve` exits with code 1 when unresolved conflicts remain. Use `mars list --status` to see which items are conflicted, or `mars doctor` to check for conflict markers.
+
+### Interrupted canonical writes
+
+Valid `.mars/pending-canonical.json` intent lets sync recover matching regular
+canonical outputs before checking self collisions. This is not byte-equality
+adoption: the path must have been recorded before Mars wrote it, and recovery
+must match the old lock. Without that evidence, identical unowned self bytes
+remain protected. See [lock write recovery](lock-file.md#interrupted-canonical-installs).

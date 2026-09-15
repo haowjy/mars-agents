@@ -189,3 +189,27 @@ If `mars.lock` fails to parse, Mars reports a `LockError::Corrupt` and suggests 
 ## Atomic Writes
 
 The lock file is written atomically via tmp+rename to prevent corruption from interrupted writes. Keys are sorted (by `IndexMap` insertion order, which the build function ensures is sorted) for deterministic output.
+
+## Interrupted Canonical Installs
+
+Before writing new canonical outputs, sync records their expected checksums and
+source provenance in `.mars/pending-canonical.json` (journal version 1). It also
+records a checksum of the prior `mars.lock`, or its absence. The journal is
+write intent, not an installed ownership claim; `mars.lock` remains version 3.
+
+An apply error or process interruption can leave completed outputs without a
+final lock. On retry, Mars recovers only journaled regular outputs matching the
+recorded bytes and the corresponding old lock. It rejects changed outputs and
+symlinks, including ancestor links. Existing published lock claims take precedence
+when interruption happened after lock publication but before journal cleanup.
+
+Recovery is initially in memory. After resolution and preflight succeed, Mars
+checkpoints recovered claims before replacing the journal. This preserves them
+through repeated failures. Successful finalization removes the journal after
+writing the lock. Dry-run does not publish recovery; no-op sync creates no journal.
+
+Keep the journal when retrying. If bytes have changed, inspect and relocate the
+conflicting output rather than forcing adoption. A corrupt journal or changed
+lock requires preserving and inspecting the recovery evidence; do not delete
+the ownership registry. This does not retroactively recover pre-journal crashes
+or journal native/config writes; those remain separate recovery boundaries.

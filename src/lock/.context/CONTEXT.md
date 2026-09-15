@@ -49,10 +49,12 @@ asserting ghost content and leaves legacy config-entry records available to the
 #130 hook sweep. Delete the v2 promotion after the release following lock v3,
 alongside that sweep.
 
-Interrupted-write recovery is not represented here. Publishing intent before
-materialization would add a second lock write, transaction ordering, and
-fault-injection recovery semantics. That is a separate pipeline transaction
-design rather than another meaning needed by the current ownership record.
+Canonical write intent is separate from installed/deletion authority.
+`sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound
+to the prior lock's bytes. It validates matching regular outputs into an
+in-memory lock, then checkpoints verified claims after resolution/preflight,
+before replacing intent. No lock schema or `_self` identity change is required.
+Native/config transaction recovery remains tracked in #149.
 
 ### `LockIndex` is the read seam
 

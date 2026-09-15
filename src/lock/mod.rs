@@ -839,21 +839,7 @@ pub fn build(
         }
     }
 
-    // Recovery of a destination move can temporarily retain two canonical paths
-    // for one logical item. A skipped new path must not carry a confirmed-removed
-    // old path back into the published lock, regardless of outcome ordering.
-    let removed: HashSet<_> = applied
-        .outcomes
-        .iter()
-        .filter(|outcome| matches!(outcome.action, ActionTaken::Removed))
-        .map(|outcome| outcome.dest_path.clone())
-        .collect();
-    for item in items.values_mut() {
-        item.outputs.retain(|output| {
-            output.target_root != CANONICAL_TARGET_ROOT || !removed.contains(&output.dest_path)
-        });
-    }
-    items.retain(|_, item| !item.outputs.is_empty());
+    remove_applied_canonical_outputs(&mut items, &applied.outcomes);
 
     // Add synthetic _self source if any local package items exist.
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
@@ -954,8 +940,9 @@ pub fn ownership_lock_after_target_sync(
 
 /// Merge current apply outcomes into a lock view for ownership checks.
 ///
-/// Write actions upsert canonical `.mars` outputs; removals drop the item;
-/// skipped/kept entries carry forward from `old_lock` when the clone lacks them.
+/// Write actions upsert canonical `.mars` outputs; skipped/kept entries carry
+/// forward from `old_lock`. Confirmed removals then drop only the affected paths,
+/// never other canonical/native outputs belonging to the same logical item.
 pub fn apply_apply_outcomes_to_lock(
     lock: &mut LockFile,
     old_lock: &LockFile,
@@ -966,9 +953,7 @@ pub fn apply_apply_outcomes_to_lock(
     let old_lock_index = LockIndex::new(old_lock);
     for outcome in outcomes {
         match outcome.action {
-            ActionTaken::Removed => {
-                lock.items.shift_remove(&item_key(&outcome.item_id));
-            }
+            ActionTaken::Removed => {}
             ActionTaken::Skipped => {
                 let key = item_key(&outcome.item_id);
                 if lock.items.contains_key(&key) {
@@ -1076,6 +1061,22 @@ pub fn apply_apply_outcomes_to_lock(
             }
         }
     }
+    remove_applied_canonical_outputs(&mut lock.items, outcomes);
+}
+
+/// Both ownership reducers apply physical removals after carry-forward/upserts.
+/// Otherwise an obsolete path can erase a surviving logical item, or a later
+/// Skip/Keep can resurrect ownership of an already removed path.
+fn remove_applied_canonical_outputs(
+    items: &mut IndexMap<String, LockedItemV2>,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+) {
+    for outcome in outcomes {
+        if matches!(outcome.action, crate::sync::apply::ActionTaken::Removed) {
+            remove_target_output(items, CANONICAL_TARGET_ROOT, outcome.dest_path.as_str());
+        }
+    }
+    items.retain(|_, item| !item.outputs.is_empty());
 }
 
 /// Merge per-target sync results into a built lock file.
@@ -1085,7 +1086,7 @@ pub fn apply_target_sync_outputs(
 ) {
     for outcome in target_outcomes {
         for dest_path in &outcome.removed_dest_paths {
-            remove_target_output(lock, &outcome.target, dest_path);
+            remove_target_output(&mut lock.items, &outcome.target, dest_path);
         }
         for synced in &outcome.synced_outputs {
             upsert_target_output(
@@ -1127,7 +1128,7 @@ pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutpu
 /// Drop native harness output records removed by native agent reconcile.
 pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
     for (target_root, dest_path) in records {
-        remove_target_output(lock, target_root, dest_path);
+        remove_target_output(&mut lock.items, target_root, dest_path);
     }
 }
 
@@ -1312,14 +1313,18 @@ fn upsert_native_output_on_owner(
     false
 }
 
-fn remove_target_output(lock: &mut LockFile, target_root: &str, dest_path: &str) {
-    for item in lock.items.values_mut() {
+fn remove_target_output(
+    items: &mut IndexMap<String, LockedItemV2>,
+    target_root: &str,
+    dest_path: &str,
+) {
+    for item in items.values_mut() {
         item.outputs.retain(|output| {
             !(output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
         });
     }
-    lock.items.retain(|_, item| !item.outputs.is_empty());
+    items.retain(|_, item| !item.outputs.is_empty());
 }
 
 // ---------------------------------------------------------------------------

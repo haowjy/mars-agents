@@ -592,3 +592,62 @@ fn invalid_write_record_shapes_preserve_recovery_evidence() {
         assert_eq!(fs::read(&muse).unwrap(), bytes_before);
     }
 }
+
+#[test]
+fn interrupted_move_keeps_native_agent_on_the_first_successful_retry() {
+    for updated in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let config = |dest: &str| {
+            format!(
+                "[settings]\ntargets=['.claude']\nagent_emission='always'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
+            )
+        };
+        let agent = |body: &str| format!("---\nname: muse\ndescription: Muse\n---\n{body}\n");
+        dir.child("source/mars.toml")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .unwrap();
+        dir.child("source/agents/muse.md")
+            .write_str(&agent("# Original"))
+            .unwrap();
+        dir.child("mars.toml").write_str(&config("agents")).unwrap();
+        sync(dir.path()).assert().success();
+        let native = dir.path().join(".claude/agents/muse.md");
+        assert!(native.is_file());
+
+        dir.child("mars.toml").write_str(&config("old")).unwrap();
+        if updated {
+            dir.child("source/agents/muse.md")
+                .write_str(&agent("# Intermediate"))
+                .unwrap();
+        }
+        dir.child(".mars-src/skills/craft/SKILL.md")
+            .write_str("# Craft\n")
+            .unwrap();
+        dir.child(".mars/skills")
+            .write_str("obstruction\n")
+            .unwrap();
+        sync(dir.path()).assert().failure();
+        assert!(dir.path().join(".mars/old/muse.md").is_file());
+
+        dir.child("mars.toml").write_str(&config("agents")).unwrap();
+        let expected = if updated { "# Final" } else { "# Original" };
+        dir.child("source/agents/muse.md")
+            .write_str(&agent(expected))
+            .unwrap();
+        fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+        sync(dir.path()).assert().success();
+        assert!(
+            native.is_file(),
+            "first successful retry must retain native muse"
+        );
+        assert!(fs::read_to_string(&native).unwrap().contains(expected));
+        assert!(!dir.path().join(".mars/old/muse.md").exists());
+        let recovered = lock::load(dir.path()).unwrap();
+        assert!(recovered.contains_output(".mars", "agents/muse.md"));
+        assert!(recovered.contains_output(".claude", "agents/muse.md"));
+        assert!(!recovered.contains_output(".mars", "old/muse.md"));
+        let before = fs::read(dir.path().join("mars.lock")).unwrap();
+        sync(dir.path()).assert().success();
+        assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), before);
+    }
+}

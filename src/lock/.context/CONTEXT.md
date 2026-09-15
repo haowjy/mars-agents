@@ -59,8 +59,10 @@ replacement bytes until finalization. It does not checkpoint the lock early, so
 failed repair preserves corrupt lock evidence. No lock schema or `_self` identity
 change is required.
 During a destination move, recovery can retain multiple canonical paths for one
-logical item. `build()` excludes confirmed-removed canonical outputs from carried
-records, even when the selected new output is skipped. Same-path deletion claims
+logical item. Final lock construction and the temporary native-emission view
+share physical-path removal after carry-forward/upserts. Removing an obsolete
+path must not erase a surviving canonical/native record for the logical item,
+and skipped outputs must not resurrect removed paths. Same-path deletion claims
 are replaced by verified installation; native and other-path claims survive.
 Native/config transaction recovery remains tracked in #149.
 

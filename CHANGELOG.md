@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Keep native agents present on the first successful retry after an interrupted destination move. Obsolete paths no longer erase surviving ownership.
 - Recover new canonical outputs after failed or interrupted sync using durable write intent. Repeated updates and destination moves retain ownership until finalization.
 - Preserve corrupt lock evidence through failed repair. Refuse changed outputs, links, malformed recovery records, and frozen recovery; no-op lock mtimes stay unchanged.
 - Reserve the recovery journal path, including portable case/dot/space aliases, so custom destinations cannot overwrite or delete recovery evidence.

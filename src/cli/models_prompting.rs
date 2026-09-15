@@ -253,6 +253,7 @@ fn prompt_target_for_agent(
             profile: &agent.profile,
             model_override: None,
             harness_override: None,
+            excluded_harnesses: &[],
             effort_override: None,
             approval_override: None,
             sandbox_override: None,

@@ -81,6 +81,11 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 
 ## Link Filtering
 
+`permission_denial` applies configured scope and caller exclusions before evidence
+collection. It distinguishes `disabled_target` from `excluded_by_caller`; neither
+changes the recorded physical installation state. Automatic fallback candidates
+also remain inside this intersection.
+
 Configured targets permit only their known harnesses. Empty or generic/path-only
 configuration permits none; only absent targets and managed_root are unrestricted.
 The shared assessor rejects disabled fixed routes before installation/auth/support

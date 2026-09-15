@@ -1,4 +1,5 @@
 use crate::config::targets::HarnessScope;
+use crate::harness::registry::HarnessId;
 use std::collections::HashSet;
 
 pub mod acceptance;
@@ -154,11 +155,28 @@ pub struct RoutingInput<'a> {
     pub config_default_harness: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
     pub harness_scope: HarnessScope,
+    pub excluded_harnesses: &'a [HarnessId],
     pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
     /// Cached catalog slugs (`provider/model`) for full model-id matching on native harnesses.
     pub catalog_model_slugs: Option<&'a [String]>,
+}
+
+/// Permission is checked before installation, authentication, or support evidence.
+/// Keep caller exclusions separate from configured scope for diagnostics.
+pub fn permission_denial(
+    scope: &HarnessScope,
+    excluded: &[HarnessId],
+    harness: &str,
+) -> Option<&'static str> {
+    if !scope.permits(harness) {
+        Some("disabled_target")
+    } else if crate::harness::registry::parse(harness).is_some_and(|id| excluded.contains(&id)) {
+        Some("excluded_by_caller")
+    } else {
+        None
+    }
 }
 
 pub trait ProbeResolver {
@@ -297,7 +315,20 @@ where
         parse_settings_provider_order(input.settings_provider_order, &mut diagnostics);
     let config_default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
-    let enabled_harnesses = input.harness_scope.harness_names();
+    let enabled_harnesses = if input.excluded_harnesses.is_empty() {
+        input.harness_scope.harness_names()
+    } else {
+        Some(
+            crate::harness::registry::names()
+                .iter()
+                .filter(|harness| {
+                    permission_denial(&input.harness_scope, input.excluded_harnesses, harness)
+                        .is_none()
+                })
+                .map(|harness| (*harness).to_string())
+                .collect(),
+        )
+    };
     let linked_harnesses = enabled_harnesses.as_deref();
     let linked_harnesses_set = linked_harnesses
         .map(|harnesses| harnesses.iter().map(String::as_str).collect::<HashSet<_>>());
@@ -579,7 +610,8 @@ where
     F: Fn(&str) -> bool,
     P: ProbeResolver + ?Sized,
 {
-    if !input.harness_scope.permits(harness) {
+    if let Some(reason) = permission_denial(&input.harness_scope, input.excluded_harnesses, harness)
+    {
         return CandidateAssessment {
             harness: harness.to_string(),
             installed: input.installed_harnesses.contains(harness),
@@ -588,7 +620,7 @@ where
             chosen_slug: None,
             chosen_model: None,
             match_evidence: None,
-            skip_reason: Some("disabled_target"),
+            skip_reason: Some(reason),
         };
     }
 
@@ -1235,6 +1267,7 @@ mod tests {
             settings_harness_order,
             config_default_harness,
             installed_harnesses,
+            excluded_harnesses: &[],
             harness_scope: match linked_harnesses {
                 None => HarnessScope::Unrestricted,
                 Some(names) => HarnessScope::Only(
@@ -1271,6 +1304,29 @@ mod tests {
             });
         assert_eq!(assessment.skip_reason, Some("disabled_target"));
         assert_eq!(assessment.match_evidence, None);
+    }
+
+    #[test]
+    fn caller_excluded_fixed_harness_is_rejected_before_auth() {
+        let installed = installed(&["claude"]);
+        let mut input = routing_input(
+            "claude-opus-4-6",
+            Some("anthropic"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, None),
+        );
+        input.excluded_harnesses = &[HarnessId::Claude];
+        let mut probes = StaticProbeResolver::from_input(&input);
+        let assessment =
+            evaluate_fixed_harness_with_auth_and_probes(&input, "claude", &mut probes, |_| {
+                panic!("caller-excluded harness must not be auth-probed")
+            });
+        assert_eq!(assessment.skip_reason, Some("excluded_by_caller"));
+        assert_eq!(assessment.match_evidence, None);
+        assert!(assessment.installed);
     }
 
     #[test]
@@ -1590,6 +1646,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
+            excluded_harnesses: &[],
             harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: Some(&opencode_probe),
             pi_probe_result: Some(&pi_probe),
@@ -1627,6 +1684,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
+            excluded_harnesses: &[],
             harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: None,
             pi_probe_result: Some(&pi_probe),
@@ -1683,6 +1741,7 @@ mod tests {
             settings_harness_order: None,
             config_default_harness: None,
             installed_harnesses: &installed,
+            excluded_harnesses: &[],
             harness_scope: HarnessScope::Unrestricted,
             opencode_probe_result: Some(&probe),
             pi_probe_result: None,

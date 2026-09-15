@@ -23,6 +23,7 @@ pub struct LaunchBundleRequest {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub harness: Option<String>,
+    pub excluded_harnesses: Vec<crate::harness::registry::HarnessId>,
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
@@ -32,8 +33,12 @@ pub struct LaunchBundleRequest {
 
 pub fn build_launch_bundle(
     ctx: &MarsContext,
-    request: LaunchBundleRequest,
+    mut request: LaunchBundleRequest,
 ) -> Result<LaunchBundle, MarsError> {
+    let mut seen = std::collections::HashSet::new();
+    request
+        .excluded_harnesses
+        .retain(|harness| seen.insert(*harness));
     let mut warnings: Vec<String> = Vec::new();
     let profile: AgentProfile;
     let agent_body: Option<String>;
@@ -101,6 +106,7 @@ pub fn build_launch_bundle(
             profile: &profile,
             model_override: request.model.as_deref(),
             harness_override: request.harness.as_deref(),
+            excluded_harnesses: &request.excluded_harnesses,
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),

@@ -1,4 +1,5 @@
 use crate::config::targets::HarnessScope;
+use crate::harness::registry::HarnessId;
 use std::collections::HashSet;
 
 use crate::config::routing_settings::ResolvedRoutingSettings;
@@ -15,6 +16,7 @@ pub struct RoutingEvidence<'a> {
     pub config_default_harness: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
     pub harness_scope: HarnessScope,
+    pub excluded_harnesses: &'a [HarnessId],
     pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
@@ -35,6 +37,7 @@ impl<'a> RoutingEvidence<'a> {
             config_default_harness,
             installed_harnesses: self.installed_harnesses,
             harness_scope: self.harness_scope.clone(),
+            excluded_harnesses: self.excluded_harnesses,
             opencode_probe_result: self.opencode_probe_result,
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,
@@ -97,6 +100,7 @@ impl<'a> RoutingSettingsEvidence<'a> {
             config_default_harness: self.default_harness.as_deref(),
             installed_harnesses: self.installed_harnesses,
             harness_scope: self.harness_scope.clone(),
+            excluded_harnesses: &[],
             opencode_probe_result: self.opencode_probe_result,
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,

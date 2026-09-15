@@ -290,6 +290,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 settings_harness_order: harness_order.as_deref(),
                 config_default_harness: default_harness.as_deref(),
                 installed_harnesses: &self.installed_for_native_targets,
+                excluded_harnesses: &[],
                 harness_scope: crate::config::targets::HarnessScope::Only(
                     [target_harness.to_harness_id()].into_iter().collect(),
                 ),

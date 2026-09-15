@@ -160,3 +160,100 @@ fn unset_targets_preserve_autodiscovery() {
     assert_eq!(bundle["routing"]["harness"], "claude");
     assert!(calls.contains("claude auth status"));
 }
+
+#[test]
+fn caller_exclusions_skip_profile_preference_before_auth() {
+    let (output, calls) = launch_with_scope(
+        "targets = [\".claude\", \".codex\"]",
+        None,
+        &["--exclude-harness", "claude", "--exclude-harness", "claude"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(bundle["routing"]["harness"], "codex");
+    assert_eq!(bundle["routing"]["model_token"], "backup");
+    assert_eq!(calls.trim(), "codex login status");
+}
+
+#[test]
+fn caller_exclusions_cannot_be_overridden_by_an_explicit_pin() {
+    let (output, calls) = launch_with_scope(
+        "targets = [\".claude\", \".codex\"]",
+        None,
+        &["--exclude-harness", "claude", "--harness", "claude"],
+    );
+    assert!(!output.status.success());
+    assert!(calls.is_empty(), "{calls}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("explicit_harness_excluded"));
+}
+
+#[test]
+fn caller_exclusions_do_not_expand_target_scope() {
+    let (output, calls) = launch_with_scope(
+        "targets = [\".claude\"]",
+        None,
+        &["--exclude-harness", "claude"],
+    );
+    assert!(!output.status.success());
+    assert!(calls.is_empty(), "{calls}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("model fallback candidates exhausted")
+    );
+}
+
+#[test]
+fn caller_exclusions_do_not_unpin_an_explicit_model() {
+    let (output, calls) = launch_with_scope(
+        "targets = [\".claude\", \".codex\"]",
+        None,
+        &["--exclude-harness", "claude", "--model", "primary"],
+    );
+    assert!(!output.status.success());
+    assert!(calls.is_empty(), "{calls}");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("no linked harness available for model `primary`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn caller_exclusions_reject_unknown_harness_names() {
+    let (output, calls) = launch_with_scope("", None, &["--exclude-harness", "unknown"]);
+    assert!(!output.status.success());
+    assert!(calls.is_empty(), "{calls}");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("invalid value") && error.contains("unknown"),
+        "{error}"
+    );
+}
+
+#[test]
+fn caller_exclusions_can_deny_all_without_configured_targets() {
+    let (output, calls) = launch_with_scope(
+        "",
+        None,
+        &[
+            "--exclude-harness",
+            "claude",
+            "--exclude-harness",
+            "codex",
+            "--exclude-harness",
+            "pi",
+            "--exclude-harness",
+            "opencode",
+            "--exclude-harness",
+            "cursor",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(calls.is_empty(), "{calls}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("model fallback candidates exhausted")
+    );
+}

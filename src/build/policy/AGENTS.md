@@ -38,7 +38,9 @@ See `.context/CONTEXT.md` for precedence ranks and the soft-fail contract.
 
 ## Target Permission
 
-Every fixed harness preference must remain inside the configured `HarnessScope`.
+Every fixed harness preference must remain inside the configured `HarnessScope`
+minus `PolicyInput.excluded_harnesses`. Caller exclusions narrow permission; they
+do not replace target configuration. Build CLI accepts repeatable `--exclude-harness`.
 Excluded CLI pins fail; excluded implicit preferences yield to permitted routes.
 The common routing assessor also rejects disabled candidates before auth probes.
 

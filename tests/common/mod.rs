@@ -321,7 +321,7 @@ pub fn setup_project(server: &MockServer) -> (tempfile::TempDir, PathBuf) {
 pub fn install_logging_harnesses(root: &Path) -> PathBuf {
     let bin = root.join("logging-harness-bin");
     fs::create_dir_all(&bin).unwrap();
-    for name in ["claude", "codex", "opencode", "pi", "agent"] {
+    for name in ["claude", "codex", "opencode", "pi", "cursor", "agent"] {
         #[cfg(windows)]
         fs::write(
             bin.join(format!("{name}.bat")),

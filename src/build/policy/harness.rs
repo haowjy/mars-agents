@@ -82,18 +82,23 @@ where
     let fixed_harness_selection = match fixed_harness_selection {
         Some(selection)
             if crate::harness::registry::is_known(&selection.value)
-                && !evidence.routing.harness_scope.permits(&selection.value) =>
+                && routing::permission_denial(
+                    &evidence.routing.harness_scope,
+                    input.excluded_harnesses,
+                    &selection.value,
+                )
+                .is_some() =>
         {
             if selection.source == PolicySource::Cli {
                 return Err(MarsError::Config(ConfigError::Invalid {
                     message: format!(
-                        "explicit_harness_excluded: harness `{}` is not enabled by configured targets",
+                        "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
                         selection.value
                     ),
                 }));
             }
             warnings.push(format!(
-                "{} harness `{}` is disabled by configured targets; trying permitted routes",
+                "{} harness `{}` is excluded by configured targets or caller restrictions; trying permitted routes",
                 selection.source.label(),
                 selection.value
             ));
@@ -653,6 +658,7 @@ mod tests {
             profile,
             model_override,
             harness_override,
+            excluded_harnesses: &[],
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
@@ -697,6 +703,7 @@ mod tests {
                 config_default_harness,
                 settings_harness_order: harness_order,
                 installed_harnesses,
+                excluded_harnesses: &[],
                 harness_scope: crate::config::targets::HarnessScope::Unrestricted,
                 opencode_probe_result: None,
                 pi_probe_result: None,
@@ -1120,6 +1127,7 @@ mod tests {
                 config_default_harness: None,
                 settings_harness_order: None,
                 installed_harnesses: &installed,
+                excluded_harnesses: &[],
                 harness_scope: crate::config::targets::HarnessScope::Only(
                     linked_harnesses
                         .iter()

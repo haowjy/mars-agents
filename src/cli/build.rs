@@ -5,6 +5,7 @@ use clap::{ArgAction, ValueEnum};
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
 use crate::error::MarsError;
+use crate::harness::registry::HarnessId;
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
@@ -18,25 +19,13 @@ pub enum BuildCommand {
     LaunchBundle(LaunchBundleArgs),
 }
 
-#[derive(Debug, Clone, ValueEnum)]
-enum HarnessArg {
-    Claude,
-    Codex,
-    Opencode,
-    Cursor,
-    Pi,
-}
-
-impl HarnessArg {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Opencode => "opencode",
-            Self::Cursor => "cursor",
-            Self::Pi => "pi",
-        }
-    }
+fn parse_harness(value: &str) -> Result<HarnessId, String> {
+    crate::harness::registry::parse(value).ok_or_else(|| {
+        format!(
+            "unknown harness `{value}`; expected one of: {}",
+            crate::harness::registry::names().join(", ")
+        )
+    })
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -108,8 +97,12 @@ pub struct LaunchBundleArgs {
     pub model: Option<String>,
 
     /// Override harness target.
-    #[arg(long, value_enum)]
-    harness: Option<HarnessArg>,
+    #[arg(long, value_parser = parse_harness)]
+    harness: Option<HarnessId>,
+
+    /// Exclude a harness from this invocation (repeatable); cannot expand configured targets.
+    #[arg(long = "exclude-harness", value_parser = parse_harness, action = ArgAction::Append)]
+    excluded_harnesses: Vec<HarnessId>,
 
     /// Override effort level.
     #[arg(long, value_enum)]
@@ -151,6 +144,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             agent: args.agent.clone(),
             model: args.model.clone(),
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),
+            excluded_harnesses: args.excluded_harnesses.clone(),
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),

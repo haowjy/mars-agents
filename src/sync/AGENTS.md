@@ -61,11 +61,17 @@ succeeds would destroy diagnostic information if the run fails.
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover source items via `src/discover/`, auto-rename dependency destination collisions, overlay selected self destinations, refuse blocked canonical self items (including under force), prune unmanaged dependency collisions, apply one unified frontmatter rename pass, then validate target state (`src/sync/validate.rs`); stages local items via `crate::staging::stage_local_item` |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse blocked canonical self items (including under force); prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
 | `finalize()` | Write lock, persist model aliases, build report |
+
+The reader/local-source seam discovers `.mars-src` unconditionally and adds
+agents/skills from the current package only with `[package]`. It selects local
+overrides before staging. Project-root hooks keep their separate discovery and
+warning-based collision path in `build_target`; the selected-item hard refusal
+does not change that path.
 
 ## Lossiness Gating
 

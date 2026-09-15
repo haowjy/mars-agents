@@ -518,15 +518,24 @@ pub(crate) fn build_target(
         }
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
             && item.discovered.source_path == Path::new(".");
-        let excluded_paths = if is_flat_skill {
-            crate::local_source::flat_skill_excluded_paths(
-                &ctx.project_root,
-                &item.disk_path(),
-                &resolved.loaded.effective.settings.managed_targets(),
-            )?
-        } else {
-            Vec::new()
-        };
+        let excluded_paths =
+            if is_flat_skill {
+                let mut targets = resolved.loaded.effective.settings.managed_targets();
+                targets.extend(
+                    resolved.loaded.old_lock.items.values().flat_map(|item| {
+                        item.outputs.iter().map(|output| output.target_root.clone())
+                    }),
+                );
+                targets.sort();
+                targets.dedup();
+                crate::local_source::flat_skill_excluded_paths(
+                    &ctx.project_root,
+                    &item.disk_path(),
+                    &targets,
+                )?
+            } else {
+                Vec::new()
+            };
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(

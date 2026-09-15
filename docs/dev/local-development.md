@@ -180,7 +180,7 @@ folders do not pin a layer. Removing `[package]` disables package self discovery
 `.mars-src` and dependencies remain eligible.
 
 A root `SKILL.md` uses the declared package name. Resources are preserved, excluding
-control files, staging, and configured output trees. **Use hidden target paths**
+control files, staging, standard native roots, and configured or previously owned output trees. **Use hidden target paths**
 (e.g. `.codex`): a non-hidden target such as `out/native` can itself become a
 convention discovery input, suppressing a root `SKILL.md` on later syncs. Resource
 filtering does not change discovery. This layout limitation also applies to

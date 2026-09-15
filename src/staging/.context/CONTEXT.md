@@ -11,7 +11,7 @@ the staged tree. Local project items stage in `sync/mod.rs` `build_target` after
 has won over matching declared-package definitions. Declared-package items
 carry Mars-native dialect; `.mars-src` retains local inference.
 
-Flat self skills filter control files, `.mars-src`, standard native roots, and configured target paths
+Flat self skills filter control files, `.mars-src`, standard native roots, and configured or previously owned target paths
 (including existing resolved paths for aliases/absolute/dot-segment spellings)
 before traversal, because their source root contains `.mars/staging`. Filtering
 at install/hash time alone would recurse into the staging destination. This

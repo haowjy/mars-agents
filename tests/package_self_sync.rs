@@ -318,3 +318,19 @@ fn flat_package_filters_alternate_spellings_of_configured_output_paths() {
         assert_noop(dir.path());
     }
 }
+
+#[test]
+fn flat_package_does_not_import_previously_owned_custom_targets() {
+    let dir = TempDir::new().unwrap();
+    dir.child("SKILL.md").write_str("# Flat").unwrap();
+    dir.child("mars.toml")
+        .write_str(&format!("{PACKAGE}[settings]\ntargets = ['.old/native']\n"))
+        .unwrap();
+    sync(dir.path()).assert().success();
+    dir.child("mars.toml")
+        .write_str(&format!("{PACKAGE}{SETTINGS}"))
+        .unwrap();
+    sync(dir.path()).assert().success();
+    assert!(!dir.child(".mars/skills/demo/.old/native").exists());
+    assert_noop(dir.path());
+}

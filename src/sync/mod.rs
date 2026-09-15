@@ -12,7 +12,7 @@ mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
@@ -516,21 +516,40 @@ pub(crate) fn build_target(
         if item.discovered.id.kind == ItemKind::Hook {
             continue;
         }
+        let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
+            && item.discovered.source_path == Path::new(".");
+        let mut excluded_paths = Vec::new();
+        if is_flat_skill {
+            excluded_paths.extend(
+                crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                    .iter()
+                    .map(PathBuf::from),
+            );
+            excluded_paths.push(PathBuf::from(crate::local_source::LOCAL_SOURCE_DIR));
+            excluded_paths.extend(
+                resolved
+                    .loaded
+                    .effective
+                    .settings
+                    .managed_targets()
+                    .iter()
+                    .map(PathBuf::from),
+            );
+        }
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(
             &item.disk_path(),
             item.discovered.id.kind,
-            crate::dialect::Dialect::resolve_local(None, &item.root),
+            item.dialect,
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,
             (item.discovered.id.kind == ItemKind::Skill).then(|| item.discovered.id.name.as_str()),
+            &excluded_paths,
             diag,
         )?;
         let source_path = staged_path;
-        let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
-            && item.discovered.source_path == Path::new(".");
         let source_hash = if is_flat_skill {
             ContentHash::from(hash::compute_skill_hash_filtered(
                 &source_path,

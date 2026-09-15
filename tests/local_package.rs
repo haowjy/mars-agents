@@ -230,7 +230,10 @@ fn sync_prefers_mars_src_local_items_over_repo_root() {
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
+        .stderr(
+            predicate::str::contains("local-shadow")
+                .or(predicate::str::contains("shadows package source")),
+        );
 
     assert_eq!(
         fs::read_to_string(
@@ -428,7 +431,7 @@ fn sync_reads_mars_src_local_items_without_package_section() {
 }
 
 #[test]
-fn sync_ignores_repo_root_local_items_with_package_section() {
+fn sync_includes_repo_root_local_items_with_package_section() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -453,12 +456,11 @@ fn sync_ignores_repo_root_local_items_with_package_section() {
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
+        .success();
 
     assert!(
-        !project
-            .child(".agents")
+        project
+            .child(".mars")
             .child("skills")
             .child("legacy-only")
             .child("SKILL.md")

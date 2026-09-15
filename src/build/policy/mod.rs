@@ -266,6 +266,7 @@ pub fn resolve_policy(
         probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_session.installed_harnesses();
+    let native_auth = crate::harness::host::NativeAuthCache::default();
     let harness_result = {
         let mut probe_resolver = SessionProbeResolver {
             session: &mut capability_session,
@@ -295,7 +296,7 @@ pub fn resolve_policy(
                 model_source: resolved_model.model_source,
             },
             &mut probe_resolver,
-            crate::models::harness::native_harness_authenticated,
+            |harness| native_auth.state(harness),
         )
     };
     let mut model_fallback: Option<(String, String)> = None;
@@ -377,7 +378,7 @@ pub fn resolve_policy(
                             model_source: fallback_model.model_source,
                         },
                         &mut probe_resolver,
-                        crate::models::harness::native_harness_authenticated,
+                        |harness| native_auth.state(harness),
                     )
                 };
 

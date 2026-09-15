@@ -46,6 +46,9 @@ The common routing assessor also rejects disabled candidates before auth probes.
 Automatic exhaustion returns an error; build never substitutes an uninstalled
 first candidate. Config defaults and remaining permitted harnesses use normal assessment.
 
+Native auth observations use one command-scoped NativeAuthCache across primary
+and backup evaluations. Support evidence alone does not establish runtime eligibility.
+
 ## Profile Model Fallback
 
 Primary first, then all concrete profile policy entries in declaration order.

@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Preserve unknown native auth as unverified; check auth for harness-default launches and cache observations per command.
+- Separate runtime eligibility from model support; prefer eligible routes over unverified support and reject blocked fixed assessments.
 - Mark rejected live model routes unavailable and prune them; never advertise unassessed harness paths as runnable.
 - Remove unchecked default/linked route fallback and no-binary route fabrication; assess each permitted harness once.
 - Treat harness order as preference, trying remaining permitted harnesses through the same evaluator.

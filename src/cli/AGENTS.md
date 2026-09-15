@@ -39,7 +39,8 @@ Resolve alias identity statically, then apply effective target scope before rout
 or probe collection. Availability output is limited to permitted installed routes;
 keep physical installation facts intact for routing diagnostics. Live model availability
 must honor route rejection and describe only the selected route, not other installed
-harnesses. Exact/prefix
+harnesses. Unverified routes report unknown availability with no asserted runnable
+paths. Live inventory and resolution share one NativeAuthCache per command. Exact/prefix
 resolution with no selected route exits nonzero, even when the model ID resolved.
 
 ## Lossiness Gating

@@ -277,8 +277,26 @@ pub fn collect_capability_snapshot_with_resolver(
     CapabilitySession::collect_with_resolver(options, resolver).into_snapshot()
 }
 
-pub fn native_harness_authenticated(harness: &str) -> bool {
-    native_auth_state_for_name(harness) == AuthState::Authenticated
+/// Native auth is observed lazily once per command, independently of model candidates.
+/// Unknown results are cached too; neither a backup nor another alias retries them.
+#[derive(Debug, Default)]
+pub struct NativeAuthCache {
+    states: std::cell::RefCell<BTreeMap<HarnessId, AuthState>>,
+}
+
+impl NativeAuthCache {
+    pub fn state(&self, harness: &str) -> AuthState {
+        let Some(id) = registry::parse(harness) else {
+            return AuthState::Unknown {
+                reason: "unknown harness".to_string(),
+            };
+        };
+        self.states
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| native_auth_state_for_name(id.as_str()))
+            .clone()
+    }
 }
 
 pub fn native_auth_state_for_name(harness: &str) -> AuthState {

@@ -43,13 +43,14 @@ inject [`default_harness_order_names()`](../../harness/registry.rs) — see
 [`src/harness/registry.rs`](../../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`) for the
 canonical ordered list.
 
-### Deferred passthrough
+### Deferred unverified routes
 
-In the auto-routing loop, `MatchEvidence::Passthrough` (Pi without compatible probe, Cursor,
-OpenCode unknown-provider paths) is **held** in `passthrough` while later candidates
-run. `Confirmed` / `Constrained` return immediately. If the order exhausts without stronger
-evidence, Mars returns the first deferred passthrough harness. Without deferral, Pi/Cursor
-would win at their config position and block stronger native/probe matches later in order.
+The evaluator ranks `CandidateAssessment::eligibility()`, independently of support
+match strength. Native authentication yields eligible only after support succeeds;
+unknown native auth and missing universal auth proof remain unverified. Keep the
+first unverified route with its original support evidence and provenance, then
+assess remaining harnesses for an eligible route. A blocked route cannot be deferred.
+This is within-model ranking; the outer build policy owns cross-model traversal.
 
 ### Native catalog slug matching
 
@@ -69,7 +70,7 @@ Empty catalog falls back to provider-native affinity + auth gate only.
 
 | Value | Evidence |
 |---|---|
-| `Confirmed` | Native provider match + authenticated, OR compatible Pi probe, OR positive OpenCode probe |
+| `Confirmed` | Native model/provider match, compatible Pi probe, or positive harness model probe |
 | `Constrained` | Same as Confirmed, but a `provider_constraint` was active |
 | `Passthrough` | Universal harness (Cursor), Pi without fresh probe, OpenCode unknown-provider |
 | `None` | No evidence — candidate was rejected |
@@ -96,13 +97,14 @@ Callers needing owned data use `SlugMatch` or `.to_string()`.
 |---|---|
 | `RequireSlugEvidence` | `Confirmed` or `Constrained` only |
 | `AllowPassthrough` | `Confirmed`, `Constrained`, or `Passthrough` |
-| `InstalledOnly` | Any evidence (or none), as long as harness is installed |
 
 **`accept_route()` vs `accept_assessment()`:**
 - `accept_route(trace, installed, policy)` — validates a full `RoutingTrace` against a policy. Used by callers who need to decide whether to proceed with a routing decision.
-- `accept_assessment(assessment)` — validates a single `CandidateAssessment` (installed + evidence present). Used when evaluating individual candidates.
+- `accept_assessment(assessment)` — validates a single `CandidateAssessment` (not blocked; support and auth remain separate). Used when evaluating individual candidates.
 
-Both share the `RejectionReason` type.
+Both share the `RejectionReason` type and reject blocked assessments. A present
+`MatchEvidence::None` is not support. Native auth rejection cannot be accepted
+merely because a matching slug and an installed binary exist.
 
 ### `report.rs` contracts
 
@@ -126,32 +128,17 @@ no installed executable means no selected route.
 
 ## Architecture
 
+```text
+scope + exclusions → ordered/deduplicated harnesses
+    → support assessment → applicable typed auth observation
+    → eligible: select / unverified: defer / blocked: skip
+    → RoutingTrace → acceptance policy → RouteDecisionReport
 ```
-RoutingInput
-    │
-    ├─ configured order (registry default if unset)
-    ├─ config default + remaining registry harnesses → permission filter + dedup
-    │
-    └─ for each candidate:
-           not installed              → skip (not_installed)
-           native provider + auth     → Confirmed ✓
-           native + constraint mismatch → skip (provider_constraint_unsatisfied)
-           opencode + probe success   → Confirmed/Constrained ✓
-           opencode + no model match  → skip (no_model_match)
-           pi + compatible probe      → Confirmed/Constrained ✓
-           pi + incompatible probe    → skip (pi_incompatible)
-           pi + no probe              → Passthrough ✓
-           cursor                     → Passthrough ✓
-           else                       → skip (unsupported_candidate)
 
-    exhausted candidates → first deferred passthrough, otherwise no selection
-
-Module boundaries:
-    slug.rs       ← stable root: borrowed parsing, normalized matching
-    acceptance.rs ← policy layer: MatchPolicy, RejectionReason
-    report.rs     ← serialization DTO: RouteDecisionReport, string labels
-    mod.rs        ← evaluator: RoutingInput → RoutingTrace
-```
+Auth callbacks are command-scoped: `NativeAuthCache` is shared across aliases and
+model attempts. Native compilation injects NotApplicable, preserving support-only
+materialization without account probes. Report verdict/reason labels never include
+raw AuthState::Unknown details or auth command output.
 
 ## Rationale
 
@@ -195,7 +182,7 @@ the caller layer owns warning promotion.
 **Test without real auth probes:**
 
 ```rust
-let trace = evaluate_candidates_with_auth(&input, |_harness| true /* always_authed */);
+let trace = evaluate_candidates_with_auth(&input, |_harness| AuthState::Authenticated);
 ```
 
 **Simulate Pi compatibility:**

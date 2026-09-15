@@ -1,9 +1,6 @@
 // qa-validated: harness-order-settings-audit
 
-use crate::harness::host::{
-    ExecutableResolver, ExecutableState, PathExecutableResolver,
-    native_harness_authenticated as host_native_authed,
-};
+use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableResolver};
 use crate::harness::registry;
 use std::collections::HashSet;
 
@@ -34,9 +31,6 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn native_harness_authenticated(harness: &str) -> bool {
-    host_native_authed(harness)
-}
 pub struct ParsedHarnessOrder {
     pub valid_candidates: Vec<String>,
     pub warnings: Vec<String>,

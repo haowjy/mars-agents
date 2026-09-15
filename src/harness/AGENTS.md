@@ -18,6 +18,13 @@ executable facts; permission is not represented by pretending a binary is absent
 Unscoped snapshots remain available for callers intentionally inspecting all hosts.
 Do not re-collect mid-command.
 
+## Native authentication
+
+`NativeAuthCache` observes each canonical harness lazily once per command, including
+unknown results. Share it across model candidates and live aliases; do not turn
+AuthState into a boolean or cache it across commands. Routing checks permission,
+installation and support before invoking it. Auth status is not credit/quota proof.
+
 ## Capability collection
 
 `CapabilityCollectionOptions`:

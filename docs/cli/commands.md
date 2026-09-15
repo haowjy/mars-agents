@@ -380,7 +380,7 @@ With `--live`, the default alias view applies availability pruning:
 
 Live JSON output includes:
 - `availability`: `runnable`, `unavailable`, or `unknown`
-- `availability_source`: assessment source; `route_rejected` means routing rejected all permitted candidates (or the fixed harness)
+- `availability_source`: assessment source; `route_rejected` means no accepted route, while `route_unverified` means support or authentication remains unverified
 - `runnable_paths`: `{harness, mars_provider, harness_model_id}` tuples for the selected route; empty for rejected routes
 - `probe_results.opencode`: summary when OpenCode probing ran
 

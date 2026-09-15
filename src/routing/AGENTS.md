@@ -24,9 +24,10 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 1. Rank candidates by configured harness order (registry default when unset), then
    `default_harness`, then remaining registry harnesses; deduplicate stably.
 2. Intersect candidates with target permission and caller exclusions before probes.
-3. Assess installation, model/provider support and native auth for each candidate.
-4. Prefer confirmed/constrained evidence; retain the first passthrough only if no
-   stronger candidate succeeds. Exhaustion returns no selection, never an unchecked route.
+3. Assess installation and support, then applicable native auth. Auth callbacks
+   return `AuthState`; command-scoped `NativeAuthCache` preserves unknown results.
+4. Prefer eligible routes; defer the first unverified route until all harnesses
+   for this model have been assessed. Blocked routes never become fallback routes.
 
 ### Default `harness_order`
 
@@ -37,12 +38,13 @@ When `settings.harness_order` is omitted, policy loaders supply
 Reported harness-order positions index the normalized valid-name list (invalid
 entries have already been removed), not the authored configuration array.
 
-### Deferred passthrough (Pi, Cursor)
+### Eligibility is not support evidence
 
-`Passthrough` candidates do **not** win immediately. The loop records the first passthrough
-harness and keeps trying stronger candidates (`Confirmed` / `Constrained` exit early). Only
-after the order is exhausted does Mars return that deferred passthrough selection. This lets
-native and probe-backed harnesses outrank universal routers.
+`CandidateAssessment::eligibility()` distinguishes eligible, unverified and blocked.
+A native auth timeout remains unverified; a known rejection is blocked. Universal
+model-list/probe success proves support, not account authentication or quota.
+No-model native launches still check auth. Native materialization supplies
+`AuthState::NotApplicable` and accepts support without probing runtime accounts.
 
 ### Routing parity with `mars models` and launch-bundle
 
@@ -62,17 +64,19 @@ in `.context/CONTEXT.md`.
 ### `MatchEvidence` (what supports it)
 | Value | Meaning |
 |---|---|
-| `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
-| `Constrained` | Same as Confirmed, but provider_constraint was active (includes cursor with provider constraint when probe can't confirm) |
+| `Confirmed` | Native model/provider match or positive harness support probe |
+| `Constrained` | Provider-constrained support evidence |
 | `Passthrough` | Universal harness or Pi without probe |
-| `None` | Rejected candidate |
+| `None` | No support evidence |
 
 ### `MatchPolicy` (acceptance strictness)
 | Policy | Accepts |
 |---|---|
 | `RequireSlugEvidence` | `Confirmed` or `Constrained` only |
 | `AllowPassthrough` | `Confirmed`, `Constrained`, or `Passthrough` |
-| `InstalledOnly` | Any evidence, as long as harness is installed |
+
+Both policies reject blocked assessments; neither installation nor support evidence
+can override an authentication rejection.
 
 ## Link Filtering
 
@@ -90,7 +94,7 @@ checks. Build policy rejects an excluded CLI pin and skips excluded preferences.
 
 **Test without real auth:**
 ```rust
-let trace = evaluate_candidates_with_auth(&input, |_harness| true);
+let trace = evaluate_candidates_with_auth(&input, |_harness| AuthState::Authenticated);
 ```
 
 **Simulate Pi compatibility:**

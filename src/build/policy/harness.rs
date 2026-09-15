@@ -39,7 +39,7 @@ pub(super) fn resolve_harness<F>(
     auth_check: F,
 ) -> Result<HarnessResolution, MarsError>
 where
-    F: Fn(&str) -> bool + Copy,
+    F: Fn(&str) -> crate::harness::host::AuthState + Copy,
 {
     let mut warnings = Vec::new();
     let mut model_override: Option<()> = None;
@@ -131,12 +131,10 @@ where
             Vec::new(),
         );
         if selection.source == PolicySource::Profile
-            && routing::acceptance::accept_route(
-                &fixed_route_trace,
-                evidence.routing.installed_harnesses,
-                routing::acceptance::MatchPolicy::InstalledOnly,
-            )
-            .is_err()
+            && !evidence
+                .routing
+                .installed_harnesses
+                .contains(&selection.value)
         {
             warnings.push(format!(
                 "profile harness '{}' not installed; pivoting via model-policies",
@@ -364,9 +362,9 @@ fn evaluate_candidates<F>(
     auth_check: F,
 ) -> routing::RoutingTrace
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
-    routing::evaluate_candidates_with_auth_and_probes(
+    routing::evaluate_candidates(
         &routing_input_from_evidence(evidence, normalized_config_default_harness),
         probe_resolver,
         auth_check,
@@ -400,7 +398,7 @@ fn resolve_fixed_harness_rejection<F>(
     auth_check: F,
 ) -> Result<routing::RoutingTrace, MarsError>
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
     if rejection.is_not_installed() {
         return Err(unavailable_fixed_harness_error(
@@ -439,7 +437,7 @@ fn soft_fail_fixed_harness_no_model_match<F>(
     auth_check: F,
 ) -> Option<routing::RoutingTrace>
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
     let should_retry = skip_reason == Some("no_model_match")
         && harness_source.precedence_rank() > model_source.precedence_rank();
@@ -743,7 +741,7 @@ mod tests {
             matched_policy,
             evidence,
             probe_resolver,
-            |_| true,
+            |_| crate::harness::host::AuthState::Authenticated,
         )
     }
 

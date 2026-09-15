@@ -85,6 +85,8 @@ impl RouteSource {
 /// Assessment of one candidate harness.
 #[derive(Debug, Clone)]
 pub struct CandidateAssessment {
+    /// None when permission, installation, or support prevented an auth check.
+    pub auth: Option<crate::harness::host::AuthState>,
     pub harness: String,
     pub installed: bool,
     pub candidate_slugs: Vec<String>,
@@ -93,6 +95,61 @@ pub struct CandidateAssessment {
     pub chosen_model: Option<String>,
     pub match_evidence: Option<MatchEvidence>,
     pub skip_reason: Option<&'static str>,
+}
+
+/// Runtime eligibility is separate from model support evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Eligibility {
+    Eligible,
+    Unverified,
+    Blocked,
+}
+
+impl Eligibility {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Eligible => "eligible",
+            Self::Unverified => "unverified",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+impl CandidateAssessment {
+    pub fn eligibility(&self) -> Eligibility {
+        if !self.installed
+            || self.skip_reason.is_some()
+            || self.auth == Some(crate::harness::host::AuthState::Unauthenticated)
+            || matches!(self.match_evidence, None | Some(MatchEvidence::None))
+        {
+            Eligibility::Blocked
+        } else if self.match_evidence == Some(MatchEvidence::Passthrough)
+            || self.auth != Some(crate::harness::host::AuthState::Authenticated)
+        {
+            Eligibility::Unverified
+        } else {
+            Eligibility::Eligible
+        }
+    }
+
+    pub fn eligibility_reason(&self) -> Option<&'static str> {
+        match self.eligibility() {
+            Eligibility::Eligible => None,
+            Eligibility::Unverified if self.match_evidence == Some(MatchEvidence::Passthrough) => {
+                Some("support_unknown")
+            }
+            Eligibility::Unverified => Some("auth_unknown"),
+            Eligibility::Blocked => Some(match self.skip_reason {
+                Some("pi_incompatible" | "unsupported_candidate") => "incompatible_harness",
+                Some(reason) => reason,
+                None if !self.installed => "not_installed",
+                None if self.auth == Some(crate::harness::host::AuthState::Unauthenticated) => {
+                    "native_auth_unavailable"
+                }
+                None => "no_model_match",
+            }),
+        }
+    }
 }
 
 /// Full routing trace for diagnostics/provenance.
@@ -211,25 +268,17 @@ impl ProbeResolver for StaticProbeResolver {
     }
 }
 
-/// Evaluate all candidates and return a routing trace.
-/// This is the ONLY candidate evaluator. Both `mars models` and `mars build` call this.
-pub fn evaluate_candidates(input: &RoutingInput<'_>) -> RoutingTrace {
-    let mut probe_resolver = StaticProbeResolver::from_input(input);
-    evaluate_candidates_with_auth_and_probes(
-        input,
-        &mut probe_resolver,
-        models::harness::native_harness_authenticated,
-    )
-}
-/// Assess a fixed harness using only the supplied probe snapshot and scoped auth.
-pub fn evaluate_fixed_harness(input: &RoutingInput<'_>, harness: &str) -> CandidateAssessment {
+/// Assess one fixed harness using a supplied auth observer and the probe snapshot.
+pub fn evaluate_fixed_harness_with_auth<F>(
+    input: &RoutingInput<'_>,
+    harness: &str,
+    auth_check: F,
+) -> CandidateAssessment
+where
+    F: Fn(&str) -> crate::harness::host::AuthState,
+{
     let mut probes = StaticProbeResolver::from_input(input);
-    evaluate_fixed_harness_with_auth_and_probes(
-        input,
-        harness,
-        &mut probes,
-        models::harness::native_harness_authenticated,
-    )
+    evaluate_fixed_harness_with_auth_and_probes(input, harness, &mut probes, auth_check)
 }
 
 pub fn evaluate_fixed_harness_with_auth_and_probes<F, P>(
@@ -239,7 +288,7 @@ pub fn evaluate_fixed_harness_with_auth_and_probes<F, P>(
     auth_check: F,
 ) -> CandidateAssessment
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
     P: ProbeResolver + ?Sized,
 {
     candidate_match_evidence_with_auth(
@@ -290,19 +339,20 @@ pub fn provider_for_order_for_fixed_harness<'a>(
 
 pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
     let mut probe_resolver = StaticProbeResolver::from_input(input);
-    evaluate_candidates_with_auth_and_probes(input, &mut probe_resolver, auth_check)
+    evaluate_candidates(input, &mut probe_resolver, auth_check)
 }
 
-pub fn evaluate_candidates_with_auth_and_probes<F, P>(
+/// The single candidate evaluator for runtime routing and native materialization.
+pub fn evaluate_candidates<F, P>(
     input: &RoutingInput<'_>,
     probe_resolver: &mut P,
     auth_check: F,
 ) -> RoutingTrace
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
     P: ProbeResolver + ?Sized,
 {
     let mut diagnostics = Vec::new();
@@ -369,7 +419,7 @@ where
         diagnostics,
         exhaustion_reason: None,
     };
-    let mut passthrough = None;
+    let mut unverified = None;
     for (harness, position, source) in candidates {
         let assessment = candidate_match_evidence_with_auth(
             input,
@@ -378,28 +428,29 @@ where
             probe_resolver,
             &auth_check,
         );
-        let evidence = assessment.match_evidence;
+        let evidence = assessment.match_evidence.unwrap_or(MatchEvidence::None);
+        let eligibility = assessment.eligibility();
         trace.candidates_tried.push(harness.clone());
         trace.assessments.push(assessment);
-        match evidence {
-            Some(evidence @ (MatchEvidence::Confirmed | MatchEvidence::Constrained)) => {
+        match eligibility {
+            Eligibility::Eligible => {
                 trace.harness = harness;
                 trace.harness_order_position = position;
                 trace.source = source;
                 trace.match_evidence = evidence;
                 return trace;
             }
-            Some(MatchEvidence::Passthrough) if passthrough.is_none() => {
-                passthrough = Some((harness, position, source));
+            Eligibility::Unverified if unverified.is_none() => {
+                unverified = Some((harness, position, source, evidence));
             }
             _ => {}
         }
     }
-    if let Some((harness, position, source)) = passthrough {
+    if let Some((harness, position, source, evidence)) = unverified {
         trace.harness = harness;
         trace.harness_order_position = position;
         trace.source = source;
-        trace.match_evidence = MatchEvidence::Passthrough;
+        trace.match_evidence = evidence;
     } else {
         if constrained {
             trace.exhaustion_reason = Some(ExhaustionReason::LinkedHarnessConstraints);
@@ -441,12 +492,37 @@ fn candidate_match_evidence_with_auth<F, P>(
     auth_check: &F,
 ) -> CandidateAssessment
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
+    P: ProbeResolver + ?Sized,
+{
+    let mut assessment = candidate_support_evidence(input, harness, provider_order, probe_resolver);
+    if assessment.match_evidence.is_some() && assessment.skip_reason.is_none() {
+        let auth = if is_native_harness(harness) {
+            auth_check(harness)
+        } else {
+            crate::harness::host::AuthState::NotApplicable
+        };
+        if auth == crate::harness::host::AuthState::Unauthenticated {
+            assessment.skip_reason = Some("native_auth_unavailable");
+        }
+        assessment.auth = Some(auth);
+    }
+    assessment
+}
+
+fn candidate_support_evidence<P>(
+    input: &RoutingInput<'_>,
+    harness: &str,
+    provider_order: Option<&[String]>,
+    probe_resolver: &mut P,
+) -> CandidateAssessment
+where
     P: ProbeResolver + ?Sized,
 {
     if let Some(reason) = permission_denial(&input.harness_scope, input.excluded_harnesses, harness)
     {
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: input.installed_harnesses.contains(harness),
             candidate_slugs: Vec::new(),
@@ -460,6 +536,7 @@ where
 
     if !input.installed_harnesses.contains(harness) {
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: false,
             candidate_slugs: Vec::new(),
@@ -475,6 +552,7 @@ where
         && provider_constraint_excludes_native_harness(input.provider_constraint, harness)
     {
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: Vec::new(),
@@ -488,13 +566,18 @@ where
 
     if input.model_id.trim().is_empty() {
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: Vec::new(),
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            match_evidence: Some(MatchEvidence::Passthrough),
+            match_evidence: Some(if is_native_harness(harness) {
+                MatchEvidence::Confirmed
+            } else {
+                MatchEvidence::Passthrough
+            }),
             skip_reason: None,
         };
     }
@@ -509,42 +592,25 @@ where
                 provider_order,
                 native_slugs,
             );
-            return assessment_from_slug_selection(
-                harness,
-                selection,
-                input.provider_constraint,
-                true,
-                &auth_check,
-            );
+            return assessment_from_slug_selection(harness, selection, input.provider_constraint);
         }
 
         if is_native_match(effective_provider_for_order(input).as_deref(), harness) {
-            if auth_check(harness) {
-                return CandidateAssessment {
-                    harness: harness.to_string(),
-                    installed: true,
-                    candidate_slugs: Vec::new(),
-                    filtered_slugs: Vec::new(),
-                    chosen_slug: None,
-                    chosen_model: Some(input.model_id.to_string()),
-                    match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
-                    skip_reason: None,
-                };
-            }
-
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
                 filtered_slugs: Vec::new(),
                 chosen_slug: None,
-                chosen_model: None,
-                match_evidence: None,
-                skip_reason: Some("native_auth_unavailable"),
+                chosen_model: Some(input.model_id.to_string()),
+                match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
+                skip_reason: None,
             };
         }
 
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: Vec::new(),
@@ -559,6 +625,7 @@ where
     if harness == "opencode" {
         let Some(opencode_probe) = probe_resolver.opencode_probe_result() else {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
@@ -571,6 +638,7 @@ where
         };
         if !opencode_probe.model_probe_success {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
@@ -592,6 +660,7 @@ where
 
         if let Some(chosen_slug) = selection.chosen_slug.clone() {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: selection.candidate_slugs,
@@ -605,6 +674,7 @@ where
 
         if !selection.candidate_slugs.is_empty() {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: selection.candidate_slugs,
@@ -617,6 +687,7 @@ where
         }
 
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: selection.candidate_slugs,
@@ -641,6 +712,7 @@ where
 
                 if let Some(chosen_slug) = selection.chosen_slug.clone() {
                     return CandidateAssessment {
+                        auth: None,
                         harness: harness.to_string(),
                         installed: true,
                         candidate_slugs: selection.candidate_slugs,
@@ -655,6 +727,7 @@ where
 
                 if !selection.candidate_slugs.is_empty() {
                     return CandidateAssessment {
+                        auth: None,
                         harness: harness.to_string(),
                         installed: true,
                         candidate_slugs: selection.candidate_slugs,
@@ -667,6 +740,7 @@ where
                 }
 
                 return CandidateAssessment {
+                    auth: None,
                     harness: harness.to_string(),
                     installed: true,
                     candidate_slugs: selection.candidate_slugs,
@@ -678,6 +752,7 @@ where
                 };
             }
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
@@ -690,6 +765,7 @@ where
         }
 
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: Vec::new(),
@@ -719,6 +795,7 @@ where
             .any(|slug| crate::models::probes::cursor::normalize_slug(slug) == normalized_model)
         {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: vec![input.model_id.to_string()],
@@ -738,6 +815,7 @@ where
             let candidate_slugs: Vec<String> =
                 matches.iter().map(|slug| (*slug).to_string()).collect();
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: candidate_slugs.clone(),
@@ -756,6 +834,7 @@ where
             .is_some_and(|p| p.eq_ignore_ascii_case("cursor"))
         {
             return CandidateAssessment {
+                auth: None,
                 harness: harness.to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
@@ -768,6 +847,7 @@ where
         }
 
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: Vec::new(),
@@ -780,6 +860,7 @@ where
     }
 
     CandidateAssessment {
+        auth: None,
         harness: harness.to_string(),
         installed: true,
         candidate_slugs: Vec::new(),
@@ -793,6 +874,7 @@ where
 
 fn passthrough_assessment(harness: &str) -> CandidateAssessment {
     CandidateAssessment {
+        auth: None,
         harness: harness.to_string(),
         installed: true,
         candidate_slugs: Vec::new(),
@@ -908,30 +990,14 @@ fn catalog_slugs_for_native_harness<'a>(
         .collect()
 }
 
-fn assessment_from_slug_selection<F>(
+fn assessment_from_slug_selection(
     harness: &str,
     selection: SlugSelection,
     provider_constraint: Option<&str>,
-    require_auth: bool,
-    auth_check: &F,
-) -> CandidateAssessment
-where
-    F: Fn(&str) -> bool,
-{
+) -> CandidateAssessment {
     if let Some(chosen_slug) = selection.chosen_slug.clone() {
-        if require_auth && !auth_check(harness) {
-            return CandidateAssessment {
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: selection.candidate_slugs,
-                filtered_slugs: selection.filtered_slugs,
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: None,
-                skip_reason: Some("native_auth_unavailable"),
-            };
-        }
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: selection.candidate_slugs,
@@ -945,6 +1011,7 @@ where
 
     if !selection.candidate_slugs.is_empty() {
         return CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed: true,
             candidate_slugs: selection.candidate_slugs,
@@ -957,6 +1024,7 @@ where
     }
 
     CandidateAssessment {
+        auth: None,
         harness: harness.to_string(),
         installed: true,
         candidate_slugs: selection.candidate_slugs,
@@ -976,12 +1044,12 @@ mod tests {
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
-    fn always_authed(_: &str) -> bool {
-        true
+    fn always_authed(_: &str) -> crate::harness::host::AuthState {
+        crate::harness::host::AuthState::Authenticated
     }
 
-    fn never_authed(_: &str) -> bool {
-        false
+    fn never_authed(_: &str) -> crate::harness::host::AuthState {
+        crate::harness::host::AuthState::Unauthenticated
     }
 
     type ProbeInputs<'a> = (
@@ -1046,6 +1114,86 @@ mod tests {
             cursor_probe_result,
             catalog_model_slugs,
         }
+    }
+
+    #[test]
+    fn supported_model_does_not_turn_unknown_auth_into_success_or_rejection() {
+        use crate::harness::host::AuthState;
+        let installed = installed(&["claude"]);
+        let input = routing_input(
+            "claude-opus-4-6",
+            Some("anthropic"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, None),
+        );
+        for (auth, verdict, reason) in [
+            (AuthState::Authenticated, Eligibility::Eligible, None),
+            (
+                AuthState::Unauthenticated,
+                Eligibility::Blocked,
+                Some("native_auth_unavailable"),
+            ),
+            (
+                AuthState::Unknown {
+                    reason: "PRIVATE_AUTH_DETAIL".into(),
+                },
+                Eligibility::Unverified,
+                Some("auth_unknown"),
+            ),
+        ] {
+            let assessment = evaluate_fixed_harness_with_auth(&input, "claude", |_| auth.clone());
+            assert_eq!(assessment.match_evidence, Some(MatchEvidence::Confirmed));
+            assert_eq!(assessment.auth, Some(auth));
+            assert_eq!(assessment.eligibility(), verdict);
+            assert_eq!(assessment.eligibility_reason(), reason);
+            let trace = trace_for_fixed_harness(RouteSource::Cli, "claude", assessment, Vec::new());
+            let accepted = acceptance::accept_route(
+                &trace,
+                &installed,
+                acceptance::MatchPolicy::AllowPassthrough,
+            );
+            assert_eq!(accepted.is_ok(), verdict != Eligibility::Blocked);
+            assert!(
+                !serde_json::to_string(&trace.to_report())
+                    .unwrap()
+                    .contains("PRIVATE_AUTH_DETAIL")
+            );
+        }
+    }
+
+    #[test]
+    fn authenticated_native_outranks_probe_support_without_auth_evidence() {
+        let installed = installed(&["pi", "codex"]);
+        let order = vec!["pi".to_string(), "codex".to_string()];
+        let pi = PiProbeResult {
+            compatible: true,
+            model_slugs: HashSet::from(["openai/gpt-5".to_string()]),
+            ..PiProbeResult::default()
+        };
+        let input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            Some(&order),
+            None,
+            &installed,
+            None,
+            (None, Some(&pi), None),
+        );
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+        assert_eq!(trace.harness, "codex");
+        assert_eq!(
+            trace.assessments[0].match_evidence,
+            Some(MatchEvidence::Confirmed)
+        );
+        assert_eq!(trace.assessments[0].eligibility(), Eligibility::Unverified);
+        assert_eq!(
+            trace.assessments[0].eligibility_reason(),
+            Some("auth_unknown")
+        );
+        assert_eq!(trace.assessments[1].eligibility(), Eligibility::Eligible);
     }
 
     #[test]
@@ -1701,7 +1849,7 @@ mod tests {
             let auth_calls = std::cell::Cell::new(0);
             let trace = evaluate_candidates_with_auth(&input, |_| {
                 auth_calls.set(auth_calls.get() + 1);
-                false
+                crate::harness::host::AuthState::Unauthenticated
             });
             assert!(trace.harness.is_empty(), "{trace:?}");
             assert_eq!(trace.match_evidence, MatchEvidence::None);
@@ -1838,7 +1986,7 @@ mod tests {
             trace.exhaustion_reason,
             Some(ExhaustionReason::LinkedHarnessConstraints)
         );
-        assert!(accept_route(&trace, &installed, MatchPolicy::InstalledOnly).is_err());
+        assert!(accept_route(&trace, &installed, MatchPolicy::AllowPassthrough).is_err());
     }
 
     #[test]

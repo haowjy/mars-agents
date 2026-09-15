@@ -8,7 +8,9 @@ use std::collections::HashSet;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot};
+use crate::harness::host::{
+    CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, NativeAuthCache,
+};
 use crate::models::availability::{AvailabilitySource, AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
@@ -183,6 +185,7 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
 }
 
 fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    let native_auth = NativeAuthCache::default();
     let mars = mars_dir(ctx);
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
     let ttl = models_cache_ttl_hours(project_config.as_ref());
@@ -265,6 +268,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         let cursor_probe_result = capability_snapshot.cursor.result().cloned();
         let catalog_slugs = models::catalog_model_slugs(&cache);
         let availability_ctx = AvailabilityContext {
+            auth: &native_auth,
             installed: &installed,
             opencode_probe_result: opencode_probe_result.as_ref(),
             pi_probe_result: pi_probe_result.as_ref(),
@@ -308,6 +312,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
 
     let mut resolved = models::resolve_all_static(&merged, &cache);
     let availability_ctx = AvailabilityContext {
+        auth: &native_auth,
         installed: &installed,
         opencode_probe_result: opencode_probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
@@ -422,6 +427,7 @@ struct ListModelEntry {
 
 #[derive(Clone, Copy)]
 struct AvailabilityContext<'a> {
+    auth: &'a NativeAuthCache,
     installed: &'a HashSet<String>,
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
@@ -451,6 +457,20 @@ impl AvailabilityContext<'_> {
                 runnable_paths: Vec::new(),
             };
         }
+        if trace
+            .assessments
+            .iter()
+            .find(|assessment| assessment.harness == trace.harness)
+            .is_some_and(|assessment| {
+                assessment.eligibility() == crate::routing::Eligibility::Unverified
+            })
+        {
+            return ModelAvailability {
+                status: AvailabilityStatus::Unknown,
+                source: AvailabilitySource::RouteUnverified,
+                runnable_paths: Vec::new(),
+            };
+        }
         // Installation alone must not advertise another, unassessed route.
         let selected = HashSet::from([trace.harness.clone()]);
         models::availability::classify_model(
@@ -466,6 +486,7 @@ impl AvailabilityContext<'_> {
 }
 
 struct ResolveRuntime<'a> {
+    auth: &'a NativeAuthCache,
     cache: &'a models::ModelsCache,
     catalog_model_slugs: &'a [String],
     outcome: &'a models::RefreshOutcome,
@@ -475,6 +496,7 @@ struct ResolveRuntime<'a> {
 }
 
 struct RouteTraceInput<'a> {
+    auth: &'a NativeAuthCache,
     model_id: &'a str,
     provider_for_order: &'a str,
     provider_constraint: Option<&'a str>,
@@ -536,6 +558,7 @@ struct OutputResolvedInput<'a> {
 }
 
 struct OutputPassthroughInput<'a> {
+    auth: &'a NativeAuthCache,
     name: &'a str,
     outcome: &'a models::RefreshOutcome,
     is_offline: bool,
@@ -812,7 +835,9 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
     let pi_probe_result = capability_snapshot.pi.result().cloned();
     let cursor_probe_result = capability_snapshot.cursor.result().cloned();
     let catalog_slugs = models::catalog_model_slugs(cache);
+    let native_auth = NativeAuthCache::default();
     let availability_ctx = AvailabilityContext {
+        auth: &native_auth,
         installed: &installed,
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
@@ -1123,11 +1148,9 @@ fn model_entry_for_cached(
     model: &models::CachedModel,
     availability_ctx: AvailabilityContext<'_>,
 ) -> ListModelEntry {
-    model_entry_for_cached_with_auth(
-        model,
-        availability_ctx,
-        models::harness::native_harness_authenticated,
-    )
+    model_entry_for_cached_with_auth(model, availability_ctx, |harness| {
+        availability_ctx.auth.state(harness)
+    })
 }
 
 fn model_entry_for_cached_with_auth<F>(
@@ -1136,7 +1159,7 @@ fn model_entry_for_cached_with_auth<F>(
     auth_check: F,
 ) -> ListModelEntry
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
     let trace =
         resolve_model_route_with_auth(&model.provider, &model.id, availability_ctx, auth_check);
@@ -1175,12 +1198,9 @@ fn model_entry_for_pinned(
         .map(str::to_string)
         .or_else(|| models::infer_provider_from_model_id(model_id).map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
-    let trace = resolve_model_route_with_auth(
-        &provider,
-        model_id,
-        availability_ctx,
-        models::harness::native_harness_authenticated,
-    );
+    let trace = resolve_model_route_with_auth(&provider, model_id, availability_ctx, |harness| {
+        availability_ctx.auth.state(harness)
+    });
     let harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
     let harness_source = if harness.is_some() {
         HarnessSource::AutoDetected
@@ -1290,9 +1310,10 @@ fn resolve_model_route_with_auth<F>(
     auth_check: F,
 ) -> crate::routing::RoutingTrace
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> crate::harness::host::AuthState,
 {
     let route_input = RouteTraceInput {
+        auth: availability_ctx.auth,
         model_id,
         provider_for_order: provider,
         provider_constraint: None,
@@ -1319,7 +1340,9 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 
 fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing::RoutingTrace {
     let routing_evidence = routing_settings_evidence(input);
-    crate::routing::evaluate_candidates(&routing_evidence.routing_input())
+    crate::routing::evaluate_candidates_with_auth(&routing_evidence.routing_input(), |harness| {
+        input.auth.state(harness)
+    })
 }
 
 fn route_trace_for_resolved_model_with_probes(
@@ -1327,10 +1350,10 @@ fn route_trace_for_resolved_model_with_probes(
     probe_resolver: &mut dyn crate::routing::ProbeResolver,
 ) -> crate::routing::RoutingTrace {
     let routing_evidence = routing_settings_evidence(input);
-    crate::routing::evaluate_candidates_with_auth_and_probes(
+    crate::routing::evaluate_candidates(
         &routing_evidence.routing_input(),
         probe_resolver,
-        models::harness::native_harness_authenticated,
+        |harness| input.auth.state(harness),
     )
 }
 
@@ -1351,7 +1374,7 @@ fn route_trace_for_fixed_harness_with_probes(
         &fixed_input,
         fixed_harness,
         probe_resolver,
-        models::harness::native_harness_authenticated,
+        |harness| input.auth.state(harness),
     );
     crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
 }
@@ -1400,6 +1423,7 @@ fn apply_routing_settings_to_resolved_alias(
         models::infer_provider_from_model_id(&alias.model_id).unwrap_or(alias.provider.as_str());
     let provider_constraint = source_alias.and_then(provider_constraint_for_alias);
     let route_input = RouteTraceInput {
+        auth: context.auth,
         model_id: &alias.model_id,
         provider_for_order,
         provider_constraint: provider_constraint.as_deref(),
@@ -1413,7 +1437,11 @@ fn apply_routing_settings_to_resolved_alias(
     let explicit_harness = source_alias.and_then(|source| source.harness.as_deref());
     let trace = if let Some(harness) = explicit_harness {
         let evidence = routing_settings_evidence(&route_input);
-        let assessment = crate::routing::evaluate_fixed_harness(&evidence.routing_input(), harness);
+        let assessment = crate::routing::evaluate_fixed_harness_with_auth(
+            &evidence.routing_input(),
+            harness,
+            |harness| context.auth.state(harness),
+        );
         crate::routing::trace_for_fixed_harness(
             crate::routing::RouteSource::Alias,
             harness,
@@ -1596,6 +1624,7 @@ fn print_route_text(trace: &crate::routing::RoutingTrace) {
 }
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    let native_auth = NativeAuthCache::default();
     let project_config = load_project_config_layers_optional(&ctx.project_root)?;
     let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
     let mars = mars_dir(ctx);
@@ -1663,6 +1692,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             .unwrap_or(fallback_catalog_slugs.as_slice());
 
         let runtime = ResolveRuntime {
+            auth: &native_auth,
             cache,
             catalog_model_slugs,
             outcome,
@@ -1691,6 +1721,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     {
         let catalog_slugs = models::catalog_model_slugs(cache);
         let route_input = RouteTraceInput {
+            auth: &native_auth,
             model_id: &resolved.model_id,
             provider_for_order: models::infer_provider_from_model_id(&resolved.model_id)
                 .unwrap_or(resolved.provider.as_str()),
@@ -1717,7 +1748,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         resolved.harness_source = match crate::routing::acceptance::accept_route(
             &route_trace,
             &installed,
-            crate::routing::acceptance::MatchPolicy::InstalledOnly,
+            crate::routing::acceptance::MatchPolicy::AllowPassthrough,
         ) {
             Ok(()) => HarnessSource::AutoDetected,
             Err(_) => HarnessSource::Unavailable,
@@ -1726,6 +1757,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             &mut resolved,
             &route_trace,
             AvailabilityContext {
+                auth: &native_auth,
                 installed: &installed,
                 opencode_probe_result: capability_session.loaded_opencode_probe_result(),
                 pi_probe_result: capability_session.loaded_pi_probe_result(),
@@ -1762,6 +1794,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .as_ref()
         .map(|(cache, _)| models::catalog_model_slugs(cache));
     run_output_passthrough(OutputPassthroughInput {
+        auth: &native_auth,
         name: &args.name,
         outcome: &outcome,
         is_offline,
@@ -1894,6 +1927,7 @@ fn run_resolve_exact_alias(
     if let Some(r) = resolved_entry.as_mut() {
         let provider_constraint = provider_constraint_for_alias(alias);
         let route_input = RouteTraceInput {
+            auth: runtime.auth,
             model_id: &r.model_id,
             provider_for_order: &r.provider,
             provider_constraint: provider_constraint.as_deref(),
@@ -1944,7 +1978,7 @@ fn run_resolve_exact_alias(
             r.harness_source = match crate::routing::acceptance::accept_route(
                 trace,
                 runtime.installed,
-                crate::routing::acceptance::MatchPolicy::InstalledOnly,
+                crate::routing::acceptance::MatchPolicy::AllowPassthrough,
             ) {
                 Ok(()) => HarnessSource::AutoDetected,
                 Err(_) => HarnessSource::Unavailable,
@@ -1956,6 +1990,7 @@ fn run_resolve_exact_alias(
                 r,
                 trace,
                 AvailabilityContext {
+                    auth: runtime.auth,
                     installed: runtime.installed,
                     opencode_probe_result: capability_session.loaded_opencode_probe_result(),
                     pi_probe_result: capability_session.loaded_pi_probe_result(),
@@ -2308,6 +2343,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
 
 fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, MarsError> {
     let OutputPassthroughInput {
+        auth,
         name,
         outcome,
         is_offline,
@@ -2366,13 +2402,14 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         let mut probe_resolver = SessionProbeResolver {
             session: capability_session,
         };
-        crate::routing::evaluate_candidates_with_auth_and_probes(
+        crate::routing::evaluate_candidates(
             &routing_evidence.routing_input(),
             &mut probe_resolver,
-            models::harness::native_harness_authenticated,
+            |harness| auth.state(harness),
         )
     };
     let availability = AvailabilityContext {
+        auth,
         installed,
         opencode_probe_result: capability_session.loaded_opencode_probe_result(),
         pi_probe_result: capability_session.loaded_pi_probe_result(),
@@ -2984,6 +3021,7 @@ description = "Old alias"
             merged,
             cache,
             AvailabilityContext {
+                auth: &NativeAuthCache::default(),
                 installed,
                 opencode_probe_result,
                 pi_probe_result,
@@ -3012,7 +3050,7 @@ description = "Old alias"
             cursor_probe_result,
             is_offline,
             routing_settings,
-            models::harness::native_harness_authenticated,
+            crate::harness::host::native_auth_state_for_name,
         )
     }
 
@@ -3028,10 +3066,11 @@ description = "Old alias"
         auth_check: F,
     ) -> Vec<ListModelEntry>
     where
-        F: Fn(&str) -> bool + Copy,
+        F: Fn(&str) -> crate::harness::host::AuthState + Copy,
     {
         let catalog_slugs = models::catalog_model_slugs(cache);
         let availability_ctx = AvailabilityContext {
+            auth: &NativeAuthCache::default(),
             installed,
             opencode_probe_result,
             pi_probe_result,
@@ -3258,7 +3297,7 @@ description = "Old alias"
             None,
             false,
             &default_routing_settings(),
-            |_| true,
+            |_| crate::harness::host::AuthState::Authenticated,
         );
 
         assert_eq!(rows.len(), 1);

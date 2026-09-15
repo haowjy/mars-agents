@@ -447,7 +447,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -509,7 +509,7 @@ default_harness = "claude""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("pi,opencode,codex,claude,cursor")
     );
     assert!(bundle["routing"]["route_trace"].is_object());
     assert_eq!(
@@ -1023,7 +1023,7 @@ provider = "openai""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode")
+        Some("opencode,codex,claude,pi,cursor")
     );
 
     let warnings = bundle["warnings"]
@@ -1319,7 +1319,7 @@ harness_order = ["pi", "opencode"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("pi,opencode,claude,codex,cursor")
     );
 }
 
@@ -1512,7 +1512,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1543,7 +1543,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1582,7 +1582,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1617,7 +1617,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1649,7 +1649,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1699,7 +1699,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1795,8 +1795,15 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
+    let selected = bundle["routing"]["route_trace"]["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
+        .unwrap();
+    assert_eq!(selected["verdict"], "unverified", "{selected}");
 }
 
 #[test]
@@ -1837,7 +1844,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1883,7 +1890,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -2203,7 +2210,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -2252,8 +2259,15 @@ harness_order = ["opencode", "cursor"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode")
+        Some("opencode,cursor,claude,codex,pi")
     );
+    let selected = bundle["routing"]["route_trace"]["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
+        .unwrap();
+    assert_eq!(selected["verdict"], "unverified", "{selected}");
 }
 
 #[test]
@@ -2498,7 +2512,7 @@ harness_order = ["opencode", "pi"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode,pi")
+        Some("opencode,pi,claude,codex,cursor")
     );
 }
 

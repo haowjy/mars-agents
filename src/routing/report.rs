@@ -22,6 +22,9 @@ pub struct RouteDecisionReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AssessmentReport {
+    pub verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub harness: String,
     pub installed: bool,
     pub candidate_slugs: Vec<String>,
@@ -59,6 +62,8 @@ impl RouteDecisionReport {
                 .assessments
                 .iter()
                 .map(|assessment| AssessmentReport {
+                    verdict: assessment.eligibility().label().to_string(),
+                    reason: assessment.eligibility_reason().map(str::to_string),
                     harness: assessment.harness.clone(),
                     installed: assessment.installed,
                     candidate_slugs: assessment.candidate_slugs.clone(),

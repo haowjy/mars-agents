@@ -197,6 +197,7 @@ mod tests {
             harness_order_position: None,
             candidates_tried: vec!["opencode".to_string()],
             assessments: vec![crate::routing::CandidateAssessment {
+                auth: None,
                 harness: "opencode".to_string(),
                 installed: true,
                 candidate_slugs: vec!["openai/gpt-5.4-mini".to_string()],
@@ -279,6 +280,7 @@ mod tests {
             harness_order_position: None,
             candidates_tried: vec!["pi".to_string()],
             assessments: vec![crate::routing::CandidateAssessment {
+                auth: None,
                 harness: "pi".to_string(),
                 installed: true,
                 candidate_slugs: Vec::new(),
@@ -339,6 +341,7 @@ mod tests {
             harness_order_position: None,
             candidates_tried: vec!["pi".to_string()],
             assessments: vec![crate::routing::CandidateAssessment {
+                auth: None,
                 harness: "pi".to_string(),
                 installed: true,
                 candidate_slugs: vec!["openai-codex/gpt-5.4-mini".to_string()],

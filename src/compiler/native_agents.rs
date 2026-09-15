@@ -302,11 +302,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             let mut probe_resolver = NativeSessionProbeResolver {
                 session: &mut self.session,
             };
-            let trace = crate::routing::evaluate_candidates_with_auth_and_probes(
-                &input,
-                &mut probe_resolver,
-                |_| true,
-            );
+            let trace = crate::routing::evaluate_candidates(&input, &mut probe_resolver, |_| {
+                crate::harness::host::AuthState::NotApplicable
+            });
             if trace.selected_harness() != target_name {
                 continue;
             }

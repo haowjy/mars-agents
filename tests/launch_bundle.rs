@@ -20,6 +20,8 @@ mod native_config;
 mod prompt_surface;
 #[path = "launch_bundle/routing.rs"]
 mod routing;
+#[path = "launch_bundle/runnable.rs"]
+mod runnable;
 #[path = "launch_bundle/schema.rs"]
 mod schema;
 #[path = "launch_bundle/target_scope.rs"]

@@ -12,7 +12,7 @@ resolve_policy()
   ├─ model::resolve_model()             → model_id, provider, model_token
   ├─ harness::resolve_harness()         → harness, route trace
   ├─ execution::resolve_execution_policy() → effort, approval, sandbox, autocompact
-  └─ runnable::resolve_routing()        → final Routing struct (warnings always empty)
+  └─ runnable::resolve_routing()        → final Routing struct
 ```
 
 ## Field Independence
@@ -26,8 +26,9 @@ remains fatal. Never clear a requested model to make a harness work.
 
 ## Key Rules
 
-- `resolve_routing()` returns `warnings: Vec::new()` always — route facts go to
-  `routing.harness_model_source` / `routing.harness_model_confidence`, not warnings
+- Final executable-model projection preserves the selected model and provider
+  constraint, including unverified routes and aliases unresolved by the catalog.
+  Route facts go to `routing.harness_model_source` / `routing.harness_model_confidence`.
 - Catalog refresh (`ensure_fresh`) runs before harness evaluation, not read-only
 
 ## Target Permission

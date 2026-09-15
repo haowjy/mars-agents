@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Preserve named Pi models and unresolved-alias provider constraints in final executable-model projection.
 - Route standalone aliases through harness preferences; preserve base-alias provider constraints on prefix resolution.
 - Resolve provider-qualified pinned aliases without deriving provider identity from their preferred harness.
 - Treat launch profile/overlay/alias harnesses as preferences; preserve independent CLI pins and remove model-clearing recovery.

@@ -512,11 +512,8 @@ pub fn resolve_policy(
         opencode_probe_result: opencode_probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
-        alias_resolution_failed: resolved_model.alias_resolution_failed,
         route_trace: harness_resolution.route_trace,
-    })?;
-
-    warnings.extend(routing_resolution.warnings);
+    });
 
     let mut effort = execution_resolution.effort.value;
     if routing_resolution.effort_consumed {

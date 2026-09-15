@@ -429,3 +429,28 @@ fn interrupted_destination_move_preserves_old_claim_until_removal() {
     sync(dir.path()).assert().success();
     assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
 }
+
+#[test]
+fn recovered_install_replaces_pending_deletion_for_the_same_path() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
+    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    sync(dir.path()).assert().success();
+    let mut previous = lock::load(dir.path()).unwrap();
+    previous.items.get_mut("agent/muse").unwrap().outputs[0].mark_pending_deletion();
+    lock::write(dir.path(), &previous).unwrap();
+    fs::remove_file(dir.path().join(".mars/agents/muse.md")).unwrap();
+    dir.child("skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    sync(dir.path()).assert().failure();
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    let recovered = lock::load(dir.path()).unwrap();
+    let outputs = &recovered.items["agent/muse"].outputs;
+    assert_eq!(outputs.len(), 1);
+    assert!(outputs[0].installed_checksum().is_some());
+}

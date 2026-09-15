@@ -207,7 +207,16 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         if let Some(previous) = old_lock.items.get(&key) {
             // A destination move can leave the same logical item at both paths.
             // Keep the old claim until an explicit removal confirms it is gone.
-            item.outputs.extend(previous.outputs.iter().cloned());
+            item.outputs.extend(
+                previous
+                    .outputs
+                    .iter()
+                    .filter(|previous_output| {
+                        previous_output.target_root != CANONICAL_TARGET_ROOT
+                            || previous_output.dest_path != output.dest_path
+                    })
+                    .cloned(),
+            );
         }
         recovered.push((key, item));
     }

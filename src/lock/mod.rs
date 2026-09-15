@@ -876,6 +876,22 @@ pub fn build(
         }
     }
 
+    // Recovery of a destination move can temporarily retain two canonical paths
+    // for one logical item. A skipped new path must not carry a confirmed-removed
+    // old path back into the published lock, regardless of outcome ordering.
+    let removed: HashSet<_> = applied
+        .outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome.action, ActionTaken::Removed))
+        .map(|outcome| outcome.dest_path.clone())
+        .collect();
+    for item in items.values_mut() {
+        item.outputs.retain(|output| {
+            output.target_root != CANONICAL_TARGET_ROOT || !removed.contains(&output.dest_path)
+        });
+    }
+    items.retain(|_, item| !item.outputs.is_empty());
+
     // Add synthetic _self source if any local package items exist.
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
     let has_self_items = items.values().any(|item| item.source == local_source_name);

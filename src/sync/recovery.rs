@@ -173,16 +173,6 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         if index.contains_installed_output(CANONICAL_TARGET_ROOT, &output.dest_path) {
             continue;
         }
-        if old_lock.items.get(&key).is_some_and(|previous| {
-            previous.outputs.iter().any(|previous_output| {
-                previous_output.target_root == CANONICAL_TARGET_ROOT
-                    && previous_output.dest_path != output.dest_path
-            })
-        }) {
-            return Err(invalid(format!(
-                "item {key} already owns a different canonical destination"
-            )));
-        }
         let path = output_path(root, item);
         if !output_exists(root, &path)? {
             continue;
@@ -215,13 +205,9 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
             .expect("matching regular output checked above")
             .clone();
         if let Some(previous) = old_lock.items.get(&key) {
-            item.outputs.extend(
-                previous
-                    .outputs
-                    .iter()
-                    .filter(|out| out.target_root != CANONICAL_TARGET_ROOT)
-                    .cloned(),
-            );
+            // A destination move can leave the same logical item at both paths.
+            // Keep the old claim until an explicit removal confirms it is gone.
+            item.outputs.extend(previous.outputs.iter().cloned());
         }
         recovered.push((key, item));
     }
@@ -249,8 +235,10 @@ pub(super) fn prepare(
                 // that version, not an unattempted version from the previous plan.
                 if let Some(item) = old_lock.items.get(&key) {
                     let mut item = item.clone();
-                    item.outputs
-                        .retain(|output| output.target_root == CANONICAL_TARGET_ROOT);
+                    item.outputs.retain(|output| {
+                        output.target_root == CANONICAL_TARGET_ROOT
+                            && output.dest_path == versions[0].outputs[0].dest_path
+                    });
                     items.insert(key, vec![item]);
                 }
             }

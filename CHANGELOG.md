@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Recover interrupted canonical destination moves without losing old ownership or retaining removed-path claims.
 - Reject inconsistent recovery identities without dropping existing ownership; support dependency-renamed canonical paths.
 - Frozen sync refuses pending ownership recovery; complete it with ordinary sync first.
 - Keep corrupt lock evidence through repeated repair failures; retain current and planned canonical write intent until finalization.

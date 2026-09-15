@@ -748,46 +748,9 @@ pub fn build(
     // Build item entries from apply outcomes.
     for outcome in &applied.outcomes {
         match &outcome.action {
-            ActionTaken::Removed | ActionTaken::Skipped => {
-                // For skipped items, carry forward from old lock
-                if matches!(outcome.action, ActionTaken::Skipped) {
-                    let item_key = item_key(&outcome.item_id);
-                    if let Some(old_item) = old_lock.items.get(&item_key) {
-                        items.insert(item_key, old_item.clone());
-                    } else {
-                        // Fall back: search old lock by dest_path when the logical item key differs
-                        if let Some((_, old_item, old_output)) = old_lock_index
-                            .item_for_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
-                        {
-                            let key = format!(
-                                "{}/{}",
-                                old_item.kind,
-                                outcome.dest_path.item_name(old_item.kind)
-                            );
-                            items.entry(key).or_insert_with(|| LockedItemV2 {
-                                source: old_item.source.clone(),
-                                kind: old_item.kind,
-                                version: old_item.version.clone(),
-                                source_checksum: old_item.source_checksum.clone(),
-                                outputs: outputs_with_carried_non_canonical(
-                                    Some(old_item),
-                                    OutputRecord::installed(
-                                        CANONICAL_TARGET_ROOT.to_string(),
-                                        old_output.dest_path.clone(),
-                                        old_output
-                                            .installed_checksum()
-                                            .expect("canonical output is installed")
-                                            .clone(),
-                                    ),
-                                ),
-                            });
-                        }
-                    }
-                }
-                // Removed items are excluded from the new lock.
-            }
-            ActionTaken::Kept => {
-                // Keep local: carry forward old lock entry.
+            ActionTaken::Removed => {}
+            ActionTaken::Skipped | ActionTaken::Kept => {
+                // Neither action writes bytes; retain the existing ownership and provenance.
                 let item_key = item_key(&outcome.item_id);
                 if let Some(old_item) = old_lock.items.get(&item_key) {
                     items.insert(item_key, old_item.clone());

@@ -18,9 +18,11 @@ use super::plan::{PlannedAction, SyncPlan};
 use crate::{
     error::{LockError, MarsError},
     hash,
-    lock::{self, CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItemV2, OutputRecord},
+    lock::{
+        self, CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItemV2, OutputRecord, OutputState,
+    },
     resolve::ResolvedGraph,
-    types::{ContentHash, DestPath, ItemKind},
+    types::{ContentHash, DestPath, ItemKind, SourceName},
 };
 
 const INTENT_FILE: &str = ".mars/pending-canonical.json";
@@ -35,7 +37,62 @@ struct WriteIntent {
     // A retry may overwrite a recovered output. Keep both the verified current
     // version and the planned version until finalization, covering death on either
     // side of that write without prematurely replacing mars.lock.
-    outputs: BTreeMap<DestPath, Vec<LockedItemV2>>,
+    outputs: BTreeMap<DestPath, Vec<PendingWrite>>,
+}
+
+/// One expected canonical write, not an installed ownership claim. Keep the
+/// existing journal encoding, but reject multi-output/deletion records at the
+/// decoding boundary instead of carrying their invalid states through recovery.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "LockedItemV2", into = "LockedItemV2")]
+struct PendingWrite {
+    source: SourceName,
+    kind: ItemKind,
+    version: Option<String>,
+    source_checksum: ContentHash,
+    dest_path: DestPath,
+    expected_checksum: ContentHash,
+}
+
+impl TryFrom<LockedItemV2> for PendingWrite {
+    type Error = &'static str;
+
+    fn try_from(item: LockedItemV2) -> Result<Self, Self::Error> {
+        let [output]: [OutputRecord; 1] = item
+            .outputs
+            .try_into()
+            .map_err(|_| "expected exactly one canonical output per intent item")?;
+        let OutputState::Installed { installed_checksum } = output.state else {
+            return Err("expected checksum-bearing write intent");
+        };
+        if output.target_root != CANONICAL_TARGET_ROOT {
+            return Err("expected canonical write intent");
+        }
+        Ok(Self {
+            source: item.source,
+            kind: item.kind,
+            version: item.version,
+            source_checksum: item.source_checksum,
+            dest_path: output.dest_path,
+            expected_checksum: installed_checksum,
+        })
+    }
+}
+
+impl From<PendingWrite> for LockedItemV2 {
+    fn from(write: PendingWrite) -> Self {
+        Self {
+            source: write.source,
+            kind: write.kind,
+            version: write.version,
+            source_checksum: write.source_checksum,
+            outputs: vec![OutputRecord::installed(
+                CANONICAL_TARGET_ROOT.to_string(),
+                write.dest_path,
+                write.expected_checksum,
+            )],
+        }
+    }
 }
 
 fn invalid(message: impl std::fmt::Display) -> MarsError {
@@ -76,8 +133,8 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
     Ok(Some(intent))
 }
 
-fn logical_key(item: &LockedItemV2) -> Result<String, MarsError> {
-    let dest = &item.outputs[0].dest_path;
+fn logical_key(item: &PendingWrite) -> Result<String, MarsError> {
+    let dest = &item.dest_path;
     let name = dest.item_name(item.kind);
     if item.kind == ItemKind::Hook {
         let Some((target, _)) = super::target::hook_target_dest_path(dest) else {
@@ -103,16 +160,9 @@ fn validate(intent: &WriteIntent) -> Result<(), MarsError> {
             return Err(invalid("expected current and/or planned output version"));
         }
         for item in versions {
-            let [output] = item.outputs.as_slice() else {
-                return Err(invalid(
-                    "expected exactly one canonical output per intent item",
-                ));
-            };
-            if output.target_root != CANONICAL_TARGET_ROOT
-                || &output.dest_path != dest
+            if &item.dest_path != dest
                 || (item.kind == ItemKind::BootstrapDoc
                     && !dest.as_str().ends_with("/BOOTSTRAP.md"))
-                || output.installed_checksum().is_none()
                 || item.kind != versions[0].kind
             {
                 return Err(invalid("invalid canonical write intent"));
@@ -174,10 +224,8 @@ pub(super) fn validate_plan(plan: &SyncPlan) -> Result<(), MarsError> {
     Ok(())
 }
 
-fn output_path(root: &Path, item: &LockedItemV2) -> PathBuf {
-    let path = item.outputs[0]
-        .dest_path
-        .resolve(&root.join(CANONICAL_TARGET_ROOT));
+fn output_path(root: &Path, item: &PendingWrite) -> PathBuf {
+    let path = item.dest_path.resolve(&root.join(CANONICAL_TARGET_ROOT));
     if item.kind == ItemKind::BootstrapDoc {
         path.parent()
             .expect("bootstrap path has a directory")
@@ -224,10 +272,9 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
     let mut recovered = Vec::new();
     for versions in intent.outputs.into_values() {
         let item = &versions[0];
-        let output = &item.outputs[0];
         // Handles interruption after final lock publication but before intent
         // cleanup. Already-published ownership takes precedence over old intent.
-        if index.contains_installed_output(CANONICAL_TARGET_ROOT, &output.dest_path) {
+        if index.contains_installed_output(CANONICAL_TARGET_ROOT, &item.dest_path) {
             continue;
         }
         let path = output_path(root, item);
@@ -243,12 +290,10 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         let metadata = fs::symlink_metadata(&path)?;
         let expects_file = matches!(item.kind, ItemKind::Agent | ItemKind::McpServer);
         let checksum = lock::regular_output_checksum(&path);
-        let matching = versions.iter().rev().find(|candidate| {
-            candidate.outputs[0]
-                .installed_checksum()
-                .map(|hash| hash.as_ref())
-                == checksum.as_deref()
-        });
+        let matching = versions
+            .iter()
+            .rev()
+            .find(|candidate| Some(candidate.expected_checksum.as_ref()) == checksum.as_deref());
         if (expects_file && !metadata.is_file())
             || (!expects_file && !metadata.is_dir())
             || matching.is_none()
@@ -264,8 +309,9 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         recovered.push((logical_key(&item)?, item));
     }
     let count = recovered.len();
-    for (key, mut item) in recovered {
-        let dest = item.outputs[0].dest_path.clone();
+    for (key, write) in recovered {
+        let dest = write.dest_path.clone();
+        let mut item = LockedItemV2::from(write);
         if let Some(previous) = old_lock.items.get(&key) {
             // Merge each recovered path, not just the final record for this item.
             // Old canonical claims survive until removal is positively confirmed.
@@ -302,9 +348,10 @@ pub(super) fn prepare(
                 // Keep the exact provenance of this verified physical output,
                 // not another path's provenance from the merged logical item.
                 if let Some(installed) = index.find_output(CANONICAL_TARGET_ROOT, &dest)
-                    && let Some(item) = versions.into_iter().rev().find(|item| {
-                        item.outputs[0].installed_checksum() == Some(&installed.installed_checksum)
-                    })
+                    && let Some(item) = versions
+                        .into_iter()
+                        .rev()
+                        .find(|item| item.expected_checksum == installed.installed_checksum)
                 {
                     outputs.insert(dest, vec![item]);
                 }
@@ -327,7 +374,7 @@ pub(super) fn prepare(
             .as_ref()
             .map(|content| ContentHash::from(hash::hash_bytes(content.as_bytes())))
             .unwrap_or_else(|| target.source_hash.clone());
-        let item = LockedItemV2 {
+        let item = PendingWrite {
             source: target.source_name.clone(),
             kind: target.id.kind,
             version: graph
@@ -335,11 +382,8 @@ pub(super) fn prepare(
                 .get(&target.source_name)
                 .and_then(|node| node.resolved_ref.version_tag.clone()),
             source_checksum: target.source_hash.clone(),
-            outputs: vec![OutputRecord::installed(
-                CANONICAL_TARGET_ROOT.to_string(),
-                target.dest_path.clone(),
-                expected,
-            )],
+            dest_path: target.dest_path.clone(),
+            expected_checksum: expected,
         };
         let path = output_path(root, &item);
         if path.symlink_metadata().is_ok() && !outputs.contains_key(dest) {

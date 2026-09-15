@@ -6,7 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Recover new canonical outputs after failed or interrupted sync using durable write intent. Repeated updates and destination moves retain ownership until finalization.
-- Preserve corrupt lock evidence through failed repair. Refuse changed outputs, links, malformed recovery identities, and frozen recovery; no-op lock mtimes stay unchanged.
+- Preserve corrupt lock evidence through failed repair. Refuse changed outputs, links, malformed recovery records, and frozen recovery; no-op lock mtimes stay unchanged.
 - Reserve the recovery journal path, including portable case/dot/space aliases, so custom destinations cannot overwrite or delete recovery evidence.
 - Keep flat `.mars-src` resources whose names resemble project output directories; exclusions follow the actual source root.
 - Flat self skills exclude native output trees including previously owned custom targets after configuration changes or when configured with absolute/dot-segment paths.

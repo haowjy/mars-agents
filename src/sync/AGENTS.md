@@ -61,7 +61,8 @@ succeeds would destroy diagnostic information if the run fails.
 absent canonical outputs. It binds exact expected checksums and provenance to the
 pre-write lock bytes. Intent is keyed by canonical destination, with current/planned
 versions per path, so repeated item moves retain every uncommitted output. The
-reader and writer share identity validation; the journal path is reserved before
+reader and writer share identity validation; decoded entries use a single-output
+PendingWrite type (the journal wire format remains unchanged); the journal path is reserved before
 config/output writes, including dry runs. On retry, load validates regular paths (including ancestors)
 and recovers matching outputs into the in-memory lock before source selection.
 Changed content, symlinks, corrupt intent, and a replaced lock fail closed.

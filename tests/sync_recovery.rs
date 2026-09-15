@@ -555,3 +555,40 @@ fn recovery_journal_path_is_reserved_before_any_canonical_writes() {
         }
     }
 }
+
+#[test]
+fn invalid_write_record_shapes_preserve_recovery_evidence() {
+    // Characterization of the journal decoding boundary, not a new recovery rule.
+    for shape in ["empty", "multiple", "native", "deletion"] {
+        let dir = interrupted_package();
+        let path = dir.path().join(INTENT);
+        let mut intent: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let outputs = intent["outputs"]["agents/muse.md"][0]["outputs"]
+            .as_array_mut()
+            .unwrap();
+        match shape {
+            "empty" => outputs.clear(),
+            "multiple" => outputs.push(outputs[0].clone()),
+            "native" => outputs[0]["target_root"] = ".codex".into(),
+            "deletion" => {
+                outputs[0]["state"] = "pending-deletion".into();
+                outputs[0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("installed_checksum");
+            }
+            _ => unreachable!(),
+        }
+        let intent = serde_json::to_vec(&intent).unwrap();
+        fs::write(&path, &intent).unwrap();
+        let lock_before = fs::read(dir.path().join("mars.lock")).ok();
+        let muse = dir.path().join(".mars/agents/muse.md");
+        let bytes_before = fs::read(&muse).unwrap();
+        fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+        sync(dir.path()).arg("--force").assert().failure();
+        assert_eq!(fs::read(&path).unwrap(), intent);
+        assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), lock_before);
+        assert_eq!(fs::read(&muse).unwrap(), bytes_before);
+    }
+}

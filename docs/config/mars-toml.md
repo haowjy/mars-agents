@@ -70,7 +70,7 @@ back to. `mars check` validates both fields before publishing.
 corresponding check for `sync`, `upgrade`, `add`, and `repair`, and always emit
 a warning.
 
-Project-local agents and skills are read from `.mars-src/` during sync. Repo-root `agents/` and `skills/` directories are package contents for downstream consumers, not local `_self` discovery roots. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
+Project-local items are read from `.mars-src/` during sync. With `[package]`, the current package also supplies its own agents and skills as Mars-native `_self` items. `.mars-src` overrides a matching package item before staging; self items then overlay matching dependency destinations after dependency renames. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
 
 ### `[dependencies]`
 
@@ -348,7 +348,9 @@ Resolution order (first-wins):
 
 1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
 2. **Container inference for lift only** — if the rooted source tree contains exactly one non-empty foreign container such as `.claude/agents/` or `.claude/skills/`, the corresponding dialect is inferred. Hidden containers are still skipped by item discovery; inference does not import their contents.
-3. **Default** — `claude` for dependencies, `mars-native` for local (`_self`) items.
+3. **Default** — `claude` for dependencies, `mars-native` for `.mars-src` items.
+
+Declared-package self inputs always use `mars-native`, without container inference. Generated native outputs cannot change their dialect.
 
 Without this field, a source authored in Claude-native `allowed-tools` will be interpreted through the Claude lift table. Set `dialect = "mars-native"` for sources that already use canonical frontmatter. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
 
@@ -491,4 +493,4 @@ See [local-development.md](../dev/local-development.md) for workflows.
 
 ## Reserved Names
 
-- `_self` is reserved for project-local items: agents and skills discovered from `.mars-src/`. `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.
+- `_self` is reserved for project-local items, including `.mars-src/` and the declared package's own agents and skills. `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.

@@ -29,7 +29,11 @@ For **dependencies** (foreign packages). Three-step chain:
 
 ### `Dialect::resolve_local(explicit: Option<Self>, package_root: &Path) -> Self`
 
-For **local project items**. Same three-step chain as `resolve`, but default is `Dialect::MarsNative` instead of `Claude`.
+For **`.mars-src` items**. Same three-step chain as `resolve`, but default is `Dialect::MarsNative` instead of `Claude`.
+
+Declared-package self inputs bypass inference and carry `Dialect::MarsNative`
+from `local_source` into staging. Never infer dialect from the output-bearing
+project root: generated targets must not reinterpret authored content.
 
 ### Helper
 

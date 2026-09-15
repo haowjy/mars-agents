@@ -61,7 +61,7 @@ succeeds would destroy diagnostic information if the run fails.
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover source items via `src/discover/`, auto-rename cross-source destination collisions, prune unmanaged collisions, apply one unified frontmatter rename pass, then validate target state (`src/sync/validate.rs`); stages local items via `crate::staging::stage_local_item` |
+| `build_target()` | Discover source items via `src/discover/`, auto-rename dependency destination collisions, overlay selected self destinations, refuse blocked canonical self items (including under force), prune unmanaged dependency collisions, apply one unified frontmatter rename pass, then validate target state (`src/sync/validate.rs`); stages local items via `crate::staging::stage_local_item` |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |

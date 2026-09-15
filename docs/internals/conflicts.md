@@ -63,13 +63,20 @@ alone.
 
 ## Unmanaged File Collisions
 
-When sync would install an item at a path where an unmanaged file already exists (not tracked in `mars.lock`), Mars skips the install and warns:
+For dependency items, an unmanaged canonical destination with different bytes is skipped with a warning (unless `--force` is used):
 
 ```
 warning: source `base` collides with unmanaged path `agents/custom.md` — leaving existing content untouched
 ```
 
 The item is removed from the target state, so the unmanaged file is preserved. This protects user-created local agents and skills from being overwritten.
+
+Selected self items (`.mars-src` or declared-package agents/skills) instead fail
+before canonical/native application and lock finalization. The error retains the
+selected source and destination and asks the user to inspect and relocate the
+destination. Matching bytes do not authorize adoption; `--force` does not bypass
+this self guard. Staging caches may have changed, but outputs and the existing
+lock have not. Native target collisions retain their separate warning/force policy.
 
 `mars repair` runs one forced pipeline pass; it has no special
 collision-removal retry loop. A corrupt lock is treated as empty in memory

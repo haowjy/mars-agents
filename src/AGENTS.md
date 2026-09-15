@@ -36,7 +36,7 @@ cli → sync → compiler → target adapters
   package layers for agents, skills, and bootstrap docs; whole hook directories
   are discovered only under the package-root `hooks/`; see
   `src/discover/.context/CONTEXT.md`
-- `dialect/` resolves inbound lift dialect per rooted package (explicit `dialect` key > foreign-container path inference > default — Claude for deps, MarsNative for local); inference does not make hidden containers discovery roots
+- `dialect/` resolves inbound lift dialect per rooted package (explicit `dialect` key > foreign-container path inference > default — Claude for deps, MarsNative for `.mars-src`); declared-package self inputs explicitly use MarsNative; inference does not make hidden containers discovery roots
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
 - `config/` parses mars.toml + mars.local.toml, merges to EffectiveConfig

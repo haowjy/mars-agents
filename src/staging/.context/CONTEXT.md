@@ -7,7 +7,15 @@ discovery, validation, hash, and apply.
 
 Staging runs in `resolve/package.rs` immediately after `apply_subpath` (and on
 version-override replay / restart). `RootedSourceRef.package_root` is repointed at
-the staged tree. Local project items stage in `sync/mod.rs` `build_target`.
+the staged tree. Local project items stage in `sync/mod.rs` `build_target` after `.mars-src`
+has won over matching declared-package definitions. Declared-package items
+carry Mars-native dialect; `.mars-src` retains local inference.
+
+Flat self skills filter control files, `.mars-src`, standard native roots, and configured target paths
+(including existing resolved paths for aliases/absolute/dot-segment spellings)
+before traversal, because their source root contains `.mars/staging`. Filtering
+at install/hash time alone would recurse into the staging destination. This
+resource filter does not exclude output trees from package discovery.
 
 ```
 fetch → ResolvedRef.tree_path (global cache, read-only)

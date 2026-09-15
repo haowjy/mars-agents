@@ -24,6 +24,7 @@ pub struct LaunchBundle {
 pub struct Routing {
     pub model: String,
     pub model_token: String,
+    pub provider_constraint: Option<String>,
     pub harness: String,
     pub selection_kind: String,
     pub match_evidence: String,

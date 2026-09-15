@@ -85,6 +85,15 @@ read-only cache read. TTL and stale fallback follow [`src/models/AGENTS.md`](../
 Catalog slugs feed `RoutingInput.catalog_model_slugs` so native harness matching aligns with
 `mars models list|resolve` (same `evaluate_candidates` path).
 
+### Literal model pins
+
+`--model <id> --literal-model` bypasses alias lookup and model backups while
+retaining normal harness permission, support and auth assessment. A provider-qualified
+literal retains its constraint in `routing.provider_constraint`. An explicitly empty
+literal pins harness-default mode instead of falling through to project/profile defaults.
+Continuation consumers use this to revalidate a recorded canonical selection without
+allowing a renamed alias to change the model.
+
 ### Selection report and errors
 
 Bundle version 4 carries report version 2 at `routing.route_trace`. Policy resolution

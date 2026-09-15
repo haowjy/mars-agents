@@ -41,6 +41,7 @@ pub struct PolicyInput<'a> {
     pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
     pub model_override: Option<&'a str>,
+    pub literal_model: bool,
     pub harness_override: Option<&'a str>,
     pub excluded_harnesses: &'a [crate::harness::registry::HarnessId],
     pub effort_override: Option<&'a str>,

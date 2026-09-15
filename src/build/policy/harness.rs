@@ -284,6 +284,7 @@ mod tests {
             agent: None,
             profile,
             model_override,
+            literal_model: false,
             harness_override,
             excluded_harnesses: &[],
             effort_override: None,

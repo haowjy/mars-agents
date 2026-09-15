@@ -252,6 +252,7 @@ fn prompt_target_for_agent(
             agent: Some(&agent.name),
             profile: &agent.profile,
             model_override: None,
+            literal_model: false,
             harness_override: None,
             excluded_harnesses: &[],
             effort_override: None,

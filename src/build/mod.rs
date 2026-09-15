@@ -22,6 +22,7 @@ pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
     pub model: Option<String>,
+    pub literal_model: bool,
     pub harness: Option<String>,
     pub excluded_harnesses: Vec<crate::harness::registry::HarnessId>,
     pub effort: Option<String>,
@@ -105,6 +106,7 @@ pub fn build_launch_bundle(
             agent: request.agent.as_deref(),
             profile: &profile,
             model_override: request.model.as_deref(),
+            literal_model: request.literal_model,
             harness_override: request.harness.as_deref(),
             excluded_harnesses: &request.excluded_harnesses,
             effort_override: request.effort.as_deref(),

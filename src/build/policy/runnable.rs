@@ -76,6 +76,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     let mut routing = Routing {
         model,
         model_token,
+        provider_constraint: provider_constraint.map(str::to_string),
         harness: harness.clone(),
         selection_kind,
         match_evidence,

@@ -96,6 +96,10 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Treat --model as a literal ID, bypassing aliases; an empty ID pins harness default.
+    #[arg(long, requires = "model")]
+    literal_model: bool,
+
     /// Override harness target.
     #[arg(long, value_parser = parse_harness)]
     harness: Option<HarnessId>,
@@ -143,6 +147,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         LaunchBundleRequest {
             agent: args.agent.clone(),
             model: args.model.clone(),
+            literal_model: args.literal_model,
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),
             excluded_harnesses: args.excluded_harnesses.clone(),
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),

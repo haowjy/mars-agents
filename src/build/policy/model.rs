@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::build::policy::{PolicyInput, PolicySource};
 use crate::config::AgentOverlay;
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias, ModelsCache};
 
 pub(super) struct ResolvedModel<'a> {
@@ -28,6 +28,14 @@ pub(super) fn resolve_model<'a>(
     aliases: &'a IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Result<ResolvedModel<'a>, MarsError> {
+    if input.literal_model {
+        let token = input.model_override.ok_or_else(|| {
+            MarsError::Config(ConfigError::Invalid {
+                message: "literal model selection requires a model override".into(),
+            })
+        })?;
+        return Ok(resolve_literal_model(token.to_string(), PolicySource::Cli));
+    }
     let (model_token, model_source) = match input.model_override {
         Some(model) => (model.to_string(), PolicySource::Cli),
         None => match overlay.and_then(|entry| entry.model.as_deref()) {
@@ -161,6 +169,7 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: Some("claude-opus-4-6"),
+            literal_model: false,
             harness_override: None,
             excluded_harnesses: &[],
             effort_override: None,
@@ -190,6 +199,7 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: None,
+            literal_model: false,
             harness_override: None,
             excluded_harnesses: &[],
             effort_override: None,

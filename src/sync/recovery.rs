@@ -1,9 +1,9 @@
 //! Write-ahead intent for new canonical outputs. A failed apply must not leave
 //! completed writes indistinguishable from arbitrary unowned user content.
 //!
-//! Read under the sync flock, recover into memory, and checkpoint those verified
-//! claims only after resolution/preflight succeeds. Never replace an outstanding
-//! intent before its recovered ownership is durable.
+//! Read under the sync flock and recover into memory. Retain evidence for
+//! completed writes when extending intent on a retry; publish installed ownership
+//! only at finalization, including when repair is preserving a corrupt lock.
 
 use std::{
     collections::BTreeMap,
@@ -32,7 +32,10 @@ struct WriteIntent {
     /// Bind recovery to the lock that authorized this plan, not a different
     /// checkout's lock or a subsequently replaced ownership registry.
     lock_checksum: Option<ContentHash>,
-    items: BTreeMap<String, LockedItemV2>,
+    // A retry may overwrite a recovered output. Keep both the verified current
+    // version and the planned version until finalization, covering death on either
+    // side of that write without prematurely replacing mars.lock.
+    items: BTreeMap<String, Vec<LockedItemV2>>,
 }
 
 fn invalid(message: impl std::fmt::Display) -> MarsError {
@@ -75,24 +78,31 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
             intent.version
         )));
     }
-    for item in intent.items.values() {
-        let [output] = item.outputs.as_slice() else {
-            return Err(invalid(
-                "expected exactly one canonical output per intent item",
-            ));
-        };
-        let prefix = match item.kind {
-            ItemKind::Agent => "agents/",
-            ItemKind::Skill => "skills/",
-            ItemKind::Hook => "hooks/",
-            ItemKind::McpServer => "mcp/",
-            ItemKind::BootstrapDoc => "bootstrap/",
-        };
-        if output.target_root != CANONICAL_TARGET_ROOT
-            || !output.dest_path.as_str().starts_with(prefix)
-            || output.installed_checksum().is_none()
-        {
-            return Err(invalid("invalid canonical write intent"));
+    for versions in intent.items.values() {
+        if versions.is_empty() || versions.len() > 2 {
+            return Err(invalid("expected current and/or planned output version"));
+        }
+        for item in versions {
+            let [output] = item.outputs.as_slice() else {
+                return Err(invalid(
+                    "expected exactly one canonical output per intent item",
+                ));
+            };
+            let prefix = match item.kind {
+                ItemKind::Agent => "agents/",
+                ItemKind::Skill => "skills/",
+                ItemKind::Hook => "hooks/",
+                ItemKind::McpServer => "mcp/",
+                ItemKind::BootstrapDoc => "bootstrap/",
+            };
+            if output.target_root != CANONICAL_TARGET_ROOT
+                || !output.dest_path.as_str().starts_with(prefix)
+                || output.installed_checksum().is_none()
+                || item.kind != versions[0].kind
+                || output.dest_path != versions[0].outputs[0].dest_path
+            {
+                return Err(invalid("invalid canonical write intent"));
+            }
         }
     }
     Ok(Some(intent))
@@ -146,14 +156,15 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
     let same_lock = intent.lock_checksum == lock_checksum(root)?;
     let index = LockIndex::new(old_lock);
     let mut recovered = Vec::new();
-    for (key, mut item) in intent.items {
+    for (key, versions) in intent.items {
+        let item = &versions[0];
         let output = &item.outputs[0];
         // Handles interruption after final lock publication but before intent
         // cleanup. Already-published ownership takes precedence over old intent.
         if index.contains_installed_output(CANONICAL_TARGET_ROOT, &output.dest_path) {
             continue;
         }
-        let path = output_path(root, &item);
+        let path = output_path(root, item);
         if !output_exists(root, &path)? {
             continue;
         }
@@ -165,16 +176,25 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         }
         let metadata = fs::symlink_metadata(&path)?;
         let expects_file = matches!(item.kind, ItemKind::Agent | ItemKind::McpServer);
+        let checksum = lock::regular_output_checksum(&path);
+        let matching = versions.iter().rev().find(|candidate| {
+            candidate.outputs[0]
+                .installed_checksum()
+                .map(|hash| hash.as_ref())
+                == checksum.as_deref()
+        });
         if (expects_file && !metadata.is_file())
             || (!expects_file && !metadata.is_dir())
-            || lock::regular_output_checksum(&path).as_deref()
-                != output.installed_checksum().map(|hash| hash.as_ref())
+            || matching.is_none()
         {
             return Err(invalid(format!(
                 "pending output {} does not match its recorded bytes or contains non-regular entries",
                 path.display()
             )));
         }
+        let mut item = matching
+            .expect("matching regular output checked above")
+            .clone();
         if let Some(previous) = old_lock.items.get(&key) {
             item.outputs.extend(
                 previous
@@ -191,26 +211,41 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
     Ok(count)
 }
 
-/// Publish intent before apply. Previously recovered writes must first be
-/// checkpointed: otherwise replacing the journal on a second failure loses them.
+/// Publish intent before apply, retaining the verified current version of any
+/// previously recovered write. The lock stays untouched until finalization.
 pub(super) fn prepare(
     root: &Path,
     plan: &SyncPlan,
     graph: &ResolvedGraph,
     old_lock: &LockFile,
 ) -> Result<(), MarsError> {
-    if read(root)?.is_some() {
-        lock::write(root, old_lock)?;
-        complete(root)?;
-    }
+    let previous = read(root)?;
+    let checksum = lock_checksum(root)?;
     let index = LockIndex::new(old_lock);
-    let mut items = BTreeMap::new();
+    let mut items: BTreeMap<String, Vec<LockedItemV2>> = BTreeMap::new();
+    if let Some(previous) = previous.filter(|intent| intent.lock_checksum == checksum) {
+        for (key, versions) in previous.items {
+            if output_exists(root, &output_path(root, &versions[0]))? {
+                // recover() verified this output before resolution. Preserve only
+                // that version, not an unattempted version from the previous plan.
+                if let Some(item) = old_lock.items.get(&key) {
+                    let mut item = item.clone();
+                    item.outputs
+                        .retain(|output| output.target_root == CANONICAL_TARGET_ROOT);
+                    items.insert(key, vec![item]);
+                }
+            }
+        }
+    }
     for action in &plan.actions {
         let (PlannedAction::Install { target } | PlannedAction::Overwrite { target }) = action
         else {
             continue;
         };
-        if index.contains_installed_output(CANONICAL_TARGET_ROOT, &target.dest_path) {
+        let key = lock::item_key(&target.id);
+        if index.contains_installed_output(CANONICAL_TARGET_ROOT, &target.dest_path)
+            && !items.contains_key(&key)
+        {
             continue;
         }
         let expected = target
@@ -233,28 +268,33 @@ pub(super) fn prepare(
             )],
         };
         let path = output_path(root, &item);
-        if path.symlink_metadata().is_ok() {
+        if path.symlink_metadata().is_ok() && !items.contains_key(&key) {
             // Do not turn a force-adopted dependency collision into crash-recovery
             // evidence. Its preexisting bytes were not written by this transaction.
             continue;
         }
         output_exists(root, &path)?; // Reject ancestor symlinks before recording intent.
-        items.insert(lock::item_key(&target.id), item);
+        let versions = items.entry(key).or_default();
+        if !versions.contains(&item) {
+            versions.push(item);
+        }
     }
     if !items.is_empty() {
         let intent = WriteIntent {
             version: 1,
-            lock_checksum: lock_checksum(root)?,
+            lock_checksum: checksum,
             items,
         };
         let bytes = serde_json::to_vec_pretty(&intent).map_err(invalid)?;
-        crate::fs::atomic_write(&root.join(INTENT_FILE), &bytes)?;
+        crate::fs::atomic_write_if_changed(&root.join(INTENT_FILE), &bytes)?;
+    } else {
+        complete(root)?;
     }
     Ok(())
 }
 
-/// Called only after lock publication. A crash before this removal is harmless:
-/// recovery recognizes the ownership already published in mars.lock.
+/// Discard after lock publication, or when no uncommitted outputs remain.
+/// A crash after publication is harmless: the installed lock claims take precedence.
 pub(super) fn complete(root: &Path) -> Result<(), MarsError> {
     match fs::remove_file(root.join(INTENT_FILE)) {
         Ok(()) => Ok(()),

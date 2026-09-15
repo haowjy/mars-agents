@@ -52,8 +52,10 @@ alongside that sweep.
 Canonical write intent is separate from installed/deletion authority.
 `sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound
 to the prior lock's bytes. It validates matching regular outputs into an
-in-memory lock, then checkpoints verified claims after resolution/preflight,
-before replacing intent. No lock schema or `_self` identity change is required.
+in-memory lock; retry intent retains verified current bytes alongside planned
+replacement bytes until finalization. It does not checkpoint the lock early, so
+failed repair preserves corrupt lock evidence. No lock schema or `_self` identity
+change is required.
 Native/config transaction recovery remains tracked in #149.
 
 ### `LockIndex` is the read seam

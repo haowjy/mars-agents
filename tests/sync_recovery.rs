@@ -271,3 +271,48 @@ fn pending_output_and_parent_symlinks_never_authorize_referent_mutation() {
         );
     }
 }
+
+#[test]
+fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml").write_str(
+        "[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n",
+    ).unwrap();
+    dir.child("mars.lock")
+        .write_str("preserve this corrupt lock\n")
+        .unwrap();
+    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    for text in ["# Muse\n", "# Revised\n", "# Revised again\n"] {
+        dir.child("agents/muse.md").write_str(text).unwrap();
+        mars()
+            .args(["repair", "--root", dir.path().to_str().unwrap()])
+            .env("MARS_OFFLINE", "1")
+            .assert()
+            .failure();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("mars.lock")).unwrap(),
+            "preserve this corrupt lock\n"
+        );
+    }
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    mars()
+        .args(["repair", "--root", dir.path().to_str().unwrap()])
+        .env("MARS_OFFLINE", "1")
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
+        "# Revised again\n"
+    );
+    assert!(
+        lock::load(dir.path())
+            .unwrap()
+            .contains_output(".mars", "agents/muse.md")
+    );
+}

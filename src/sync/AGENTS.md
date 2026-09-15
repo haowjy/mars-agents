@@ -63,10 +63,11 @@ pre-write lock bytes. On retry, load validates regular paths (including ancestor
 and recovers matching outputs into the in-memory lock before source selection.
 Changed content, symlinks, corrupt intent, and a replaced lock fail closed.
 
-After resolution/preflight, verified recovery is checkpointed to `mars.lock`
-before any replacement intent. Finalization removes intent only after lock
-publication. Dry-run and resolution failure never checkpoint recovery. No-op
-sync creates no journal. Existing installed claims remain authoritative.
+On retry, intent retains the verified current version alongside any planned
+replacement until finalization publishes ownership. No early lock checkpoint:
+failed repair must preserve even corrupt lock bytes. Finalization removes intent
+after lock publication. Dry-run and resolution failure never publish recovery.
+No-op sync creates no journal. Existing installed claims remain authoritative.
 This protects new canonical writes, not native/config emission (#149).
 
 ### Key Operations

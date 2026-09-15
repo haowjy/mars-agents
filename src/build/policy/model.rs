@@ -73,7 +73,7 @@ pub(super) fn resolve_model_token<'a>(
     };
 
     let provider_constraint = alias
-        .and_then(provider_constraint_for_alias)
+        .and_then(models::provider_constraint_for_alias)
         .or(token_provider_constraint.clone());
     let provider_for_order = if let Some(entry) = alias {
         models::resolve_provider_for_alias(entry, cache)
@@ -115,15 +115,6 @@ pub(super) fn resolve_literal_model(
         provider_constraint,
         warnings: Vec::new(),
     }
-}
-
-fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
-    match &alias.spec {
-        models::ModelSpec::Pinned { provider, .. }
-        | models::ModelSpec::PinnedWithMatch { provider, .. } => provider.clone(),
-        models::ModelSpec::AutoResolve { provider, .. } => provider.clone(),
-    }
-    .map(|provider| provider.trim().to_ascii_lowercase())
 }
 
 pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {

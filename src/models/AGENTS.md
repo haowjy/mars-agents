@@ -93,12 +93,19 @@ Do not conflate env offline with flag-driven skip when debugging missing probe d
 3. Matching against all alias filter candidates
 4. Returning best match by release date
 
+CLI routing reuses the same longest-base lookup for provider constraints and harness
+preference. Identity resolution itself remains probe-free.
+
 ## Identity Before Routing
 
 Exact, bulk and prefix alias resolution are static: resolve IDs/provider/settings
 without executable discovery, auth or support probes. CLI consumers then assess
 routes with effective target scope. Never add an unrestricted preliminary routing
 pass; a later scoped assessment cannot undo an excluded auth command.
+
+`provider_constraint_for_alias()` supplies the shared authored restriction for launch
+and standalone routing: explicit provider first, then a provider-qualified pinned
+model. Provider inference may use the model family, never the preferred harness.
 
 ## Launch `harness_model` (argv model id)
 

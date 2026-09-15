@@ -496,6 +496,7 @@ struct ResolveRuntime<'a> {
 }
 
 struct RouteTraceInput<'a> {
+    preferred_harness: Option<&'a str>,
     auth: &'a NativeAuthCache,
     model_id: &'a str,
     provider_for_order: &'a str,
@@ -1313,6 +1314,7 @@ where
     F: Fn(&str) -> crate::harness::host::AuthState,
 {
     let route_input = RouteTraceInput {
+        preferred_harness: None,
         auth: availability_ctx.auth,
         model_id,
         provider_for_order: provider,
@@ -1328,19 +1330,13 @@ where
     crate::routing::evaluate_candidates_with_auth(&routing_evidence.routing_input(), auth_check)
 }
 
-fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
-    match &alias.spec {
-        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
-            provider.clone()
-        }
-        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
-    }
-    .map(|provider| provider.trim().to_ascii_lowercase())
-}
-
 fn route_trace_for_resolved_model(input: &RouteTraceInput<'_>) -> crate::routing::RoutingTrace {
     let routing_evidence = routing_settings_evidence(input);
-    crate::routing::evaluate_candidates_with_auth(&routing_evidence.routing_input(), |harness| {
+    let mut routing_input = routing_evidence.routing_input();
+    routing_input.preferred_harness = input
+        .preferred_harness
+        .map(|harness| (harness, crate::routing::RouteSource::Alias));
+    crate::routing::evaluate_candidates_with_auth(&routing_input, |harness| {
         input.auth.state(harness)
     })
 }
@@ -1350,33 +1346,13 @@ fn route_trace_for_resolved_model_with_probes(
     probe_resolver: &mut dyn crate::routing::ProbeResolver,
 ) -> crate::routing::RoutingTrace {
     let routing_evidence = routing_settings_evidence(input);
-    crate::routing::evaluate_candidates(
-        &routing_evidence.routing_input(),
-        probe_resolver,
-        |harness| input.auth.state(harness),
-    )
-}
-
-fn route_trace_for_fixed_harness_with_probes(
-    input: &RouteTraceInput<'_>,
-    fixed_harness: &str,
-    source: crate::routing::RouteSource,
-    probe_resolver: &mut dyn crate::routing::ProbeResolver,
-) -> crate::routing::RoutingTrace {
-    let provider_for_order = crate::routing::provider_for_order_for_fixed_harness(
-        Some(input.provider_for_order),
-        fixed_harness,
-    );
-    let routing_evidence = routing_settings_evidence(input);
-    let mut fixed_input = routing_evidence.routing_input();
-    fixed_input.provider_for_order = provider_for_order;
-    let assessment = crate::routing::evaluate_fixed_harness_with_auth_and_probes(
-        &fixed_input,
-        fixed_harness,
-        probe_resolver,
-        |harness| input.auth.state(harness),
-    );
-    crate::routing::trace_for_fixed_harness(source, fixed_harness, assessment, Vec::new())
+    let mut routing_input = routing_evidence.routing_input();
+    routing_input.preferred_harness = input
+        .preferred_harness
+        .map(|harness| (harness, crate::routing::RouteSource::Alias));
+    crate::routing::evaluate_candidates(&routing_input, probe_resolver, |harness| {
+        input.auth.state(harness)
+    })
 }
 
 fn effective_visibility(
@@ -1421,8 +1397,9 @@ fn apply_routing_settings_to_resolved_alias(
     } = context;
     let provider_for_order =
         models::infer_provider_from_model_id(&alias.model_id).unwrap_or(alias.provider.as_str());
-    let provider_constraint = source_alias.and_then(provider_constraint_for_alias);
+    let provider_constraint = source_alias.and_then(models::provider_constraint_for_alias);
     let route_input = RouteTraceInput {
+        preferred_harness: source_alias.and_then(|source| source.harness.as_deref()),
         auth: context.auth,
         model_id: &alias.model_id,
         provider_for_order,
@@ -1434,38 +1411,8 @@ fn apply_routing_settings_to_resolved_alias(
         catalog_model_slugs,
         routing_settings,
     };
-    let explicit_harness = source_alias.and_then(|source| source.harness.as_deref());
-    let trace = if let Some(harness) = explicit_harness {
-        let evidence = routing_settings_evidence(&route_input);
-        let assessment = crate::routing::evaluate_fixed_harness_with_auth(
-            &evidence.routing_input(),
-            harness,
-            |harness| context.auth.state(harness),
-        );
-        crate::routing::trace_for_fixed_harness(
-            crate::routing::RouteSource::Alias,
-            harness,
-            assessment,
-            Vec::new(),
-        )
-    } else {
-        route_trace_for_resolved_model(&route_input)
-    };
-    alias.harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
-    alias.harness_candidates = models::harness::harness_candidates_for_provider(&alias.provider)
-        .into_iter()
-        .filter(|harness| routing_settings.harness_scope.permits(harness))
-        .collect();
-    alias.harness_source = match crate::routing::acceptance::accept_route(
-        &trace,
-        installed,
-        crate::routing::acceptance::MatchPolicy::AllowPassthrough,
-    ) {
-        Ok(()) if explicit_harness.is_some() => HarnessSource::Explicit,
-        Ok(()) => HarnessSource::AutoDetected,
-        Err(_) => HarnessSource::Unavailable,
-    };
-    annotate_one_availability(alias, &trace, context);
+    let trace = route_trace_for_resolved_model(&route_input);
+    apply_route_to_resolved_alias(alias, &trace, context);
 }
 
 fn prune_unavailable(resolved: &mut IndexMap<String, models::ResolvedAlias>) {
@@ -1572,11 +1519,26 @@ fn availability_status_label(availability: Option<&ModelAvailability>) -> &'stat
     }
 }
 
-fn annotate_one_availability(
+fn apply_route_to_resolved_alias(
     resolved: &mut models::ResolvedAlias,
     trace: &crate::routing::RoutingTrace,
     context: AvailabilityContext<'_>,
 ) {
+    resolved.harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
+    resolved.harness_candidates =
+        models::harness::harness_candidates_for_provider(&resolved.provider)
+            .into_iter()
+            .filter(|harness| context.routing_settings.harness_scope.permits(harness))
+            .collect();
+    resolved.harness_source = match crate::routing::acceptance::accept_route(
+        trace,
+        context.installed,
+        crate::routing::acceptance::MatchPolicy::AllowPassthrough,
+    ) {
+        Ok(()) if trace.source == crate::routing::RouteSource::Alias => HarnessSource::Explicit,
+        Ok(()) => HarnessSource::AutoDetected,
+        Err(_) => HarnessSource::Unavailable,
+    };
     resolved.availability = Some(context.classify(&resolved.model_id, &resolved.provider, trace));
 }
 
@@ -1719,13 +1681,16 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         && let Some(mut resolved) =
             models::resolve_with_alias_prefix_static(&args.name, &merged, cache)
     {
+        let base_alias = models::alias_prefix_base(&args.name, &merged);
+        let provider_constraint = base_alias.and_then(models::provider_constraint_for_alias);
         let catalog_slugs = models::catalog_model_slugs(cache);
         let route_input = RouteTraceInput {
+            preferred_harness: base_alias.and_then(|alias| alias.harness.as_deref()),
             auth: &native_auth,
             model_id: &resolved.model_id,
             provider_for_order: models::infer_provider_from_model_id(&resolved.model_id)
                 .unwrap_or(resolved.provider.as_str()),
-            provider_constraint: None,
+            provider_constraint: provider_constraint.as_deref(),
             installed: &installed,
             opencode_probe_result: None,
             pi_probe_result: None,
@@ -1739,21 +1704,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             };
             route_trace_for_resolved_model_with_probes(&route_input, &mut probe_resolver)
         };
-        resolved.harness = (!route_trace.harness.is_empty()).then(|| route_trace.harness.clone());
-        resolved.harness_candidates =
-            models::harness::harness_candidates_for_provider(&resolved.provider)
-                .into_iter()
-                .filter(|harness| routing_settings.harness_scope.permits(harness))
-                .collect();
-        resolved.harness_source = match crate::routing::acceptance::accept_route(
-            &route_trace,
-            &installed,
-            crate::routing::acceptance::MatchPolicy::AllowPassthrough,
-        ) {
-            Ok(()) => HarnessSource::AutoDetected,
-            Err(_) => HarnessSource::Unavailable,
-        };
-        annotate_one_availability(
+        apply_route_to_resolved_alias(
             &mut resolved,
             &route_trace,
             AvailabilityContext {
@@ -1923,10 +1874,10 @@ fn run_resolve_exact_alias(
     let mut diag = DiagnosticCollector::new();
     let mut resolved_entry = models::resolve_one_static(name, merged, runtime.cache);
     let mut route_trace = None;
-    let mut fixed_harness_route_rejection = None;
     if let Some(r) = resolved_entry.as_mut() {
-        let provider_constraint = provider_constraint_for_alias(alias);
+        let provider_constraint = models::provider_constraint_for_alias(alias);
         let route_input = RouteTraceInput {
+            preferred_harness: alias.harness.as_deref(),
             auth: runtime.auth,
             model_id: &r.model_id,
             provider_for_order: &r.provider,
@@ -1938,55 +1889,15 @@ fn run_resolve_exact_alias(
             catalog_model_slugs: Some(runtime.catalog_model_slugs),
             routing_settings: runtime.routing_settings,
         };
-        route_trace = Some(if let Some(fixed_harness) = alias.harness.as_deref() {
-            let mut probe_resolver = SessionProbeResolver {
-                session: capability_session,
-            };
-            let fixed_trace = route_trace_for_fixed_harness_with_probes(
-                &route_input,
-                fixed_harness,
-                crate::routing::RouteSource::Alias,
-                &mut probe_resolver,
-            );
-            let assessed = fixed_trace
-                .assessments
-                .iter()
-                .find(|assessment| assessment.harness == fixed_harness)
-                .or_else(|| fixed_trace.assessments.first());
-            fixed_harness_route_rejection = match assessed {
-                Some(assessment) => crate::routing::acceptance::accept_assessment(assessment).err(),
-                None => Some(
-                    crate::routing::acceptance::RejectionReason::AssessmentFailed {
-                        harness: fixed_harness.to_string(),
-                        skip_reason: Some("missing_assessment".to_string()),
-                    },
-                ),
-            };
-            fixed_trace
-        } else {
-            let mut probe_resolver = SessionProbeResolver {
-                session: capability_session,
-            };
-            route_trace_for_resolved_model_with_probes(&route_input, &mut probe_resolver)
-        });
+        let mut probe_resolver = SessionProbeResolver {
+            session: capability_session,
+        };
+        route_trace = Some(route_trace_for_resolved_model_with_probes(
+            &route_input,
+            &mut probe_resolver,
+        ));
         if let Some(trace) = route_trace.as_ref() {
-            r.harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
-            r.harness_candidates = models::harness::harness_candidates_for_provider(&r.provider)
-                .into_iter()
-                .filter(|harness| runtime.routing_settings.harness_scope.permits(harness))
-                .collect();
-            r.harness_source = match crate::routing::acceptance::accept_route(
-                trace,
-                runtime.installed,
-                crate::routing::acceptance::MatchPolicy::AllowPassthrough,
-            ) {
-                Ok(()) => HarnessSource::AutoDetected,
-                Err(_) => HarnessSource::Unavailable,
-            };
-            if alias.harness.is_some() {
-                r.harness_source = HarnessSource::Explicit;
-            }
-            annotate_one_availability(
+            apply_route_to_resolved_alias(
                 r,
                 trace,
                 AvailabilityContext {
@@ -2007,26 +1918,6 @@ fn run_resolve_exact_alias(
         .loaded_opencode_outcome()
         .cloned()
         .unwrap_or(CachedProbeOutcome::Unavailable);
-
-    if let Some(rejection_reason) = fixed_harness_route_rejection {
-        let trace = route_trace
-            .as_ref()
-            .expect("fixed harness route trace exists");
-        let Some(resolved) = resolved_entry.as_ref() else {
-            return Ok(1);
-        };
-        return run_resolve_fixed_harness_failure(ResolveFixedHarnessFailureInput {
-            name,
-            source: source.as_str(),
-            resolved,
-            trace,
-            cache_warning: cache_warning.as_deref(),
-            diagnostics: &diagnostics,
-            rejection_reason: &rejection_reason,
-            routing_diagnostics,
-            json,
-        });
-    }
 
     if json {
         if let Some(r) = resolved_entry.as_ref() {
@@ -2152,18 +2043,6 @@ fn run_resolve_exact_alias(
     ))
 }
 
-struct ResolveFixedHarnessFailureInput<'a> {
-    name: &'a str,
-    source: &'a str,
-    resolved: &'a models::ResolvedAlias,
-    trace: &'a crate::routing::RoutingTrace,
-    cache_warning: Option<&'a str>,
-    diagnostics: &'a [Diagnostic],
-    rejection_reason: &'a crate::routing::acceptance::RejectionReason,
-    routing_diagnostics: &'a [String],
-    json: bool,
-}
-
 struct AutoResolveAliasCacheUnavailableInput<'a> {
     name: &'a str,
     alias: &'a ModelAlias,
@@ -2204,58 +2083,6 @@ fn run_auto_resolve_alias_cache_unavailable(
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         eprintln!("error: {error}");
-    }
-
-    Ok(1)
-}
-
-fn run_resolve_fixed_harness_failure(
-    input: ResolveFixedHarnessFailureInput<'_>,
-) -> Result<i32, MarsError> {
-    let ResolveFixedHarnessFailureInput {
-        name,
-        source,
-        resolved,
-        trace,
-        cache_warning,
-        diagnostics,
-        rejection_reason,
-        routing_diagnostics,
-        json,
-    } = input;
-    let error_message = fixed_alias_rejection_message(rejection_reason);
-
-    if json {
-        let mut out = serde_json::json!({
-            "name": name,
-            "source": source,
-            "provider": resolved.provider,
-            "harness": trace.selected_harness(),
-            "model_id": resolved.model_id,
-            "resolved_model": resolved.model_id,
-            "error": error_message,
-            "route_rejection": route_rejection_json(rejection_reason),
-            "harnesses_tried": trace.candidates_tried,
-        });
-        add_route_json_fields(&mut out, trace);
-        add_availability_json_fields(&mut out, resolved.availability.as_ref());
-        if let Some(warning) = cache_warning {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        if !diagnostics.is_empty() {
-            out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(diagnostics));
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    } else {
-        eprintln!("error: {error_message}");
-        println!("Alias:    {name}");
-        println!("Source:   {source}");
-        println!("Provider: {}", resolved.provider);
-        println!("Resolved: {}", resolved.model_id);
-        print_route_text(trace);
-        print_availability_text(resolved.availability.as_ref());
-        emit_drained_text_diagnostics(diagnostics);
     }
 
     Ok(1)
@@ -2601,26 +2428,6 @@ fn unavailable_harness_error(resolved: &models::ResolvedAlias) -> Option<String>
         "No permitted, runnable harness for model '{}'",
         resolved.model_id
     ))
-}
-
-fn fixed_alias_rejection_message(
-    rejection: &crate::routing::acceptance::RejectionReason,
-) -> String {
-    match rejection {
-        crate::routing::acceptance::RejectionReason::HarnessNotInstalled { harness } => format!(
-            "alias harness `{harness}` is not installed and cannot run resolved model under model-first routing"
-        ),
-        crate::routing::acceptance::RejectionReason::NoSlugEvidence { harness } => format!(
-            "alias harness `{harness}` did not provide required model slug evidence under model-first routing"
-        ),
-        crate::routing::acceptance::RejectionReason::AssessmentFailed {
-            harness,
-            skip_reason,
-        } => format!(
-            "alias harness `{harness}` cannot run resolved model under model-first routing ({})",
-            skip_reason.as_deref().unwrap_or("unavailable")
-        ),
-    }
 }
 
 fn passthrough_rejection_message(

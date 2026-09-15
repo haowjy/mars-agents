@@ -1102,7 +1102,7 @@ pub fn resolve_with_alias_prefix_static(
     })
 }
 
-fn alias_prefix_base<'a>(
+pub(crate) fn alias_prefix_base<'a>(
     input: &str,
     aliases: &'a IndexMap<String, ModelAlias>,
 ) -> Option<&'a ModelAlias> {
@@ -1497,23 +1497,9 @@ pub fn filter_by_visibility(
 
 fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option<(String, String)> {
     match &alias.spec {
-        ModelSpec::Pinned {
-            model, provider, ..
-        } => {
-            let p = provider
-                .clone()
-                .or_else(|| infer_provider_from_model_id(model).map(str::to_string))
-                .unwrap_or_else(|| "unknown".to_string());
-            Some((model.clone(), p))
-        }
-        ModelSpec::PinnedWithMatch {
-            model, provider, ..
-        } => {
-            let p = provider
-                .clone()
-                .or_else(|| infer_provider_from_model_id(model).map(str::to_string))
-                .unwrap_or_else(|| "unknown".to_string());
-            Some((model.clone(), p))
+        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+            let provider = provider_from_alias_spec(alias).unwrap_or_else(|| "unknown".to_string());
+            Some((model.clone(), provider))
         }
         ModelSpec::AutoResolve {
             provider,
@@ -1539,6 +1525,21 @@ fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option
     }
 }
 
+/// Authored provider restriction, never inferred from a preferred harness.
+/// A provider-qualified pinned model supplies a restriction when the field is absent.
+pub(crate) fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    let (provider, model) = match &alias.spec {
+        ModelSpec::Pinned { model, provider }
+        | ModelSpec::PinnedWithMatch {
+            model, provider, ..
+        } => (provider.as_deref(), Some(model.as_str())),
+        ModelSpec::AutoResolve { provider, .. } => (provider.as_deref(), None),
+    };
+    provider
+        .map(|provider| provider.trim().to_ascii_lowercase())
+        .or_else(|| model.and_then(|model| split_provider_constrained_model_token(model).1))
+}
+
 fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
     match &alias.spec {
         ModelSpec::Pinned { model, provider }
@@ -1546,6 +1547,7 @@ fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
             model, provider, ..
         } => provider
             .clone()
+            .or_else(|| provider_constraint_for_alias(alias))
             .or_else(|| infer_provider_from_model_id(model).map(str::to_string)),
         ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }

@@ -27,7 +27,7 @@ which breaks ChatGPT-auth Codex (expects bare `gpt-5.4-mini`) and Pi (expects pr
 
 | Input | Harness | Typical `harness_model` | Source |
 |-------|---------|-------------------------|--------|
-| alias `gptmini` | codex (alias-fixed) | `gpt-5.4-mini` | `provider-match` |
+| alias `gptmini` | codex (alias preference) | `gpt-5.4-mini` | `provider-match` |
 | alias `gptmini` | pi (CLI) | `openai-codex/gpt-5.4-mini` | `cached-probe` |
 | CLI `gpt-5.4-mini` | codex (auto, native match) | `gpt-5.4-mini` | `provider-match` |
 

@@ -903,8 +903,13 @@ provider = "openai"
         Some("consumer local (mars.local.toml)")
     );
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5.4-mini"));
-    assert_eq!(stdout["harness"].as_str(), Some("pi"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["spec"]["model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(stdout["route_trace"]["assessments"][0]["harness"], "pi");
+    assert_eq!(
+        stdout["route_trace"]["assessments"][0]["verdict"],
+        "unverified"
+    );
 }
 
 #[test]
@@ -1024,7 +1029,7 @@ harness_order = ["codex", "pi"]
 
 #[test]
 #[serial]
-fn resolve_exact_alias_fixed_native_harness_fails_when_provider_constraint_is_incompatible() {
+fn resolve_exact_alias_preference_cannot_override_provider_constraint() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
@@ -1060,24 +1065,18 @@ provider = "anthropic"
     assert!(
         stdout["error"]
             .as_str()
-            .expect("error should be present")
-            .contains("cannot run resolved model under model-first routing")
+            .unwrap()
+            .contains("No permitted, runnable harness")
     );
-    assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
-    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
-    assert_eq!(stdout["route"]["match_evidence"].as_str(), Some("none"));
+    assert!(stdout["harness"].is_null());
+    assert_eq!(stdout["harness_source"], "unavailable");
+    assert_eq!(stdout["route"]["selection_kind"], "auto");
+    assert_eq!(stdout["route"]["match_evidence"], "none");
     assert_eq!(
-        stdout["route_rejection"]["reason"].as_str(),
-        Some("assessment_failed")
+        stdout["route_trace"]["candidates_tried"],
+        json!(["codex", "claude", "pi", "cursor", "opencode"])
     );
-    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("codex"));
-    assert_eq!(
-        stdout["route_rejection"]["skip_reason"].as_str(),
-        Some("provider_constraint_unsatisfied")
-    );
-    assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
-    assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
+    assert_eq!(stdout["route_trace"]["version"], 1);
     let assessments = stdout["route_trace"]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
@@ -1085,6 +1084,7 @@ provider = "anthropic"
         .iter()
         .find(|assessment| assessment["harness"].as_str() == Some("codex"))
         .expect("codex assessment should exist");
+    assert_eq!(codex_assessment["verdict"], "blocked");
     assert_eq!(
         codex_assessment["skip_reason"].as_str(),
         Some("provider_constraint_unsatisfied")
@@ -1185,14 +1185,14 @@ provider = "openai"
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["route"]["source"].as_str(), Some("alias"));
-    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("auto"));
     assert_eq!(
         stdout["route"]["match_evidence"].as_str(),
         Some("constrained")
     );
     assert_eq!(
         stdout["route_trace"]["selection_kind"].as_str(),
-        Some("fixed")
+        Some("auto")
     );
     assert_eq!(
         stdout["route_trace"]["match_evidence"].as_str(),

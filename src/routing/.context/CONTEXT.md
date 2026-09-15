@@ -14,7 +14,8 @@ would break the parity invariant.
 `evaluate_fixed_harness_with_auth_and_probes()` evaluates one specific harness
 without fallback, using the caller's probe resolver and authentication check.
 It is used when the caller has already committed to a fixed harness choice
-(CLI `--harness`, profile `harness:`, alias `harness:`). It returns a single
+(CLI `--harness`). Profile and alias harness declarations instead enter the ordered
+evaluator as preferences. The fixed-harness function returns a single
 `CandidateAssessment` — the caller decides what to do with a failed fixed
 selection.
 
@@ -29,6 +30,7 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | `provider_for_order` | Optional provider name for native compatibility and model-slug preference |
 | `provider_constraint` | Alias/provider pin from model config — filters probe slug selection and native harness acceptance; shapes `harness_model` via [`resolve_harness_model`](../../models/harness_model.rs) (no blind `provider/model` prefix) |
 | `settings_provider_order` | Raw `provider_order` from config, if set |
+| `preferred_harness` | Highest-precedence authored harness and source; ranked first, not pinned |
 | `settings_harness_order` | Raw `harness_order` from config, if set |
 | `config_default_harness` | Raw `default_harness` from config, if set |
 | `installed_harnesses` | Set of harness names found on PATH |

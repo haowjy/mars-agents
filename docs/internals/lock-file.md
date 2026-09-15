@@ -197,7 +197,9 @@ source provenance in `.mars/pending-canonical.json` (journal version 1). It also
 records a checksum of the prior `mars.lock`, or its absence. Entries are keyed
 by canonical output path, with at most current/planned versions per path. The
 same identity validation runs before writing and after reading intent. A custom
-output cannot equal, contain, or fall beneath the journal path. The journal is
+output cannot equal, contain, or fall beneath the journal path, including its
+case and trailing-dot/space aliases on case-insensitive or Win32 filesystems.
+These spellings are reserved on every platform for checkout portability. The journal is
 write intent, not an installed ownership claim; `mars.lock` remains version 3.
 
 An apply error or process interruption can leave completed outputs without a

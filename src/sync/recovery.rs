@@ -134,7 +134,17 @@ fn validate_destination(dest: &DestPath, kind: ItemKind) -> Result<(), MarsError
     let journal = Path::new(INTENT_FILE)
         .strip_prefix(CANONICAL_TARGET_ROOT)
         .expect("journal is canonical metadata");
-    if output.starts_with(journal) || journal.starts_with(output) {
+    // Reserve case and trailing-dot/space aliases on every platform. A checkout
+    // must not gain a metadata collision when moved to a case-insensitive or
+    // Win32 filesystem, even if that spelling is distinct on the current host.
+    let aliases_journal = output.components().next().is_some_and(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .trim_end_matches(['.', ' '])
+            .eq_ignore_ascii_case(&journal.to_string_lossy())
+    });
+    if aliases_journal || journal.starts_with(output) {
         return Err(MarsError::InvalidRequest {
             message: format!(
                 "canonical destination {dest} overlaps reserved recovery state {INTENT_FILE}; choose a different destination"

@@ -514,6 +514,9 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
 fn recovery_journal_path_is_reserved_before_any_canonical_writes() {
     for (kind, destination) in [
         ("agent", "./pending-canonical.json"),
+        ("agent", "./PENDING-CANONICAL.JSON"),
+        ("agent", "./pending-canonical.json. "),
+        ("agent", "Pending-Canonical.Json/child.md"),
         ("agent", "pending-canonical.json/child.md"),
         ("skill", "./pending-canonical.json"),
         ("bootstrap", "./BOOTSTRAP.md"),

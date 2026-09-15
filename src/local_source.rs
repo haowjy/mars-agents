@@ -79,6 +79,42 @@ pub fn discover_local_items(
     Ok(selected)
 }
 
+/// Resource exclusions for a flat self skill, relative to its source root.
+/// Existing outputs may use absolute paths, dot segments, or symlink aliases.
+pub(crate) fn flat_skill_excluded_paths(
+    project_root: &Path,
+    source_root: &Path,
+    targets: &[String],
+) -> Result<Vec<PathBuf>, MarsError> {
+    let mut excluded: Vec<_> = crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
+    excluded.extend(
+        crate::harness::registry::all()
+            .iter()
+            .map(|h| PathBuf::from(h.default_target())),
+    );
+
+    let source_root = dunce::canonicalize(source_root)?;
+    let project_root = dunce::canonicalize(project_root)?;
+    for target in targets {
+        let path = std::path::absolute(project_root.join(target))?;
+        if let Ok(relative) = path.strip_prefix(&source_root) {
+            excluded.push(relative.to_path_buf());
+        }
+        // Missing targets have no resources to exclude yet. Resolve existing
+        // paths too so parent segments and aliases cannot hide generated trees.
+        if let Ok(real_path) = dunce::canonicalize(&path)
+            && let Ok(relative) = real_path.strip_prefix(&source_root)
+        {
+            excluded.push(relative.to_path_buf());
+        }
+    }
+    Ok(excluded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

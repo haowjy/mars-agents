@@ -12,7 +12,7 @@ mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
@@ -518,24 +518,15 @@ pub(crate) fn build_target(
         }
         let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
             && item.discovered.source_path == Path::new(".");
-        let mut excluded_paths = Vec::new();
-        if is_flat_skill {
-            excluded_paths.extend(
-                crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
-                    .iter()
-                    .map(PathBuf::from),
-            );
-            excluded_paths.push(PathBuf::from(crate::local_source::LOCAL_SOURCE_DIR));
-            excluded_paths.extend(
-                resolved
-                    .loaded
-                    .effective
-                    .settings
-                    .managed_targets()
-                    .iter()
-                    .map(PathBuf::from),
-            );
-        }
+        let excluded_paths = if is_flat_skill {
+            crate::local_source::flat_skill_excluded_paths(
+                &ctx.project_root,
+                &item.disk_path(),
+                &resolved.loaded.effective.settings.managed_targets(),
+            )?
+        } else {
+            Vec::new()
+        };
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(

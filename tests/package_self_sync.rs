@@ -115,6 +115,9 @@ fn flat_package_uses_declared_name_and_filters_before_staging() {
         .write_str("resource")
         .unwrap();
     dir.child(".git/control").write_str("control").unwrap();
+    dir.child(".claude/skills/old/SKILL.md")
+        .write_str("# Old generated")
+        .unwrap();
     dir.child(".native/custom/unrelated")
         .write_str("user")
         .unwrap();
@@ -127,7 +130,14 @@ fn flat_package_uses_declared_name_and_filters_before_staging() {
         read(dir.path(), ".mars/skills/demo/resources/example.txt"),
         "resource"
     );
-    for excluded in [".mars", ".git", "mars.toml", "mars.lock", ".native/custom"] {
+    for excluded in [
+        ".mars",
+        ".git",
+        "mars.toml",
+        "mars.lock",
+        ".native/custom",
+        ".claude",
+    ] {
         assert!(
             !dir.child(format!(".mars/skills/demo/{excluded}")).exists(),
             "copied {excluded}"
@@ -280,5 +290,31 @@ fn self_overlays_installed_names_after_explicit_and_collision_renames() {
             "# Self replacement"
         );
         assert_noop(project.path());
+    }
+}
+
+#[test]
+fn flat_package_filters_alternate_spellings_of_configured_output_paths() {
+    for spelling in ["absolute", "dot", "parent"] {
+        let dir = TempDir::new().unwrap();
+        let target = match spelling {
+            "absolute" => portable_path(dir.child(".native").path()),
+            "dot" => "./.native".to_string(),
+            _ => "unused/../.native".to_string(),
+        };
+        dir.child("mars.toml")
+            .write_str(&format!("{PACKAGE}[settings]\ntargets = ['{target}']\n"))
+            .unwrap();
+        dir.child("SKILL.md").write_str("# Flat source").unwrap();
+        sync(dir.path()).assert().success();
+        assert_noop(dir.path());
+        assert!(
+            !dir.child(".mars/skills/demo/.native").exists(),
+            "copied target: {spelling}"
+        );
+        dir.child("SKILL.md").write_str("# Edit").unwrap();
+        sync(dir.path()).assert().success();
+        assert_eq!(read(dir.path(), ".mars/skills/demo/SKILL.md"), "# Edit");
+        assert_noop(dir.path());
     }
 }

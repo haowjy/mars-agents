@@ -348,9 +348,9 @@ fn malformed_intent_identity_cannot_replace_another_items_ownership() {
     sync(dir.path()).assert().failure();
     let mut journal: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.path().join(INTENT)).unwrap()).unwrap();
-    let items = journal["items"].as_object_mut().unwrap();
-    let muse = items.remove("agent/muse").unwrap();
-    items.insert("agent/existing".into(), muse);
+    let items = journal["outputs"].as_object_mut().unwrap();
+    let muse = items.remove("agents/muse.md").unwrap();
+    items.insert("agents/existing.md".into(), muse);
     let journal = serde_json::to_vec(&journal).unwrap();
     fs::write(dir.path().join(INTENT), &journal).unwrap();
     fs::remove_file(dir.path().join("agents/existing.md")).unwrap();
@@ -453,4 +453,102 @@ fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let outputs = &recovered.items["agent/muse"].outputs;
     assert_eq!(outputs.len(), 1);
     assert!(outputs[0].installed_checksum().is_some());
+}
+
+#[test]
+fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
+    for established in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let config = |dest: &str| {
+            format!(
+                "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
+            )
+        };
+        dir.child("source/mars.toml")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .unwrap();
+        dir.child("source/agents/muse.md")
+            .write_str("# Original\n")
+            .unwrap();
+        if established {
+            dir.child("mars.toml")
+                .write_str(&config("committed"))
+                .unwrap();
+            sync(dir.path()).assert().success();
+        }
+        let old_lock = fs::read(dir.path().join("mars.lock")).ok();
+        dir.child(".mars-src/skills/craft/SKILL.md")
+            .write_str("# Craft\n")
+            .unwrap();
+        dir.child(".mars/skills")
+            .write_str("obstruction\n")
+            .unwrap();
+        for dest in ["z-first", "a-second", "m-third"] {
+            dir.child("mars.toml").write_str(&config(dest)).unwrap();
+            dir.child("source/agents/muse.md")
+                .write_str(&format!("# {dest}\n"))
+                .unwrap();
+            sync(dir.path()).assert().failure();
+            assert!(dir.path().join(format!(".mars/{dest}/muse.md")).is_file());
+            assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), old_lock);
+        }
+        fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+        sync(dir.path()).assert().success();
+        let recovered = lock::load(dir.path()).unwrap();
+        for dest in ["committed", "z-first", "a-second"] {
+            assert!(!dir.path().join(format!(".mars/{dest}/muse.md")).exists());
+            assert!(!recovered.contains_output(".mars", &format!("{dest}/muse.md")));
+        }
+        assert!(recovered.contains_output(".mars", "m-third/muse.md"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".mars/m-third/muse.md")).unwrap(),
+            "# m-third\n"
+        );
+        let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
+        sync(dir.path()).assert().success();
+        assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn recovery_journal_path_is_reserved_before_any_canonical_writes() {
+    for (kind, destination) in [
+        ("agent", "./pending-canonical.json"),
+        ("agent", "pending-canonical.json/child.md"),
+        ("skill", "./pending-canonical.json"),
+        ("bootstrap", "./BOOTSTRAP.md"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        dir.child("mars.toml").write_str(&format!("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{reserved='{destination}'}}\n")).unwrap();
+        dir.child("source/mars.toml")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .unwrap();
+        // Also ensure a preceding valid item cannot be partially installed.
+        dir.child("source/agents/a-first.md")
+            .write_str("# First\n")
+            .unwrap();
+        let path = match kind {
+            "agent" => "source/agents/reserved.md",
+            "skill" => "source/skills/reserved/SKILL.md",
+            _ => "source/bootstrap/reserved/BOOTSTRAP.md",
+        };
+        dir.child(path).write_str("# Reserved\n").unwrap();
+        dir.child(".mars/user-content.txt")
+            .write_str("user content\n")
+            .unwrap();
+        for dry in [true, false] {
+            let mut cmd = sync(dir.path());
+            if dry {
+                cmd.arg("--diff");
+            }
+            cmd.assert().failure();
+            assert!(!dir.path().join("mars.lock").exists());
+            assert!(!dir.path().join(INTENT).exists());
+            assert!(!dir.path().join(".mars/agents/a-first.md").exists());
+            assert_eq!(
+                fs::read_to_string(dir.path().join(".mars/user-content.txt")).unwrap(),
+                "user content\n"
+            );
+        }
+    }
 }

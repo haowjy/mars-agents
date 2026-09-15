@@ -59,12 +59,16 @@ succeeds would destroy diagnostic information if the run fails.
 
 `recovery.rs` writes versioned `.mars/pending-canonical.json` before applying new,
 absent canonical outputs. It binds exact expected checksums and provenance to the
-pre-write lock bytes. On retry, load validates regular paths (including ancestors)
+pre-write lock bytes. Intent is keyed by canonical destination, with current/planned
+versions per path, so repeated item moves retain every uncommitted output. The
+reader and writer share identity validation; the journal path is reserved before
+config/output writes, including dry runs. On retry, load validates regular paths (including ancestors)
 and recovers matching outputs into the in-memory lock before source selection.
 Changed content, symlinks, corrupt intent, and a replaced lock fail closed.
 
 On retry, intent retains the verified current version alongside any planned
-replacement until finalization publishes ownership. No early lock checkpoint:
+replacement until finalization publishes ownership. Prior canonical paths remain
+owned until confirmed removal; same-path deletion claims are replaced, not duplicated. No early lock checkpoint:
 failed repair must preserve even corrupt lock bytes. Finalization removes intent
 after lock publication. Dry-run and resolution failure never publish recovery.
 `--frozen` refuses uncommitted recovered claims even when output bytes need no

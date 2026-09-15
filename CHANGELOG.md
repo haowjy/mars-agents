@@ -5,12 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Confirmed interrupted installs replace same-path deletion claims without losing other outputs.
-- Recover interrupted canonical destination moves without losing old ownership or retaining removed-path claims.
-- Reject inconsistent recovery identities without dropping existing ownership; support dependency-renamed canonical paths.
-- Frozen sync refuses pending ownership recovery; complete it with ordinary sync first.
-- Keep corrupt lock evidence through repeated repair failures; retain current and planned canonical write intent until finalization.
-- Recover new canonical outputs after failed or interrupted sync using durable write intent. Refuse changed content and symlinks; preserve no-op lock mtimes.
+- Recover new canonical outputs after failed or interrupted sync using durable write intent. Repeated updates and destination moves retain ownership until finalization.
+- Preserve corrupt lock evidence through failed repair. Refuse changed outputs, links, malformed recovery identities, and frozen recovery; no-op lock mtimes stay unchanged.
+- Reserve the recovery journal path so custom destinations cannot overwrite or delete recovery evidence.
 - Keep flat `.mars-src` resources whose names resemble project output directories; exclusions follow the actual source root.
 - Flat self skills exclude native output trees including previously owned custom targets after configuration changes or when configured with absolute/dot-segment paths.
 - Document self-sync recovery and occupied-layer discovery, including nested fallback and the non-hidden output limitation.

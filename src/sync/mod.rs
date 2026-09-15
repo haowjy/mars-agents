@@ -816,6 +816,8 @@ pub(crate) fn apply_plan(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
+    recovery::validate_plan(&planned.plan)?;
+
     // Persist config/local only after validation gate and before apply.
     persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 

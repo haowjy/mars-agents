@@ -51,11 +51,17 @@ alongside that sweep.
 
 Canonical write intent is separate from installed/deletion authority.
 `sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound
-to the prior lock's bytes. It validates matching regular outputs into an
+to the prior lock's bytes. Journal entries are keyed by physical destination,
+not logical item; shared read/write validation checks each path and kind, and
+rejects overlap with the journal itself. It validates matching regular outputs into an
 in-memory lock; retry intent retains verified current bytes alongside planned
 replacement bytes until finalization. It does not checkpoint the lock early, so
 failed repair preserves corrupt lock evidence. No lock schema or `_self` identity
 change is required.
+During a destination move, recovery can retain multiple canonical paths for one
+logical item. `build()` excludes confirmed-removed canonical outputs from carried
+records, even when the selected new output is skipped. Same-path deletion claims
+are replaced by verified installation; native and other-path claims survive.
 Native/config transaction recovery remains tracked in #149.
 
 ### `LockIndex` is the read seam

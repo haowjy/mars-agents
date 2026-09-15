@@ -194,7 +194,10 @@ The lock file is written atomically via tmp+rename to prevent corruption from in
 
 Before writing new canonical outputs, sync records their expected checksums and
 source provenance in `.mars/pending-canonical.json` (journal version 1). It also
-records a checksum of the prior `mars.lock`, or its absence. The journal is
+records a checksum of the prior `mars.lock`, or its absence. Entries are keyed
+by canonical output path, with at most current/planned versions per path. The
+same identity validation runs before writing and after reading intent. A custom
+output cannot equal, contain, or fall beneath the journal path. The journal is
 write intent, not an installed ownership claim; `mars.lock` remains version 3.
 
 An apply error or process interruption can leave completed outputs without a
@@ -205,7 +208,11 @@ when interruption happened after lock publication but before journal cleanup.
 
 Recovery stays in memory until finalization. On retry, the journal retains the
 verified current version alongside any planned replacement, so another failure
-on either side of the write remains recoverable. The lock is not checkpointed
+on either side of the write remains recoverable. Repeated destination moves
+retain every unfinished output path, not just the most recent item name. Old
+canonical claims survive until removal is confirmed; finalized lock records
+exclude those removed paths even when the new path needs no rewrite. An installed
+recovery replaces same-path pending deletion without duplicating authority. The lock is not checkpointed
 early: failed repair still preserves corrupt lock bytes. Successful finalization
 removes the journal after writing the lock. Dry-run does not publish recovery; `--frozen` refuses pending ownership recovery
 until an ordinary sync publishes it. No-op sync creates no journal.

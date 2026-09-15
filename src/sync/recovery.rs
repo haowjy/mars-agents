@@ -6,7 +6,7 @@
 //! only at finalization, including when repair is preserving a corrupt lock.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -78,7 +78,8 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
             intent.version
         )));
     }
-    for versions in intent.items.values() {
+    let mut destinations = BTreeSet::new();
+    for (key, versions) in &intent.items {
         if versions.is_empty() || versions.len() > 2 {
             return Err(invalid("expected current and/or planned output version"));
         }
@@ -88,21 +89,29 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
                     "expected exactly one canonical output per intent item",
                 ));
             };
-            let prefix = match item.kind {
-                ItemKind::Agent => "agents/",
-                ItemKind::Skill => "skills/",
-                ItemKind::Hook => "hooks/",
-                ItemKind::McpServer => "mcp/",
-                ItemKind::BootstrapDoc => "bootstrap/",
+            let name = output.dest_path.item_name(item.kind);
+            let expected_key = if item.kind == ItemKind::Hook {
+                let Some((target, _)) = super::target::hook_target_dest_path(&output.dest_path)
+                else {
+                    return Err(invalid("invalid target-scoped hook destination"));
+                };
+                format!("hook/{name}@{target}")
+            } else {
+                format!("{}/{name}", item.kind)
             };
             if output.target_root != CANONICAL_TARGET_ROOT
-                || !output.dest_path.as_str().starts_with(prefix)
+                || key != &expected_key
+                || (item.kind == ItemKind::BootstrapDoc
+                    && !output.dest_path.as_str().ends_with("/BOOTSTRAP.md"))
                 || output.installed_checksum().is_none()
                 || item.kind != versions[0].kind
                 || output.dest_path != versions[0].outputs[0].dest_path
             {
                 return Err(invalid("invalid canonical write intent"));
             }
+        }
+        if !destinations.insert(versions[0].outputs[0].dest_path.clone()) {
+            return Err(invalid("duplicate canonical destination in write intent"));
         }
     }
     Ok(Some(intent))
@@ -163,6 +172,16 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         // cleanup. Already-published ownership takes precedence over old intent.
         if index.contains_installed_output(CANONICAL_TARGET_ROOT, &output.dest_path) {
             continue;
+        }
+        if old_lock.items.get(&key).is_some_and(|previous| {
+            previous.outputs.iter().any(|previous_output| {
+                previous_output.target_root == CANONICAL_TARGET_ROOT
+                    && previous_output.dest_path != output.dest_path
+            })
+        }) {
+            return Err(invalid(format!(
+                "item {key} already owns a different canonical destination"
+            )));
         }
         let path = output_path(root, item);
         if !output_exists(root, &path)? {

@@ -328,3 +328,65 @@ fn frozen_sync_does_not_publish_pending_ownership_even_when_bytes_are_complete()
     assert_eq!(fs::read(dir.path().join(INTENT)).unwrap(), intent);
     sync(dir.path()).assert().success();
 }
+
+#[test]
+fn malformed_intent_identity_cannot_replace_another_items_ownership() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
+    dir.child("agents/existing.md")
+        .write_str("# Existing\n")
+        .unwrap();
+    sync(dir.path()).assert().success();
+    let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
+    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    sync(dir.path()).assert().failure();
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.path().join(INTENT)).unwrap()).unwrap();
+    let items = journal["items"].as_object_mut().unwrap();
+    let muse = items.remove("agent/muse").unwrap();
+    items.insert("agent/existing".into(), muse);
+    let journal = serde_json::to_vec(&journal).unwrap();
+    fs::write(dir.path().join(INTENT), &journal).unwrap();
+    fs::remove_file(dir.path().join("agents/existing.md")).unwrap();
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().failure();
+    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), old_lock);
+    assert_eq!(fs::read(dir.path().join(INTENT)).unwrap(), journal);
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".mars/agents/existing.md")).unwrap(),
+        "# Existing\n"
+    );
+}
+
+#[test]
+fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml").write_str("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={muse='custom/muse.md'}\n").unwrap();
+    dir.child("source/mars.toml")
+        .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+        .unwrap();
+    dir.child("source/agents/muse.md")
+        .write_str("# Muse\n")
+        .unwrap();
+    dir.child(".mars-src/skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    sync(dir.path()).assert().failure();
+    assert!(dir.path().join(".mars/custom/muse.md").is_file());
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    assert!(
+        lock::load(dir.path())
+            .unwrap()
+            .contains_output(".mars", "custom/muse.md")
+    );
+}

@@ -592,14 +592,17 @@ pub(crate) fn build_target(
         if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
         {
-            diag.warn(
-                "unmanaged-collision",
-                format!(
-                    "local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                    item.discovered.id.kind, item.discovered.id.name, dest_path
+            return Err(MarsError::Source {
+                source_name: local_source_name.to_string(),
+                message: format!(
+                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; \
+                     relocate the destination and retry sync (even identical bytes and --force do not establish self ownership)",
+                    item.discovered.id.kind,
+                    item.discovered.id.name,
+                    item.disk_path().display(),
+                    disk_path.display(),
                 ),
-            );
-            continue;
+            });
         }
 
         target_state.items.insert(

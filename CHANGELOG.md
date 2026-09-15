@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Blocked self destinations fail before output writes, including identical bytes and `--force`. Unchanged-content source transitions refresh ownership without losing native output claims.
 - Declared packages sync their own agents and skills as Mars-native sources. `.mars-src` wins before staging; dependency renames stay intact. Flat-root skills keep resources without copying generated output trees.
 
 ## [0.13.1] - 2026-09-11

@@ -24,8 +24,8 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
             .args(flags)
             .assert()
             .failure()
-            .stderr(predicate::str::contains(".mars-src/agents/local.md"))
-            .stderr(predicate::str::contains(".mars/agents/local.md"))
+            .stderr(predicate::str::is_match(r"\.mars-src[/\\]agents[/\\]local\.md").unwrap())
+            .stderr(predicate::str::is_match(r"\.mars[/\\]agents[/\\]local\.md").unwrap())
             .stderr(predicate::str::contains("relocate"));
         assert_eq!(
             fs::read_to_string(dir.child(".mars/agents/local.md").path()).unwrap(),

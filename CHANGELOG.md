@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-16
+
 ### Changed
 - Prune test scaffolding, duplicate assertions and forwarding wrappers. Fix weak safety checks; isolate touched CLI fixtures. Keep ownership and recovery regressions.
 

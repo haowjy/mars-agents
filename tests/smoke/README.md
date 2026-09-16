@@ -48,7 +48,7 @@ For example:
 
 ```bash
 "$MARS_BIN" init
-"$MARS_BIN" models list --json
+"$MARS_BIN" agents list --json
 ```
 
 ## LLM Runner Rules

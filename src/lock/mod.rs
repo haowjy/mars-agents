@@ -1701,7 +1701,10 @@ installed_checksum = "sha256:bbb"
 
     #[test]
     fn roundtrip_lock_file() {
-        let lock = sample_lock();
+        let mut lock = sample_lock();
+        let mut nested = lock.dependencies["base"].clone();
+        nested.subpath = Some(crate::types::SourceSubpath::new(r"plugins\foo").unwrap());
+        lock.dependencies.insert("nested".into(), nested);
         let dir = TempDir::new().unwrap();
         write(dir.path(), &lock).unwrap();
         let reloaded = load(dir.path()).unwrap();

@@ -2923,29 +2923,6 @@ provider = "anthropic"
     }
 
     #[test]
-    fn model_alias_pinned_json_roundtrip_with_provider() {
-        let json = r#"{
-            "model": "gpt-5.3-codex",
-            "provider": "openai"
-        }"#;
-
-        let alias: ModelAlias = serde_json::from_str(json).unwrap();
-        assert_eq!(alias.harness, None);
-        assert_eq!(alias.description, None);
-        assert_eq!(
-            alias.spec,
-            ModelSpec::Pinned {
-                model: "gpt-5.3-codex".to_string(),
-                provider: Some("openai".to_string())
-            }
-        );
-
-        let encoded = serde_json::to_string(&alias).unwrap();
-        let roundtripped: ModelAlias = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(roundtripped, alias);
-    }
-
-    #[test]
     fn model_alias_auto_resolve_toml_roundtrip() {
         let toml_str = r#"
 [models.opus]

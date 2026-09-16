@@ -692,12 +692,6 @@ mod tests {
     }
 
     #[test]
-    fn source_subpath_accepts_plugins_foo() {
-        let subpath = SourceSubpath::new("plugins/foo").unwrap();
-        assert_eq!(subpath.as_str(), "plugins/foo");
-    }
-
-    #[test]
     fn source_subpath_serializes_with_forward_slashes() {
         #[derive(Debug, Serialize, Deserialize, PartialEq)]
         struct SubpathWrapper {
@@ -724,15 +718,6 @@ mod tests {
         let escaped = SourceSubpath(String::from("../escape"));
         let err = escaped.join_under(Path::new("/tmp/base")).unwrap_err();
         assert!(matches!(err, SourceSubpathError::Escaping { .. }));
-    }
-
-    // --- Additional edge cases ---
-
-    // Edge case 4: deeply nested path (5 levels)
-    #[test]
-    fn source_subpath_accepts_deeply_nested() {
-        let subpath = SourceSubpath::new("a/b/c/d/e").unwrap();
-        assert_eq!(subpath.as_str(), "a/b/c/d/e");
     }
 
     // Edge case 7: Windows drive letter with forward slash (C:/foo)
@@ -863,116 +848,6 @@ mod tests {
         assert_eq!(subpath.as_str(), "plugins/foo");
     }
 
-    // join_under: base path with trailing slash (PathBuf handles it consistently)
-    #[test]
-    fn source_subpath_join_under_base_with_trailing_slash() {
-        let base = PathBuf::from("/tmp/mars/");
-        let subpath = SourceSubpath::new("plugins/foo").unwrap();
-        let joined = subpath.join_under(&base).unwrap();
-        // PathBuf normalizes trailing slash — result should be /tmp/mars/plugins/foo
-        assert_eq!(joined, PathBuf::from("/tmp/mars/plugins/foo"));
-    }
-
-    // JSON serde round-trip: LockedSource without subpath → subpath = None
-    #[test]
-    fn locked_source_json_roundtrip_without_subpath() {
-        let json = r#"{"url":"https://github.com/org/base.git"}"#;
-        let parsed: crate::lock::LockedSource = serde_json::from_str(json).unwrap();
-        assert!(parsed.subpath.is_none());
-    }
-
-    // JSON serde round-trip: LockedSource with subpath serializes as forward-slash string
-    #[test]
-    fn locked_source_json_roundtrip_with_subpath() {
-        let source = crate::lock::LockedSource {
-            url: Some(SourceUrl::from("https://github.com/org/base.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
-            version: None,
-            commit: None,
-        };
-        let json = serde_json::to_string(&source).unwrap();
-        assert!(json.contains("\"subpath\":\"plugins/foo\""));
-        let reparsed: crate::lock::LockedSource = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            reparsed.subpath.as_ref().map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-    }
-
-    // Backward compat: old lock TOML with no subpath field deserializes with subpath = None (RES-013)
-    #[test]
-    fn locked_source_toml_missing_subpath_field_is_none() {
-        let toml_str = r#"
-version = 1
-
-[dependencies.dep]
-url = "https://github.com/org/dep.git"
-commit = "deadbeef"
-"#;
-        let lock: crate::lock::LockFile = toml::from_str(toml_str).unwrap();
-        assert!(lock.dependencies["dep"].subpath.is_none());
-    }
-
-    // RES-014: LockedSource with subpath serializes the subpath field alongside other fields
-    #[test]
-    fn locked_source_toml_subpath_serializes_alongside_other_fields() {
-        let source = crate::lock::LockedSource {
-            url: Some(SourceUrl::from("https://github.com/org/base.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
-            version: Some("v1.0.0".to_string()),
-            commit: Some(CommitHash::from("abc123")),
-        };
-        #[derive(Serialize)]
-        struct Wrapper {
-            source: crate::lock::LockedSource,
-        }
-        let serialized = toml::to_string(&Wrapper { source }).unwrap();
-        assert!(serialized.contains("subpath = \"plugins/foo\""));
-        assert!(serialized.contains("url = "));
-        assert!(serialized.contains("commit = "));
-    }
-
-    #[test]
-    fn lock_roundtrip_with_and_without_subpath() {
-        let old_lock = r#"
-version = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-"#;
-        let parsed_old: crate::lock::LockFile = toml::from_str(old_lock).unwrap();
-        assert!(parsed_old.dependencies["base"].subpath.is_none());
-
-        let lock = crate::lock::LockFile {
-            version: 1,
-            dependencies: indexmap::IndexMap::from([(
-                SourceName::from("base"),
-                crate::lock::LockedSource {
-                    url: Some(SourceUrl::from("https://github.com/org/base.git")),
-                    path: None,
-                    subpath: Some(SourceSubpath::new(r"plugins\foo").unwrap()),
-                    version: Some("v1.2.3".to_string()),
-                    commit: Some(CommitHash::from("abc123")),
-                },
-            )]),
-            items: indexmap::IndexMap::new(),
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: indexmap::IndexMap::new(),
-        };
-        let serialized = toml::to_string_pretty(&lock).unwrap();
-        assert!(serialized.contains("subpath = \"plugins/foo\""));
-        let reparsed: crate::lock::LockFile = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            reparsed.dependencies["base"]
-                .subpath
-                .as_ref()
-                .map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-    }
-
     #[test]
     fn config_roundtrip_preserves_subpath() {
         let config = r#"
@@ -998,54 +873,6 @@ subpath = "plugins\\foo"
                 .as_ref()
                 .map(SourceSubpath::as_str),
             Some("plugins/foo")
-        );
-    }
-
-    // ========== RES-001: lock file write + load round-trip via lock::write/load ==========
-
-    /// RES-001: A lock file written with lock::write and re-loaded with lock::load
-    /// must preserve the subpath field exactly. This exercises the full atomic
-    /// write path, not just toml::to_string.
-    #[test]
-    fn lock_write_and_load_roundtrip_preserves_subpath() {
-        use crate::lock::{LockFile, LockedSource};
-        use tempfile::TempDir;
-
-        let dir = TempDir::new().unwrap();
-        let lock = LockFile {
-            version: 1,
-            dependencies: indexmap::IndexMap::from([(
-                SourceName::from("dep"),
-                LockedSource {
-                    url: Some(SourceUrl::from("https://github.com/org/repo.git")),
-                    path: None,
-                    subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
-                    version: Some("v1.2.3".to_string()),
-                    commit: Some(CommitHash::from("deadbeef")),
-                },
-            )]),
-            items: indexmap::IndexMap::new(),
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: indexmap::IndexMap::new(),
-        };
-
-        crate::lock::write(dir.path(), &lock).unwrap();
-        let loaded = crate::lock::load(dir.path()).unwrap();
-
-        assert_eq!(
-            loaded.dependencies["dep"]
-                .subpath
-                .as_ref()
-                .map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-        assert_eq!(
-            loaded.dependencies["dep"].url.as_deref(),
-            Some("https://github.com/org/repo.git")
-        );
-        assert_eq!(
-            loaded.dependencies["dep"].version.as_deref(),
-            Some("v1.2.3")
         );
     }
 

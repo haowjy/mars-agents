@@ -1663,19 +1663,6 @@ harness_order = ["pi", "opencode", "codex"]
     }
 
     #[test]
-    fn load_from_disk() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-        let config = load(dir.path()).unwrap();
-        assert_eq!(config.dependencies.len(), 1);
-    }
-
-    #[test]
     fn load_migrates_legacy_bare_domain_url() {
         let dir = TempDir::new().unwrap();
         let toml_str = r#"
@@ -2448,33 +2435,6 @@ future_nested_key = true
     }
 
     #[test]
-    fn save_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let config = Config {
-            dependencies: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
-                        subpath: None,
-                        version: Some("v2.0".into()),
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                    },
-                );
-                m
-            },
-            settings: Settings::default(),
-            ..Config::default()
-        };
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(config, reloaded);
-    }
-
-    #[test]
     fn rename_map_preserved() {
         let toml_str = r#"
 [dependencies.base]
@@ -2503,24 +2463,6 @@ url = "https://github.com/org/base.git"
         assert!(
             err.contains("_self") && err.contains("reserved"),
             "should reject _self: {err}"
-        );
-    }
-
-    #[test]
-    fn managed_root_setting_roundtrip() {
-        let config = Config {
-            settings: Settings {
-                managed_root: Some(".claude".into()),
-                targets: None,
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let deserialized: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            deserialized.settings.managed_root.as_deref(),
-            Some(".claude")
         );
     }
 
@@ -2630,55 +2572,6 @@ only_agents = true
         let only_agents = &reloaded.dependencies["only_agents"].filter;
         assert!(only_agents.only_agents);
         assert!(!only_agents.only_skills);
-    }
-
-    #[test]
-    fn roundtrip_multiple_dependencies_with_distinct_filter_combos() {
-        let dir = TempDir::new().unwrap();
-        let original = r#"
-[dependencies.git-include]
-url = "https://github.com/org/git-include.git"
-agents = ["coder"]
-
-[dependencies.path-exclude]
-path = "../local-source"
-exclude = ["draft"]
-
-[dependencies.git-only-skills]
-url = "https://github.com/org/git-skills.git"
-only_skills = true
-
-[dependencies.git-only-agents]
-url = "https://github.com/org/git-agents.git"
-only_agents = true
-"#;
-        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-
-        assert_eq!(reloaded.dependencies.len(), 4);
-        assert_eq!(
-            reloaded.dependencies["git-include"]
-                .filter
-                .agents
-                .as_deref(),
-            Some(&["coder".into()][..])
-        );
-        assert_eq!(
-            reloaded.dependencies["path-exclude"].path.as_deref(),
-            Some(Path::new("../local-source"))
-        );
-        assert_eq!(
-            reloaded.dependencies["path-exclude"]
-                .filter
-                .exclude
-                .as_deref(),
-            Some(&["draft".into()][..])
-        );
-        assert!(reloaded.dependencies["git-only-skills"].filter.only_skills);
-        assert!(reloaded.dependencies["git-only-agents"].filter.only_agents);
     }
 
     #[test]

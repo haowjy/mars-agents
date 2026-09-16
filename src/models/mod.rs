@@ -1950,48 +1950,32 @@ mod tests {
     // -- glob_match tests --
 
     #[test]
-    fn glob_exact_match() {
-        assert!(glob_match("claude-opus-4", "claude-opus-4"));
-        assert!(!glob_match("claude-opus-4", "claude-opus-5"));
-    }
-
-    #[test]
-    fn glob_star_suffix() {
-        assert!(glob_match("claude-opus-*", "claude-opus-4"));
-        assert!(glob_match("claude-opus-*", "claude-opus-4-20250514"));
-        assert!(!glob_match("claude-opus-*", "claude-sonnet-4"));
-    }
-
-    #[test]
-    fn glob_star_prefix() {
-        assert!(glob_match("*-opus-4", "claude-opus-4"));
-        assert!(!glob_match("*-opus-4", "claude-opus-5"));
-    }
-
-    #[test]
-    fn glob_star_middle() {
-        assert!(glob_match("claude-*-4", "claude-opus-4"));
-        assert!(glob_match("claude-*-4", "claude-sonnet-4"));
-        assert!(!glob_match("claude-*-4", "claude-opus-5"));
-    }
-
-    #[test]
-    fn glob_multiple_stars() {
-        assert!(glob_match("*claude*opus*", "claude-opus-4"));
-        assert!(glob_match("*claude*opus*", "my-claude-opus-4-special"));
-        assert!(!glob_match("*claude*opus*", "claude-sonnet-4"));
-    }
-
-    #[test]
-    fn glob_star_only() {
-        assert!(glob_match("*", "anything"));
-        assert!(glob_match("*", ""));
-    }
-
-    #[test]
-    fn glob_empty_pattern() {
-        assert!(glob_match("", ""));
-        assert!(!glob_match("", "something"));
+    fn glob_match_boundaries() {
+        for (pattern, candidate, expected) in [
+            ("claude-opus-4", "claude-opus-4", true),
+            ("claude-opus-4", "claude-opus-5", false),
+            ("claude-opus-*", "claude-opus-4", true),
+            ("claude-opus-*", "claude-opus-4-20250514", true),
+            ("claude-opus-*", "claude-sonnet-4", false),
+            ("*-opus-4", "claude-opus-4", true),
+            ("*-opus-4", "claude-opus-5", false),
+            ("claude-*-4", "claude-opus-4", true),
+            ("claude-*-4", "claude-sonnet-4", true),
+            ("claude-*-4", "claude-opus-5", false),
+            ("*claude*opus*", "claude-opus-4", true),
+            ("*claude*opus*", "my-claude-opus-4-special", true),
+            ("*claude*opus*", "claude-sonnet-4", false),
+            ("*", "anything", true),
+            ("*", "", true),
+            ("", "", true),
+            ("", "something", false),
+        ] {
+            assert_eq!(
+                glob_match(pattern, candidate),
+                expected,
+                "{pattern:?} vs {candidate:?}"
+            );
+        }
     }
 
     // -- auto_resolve tests --

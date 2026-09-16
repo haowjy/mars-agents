@@ -2836,38 +2836,34 @@ only_skills = true
     // === managed_targets tests ===
 
     #[test]
-    fn managed_targets_defaults_to_no_target_sync_targets() {
-        let settings = Settings::default();
-        assert!(settings.managed_targets().is_empty());
-    }
-
-    #[test]
-    fn managed_targets_uses_explicit_targets() {
-        let settings = Settings {
-            targets: Some(vec![".claude".to_string()]),
-            ..Settings::default()
-        };
-        assert_eq!(settings.managed_targets(), vec![".claude"]);
-    }
-
-    #[test]
-    fn managed_targets_uses_managed_root_as_primary() {
-        let settings = Settings {
-            managed_root: Some(".claude".to_string()),
-            ..Settings::default()
-        };
-        assert_eq!(settings.managed_targets(), vec![".claude"]);
-    }
-
-    #[test]
-    fn managed_targets_explicit_overrides_links_and_managed_root() {
-        let settings = Settings {
-            managed_root: Some(".cursor".to_string()),
-            targets: Some(vec![".codex".to_string()]),
-            ..Settings::default()
-        };
-        // targets takes precedence over managed_root
-        assert_eq!(settings.managed_targets(), vec![".codex"]);
+    fn managed_targets_precedence() {
+        for (settings, expected) in [
+            (Settings::default(), vec![]),
+            (
+                Settings {
+                    targets: Some(vec![".claude".into()]),
+                    ..Settings::default()
+                },
+                vec![".claude"],
+            ),
+            (
+                Settings {
+                    managed_root: Some(".claude".into()),
+                    ..Settings::default()
+                },
+                vec![".claude"],
+            ),
+            (
+                Settings {
+                    managed_root: Some(".cursor".into()),
+                    targets: Some(vec![".codex".into()]),
+                    ..Settings::default()
+                },
+                vec![".codex"],
+            ),
+        ] {
+            assert_eq!(settings.managed_targets(), expected);
+        }
     }
 
     #[test]
@@ -2945,51 +2941,36 @@ only_skills = true
     }
 
     #[test]
-    fn settings_models_cache_ttl_defaults_to_24_when_omitted() {
-        let config: Config = toml::from_str(
-            r#"
-[dependencies.base]
+    fn settings_models_cache_ttl_parsing_and_defaults() {
+        for (toml, expected) in [
+            (
+                r#"[dependencies.base]
 url = "https://github.com/org/base.git"
 "#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.models_cache_ttl_hours, 24);
-    }
-
-    #[test]
-    fn settings_models_cache_ttl_defaults_to_24_when_settings_present_without_ttl() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
+                24,
+            ),
+            (
+                r#"[settings]
 managed_root = ".agents"
 "#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.models_cache_ttl_hours, 24);
-    }
-
-    #[test]
-    fn settings_models_cache_ttl_parses_zero() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
+                24,
+            ),
+            (
+                r#"[settings]
 models_cache_ttl_hours = 0
 "#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.models_cache_ttl_hours, 0);
-    }
-
-    #[test]
-    fn settings_models_cache_ttl_parses_custom_value() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
+                0,
+            ),
+            (
+                r#"[settings]
 models_cache_ttl_hours = 48
 "#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.models_cache_ttl_hours, 48);
+                48,
+            ),
+        ] {
+            let config: Config = toml::from_str(toml).unwrap();
+            assert_eq!(config.settings.models_cache_ttl_hours, expected, "{toml}");
+        }
     }
 
     #[test]
@@ -3010,48 +2991,27 @@ models_cache_ttl_hours = 48
     }
 
     #[test]
-    fn settings_agent_emission_parses_auto() {
+    fn settings_agent_emission_parsing_and_default() {
+        for (value, expected) in [
+            ("auto", AgentEmission::Auto),
+            ("always", AgentEmission::Always),
+            ("never", AgentEmission::Never),
+        ] {
+            let config: Config = toml::from_str(&format!(
+                "[settings]
+agent_emission = \"{value}\"
+"
+            ))
+            .unwrap();
+            assert_eq!(config.settings.agent_emission, Some(expected));
+        }
         let config: Config = toml::from_str(
-            r#"
-[settings]
-agent_emission = "auto"
-"#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.agent_emission, Some(AgentEmission::Auto));
-    }
-
-    #[test]
-    fn settings_agent_emission_parses_always_and_never() {
-        let always: Config = toml::from_str(
-            r#"
-[settings]
-agent_emission = "always"
-"#,
-        )
-        .unwrap();
-        assert_eq!(always.settings.agent_emission, Some(AgentEmission::Always));
-
-        let never: Config = toml::from_str(
-            r#"
-[settings]
-agent_emission = "never"
-"#,
-        )
-        .unwrap();
-        assert_eq!(never.settings.agent_emission, Some(AgentEmission::Never));
-    }
-
-    #[test]
-    fn settings_agent_emission_defaults_to_auto_when_omitted() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
+            "[settings]
 models_cache_ttl_hours = 48
-"#,
+",
         )
         .unwrap();
-        assert!(config.settings.agent_emission.is_none());
+        assert_eq!(config.settings.agent_emission, None);
     }
 
     #[test]

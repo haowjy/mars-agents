@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-16
+
 ### Added
 - Literal launch-model pins bypass aliases and preserve deliberate harness defaults; expose provider constraints for continuation replay.
 

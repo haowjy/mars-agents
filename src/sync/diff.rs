@@ -87,7 +87,14 @@ pub fn compute(
             match (source_changed, &local_changed) {
                 (false, None) => {
                     // Neither changed → skip
-                    if hash_path.exists() {
+                    if hash_path.exists() && target_item.source_name != locked_item.source {
+                        // Identical bytes can still transfer ownership. A write outcome
+                        // records the selected source and carries native claims forward.
+                        // Locally modified outputs still take LocalModified below.
+                        items.push(DiffEntry::Update {
+                            target: target_item.clone(),
+                        });
+                    } else if hash_path.exists() {
                         items.push(DiffEntry::Unchanged {
                             target: target_item.clone(),
                             locked: locked_item.clone(),

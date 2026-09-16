@@ -181,28 +181,15 @@ mod tests {
     }
 
     #[test]
-    fn provider_candidate_order_derives_from_default_harness_order() {
-        assert_eq!(
-            provider_candidate_order("openai"),
-            derive_provider_candidate_order(Some(HarnessId::Codex))
-        );
-        assert_eq!(
-            provider_candidate_order("anthropic"),
-            derive_provider_candidate_order(Some(HarnessId::Claude))
-        );
-        assert_eq!(
-            provider_candidate_order("unknown"),
-            derive_provider_candidate_order(None)
-        );
-        assert_eq!(
-            provider_candidate_order("google"),
-            DEFAULT_HARNESS_ORDER.to_vec()
-        );
-    }
-
-    #[test]
-    fn descriptor_cursor_is_first_class() {
-        let cursor = descriptor(HarnessId::Cursor);
-        assert_eq!(cursor.default_target, ".cursor");
+    fn provider_candidates_prefer_native_then_follow_default_order() {
+        use HarnessId::*;
+        for (provider, expected) in [
+            ("openai", vec![Codex, Claude, Pi, Cursor, OpenCode]),
+            ("anthropic", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            ("unknown", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            ("google", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+        ] {
+            assert_eq!(provider_candidate_order(provider), expected, "{provider}");
+        }
     }
 }

@@ -533,6 +533,7 @@ mod tests {
 
         let exit = run(&args, &ctx, true).unwrap();
         assert_eq!(exit, 0);
+        assert!(!repo.path().join("CHANGELOG.md").exists());
 
         let config = crate::config::load(repo.path()).unwrap();
         assert_eq!(config.package.unwrap().version, "0.1.1");
@@ -613,26 +614,6 @@ mod tests {
             .unwrap()
             .unreleased_was_empty
         );
-    }
-
-    #[test]
-    fn run_succeeds_without_changelog() {
-        let (repo, ctx) = init_repo_with_mars_toml(
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
-        );
-
-        let args = VersionArgs {
-            bump: "patch".to_string(),
-            push: false,
-            force: false,
-        };
-
-        let exit = run(&args, &ctx, true).unwrap();
-        assert_eq!(exit, 0);
-
-        let config = crate::config::load(repo.path()).unwrap();
-        assert_eq!(config.package.unwrap().version, "0.1.1");
-        assert!(!repo.path().join("CHANGELOG.md").exists());
     }
 
     #[test]

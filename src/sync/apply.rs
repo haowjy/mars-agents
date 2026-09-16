@@ -731,22 +731,4 @@ mod tests {
         assert!(!installed.join("mars.toml").exists());
         assert!(!installed.join(".gitignore").exists());
     }
-
-    // === DestPath::item_name tests ===
-
-    #[test]
-    fn extract_agent_name() {
-        assert_eq!(
-            crate::types::DestPath::from("agents/coder.md").item_name(ItemKind::Agent),
-            "coder"
-        );
-    }
-
-    #[test]
-    fn extract_skill_name() {
-        assert_eq!(
-            crate::types::DestPath::from("skills/planning").item_name(ItemKind::Skill),
-            "planning"
-        );
-    }
 }

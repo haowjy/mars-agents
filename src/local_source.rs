@@ -1,4 +1,4 @@
-//! Project-local source discovery rooted under `.mars-src/`.
+//! Self source selection: `.mars-src/` overrides the declared package.
 //!
 //! Local items intentionally use the same convention walk as dependency packages
 //! so nested `.mars-src/**/agents` and `.mars-src/**/skills` layouts follow the
@@ -6,8 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::diagnostic::DiagnosticCollector;
+use crate::dialect::Dialect;
 use crate::discover::{self, DiscoveredItem};
 use crate::error::MarsError;
+use crate::types::ItemKind;
 
 pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 
@@ -15,6 +18,7 @@ pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 pub struct LocalDiscoveredItem {
     pub discovered: DiscoveredItem,
     pub root: PathBuf,
+    pub dialect: Dialect,
 }
 
 impl LocalDiscoveredItem {
@@ -27,27 +31,91 @@ pub fn preferred_local_source_root(project_root: &Path) -> PathBuf {
     project_root.join(LOCAL_SOURCE_DIR)
 }
 
-pub fn local_discovery_roots(project_root: &Path) -> Vec<PathBuf> {
-    vec![preferred_local_source_root(project_root)]
-}
-
+/// Select self definitions before staging; dependency destination renames happen later.
 pub fn discover_local_items(
     project_root: &Path,
-    source_name: Option<&str>,
+    package_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
-    let mut merged = Vec::new();
+    let root = preferred_local_source_root(project_root);
+    let dialect = Dialect::resolve_local(None, &root);
+    let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"))?
+        .into_iter()
+        .map(|discovered| LocalDiscoveredItem {
+            discovered,
+            root: root.clone(),
+            dialect,
+        })
+        .collect();
 
-    for root in local_discovery_roots(project_root) {
-        let discovered = discover::discover_source(&root, source_name)?;
-        for item in discovered {
-            merged.push(LocalDiscoveredItem {
-                discovered: item,
-                root: root.clone(),
+    if let Some(name) = package_name {
+        for discovered in discover::discover_source(project_root, Some(name))? {
+            if !matches!(discovered.id.kind, ItemKind::Agent | ItemKind::Skill) {
+                continue;
+            }
+            if let Some(winner) = selected
+                .iter()
+                .find(|item| item.discovered.id == discovered.id)
+            {
+                diag.warn(
+                    "local-shadow",
+                    format!(
+                        "self {} `{}` at `{}` shadows package source `{}`",
+                        discovered.id.kind,
+                        discovered.id.name,
+                        winner.disk_path().display(),
+                        project_root.join(&discovered.source_path).display(),
+                    ),
+                );
+                continue;
+            }
+            selected.push(LocalDiscoveredItem {
+                discovered,
+                root: project_root.to_path_buf(),
+                dialect: Dialect::MarsNative,
             });
         }
     }
+    Ok(selected)
+}
 
-    Ok(merged)
+/// Resource exclusions for a flat self skill, relative to its source root.
+/// Existing outputs may use absolute paths, dot segments, or symlink aliases.
+pub(crate) fn flat_skill_excluded_paths(
+    project_root: &Path,
+    source_root: &Path,
+    targets: &[String],
+) -> Result<Vec<PathBuf>, MarsError> {
+    let mut excluded: Vec<_> = crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let source_root = dunce::canonicalize(source_root)?;
+    let project_root = dunce::canonicalize(project_root)?;
+    if source_root == project_root {
+        // These are project output/control roots, not reserved names inside
+        // an authored `.mars-src` resource tree.
+        excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
+        excluded.extend(
+            crate::harness::registry::all()
+                .iter()
+                .map(|h| PathBuf::from(h.default_target())),
+        );
+    }
+    for target in targets {
+        let path = std::path::absolute(project_root.join(target))?;
+        if let Ok(relative) = path.strip_prefix(&source_root) {
+            excluded.push(relative.to_path_buf());
+        }
+        // Missing targets have no resources to exclude yet. Resolve existing
+        // paths too so parent segments and aliases cannot hide generated trees.
+        if let Ok(real_path) = dunce::canonicalize(&path)
+            && let Ok(relative) = real_path.strip_prefix(&source_root)
+        {
+            excluded.push(relative.to_path_buf());
+        }
+    }
+    Ok(excluded)
 }
 
 #[cfg(test)]
@@ -67,7 +135,8 @@ mod tests {
         std::fs::write(agent_dir.join("local.md"), "# local").unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "# review").unwrap();
 
-        let items = discover_local_items(project_root, Some("_self")).unwrap();
+        let items =
+            discover_local_items(project_root, None, &mut DiagnosticCollector::new()).unwrap();
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| {
@@ -101,7 +170,8 @@ mod tests {
         std::fs::create_dir_all(&preferred).unwrap();
         std::fs::write(preferred.join("SKILL.md"), "# Preferred").unwrap();
 
-        let items = discover_local_items(project_root, Some("_self")).unwrap();
+        let items =
+            discover_local_items(project_root, None, &mut DiagnosticCollector::new()).unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].discovered.id.kind, ItemKind::Skill);

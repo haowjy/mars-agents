@@ -133,7 +133,7 @@ agent_emission = "always"
     std::fs::create_dir_all(project.path().join(".mars")).unwrap();
     std::fs::create_dir_all(project.path().join(".cursor")).unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args([
             "add",
             lossy_source.to_str().unwrap(),
@@ -142,7 +142,8 @@ agent_emission = "always"
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not())
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
 }
 
 #[test]

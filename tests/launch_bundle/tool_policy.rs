@@ -5,8 +5,8 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_passthrough()
-{
+#[test]
+fn build_launch_bundle_preserves_mixed_tool_allow_deny_and_harness_override_passthrough() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
@@ -92,7 +92,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload() {
+#[test]
+fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
@@ -125,7 +126,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
+#[test]
+fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
@@ -192,7 +194,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
+#[test]
+fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
@@ -253,7 +256,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_skill_deny_projects_without_unknown_warning() {
+#[test]
+fn build_launch_bundle_skill_deny_projects_without_unknown_warning() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
@@ -342,7 +346,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
+#[test]
+fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
     let agent_content = r#"---
@@ -409,7 +414,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_projects_mcp_refs_per_harness() {
+#[test]
+fn build_launch_bundle_projects_mcp_refs_per_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
@@ -474,7 +480,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_projects_disallowed_mcp_refs_per_harness() {
+#[test]
+fn build_launch_bundle_projects_disallowed_mcp_refs_per_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "codex"]);
     let agent_content = r#"---

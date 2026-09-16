@@ -168,7 +168,8 @@ mod tests {
 
     #[test]
     fn dir_size_nonexistent() {
-        assert_eq!(dir_size(std::path::Path::new("/nonexistent/path")), 0);
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(dir_size(&dir.path().join("absent")), 0);
     }
 
     #[test]
@@ -186,6 +187,7 @@ mod tests {
 
     #[test]
     fn remove_dir_contents_nonexistent_ok() {
-        assert!(remove_dir_contents(std::path::Path::new("/nonexistent")).is_ok());
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(remove_dir_contents(&dir.path().join("absent")).is_ok());
     }
 }

@@ -15,7 +15,7 @@ When developing agents and skills, you need fast iteration: edit source, see cha
       SKILL.md
 ```
 
-Items in `.mars-src/` are discovered automatically on every `mars sync` and installed into the managed root under the `_self` source name. `.mars-src/` uses the same convention walk as dependency packages, so nested non-hidden `agents/`, `skills/`, and `bootstrap/` folders are valid when they are in the grounded package layer. Edit a file and run `mars sync` to propagate changes.
+Items in `.mars-src/` are discovered automatically on every `mars sync` and installed into `.mars/` under the `_self` source name, then projected to configured targets. `.mars-src/` uses the same convention walk as dependency packages, so nested non-hidden `agents/`, `skills/`, and `bootstrap/` folders are valid when they are in the grounded package layer. Edit a file and run `mars sync` to propagate changes.
 
 > **`.mars-src/` vs `.mars/`**: `.mars-src/` is your editable, committed source — put your own agents and skills here. `.mars/` is a gitignored cache directory rebuilt by sync; never edit it directly.
 
@@ -166,7 +166,40 @@ name = "my-project-agents"
 version = "0.1.0"
 ```
 
-Source package contents can live in repo-root convention folders such as `agents/`, `skills/`, and `bootstrap/` for downstream consumers. For items you want the package project itself to sync as `_self`, put them in `.mars-src/`. See [`mars.toml`](../config/mars-toml.md#package-optional) for the full schema.
+A checkout declaring `[package]` syncs its own agents and skills into `.mars/`
+under `_self`, using Mars-native frontmatter. No self-dependency or source copies
+are needed. Run `mars sync`, then `mars agents show <name>` to inspect a canonical
+agent without launching it. `.mars-src` works independently of `[package]` and
+wins over matching package definitions. Self items replace only matching installed
+dependency names; explicit and collision-renamed dependency outputs still coexist.
+
+Discovery uses the same shallowest occupied convention layer as downstream
+packages. A nested distribution such as `cw/` is ignored while shallower items
+exist, but becomes eligible if all shallower convention items disappear. Empty
+folders do not pin a layer. Removing `[package]` disables package self discovery;
+`.mars-src` and dependencies remain eligible.
+
+A root `SKILL.md` uses the declared package name. Resources are preserved, excluding
+control files, staging, standard native roots, and configured or previously owned output trees. **Use hidden target paths**
+(e.g. `.codex`): a non-hidden target such as `out/native` can itself become a
+convention discovery input, suppressing a root `SKILL.md` on later syncs. Resource
+filtering does not change discovery. This layout limitation also applies to
+nested convention inputs; no distribution directory is permanently excluded.
+The output-discovery limitation is tracked in [issue #161](https://github.com/haowjy/mars-agents/issues/161).
+
+After an interrupted canonical install, ordinary sync recovers completed writes
+from `.mars/pending-canonical.json` when their bytes and the prior lock match.
+Keep that journal; no force or output relocation is needed for unchanged writes.
+Changed content or links are refused. See [write recovery](../internals/lock-file.md#interrupted-canonical-installs).
+
+If an unowned canonical destination without valid write intent blocks a selected self item, sync fails before
+output or lock changes. This includes identical bytes, symlinks, `--diff`,
+`--frozen`, and `--force`. Inspect and relocate the conflicting destination, then
+retry. Do not delete authored sources or remove the lock to recover. Native target
+collisions keep their existing warning/explicit-force adoption behavior; canonical
+self refusal does not broaden permission to replace unrelated target files.
+
+See [`mars.toml`](../config/mars-toml.md) for the full schema.
 
 ### Validating Before Publishing
 

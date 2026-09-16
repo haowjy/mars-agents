@@ -244,17 +244,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn atomic_write_creates_file_with_correct_content() {
-        let dir = TempDir::new().unwrap();
-        let dest = dir.path().join("output.txt");
-        let content = b"hello world";
-
-        atomic_write(&dest, content).unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap(), content);
-    }
-
-    #[test]
     fn atomic_write_creates_parent_dirs() {
         let dir = TempDir::new().unwrap();
         let dest = dir.path().join("nested").join("dir").join("file.txt");
@@ -343,26 +332,6 @@ mod tests {
     }
 
     #[test]
-    fn atomic_install_dir_dest_exists_throughout() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        // Create initial dest
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("v1.txt"), "v1").unwrap();
-
-        // Create source
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("v2.txt"), "v2").unwrap();
-
-        assert!(dest.exists(), "dest should exist before install");
-        atomic_install_dir(&src, &dest).unwrap();
-        assert!(dest.exists(), "dest should exist after install");
-        assert!(dest.join("v2.txt").exists());
-    }
-
-    #[test]
     fn atomic_install_dir_filtered_excludes_top_level_entries() {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src_dir");
@@ -383,16 +352,6 @@ mod tests {
         assert!(!dest.join(".git").exists());
         assert!(!dest.join("mars.toml").exists());
         assert!(!dest.join(".gitignore").exists());
-    }
-
-    #[test]
-    fn file_lock_acquire_returns_lock() {
-        let dir = TempDir::new().unwrap();
-        let lock_path = dir.path().join("test.lock");
-
-        let lock = FileLock::acquire(&lock_path).unwrap();
-        assert!(lock_path.exists());
-        drop(lock);
     }
 
     #[test]

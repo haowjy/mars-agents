@@ -326,7 +326,6 @@ fn format_item_names(items: &[ItemName]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::DependencyUpsertChange;
     use std::path::Path;
 
     #[test]
@@ -498,27 +497,5 @@ mod tests {
             }),
             "exclude=[legacy]"
         );
-    }
-
-    #[test]
-    fn detects_filter_change_for_message() {
-        let old_filter = FilterConfig {
-            agents: Some(vec!["reviewer".into()]),
-            ..FilterConfig::default()
-        };
-        let change = DependencyUpsertChange {
-            name: "ops".into(),
-            already_exists: true,
-            old_version: Some("v0.1.0".into()),
-            new_version: Some("v0.1.0".into()),
-            old_filter: Some(old_filter.clone()),
-            new_filter: FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            },
-        };
-        assert_ne!(change.old_filter.as_ref(), Some(&change.new_filter));
-        assert_eq!(format_filter(&old_filter), "agents=[reviewer]");
-        assert_eq!(format_filter(&change.new_filter), "only_skills=true");
     }
 }

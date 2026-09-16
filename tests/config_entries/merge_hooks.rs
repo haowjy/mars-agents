@@ -239,7 +239,8 @@ fn invalid_fragments_fail_preflight_without_mutation() {
             fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap(),
             "{\"sentinel\":true}"
         );
-        assert!(!project.child(".mars/hooks/bad").exists());
+        assert!(!project.child(".mars/hooks/claude/bad").exists());
+        assert!(!project.child("mars.lock").exists());
     }
 }
 

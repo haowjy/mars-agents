@@ -119,6 +119,7 @@ pub(crate) fn stage_canonical_source(
         skill_overrides,
         renames,
         fallback_skill_name,
+        &[],
         diag,
     )
 }
@@ -133,6 +134,7 @@ pub(crate) fn stage_local_item(
     staging_root: &Path,
     item_key: &str,
     skill_overlay_key: Option<&str>,
+    excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<PathBuf, MarsError> {
     let dest = staging_root
@@ -172,13 +174,16 @@ pub(crate) fn stage_local_item(
             Ok(dest_file)
         }
         ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => {
-            stage_canonical_source(
+            fs::create_dir_all(&dest)?;
+            copy_and_lift_tree(
                 source_path,
                 &dest,
+                source_path,
                 dialect,
                 skill_overrides,
                 &RenameMap::new(),
                 skill_overlay_key,
+                excluded_paths,
                 diag,
             )?;
             Ok(dest)
@@ -211,6 +216,7 @@ fn copy_and_lift_tree(
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
+    excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
@@ -227,6 +233,13 @@ fn copy_and_lift_tree(
                     src_path.display()
                 ),
             })?;
+        // Filter before descending: local flat skills contain their own staging tree.
+        if excluded_paths
+            .iter()
+            .any(|excluded| rel.starts_with(excluded))
+        {
+            continue;
+        }
         let dest_path = dest_root.join(rel);
         let file_type = entry.file_type()?;
 
@@ -240,6 +253,7 @@ fn copy_and_lift_tree(
                 skill_overrides,
                 renames,
                 fallback_skill_name,
+                excluded_paths,
                 diag,
             )?;
         } else if should_lift_markdown(&src_path) {
@@ -746,6 +760,7 @@ mod tests {
             &root.path().join("staging"),
             "skill:bad-allowed",
             Some("bad-allowed"),
+            &[],
             &mut diag,
         )
         .unwrap();
@@ -786,6 +801,7 @@ mod tests {
             &root.path().join("staging"),
             "skill:demo",
             Some("demo"),
+            &[],
             &mut diag,
         )
         .unwrap();
@@ -821,6 +837,7 @@ mod tests {
             &root.path().join("staging"),
             "skill:demo",
             Some("demo"),
+            &[],
             &mut diag,
         )
         .unwrap();

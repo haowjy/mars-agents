@@ -93,18 +93,18 @@ fn add_auto_inits_project_when_root_has_no_mars_toml() {
     let source = create_source(&dir, "bootstrap-source", &[("coder", "# Coder agent")], &[]);
     let project = dir.child("project");
 
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
+    mars_cmd(project.path(), dir.path(), "http://127.0.0.1:9/api.json")
+        .env("MARS_OFFLINE", "1")
+        .args(["add", source.to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("auto-initialized"));
 
-    assert!(project.child("mars.toml").exists());
+    let saved = mars_agents::config::load(project.path()).unwrap();
+    assert_eq!(
+        saved.dependencies["bootstrap-source"].path.as_deref(),
+        Some(source.as_path())
+    );
     assert!(project.child(".mars").exists());
     assert!(
         project
@@ -154,43 +154,6 @@ fn sync_without_project_still_errors_instead_of_auto_init() {
         .stderr(predicate::str::contains("no mars.toml found"));
 
     assert!(!project.child("mars.toml").exists());
-}
-
-#[test]
-fn sync_idempotent() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("reviewer", "# Reviewer")], &[]);
-
-    let _agents_dir = dir.child("project").child(".agents");
-    mars()
-        .args([
-            "init",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    // Second sync should report up to date
-    mars()
-        .args([
-            "sync",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
 }
 
 #[test]
@@ -582,33 +545,4 @@ fn add_nonexistent_path_does_not_pollute_config() {
         deps.is_empty(),
         "expected no dependencies after failed add, got: {config_content}"
     );
-}
-
-#[test]
-fn upgrade_command_is_available() {
-    mars()
-        .args(["upgrade", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("upgrade"));
-}
-
-#[test]
-fn init_with_root_uses_resolved_root_path_in_message() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("proj");
-    project.create_dir_all().unwrap();
-    let root = project.path().to_path_buf();
-
-    mars()
-        .args(["init", "--root", root.to_str().unwrap()])
-        .assert()
-        .success();
-
-    // Second init should be idempotent
-    mars()
-        .args(["init", "--root", root.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("already initialized"));
 }

@@ -415,6 +415,7 @@ fn file_fragment_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
         project
             .child(".opencode/plugins/mars-bad.ts")
             .assert(predicate::path::missing());
-        assert!(!project.child(".mars/hooks/bad").exists());
+        assert!(!project.child(".mars/hooks/opencode/bad").exists());
+        assert!(!project.child("mars.lock").exists());
     }
 }

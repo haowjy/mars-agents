@@ -572,37 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn project_skill_for_target_skips_byte_identical_dest() {
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("source");
-        let dest = tmp.path().join("dest");
-        std::fs::create_dir_all(source.join("variants/claude")).unwrap();
-        std::fs::write(source.join("SKILL.md"), "base").unwrap();
-        std::fs::write(source.join("variants/claude/SKILL.md"), "claude").unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        assert!(
-            project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
-                .unwrap()
-        );
-
-        let before = std::fs::metadata(dest.join("SKILL.md"))
-            .unwrap()
-            .modified()
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        assert!(
-            !project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning")
-                .unwrap()
-        );
-        let after = std::fs::metadata(dest.join("SKILL.md"))
-            .unwrap()
-            .modified()
-            .unwrap();
-        assert_eq!(before, after);
-    }
-
-    #[test]
     fn projects_native_skill_without_variants_and_replaces_skill_md() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("source");

@@ -4,6 +4,7 @@ pub mod filter;
 pub mod mutation;
 pub mod plan;
 pub mod provider;
+mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;
@@ -378,7 +379,7 @@ pub(crate) fn load_config(
     }
 
     // Load existing lock file, routing load diagnostics through sync diagnostics.
-    let (old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
+    let (mut old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
         Ok(loaded) => loaded,
         Err(MarsError::Lock(crate::error::LockError::Corrupt { message }))
             if request.recovery == RecoveryPolicy::Repair =>
@@ -392,6 +393,20 @@ pub(crate) fn load_config(
         Err(err) => return Err(err),
     };
     diag.extend(lock_diagnostics);
+    let recovered = recovery::recover(project_root, &mut old_lock)?;
+    if recovered > 0 && request.options.frozen {
+        return Err(MarsError::FrozenViolation {
+            message: "interrupted canonical writes require ownership recovery; run sync without --frozen first".into(),
+        });
+    }
+    if recovered > 0 {
+        diag.warn(
+            "sync-recovered",
+            format!(
+                "recovered ownership of {recovered} canonical outputs from an interrupted sync"
+            ),
+        );
+    }
 
     Ok(LoadedConfig {
         config,
@@ -516,21 +531,40 @@ pub(crate) fn build_target(
         if item.discovered.id.kind == ItemKind::Hook {
             continue;
         }
+        let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
+            && item.discovered.source_path == Path::new(".");
+        let excluded_paths =
+            if is_flat_skill {
+                let mut targets = resolved.loaded.effective.settings.managed_targets();
+                targets.extend(
+                    resolved.loaded.old_lock.items.values().flat_map(|item| {
+                        item.outputs.iter().map(|output| output.target_root.clone())
+                    }),
+                );
+                targets.sort();
+                targets.dedup();
+                crate::local_source::flat_skill_excluded_paths(
+                    &ctx.project_root,
+                    &item.disk_path(),
+                    &targets,
+                )?
+            } else {
+                Vec::new()
+            };
         let staging_root = ctx.project_root.join(".mars/staging");
         let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
         let staged_path = crate::staging::stage_local_item(
             &item.disk_path(),
             item.discovered.id.kind,
-            crate::dialect::Dialect::resolve_local(None, &item.root),
+            item.dialect,
             &resolved.loaded.effective.skills,
             &staging_root,
             &item_key,
             (item.discovered.id.kind == ItemKind::Skill).then(|| item.discovered.id.name.as_str()),
+            &excluded_paths,
             diag,
         )?;
         let source_path = staged_path;
-        let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
-            && item.discovered.source_path == Path::new(".");
         let source_hash = if is_flat_skill {
             ContentHash::from(hash::compute_skill_hash_filtered(
                 &source_path,
@@ -573,14 +607,17 @@ pub(crate) fn build_target(
         if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
         {
-            diag.warn(
-                "unmanaged-collision",
-                format!(
-                    "local {} `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                    item.discovered.id.kind, item.discovered.id.name, dest_path
+            return Err(MarsError::Source {
+                source_name: local_source_name.to_string(),
+                message: format!(
+                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; \
+                     relocate the destination and retry sync (even identical bytes and --force do not establish self ownership)",
+                    item.discovered.id.kind,
+                    item.discovered.id.name,
+                    item.disk_path().display(),
+                    disk_path.display(),
                 ),
-            );
-            continue;
+            });
         }
 
         target_state.items.insert(
@@ -779,12 +816,22 @@ pub(crate) fn apply_plan(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
+    recovery::validate_plan(&planned.plan)?;
+
     // Persist config/local only after validation gate and before apply.
     persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 
     // Apply plan to .mars/ canonical store (D25).
     // Content is written to .mars/agents/ and .mars/skills/, then
     // sync_targets() copies to all managed target directories.
+    if !request.options.dry_run {
+        recovery::prepare(
+            project_root,
+            &planned.plan,
+            &planned.targeted.resolved.graph,
+            &planned.targeted.resolved.loaded.old_lock,
+        )?;
+    }
     let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
@@ -1023,6 +1070,7 @@ pub(crate) fn finalize(
         {
             diag.warn("native-agent-manifest-write", warning);
         }
+        recovery::complete(project_root)?;
 
         // Best-effort models cache refresh: ensure the catalog covers any
         // new aliases we're about to persist. Sync never aborts on refresh

@@ -5,7 +5,8 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_accepts_cursor_harness_flag() {
+#[test]
+fn build_launch_bundle_accepts_cursor_harness_flag() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
@@ -38,7 +39,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_accepts_profile_cursor_harness() {
+#[test]
+fn build_launch_bundle_accepts_profile_cursor_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
@@ -69,7 +71,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only() {
+#[test]
+fn build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
     let agent_content = r#"---
@@ -103,7 +106,7 @@ Review code changes."#;
     let root_skill = "---\nname: root_skill\ndescription: Root\n---\nRoot skill content.";
     let opencode_skill =
         "---\nname: opencode_skill\ndescription: OpenCode\n---\nOpenCode skill content.";
-    let cursor_skill = "---\nname: cursor_skill\ndescription: Cursor\n---\nRoot skill content.";
+    let cursor_skill = "---\nname: cursor_skill\ndescription: Cursor\n---\nCursor skill content.";
 
     let extra_toml = r#"[models.cursoralias]
 model = "claude-opus-4-6"

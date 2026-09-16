@@ -68,26 +68,3 @@ pub fn list_versions(
 ) -> Result<Vec<AvailableVersion>, MarsError> {
     git::list_versions(url.as_ref(), cache)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn global_cache_creates_directory() {
-        let cache = GlobalCache::new().unwrap();
-        assert!(cache.root.exists());
-        let expected_root = global_cache_root().unwrap();
-        assert_eq!(cache.root, expected_root);
-        assert!(cache.archives_dir().exists());
-        assert!(cache.git_dir().exists());
-    }
-
-    #[test]
-    fn global_cache_idempotent() {
-        let cache1 = GlobalCache::new().unwrap();
-        let cache2 = GlobalCache::new().unwrap();
-        assert_eq!(cache1.root, cache2.root);
-        assert!(cache1.root.exists());
-    }
-}

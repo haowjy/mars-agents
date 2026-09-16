@@ -1,0 +1,14 @@
+# Test architecture follow-ups
+
+- `tests/release_metadata.rs`: label/version/tag-recovery tests still mirror shell
+  spelling and comments. When release logic gains an executable script seam,
+  replace these checks with temporary-repository decision tests; retain release
+  safety coverage until then. Windows command checks are now scoped to its job.
+- `tests/launch_bundle/routing.rs`: loosen full warning/error sentences in the
+  three unavailable/profile-harness pivot cases and four Cursor effort error
+  cases. Preserve selected model/harness/provenance, exit code, diagnostic
+  subjects/remediation and negative misclassification checks. Do not merge
+  distinct routing failures merely to reduce test count.
+- Broader suite isolation (library and process tests): GitHub #167. Unknown
+  skill-variant harness validation warning: #166; removing its ignored test did
+  not implement that behavior.

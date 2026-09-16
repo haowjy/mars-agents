@@ -562,24 +562,6 @@ mod content_tests {
     }
 
     #[test]
-    fn directory_trees_content_equal_identical_regular_file_trees_still_equal() {
-        let dir = TempDir::new().expect("temp dir");
-        let left = dir.path().join("left");
-        let right = dir.path().join("right");
-        fs::create_dir_all(left.join("nested")).expect("create left nested");
-        fs::create_dir_all(right.join("nested")).expect("create right nested");
-        fs::write(left.join("root.txt"), "root").expect("write left root");
-        fs::write(left.join("nested/child.txt"), "child").expect("write left child");
-        fs::write(right.join("root.txt"), "root").expect("write right root");
-        fs::write(right.join("nested/child.txt"), "child").expect("write right child");
-
-        assert!(
-            directory_trees_content_equal(&left, &right).expect("compare identical trees"),
-            "identical all-regular-file trees must still compare equal"
-        );
-    }
-
-    #[test]
     fn atomic_copy_file_copies_regular_file() {
         let dir = TempDir::new().expect("temp dir");
         let source = dir.path().join("source.txt");

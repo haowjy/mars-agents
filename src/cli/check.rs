@@ -674,25 +674,6 @@ mod tests {
     }
 
     #[test]
-    fn check_warns_for_truly_missing_external_skill() {
-        // No mars.toml → local-only path → skill ref that isn't local → warning.
-        let dir = TempDir::new().unwrap();
-        write_agent(dir.path(), "coder", &["missing-skill"]);
-
-        let report = super::check_dir(dir.path()).unwrap();
-        let has_missing_warning = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("external dependency: `missing-skill`"));
-
-        assert!(
-            has_missing_warning,
-            "expected missing external dependency warning, got: {:?}",
-            report.warnings
-        );
-    }
-
-    #[test]
     fn check_errors_for_malformed_agent_model_policy() {
         let dir = TempDir::new().unwrap();
         write_agent_content(

@@ -5,7 +5,8 @@ use super::common::{
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 
-pub(crate) fn build_launch_bundle_fails_on_unknown_agent_harness() {
+#[test]
+fn build_launch_bundle_fails_on_unknown_agent_harness() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -25,7 +26,8 @@ Review code changes."#;
         .stderr(predicates::str::contains("unknown harness"));
 }
 
-pub(crate) fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
+#[test]
+fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -45,7 +47,8 @@ Review code changes."#;
         .stderr(predicates::str::contains("model-invocable"));
 }
 
-pub(crate) fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
+#[test]
+fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
@@ -71,7 +74,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {
+#[test]
+fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---
 name: reviewer
@@ -104,7 +108,8 @@ Broken inventory entry."#;
         .stderr(predicates::str::contains("inventory file"));
 }
 
-pub(crate) fn build_launch_bundle_fails_when_agent_file_missing() {
+#[test]
+fn build_launch_bundle_fails_when_agent_file_missing() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer

@@ -65,24 +65,25 @@ pub fn assert_prompt_surface_excludes(bundle: &Value, needles: &[&str]) {
             "system_instruction",
             prompt_surface["system_instruction"]
                 .as_str()
-                .unwrap_or_default(),
+                .expect("prompt surface must contain string fields"),
         ),
         (
             "inventory_prompt",
             prompt_surface["inventory_prompt"]
                 .as_str()
-                .unwrap_or_default(),
+                .expect("prompt surface must contain string fields"),
         ),
     ];
 
-    let empty_docs = Vec::new();
     let docs = prompt_surface["supplemental_documents"]
         .as_array()
-        .unwrap_or(&empty_docs);
+        .expect("supplemental_documents must be an array");
     for doc in docs {
         surfaces.push((
             "supplemental_documents.content",
-            doc["content"].as_str().unwrap_or_default(),
+            doc["content"]
+                .as_str()
+                .expect("prompt surface must contain string fields"),
         ));
     }
 

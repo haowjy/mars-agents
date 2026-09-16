@@ -76,14 +76,24 @@ fn npm_launcher_routes_windows_to_exe_package() {
 
 #[test]
 fn ci_workflow_runs_windows_build_test_clippy_and_fmt() {
-    let workflow = read(".github/workflows/ci.yml");
-
-    assert!(workflow.contains("check-windows:"));
-    assert!(workflow.contains("runs-on: windows-latest"));
-    assert!(workflow.contains("cargo build"));
-    assert!(workflow.contains("cargo test"));
-    assert!(workflow.contains("cargo clippy -- -D warnings"));
-    assert!(workflow.contains("cargo fmt --check"));
+    let workflow: serde_yaml::Value =
+        serde_yaml::from_str(&read(".github/workflows/ci.yml")).unwrap();
+    let windows = &workflow["jobs"]["check-windows"];
+    assert_eq!(windows["runs-on"].as_str(), Some("windows-latest"));
+    let steps = windows["steps"].as_sequence().expect("Windows job steps");
+    for command in [
+        "cargo build",
+        "cargo test",
+        "cargo clippy -- -D warnings",
+        "cargo fmt --check",
+    ] {
+        assert!(
+            steps
+                .iter()
+                .any(|step| step["run"].as_str() == Some(command)),
+            "Windows job must run {command}"
+        );
+    }
 }
 
 #[test]

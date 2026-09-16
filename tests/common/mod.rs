@@ -69,6 +69,19 @@ pub fn mars() -> Command {
     Command::cargo_bin("mars").unwrap()
 }
 
+/// Offline CLI fixture; all writable environment state stays under this test root.
+/// `.mars` keeps fixture state out of declared-package source discovery/staging.
+pub fn offline_mars(root: &Path) -> Command {
+    let mut cmd = mars();
+    configure_assert_cmd(
+        &mut cmd,
+        &root.join(".mars/test-env"),
+        "http://127.0.0.1:9/api.json",
+    );
+    cmd.env("MARS_OFFLINE", "1").env("PATH", "");
+    cmd
+}
+
 /// Render a path with separators that are safe in TOML/JSON string fixtures
 /// and accepted by Windows as well as POSIX.
 pub fn portable_path(path: &Path) -> String {
@@ -93,7 +106,7 @@ pub fn setup_synced_project(
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
@@ -248,6 +261,9 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
 
     cmd.env("MARS_MODELS_API_URL", api_url)
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("APPDATA", &xdg_config)
+        .env("LOCALAPPDATA", &xdg_data)
         .env("XDG_CONFIG_HOME", &xdg_config)
         .env("XDG_DATA_HOME", &xdg_data)
         .env("MARS_CACHE_DIR", &mars_cache)
@@ -268,6 +284,9 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
 
     cmd.env("MARS_MODELS_API_URL", api_url)
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("APPDATA", &xdg_config)
+        .env("LOCALAPPDATA", &xdg_data)
         .env("XDG_CONFIG_HOME", &xdg_config)
         .env("XDG_DATA_HOME", &xdg_data)
         .env("MARS_CACHE_DIR", &mars_cache)

@@ -49,10 +49,22 @@ asserting ghost content and leaves legacy config-entry records available to the
 #130 hook sweep. Delete the v2 promotion after the release following lock v3,
 alongside that sweep.
 
-Interrupted-write recovery is not represented here. Publishing intent before
-materialization would add a second lock write, transaction ordering, and
-fault-injection recovery semantics. That is a separate pipeline transaction
-design rather than another meaning needed by the current ownership record.
+Canonical write intent is separate from installed/deletion authority.
+`sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound
+to the prior lock's bytes. Journal entries are keyed by physical destination,
+not logical item; shared read/write validation checks each path and kind, and
+rejects overlap with the journal itself. It validates matching regular outputs into an
+in-memory lock; retry intent retains verified current bytes alongside planned
+replacement bytes until finalization. It does not checkpoint the lock early, so
+failed repair preserves corrupt lock evidence. No lock schema or `_self` identity
+change is required.
+During a destination move, recovery can retain multiple canonical paths for one
+logical item. Final lock construction and the temporary native-emission view
+share physical-path removal after carry-forward/upserts. Removing an obsolete
+path must not erase a surviving canonical/native record for the logical item,
+and skipped outputs must not resurrect removed paths. Same-path deletion claims
+are replaced by verified installation; native and other-path claims survive.
+Native/config transaction recovery remains tracked in #149.
 
 ### `LockIndex` is the read seam
 

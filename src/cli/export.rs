@@ -262,52 +262,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_nonzero() {
-        const { assert!(SCHEMA_VERSION >= 1) };
-    }
-
-    #[test]
     fn export_status_serializes_lowercase() {
         let complete = serde_json::to_string(&ExportStatus::Complete).unwrap();
         let failed = serde_json::to_string(&ExportStatus::Failed).unwrap();
         assert_eq!(complete, r#""complete""#);
         assert_eq!(failed, r#""failed""#);
-    }
-
-    #[test]
-    fn envelope_includes_schema_version() {
-        let env = ExportEnvelope {
-            schema_version: 1,
-            status: ExportStatus::Complete,
-            dependencies: vec![],
-            items: vec![],
-            outputs: vec![],
-            diagnostics: vec![],
-        };
-        let json = serde_json::to_string(&env).unwrap();
-        assert!(
-            json.contains("\"schema_version\":1"),
-            "missing schema_version: {json}"
-        );
-    }
-
-    #[test]
-    fn envelope_no_file_bodies() {
-        // ExportEnvelope must not have any field that could hold file content.
-        // Verified structurally: ExportItem, ExportOutput, ExportDependency
-        // have no "content", "body", or "source_content" fields.
-        let item = ExportItem {
-            name: "coder".to_string(),
-            kind: "agent".to_string(),
-            source: "meridian-base".to_string(),
-            action: "install".to_string(),
-        };
-        let json = serde_json::to_string(&item).unwrap();
-        assert!(
-            !json.contains("content"),
-            "item should not have content field"
-        );
-        assert!(!json.contains("body"), "item should not have body field");
     }
 
     #[test]

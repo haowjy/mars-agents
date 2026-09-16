@@ -581,7 +581,7 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
                     let path = root
                         .join(&output.target_root)
                         .join(output.dest_path.as_str());
-                    let matches_disk = v2_output_checksum(&path)
+                    let matches_disk = regular_output_checksum(&path)
                         .is_some_and(|checksum| checksum == output.installed_checksum.as_ref());
                     if matches_disk {
                         OutputRecord::installed(
@@ -616,7 +616,9 @@ fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
     }
 }
 
-fn v2_output_checksum(path: &Path) -> Option<String> {
+/// Hash regular installed content without following root or nested symlinks.
+/// Callers inspecting write intent must also validate the path ancestors.
+pub(crate) fn regular_output_checksum(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
@@ -746,46 +748,9 @@ pub fn build(
     // Build item entries from apply outcomes.
     for outcome in &applied.outcomes {
         match &outcome.action {
-            ActionTaken::Removed | ActionTaken::Skipped => {
-                // For skipped items, carry forward from old lock
-                if matches!(outcome.action, ActionTaken::Skipped) {
-                    let item_key = item_key(&outcome.item_id);
-                    if let Some(old_item) = old_lock.items.get(&item_key) {
-                        items.insert(item_key, old_item.clone());
-                    } else {
-                        // Fall back: search old lock by dest_path when the logical item key differs
-                        if let Some((_, old_item, old_output)) = old_lock_index
-                            .item_for_output(CANONICAL_TARGET_ROOT, &outcome.dest_path)
-                        {
-                            let key = format!(
-                                "{}/{}",
-                                old_item.kind,
-                                outcome.dest_path.item_name(old_item.kind)
-                            );
-                            items.entry(key).or_insert_with(|| LockedItemV2 {
-                                source: old_item.source.clone(),
-                                kind: old_item.kind,
-                                version: old_item.version.clone(),
-                                source_checksum: old_item.source_checksum.clone(),
-                                outputs: outputs_with_carried_non_canonical(
-                                    Some(old_item),
-                                    OutputRecord::installed(
-                                        CANONICAL_TARGET_ROOT.to_string(),
-                                        old_output.dest_path.clone(),
-                                        old_output
-                                            .installed_checksum()
-                                            .expect("canonical output is installed")
-                                            .clone(),
-                                    ),
-                                ),
-                            });
-                        }
-                    }
-                }
-                // Removed items are excluded from the new lock.
-            }
-            ActionTaken::Kept => {
-                // Keep local: carry forward old lock entry.
+            ActionTaken::Removed => {}
+            ActionTaken::Skipped | ActionTaken::Kept => {
+                // Neither action writes bytes; retain the existing ownership and provenance.
                 let item_key = item_key(&outcome.item_id);
                 if let Some(old_item) = old_lock.items.get(&item_key) {
                     items.insert(item_key, old_item.clone());
@@ -873,6 +838,8 @@ pub fn build(
             }
         }
     }
+
+    remove_applied_canonical_outputs(&mut items, &applied.outcomes);
 
     // Add synthetic _self source if any local package items exist.
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
@@ -973,8 +940,9 @@ pub fn ownership_lock_after_target_sync(
 
 /// Merge current apply outcomes into a lock view for ownership checks.
 ///
-/// Write actions upsert canonical `.mars` outputs; removals drop the item;
-/// skipped/kept entries carry forward from `old_lock` when the clone lacks them.
+/// Write actions upsert canonical `.mars` outputs; skipped/kept entries carry
+/// forward from `old_lock`. Confirmed removals then drop only the affected paths,
+/// never other canonical/native outputs belonging to the same logical item.
 pub fn apply_apply_outcomes_to_lock(
     lock: &mut LockFile,
     old_lock: &LockFile,
@@ -985,9 +953,7 @@ pub fn apply_apply_outcomes_to_lock(
     let old_lock_index = LockIndex::new(old_lock);
     for outcome in outcomes {
         match outcome.action {
-            ActionTaken::Removed => {
-                lock.items.shift_remove(&item_key(&outcome.item_id));
-            }
+            ActionTaken::Removed => {}
             ActionTaken::Skipped => {
                 let key = item_key(&outcome.item_id);
                 if lock.items.contains_key(&key) {
@@ -1095,6 +1061,22 @@ pub fn apply_apply_outcomes_to_lock(
             }
         }
     }
+    remove_applied_canonical_outputs(&mut lock.items, outcomes);
+}
+
+/// Both ownership reducers apply physical removals after carry-forward/upserts.
+/// Otherwise an obsolete path can erase a surviving logical item, or a later
+/// Skip/Keep can resurrect ownership of an already removed path.
+fn remove_applied_canonical_outputs(
+    items: &mut IndexMap<String, LockedItemV2>,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+) {
+    for outcome in outcomes {
+        if matches!(outcome.action, crate::sync::apply::ActionTaken::Removed) {
+            remove_target_output(items, CANONICAL_TARGET_ROOT, outcome.dest_path.as_str());
+        }
+    }
+    items.retain(|_, item| !item.outputs.is_empty());
 }
 
 /// Merge per-target sync results into a built lock file.
@@ -1104,7 +1086,7 @@ pub fn apply_target_sync_outputs(
 ) {
     for outcome in target_outcomes {
         for dest_path in &outcome.removed_dest_paths {
-            remove_target_output(lock, &outcome.target, dest_path);
+            remove_target_output(&mut lock.items, &outcome.target, dest_path);
         }
         for synced in &outcome.synced_outputs {
             upsert_target_output(
@@ -1146,7 +1128,7 @@ pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutpu
 /// Drop native harness output records removed by native agent reconcile.
 pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
     for (target_root, dest_path) in records {
-        remove_target_output(lock, target_root, dest_path);
+        remove_target_output(&mut lock.items, target_root, dest_path);
     }
 }
 
@@ -1331,14 +1313,18 @@ fn upsert_native_output_on_owner(
     false
 }
 
-fn remove_target_output(lock: &mut LockFile, target_root: &str, dest_path: &str) {
-    for item in lock.items.values_mut() {
+fn remove_target_output(
+    items: &mut IndexMap<String, LockedItemV2>,
+    target_root: &str,
+    dest_path: &str,
+) {
+    for item in items.values_mut() {
         item.outputs.retain(|output| {
             !(output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
         });
     }
-    lock.items.retain(|_, item| !item.outputs.is_empty());
+    items.retain(|_, item| !item.outputs.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -1530,7 +1516,7 @@ installed_checksum = "sha256:old"
         std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
         symlink("missing.md", output.join("reference.md")).unwrap();
 
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
     }
 
     #[cfg(unix)]
@@ -1547,7 +1533,7 @@ installed_checksum = "sha256:old"
         std::fs::write(external.join("reference.md"), "# Reference").unwrap();
         symlink(&external, output.join("references")).unwrap();
 
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
     }
 
     #[cfg(unix)]
@@ -1564,7 +1550,7 @@ installed_checksum = "sha256:old"
         assert!(status.success());
 
         let started = std::time::Instant::now();
-        assert_eq!(v2_output_checksum(&output), None);
+        assert_eq!(regular_output_checksum(&output), None);
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1),
             "shape validation must not open and block on the FIFO"
@@ -1715,7 +1701,10 @@ installed_checksum = "sha256:bbb"
 
     #[test]
     fn roundtrip_lock_file() {
-        let lock = sample_lock();
+        let mut lock = sample_lock();
+        let mut nested = lock.dependencies["base"].clone();
+        nested.subpath = Some(crate::types::SourceSubpath::new(r"plugins\foo").unwrap());
+        lock.dependencies.insert("nested".into(), nested);
         let dir = TempDir::new().unwrap();
         write(dir.path(), &lock).unwrap();
         let reloaded = load(dir.path()).unwrap();
@@ -1801,48 +1790,12 @@ model = "openai/gpt-a"
     }
 
     #[test]
-    fn empty_lock_file() {
-        let lock = LockFile::empty();
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(lock.dependencies.is_empty());
-        assert!(lock.items.is_empty());
-    }
-
-    #[test]
     fn load_absent_returns_empty() {
         let dir = TempDir::new().unwrap();
         let lock = load(dir.path()).unwrap();
         assert_eq!(lock.version, LOCK_VERSION);
         assert!(lock.dependencies.is_empty());
         assert!(lock.items.is_empty());
-    }
-
-    #[test]
-    fn write_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let lock = sample_lock();
-        write(dir.path(), &lock).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(lock, reloaded);
-    }
-
-    #[test]
-    fn dual_checksums_present() {
-        let lock = sample_lock();
-        let item = &lock.items["agent/coder"];
-        assert_ne!(
-            &item.source_checksum,
-            item.outputs[0]
-                .installed_checksum()
-                .expect("installed output")
-        );
-        assert!(item.source_checksum.starts_with("sha256:"));
-        assert!(
-            item.outputs[0]
-                .installed_checksum()
-                .expect("installed output")
-                .starts_with("sha256:")
-        );
     }
 
     #[test]

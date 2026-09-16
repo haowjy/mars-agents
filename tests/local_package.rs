@@ -230,7 +230,10 @@ fn sync_prefers_mars_src_local_items_over_repo_root() {
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
+        .stderr(
+            predicate::str::contains("local-shadow")
+                .or(predicate::str::contains("shadows package source")),
+        );
 
     assert_eq!(
         fs::read_to_string(
@@ -425,43 +428,4 @@ fn sync_reads_mars_src_local_items_without_package_section() {
     let lock_content = fs::read_to_string(project.child("mars.lock").path()).unwrap();
     assert!(lock_content.contains("[dependencies._self]"));
     assert!(lock_content.contains("[items.\"skill/local-only\"]"));
-}
-
-#[test]
-fn sync_ignores_repo_root_local_items_with_package_section() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-
-    mars()
-        .args(["init", "--root", project.path().to_str().unwrap()])
-        .assert()
-        .success();
-    fs::write(
-        project.child("mars.toml").path(),
-        "[dependencies]\n\n[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
-    )
-    .unwrap();
-
-    let legacy_skill = project.child("skills").child("legacy-only");
-    legacy_skill.create_dir_all().unwrap();
-    legacy_skill
-        .child("SKILL.md")
-        .write_str("# Legacy only")
-        .unwrap();
-
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
-
-    assert!(
-        !project
-            .child(".agents")
-            .child("skills")
-            .child("legacy-only")
-            .child("SKILL.md")
-            .exists()
-    );
 }

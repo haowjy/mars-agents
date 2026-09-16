@@ -19,6 +19,19 @@ fail resolution because a second scanner searched a different root.
 
 After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
 
+## Current-package self inputs
+
+`local_source` opts into this walk only when the project declares `[package]`,
+then selects agents/skills after grounding (other convention kinds still affect
+the occupied layer). `.mars-src` is discovered separately and wins matching
+`(kind, name)` definitions before staging. Removing shallower items can promote
+nested distribution items; there is no permanent `cw/` exclusion.
+
+Configured non-hidden output trees are not excluded from discovery. For example,
+`out/native/skills/demo/SKILL.md` can suppress the authored root `SKILL.md` fallback
+on the next run. Use hidden targets for authored-root convergence. Flat-resource
+staging exclusions cannot repair this earlier source-selection decision.
+
 ## Hidden directories
 
 The walk skips dot-prefixed directories at every descent step. This keeps generated harness outputs and control/cache directories (`.claude/`, `.codex/`, `.cursor/`, `.opencode/`, `.git/`, `.mars/`) out of default package discovery without maintaining a harness blocklist. These directories are local execution or output surfaces, not package discovery sources.

@@ -56,14 +56,6 @@ fn lock_has_codex_native_agent(project: &assert_fs::fixture::ChildPath, agent: &
     lock.contains_output(".codex", &format!("agents/{agent}.toml"))
 }
 
-fn lock_has_codex_secondary_native_agent(
-    project: &assert_fs::fixture::ChildPath,
-    agent: &str,
-) -> bool {
-    let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
-    lock.contains_output(".codex", &format!("agents/{agent}.toml"))
-}
-
 fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -> String {
     fs::read_to_string(
         project
@@ -650,10 +642,7 @@ path = "{}"
                     .child(".codex/agents/integration-tester.toml")
                     .exists()
             );
-            assert!(!lock_has_codex_secondary_native_agent(
-                &project,
-                "integration-tester"
-            ));
+            assert!(!lock_has_codex_native_agent(&project, "integration-tester"));
         }
         assert_claude_collision_unchanged(&project);
     }

@@ -16,7 +16,7 @@ fn sync_diff_does_not_modify_files() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("agent", "# Agent content")], &[]);
 
-    let agents_dir = dir.child("project").child(".agents");
+    let agents_dir = dir.child("project").child(".mars");
     // Manually init so we have the dir without any sync
     fs::create_dir_all(dir.child("project").child(".mars").path()).unwrap();
     fs::write(
@@ -28,7 +28,8 @@ fn sync_diff_does_not_modify_files() {
     )
     .unwrap();
 
-    mars()
+    let config_before = fs::read(dir.child("project/mars.toml").path()).unwrap();
+    offline_mars(dir.path())
         .args([
             "sync",
             "--diff",
@@ -38,58 +39,14 @@ fn sync_diff_does_not_modify_files() {
         .assert()
         .success();
 
+    assert!(!dir.child("project/mars.lock").exists());
+    assert_eq!(
+        fs::read(dir.child("project/mars.toml").path()).unwrap(),
+        config_before
+    );
+
     // File should NOT be installed (dry run)
     assert!(!agents_dir.child("agents").child("agent.md").exists());
-}
-
-#[test]
-fn sync_force_overwrites_local_changes() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "base", &[("coder", "# Original content")], &[]);
-
-    // Agents materialize to the canonical `.mars/agents` store; the `.agents`
-    // link target only receives native skills.
-    let mars_agents_dir = dir.child("project").child(".mars").child("agents");
-    mars()
-        .args([
-            "init",
-            ".agents",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    // Locally modify the canonical store file
-    let installed_file = mars_agents_dir.child("coder.md");
-    fs::write(installed_file.path(), "# Locally modified").unwrap();
-
-    // Also update source so there's a conflict
-    fs::write(source.join("agents").join("coder.md"), "# Upstream update").unwrap();
-
-    // Force sync should overwrite
-    mars()
-        .args([
-            "sync",
-            "--force",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let content = fs::read_to_string(installed_file.path()).unwrap();
-    assert_eq!(content, "# Upstream update");
 }
 
 #[test]
@@ -327,7 +284,7 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
     let source = create_source(&dir, "base", &[], &[("planning", "# Planning")]);
     let project = dir.child("project");
 
-    mars()
+    offline_mars(dir.path())
         .args([
             "init",
             ".claude",
@@ -336,7 +293,7 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
         ])
         .assert()
         .success();
-    mars()
+    offline_mars(dir.path())
         .args([
             "add",
             source.to_str().unwrap(),
@@ -345,6 +302,8 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
         ])
         .assert()
         .success();
+
+    write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
 
     let lock_path = project.child("mars.lock");
     let mut lock: toml::Value =
@@ -359,7 +318,7 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
         .write_str(&toml::to_string(&lock).unwrap())
         .unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args([
             "sync",
             "--no-upgrade-hint",

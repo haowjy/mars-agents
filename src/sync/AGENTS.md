@@ -1,6 +1,6 @@
 # src/sync/ — Sync Engine
 
-Unified sync pipeline orchestration. 12 files, ~8200 lines.
+Unified sync pipeline orchestration.
 
 ## Mental Model
 
@@ -55,17 +55,44 @@ are preserved until a successful full run finalizes via atomic tmp+rename.
 A corrupt lock is evidence, not garbage -- replacing it before the pipeline
 succeeds would destroy diagnostic information if the run fails.
 
+### Canonical write recovery
+
+`recovery.rs` writes versioned `.mars/pending-canonical.json` before applying new,
+absent canonical outputs. It binds exact expected checksums and provenance to the
+pre-write lock bytes. Intent is keyed by canonical destination, with current/planned
+versions per path, so repeated item moves retain every uncommitted output. The
+reader and writer share identity validation; decoded entries use a single-output
+PendingWrite type (the journal wire format remains unchanged); the journal path is reserved before
+config/output writes, including dry runs. On retry, load validates regular paths (including ancestors)
+and recovers matching outputs into the in-memory lock before source selection.
+Changed content, symlinks, corrupt intent, and a replaced lock fail closed.
+
+On retry, intent retains the verified current version alongside any planned
+replacement until finalization publishes ownership. Prior canonical paths remain
+owned until confirmed removal; same-path deletion claims are replaced, not duplicated. No early lock checkpoint:
+failed repair must preserve even corrupt lock bytes. Finalization removes intent
+after lock publication. Dry-run and resolution failure never publish recovery.
+`--frozen` refuses uncommitted recovered claims even when output bytes need no
+changes. No-op sync creates no journal. Existing installed claims remain authoritative.
+This protects new canonical writes, not native/config emission (#149).
+
 ### Key Operations
 
 | Function | Responsibility |
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Discover source items via `src/discover/`, auto-rename cross-source destination collisions, prune unmanaged collisions, apply one unified frontmatter rename pass, then validate target state (`src/sync/validate.rs`); stages local items via `crate::staging::stage_local_item` |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse blocked canonical self items (including under force); prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
 | `finalize()` | Write lock, persist model aliases, build report |
+
+The reader/local-source seam discovers `.mars-src` unconditionally and adds
+agents/skills from the current package only with `[package]`. It selects local
+overrides before staging. Project-root hooks keep their separate discovery and
+warning-based collision path in `build_target`; the selected-item hard refusal
+does not change that path.
 
 ## Lossiness Gating
 

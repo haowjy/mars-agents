@@ -77,7 +77,7 @@ fn report_records_failed_primary_and_selected_backup_with_local_scope() {
         attempts[1]["assessments"][index]["harness"],
         bundle["routing"]["harness"]
     );
-    assert_eq!(calls, "codex login status\n");
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["codex login status"]);
 }
 
 #[test]

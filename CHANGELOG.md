@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch bundle schema 4 and routing report schema 2 retain target provenance and every attempted model; JSON failures carry structured errors and available selection history.
 
 ### Fixed
+- Make bundle and alias checks independent of installed developer harnesses and native log line endings.
 - Preserve named Pi models and unresolved-alias provider constraints in final executable-model projection.
 - Route standalone aliases through harness preferences; preserve base-alias provider constraints on prefix resolution.
 - Resolve provider-qualified pinned aliases without deriving provider identity from their preferred harness.

@@ -9,6 +9,7 @@ use serde_json::Value;
 #[test]
 fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -27,6 +28,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -99,6 +101,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_splits_loaded_and_available_skills() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -124,6 +127,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -307,6 +311,7 @@ fn build_launch_bundle_loads_model_non_invocable_skills_when_explicit() {
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile explicitly lists a skill, it loads regardless.
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -325,6 +330,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -351,6 +357,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_includes_inventory_prompt_before_report_block() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let reviewer_content = r#"---
 name: reviewer
 description: Review implementation
@@ -375,6 +382,7 @@ Plan work."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -409,6 +417,7 @@ Plan work."#;
 #[test]
 fn build_launch_bundle_orders_skills_by_type_and_bookends_principles() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -439,6 +448,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -547,6 +557,7 @@ agents = ["reviewer"]
 #[test]
 fn build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let reviewer_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -562,6 +573,7 @@ fanout_agents = ["reviewer"]
         setup_bundle_project(&temp, "bundle-source", reviewer_content, &[], extra_toml);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -581,6 +593,7 @@ fanout_agents = ["reviewer"]
 #[test]
 fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_backups() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let reviewer_content = r#"---
 name: reviewer
 description: Review implementation
@@ -623,6 +636,7 @@ Hidden work."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();
@@ -639,6 +653,7 @@ Hidden work."#;
 #[test]
 fn build_launch_bundle_merges_extra_skills_after_profile_dedupes_and_tracks_missing() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -659,6 +674,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args([
         "build",
         "launch-bundle",
@@ -695,6 +711,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_has_canonical_prompt_surface_for_small_fixture() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 description: Review implementation
@@ -720,6 +737,7 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
 
     let output = cmd.assert().success().get_output().clone();

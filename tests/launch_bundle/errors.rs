@@ -77,6 +77,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let reviewer_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -101,6 +102,7 @@ Broken inventory entry."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
     cmd.assert()
         .failure()

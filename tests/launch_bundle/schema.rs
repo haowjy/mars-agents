@@ -117,6 +117,7 @@ Review code changes.
 #[test]
 fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -136,7 +137,8 @@ Review code changes."#;
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--model", "gpt-5.4-mini"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.args(["build", "launch-bundle", "--model", "gpt-5"]);
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -144,10 +146,7 @@ Review code changes."#;
     assert_eq!(bundle["version"].as_u64(), Some(4));
     assert!(bundle["agent"].is_null());
     assert_field_absent_or_null(&bundle, "agent_body");
-    assert_eq!(
-        bundle["routing"]["model_token"].as_str(),
-        Some("gpt-5.4-mini")
-    );
+    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
     assert!(bundle["routing"]["harness"].is_string());
     assert_eq!(bundle["tools"]["allowed"], serde_json::json!([]));
     assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));

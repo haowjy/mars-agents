@@ -9,8 +9,6 @@ pub enum MatchPolicy {
     RequireSlugEvidence,
     /// Accept Passthrough (harness may or may not support the model).
     AllowPassthrough,
-    /// Accept anything — only check harness is installed.
-    InstalledOnly,
 }
 
 /// Why a route was rejected.
@@ -62,8 +60,15 @@ pub fn accept_route(
         });
     }
 
+    if let Some(assessment) = trace
+        .assessments
+        .iter()
+        .find(|assessment| assessment.harness == trace.harness)
+    {
+        accept_assessment(assessment)?;
+    }
+
     match policy {
-        MatchPolicy::InstalledOnly => Ok(()),
         MatchPolicy::AllowPassthrough => match trace.match_evidence {
             MatchEvidence::Confirmed | MatchEvidence::Constrained | MatchEvidence::Passthrough => {
                 Ok(())
@@ -91,11 +96,11 @@ pub fn accept_assessment(assessment: &CandidateAssessment) -> Result<(), Rejecti
         });
     }
 
-    match assessment.match_evidence {
-        Some(_) => Ok(()),
-        None => Err(RejectionReason::AssessmentFailed {
+    match assessment.eligibility() {
+        super::Eligibility::Eligible | super::Eligibility::Unverified => Ok(()),
+        super::Eligibility::Blocked => Err(RejectionReason::AssessmentFailed {
             harness: assessment.harness.clone(),
-            skip_reason: assessment.skip_reason.map(str::to_string),
+            skip_reason: assessment.eligibility_reason().map(str::to_string),
         }),
     }
 }
@@ -130,6 +135,7 @@ mod tests {
         skip_reason: Option<&'static str>,
     ) -> CandidateAssessment {
         CandidateAssessment {
+            auth: None,
             harness: harness.to_string(),
             installed,
             candidate_slugs: Vec::new(),
@@ -142,30 +148,9 @@ mod tests {
     }
 
     #[test]
-    fn installed_only_accepts_any_evidence_when_installed() {
-        let installed = installed(&["pi"]);
-        for match_evidence in [
-            MatchEvidence::Confirmed,
-            MatchEvidence::Constrained,
-            MatchEvidence::Passthrough,
-            MatchEvidence::None,
-        ] {
-            assert_eq!(
-                accept_route(
-                    &trace("pi", match_evidence),
-                    &installed,
-                    MatchPolicy::InstalledOnly
-                ),
-                Ok(())
-            );
-        }
-    }
-
-    #[test]
     fn any_policy_rejects_when_harness_not_installed() {
         let installed = installed(&["codex"]);
         for policy in [
-            MatchPolicy::InstalledOnly,
             MatchPolicy::AllowPassthrough,
             MatchPolicy::RequireSlugEvidence,
         ] {
@@ -265,12 +250,11 @@ mod tests {
     }
 
     #[test]
-    fn accept_assessment_accepts_any_present_evidence() {
+    fn accept_assessment_accepts_nonempty_support_evidence() {
         for match_evidence in [
             MatchEvidence::Confirmed,
             MatchEvidence::Constrained,
             MatchEvidence::Passthrough,
-            MatchEvidence::None,
         ] {
             assert_eq!(
                 accept_assessment(&assessment("pi", true, Some(match_evidence), None)),

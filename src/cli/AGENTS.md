@@ -33,6 +33,19 @@ Three bypass conditions:
 | Diagnostics | `doctor`, `check`, `list`, `version` | Read-only inspection |
 | Init | `init` | Bootstrap project |
 
+## Model Command Boundaries
+
+Resolve alias identity statically, then apply effective target scope before routing
+or probe collection. Availability output is limited to permitted installed routes;
+keep physical installation facts intact for routing diagnostics. Live model availability
+must honor route rejection and describe only the selected route, not other installed
+harnesses. Unverified routes report unknown availability with no asserted runnable
+paths. Live inventory and resolution share one NativeAuthCache per command. Exact/prefix
+resolution with no selected route exits nonzero, even when the model ID resolved.
+Alias harness declarations are ordered preferences, not pins. Exact and live alias
+commands share selected-route projection; prefix commands retain the longest base
+alias's harness preference and provider constraint. Static listings do not route.
+
 ## Lossiness Gating
 
 `SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Hidden`) is applied when the

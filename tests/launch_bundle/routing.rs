@@ -1,7 +1,7 @@
 // qa-validated: harness-order-settings-audit
 // qa-validated: capability-cache-resolver-routing-gaps
 
-use super::common::setup_bundle_project;
+use super::common::{selected_attempt, setup_bundle_project};
 use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;
 use assert_fs::fixture::PathChild;
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-fn build_launch_bundle_cli_model_alias_harness_beats_profile_harness() {
+fn build_launch_bundle_cli_model_does_not_override_harness_precedence() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
@@ -53,7 +53,7 @@ harness = "codex""#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("alias")
+        Some("config-order")
     );
 }
 
@@ -192,7 +192,7 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
 }
 
 #[test]
-fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
+fn build_launch_bundle_default_harness_cannot_bypass_installation() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &[]);
     let agent_content = r#"---
@@ -211,41 +211,15 @@ default_harness = "pi""#;
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(
-        bundle["routing"]["model"].as_str(),
-        Some("unknown-model-token")
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("model fallback candidates exhausted"),
+        "{stderr}"
     );
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config")
-    );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["provenance"]["match_evidence"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("unknown-model-token")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(
-        bundle["routing"]["harness_model_confidence"].as_str(),
-        Some("unknown")
+    assert!(
+        output.stdout.is_empty(),
+        "no launch bundle may be fabricated"
     );
 }
 
@@ -473,7 +447,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -535,14 +509,14 @@ default_harness = "claude""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("pi,opencode,codex,claude,cursor")
     );
     assert!(bundle["routing"]["route_trace"].is_object());
     assert_eq!(
-        bundle["routing"]["route_trace"]["harness"].as_str(),
+        selected_attempt(&bundle)["harness"].as_str(),
         Some("opencode")
     );
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -712,7 +686,7 @@ model = "gpt-5.4-mini""#;
         Some("openai/gpt-5.4-mini")
     );
 
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -783,7 +757,7 @@ model = "gpt-5.4-mini""#;
         Some("confirmed")
     );
 
-    let diagnostics = bundle["routing"]["route_trace"]["diagnostics"]
+    let diagnostics = selected_attempt(&bundle)["diagnostics"]
         .as_array()
         .expect("route_trace.diagnostics should be array");
     assert!(diagnostics.iter().any(|diagnostic| {
@@ -839,7 +813,7 @@ model = "gpt-5.4-mini""#;
         Some("openai/gpt-5.4-mini")
     );
 
-    let assessments = bundle["routing"]["route_trace"]["assessments"]
+    let assessments = selected_attempt(&bundle)["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let opencode_assessment = assessments
@@ -902,11 +876,11 @@ harness_order = ["pi", "opencode"]"#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
+        selected_attempt(&bundle)["selection_kind"].as_str(),
         Some("fixed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
@@ -964,15 +938,15 @@ harness_order = ["codex", "opencode"]"#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
-        Some("fixed")
+        selected_attempt(&bundle)["selection_kind"].as_str(),
+        Some("auto")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["candidates_tried"],
+        selected_attempt(&bundle)["candidates_tried"],
         json!(["claude"])
     );
     assert_eq!(
@@ -1049,20 +1023,21 @@ provider = "openai""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode")
+        Some("claude,opencode,codex,pi,cursor")
     );
 
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default()
-            == "profile harness 'claude' not installed; pivoting via model-policies"
-    }));
+    assert_eq!(
+        selected_attempt(&bundle)["assessments"][0]["harness"],
+        "claude"
+    );
+    assert_eq!(
+        selected_attempt(&bundle)["assessments"][0]["reason"],
+        "not_installed"
+    );
 }
 
 #[test]
-fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
+fn build_launch_bundle_unavailable_profile_harness_retains_unverified_route() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
     let agent_content = r#"---
@@ -1080,16 +1055,20 @@ Review code changes."#;
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.env("MARS_OFFLINE", "1");
 
-    let output = cmd.assert().failure().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(
-        "profile harness `claude` is not installed and no installed fallback harness is available",
-    ));
-    assert!(stderr.contains("installed harnesses: codex, opencode"));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(bundle["routing"]["model"], "claude-opus-4-6");
+    assert_eq!(bundle["routing"]["harness"], "opencode");
+    let assessments = selected_attempt(&bundle)["assessments"].as_array().unwrap();
+    let selected = assessments
+        .iter()
+        .find(|a| a["harness"] == "opencode")
+        .unwrap();
+    assert_eq!(selected["verdict"], "unverified");
 }
 
 #[test]
-fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate() {
+fn build_launch_bundle_without_installed_harnesses_fails() {
     let temp = TempDir::new().unwrap();
     let bin_dir = temp.path().join("empty-bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -1107,26 +1086,16 @@ Review code changes."#;
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("model fallback candidates exhausted"),
+        "{stderr}"
     );
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default()
-            == "profile harness 'claude' not installed; pivoting via model-policies"
-    }));
-    assert!(warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default().contains(
-            "no harnesses are installed; selecting first routed candidate `claude` as passthrough",
-        )
-    }));
+    assert!(
+        output.stdout.is_empty(),
+        "no launch bundle may be fabricated"
+    );
 }
 
 #[test]
@@ -1157,7 +1126,7 @@ Review code changes."#;
     let stderr = String::from_utf8(output.stderr).unwrap();
 
     assert!(stderr.contains("cli harness `claude` is not installed"));
-    assert!(stderr.contains("installed harnesses: codex, opencode"));
+    assert!(stderr.contains("Skip: claude (not_installed)"));
     assert!(
         !stderr.contains("pivoting via model-policies"),
         "explicit CLI harness must not auto-pivot: {stderr}"
@@ -1165,7 +1134,7 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing() {
+fn build_launch_bundle_cli_harness_rejects_profile_model_without_clearing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -1203,29 +1172,17 @@ Review code changes."#;
     cmd.env("MARS_CACHE_DIR", &cache_root);
     cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
-    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("model fallback candidates exhausted"),
+        "{stderr}"
     );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+    assert!(stderr.contains("no_model_match"), "{stderr}");
+    assert!(
+        output.stdout.is_empty(),
+        "no default-model launch may be fabricated"
     );
-
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default()
-            == "profile model 'claude-opus-4-6' cannot run on cli harness 'opencode'; clearing model (harness override takes precedence)."
-    }));
 }
 
 #[test]
@@ -1273,15 +1230,15 @@ harness = "codex""#;
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["selection_kind"].as_str(),
-        Some("fixed")
+        selected_attempt(&bundle)["selection_kind"].as_str(),
+        Some("auto")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["match_evidence"].as_str(),
+        selected_attempt(&bundle)["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
-        bundle["routing"]["route_trace"]["candidates_tried"],
+        selected_attempt(&bundle)["candidates_tried"],
         json!(["codex"])
     );
     assert_eq!(
@@ -1292,7 +1249,7 @@ harness = "codex""#;
 }
 
 #[test]
-fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness() {
+fn build_launch_bundle_cli_model_checks_profile_preference_before_settings_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "opencode"]);
     let agent_content = r#"---
@@ -1355,13 +1312,14 @@ harness_order = ["pi", "opencode"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode")
+        Some("claude,pi,opencode,codex,cursor")
     );
 }
 
 #[test]
 fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness() {
     let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -1377,6 +1335,7 @@ default_harness = "pi""#;
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1408,7 +1367,7 @@ default_harness = "pi""#;
 }
 
 #[test]
-fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
+fn build_launch_bundle_harness_order_can_use_remaining_permitted_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -1431,28 +1390,21 @@ default_harness = "claude""#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5"));
     assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config")
+        bundle["routing"]["match_evidence"].as_str(),
+        Some("confirmed")
     );
-    assert!(bundle["provenance"]["harness_order_position"].is_null());
-
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("settings.harness_order is set but none of [pi, opencode] are installed")
-    }));
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("falling through to settings.default_harness")
-    }));
+    let assessments = selected_attempt(&bundle)["assessments"].as_array().unwrap();
+    for harness in ["pi", "opencode", "claude"] {
+        let rejected = assessments
+            .iter()
+            .find(|assessment| assessment["harness"] == harness)
+            .unwrap();
+        assert_eq!(rejected["skip_reason"], "not_installed");
+    }
+    assert_eq!(assessments.last().unwrap()["harness"], "codex");
 }
 
 #[test]
@@ -1551,7 +1503,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1582,7 +1534,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1621,7 +1573,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1656,7 +1608,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1688,7 +1640,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1738,7 +1690,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1834,8 +1786,15 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
+        Some("claude,codex,pi,cursor,opencode")
     );
+    let selected = selected_attempt(&bundle)["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
+        .unwrap();
+    assert_eq!(selected["verdict"], "unverified", "{selected}");
 }
 
 #[test]
@@ -1876,7 +1835,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -1922,7 +1881,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -2168,7 +2127,7 @@ fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_mes
 }
 
 #[test]
-fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message() {
+fn build_launch_bundle_cursor_unmatched_model_fails_before_effort_projection() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(
         &temp,
@@ -2202,10 +2161,8 @@ fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains(
-            "requested model selected effort high; Cursor model catalog has no matching model slug for `gpt-5`."
-        ),
-        "expected no-prefix message, got:\n{stderr}"
+        stderr.contains("model fallback candidates exhausted for `gpt-5`"),
+        "an unsupported route must fail before effort projection: {stderr}"
     );
     assert!(
         !stderr.contains("has no high variant"),
@@ -2244,7 +2201,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
+        Some("claude,codex,pi,cursor,opencode")
     );
 }
 
@@ -2293,8 +2250,15 @@ harness_order = ["opencode", "cursor"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode")
+        Some("opencode,cursor,claude,codex,pi")
     );
+    let selected = selected_attempt(&bundle)["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
+        .unwrap();
+    assert_eq!(selected["verdict"], "unverified", "{selected}");
 }
 
 #[test]
@@ -2539,7 +2503,7 @@ harness_order = ["opencode", "pi"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode,pi")
+        Some("opencode,pi,claude,codex,cursor")
     );
 }
 
@@ -2778,7 +2742,8 @@ model = "gpt-5.4-mini""#;
     let stderr = String::from_utf8(output.stderr).unwrap();
 
     assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
-    assert!(stderr.contains("tried: gpt55, gptmini"));
+    assert!(stderr.contains("Model: gpt55 ("), "{stderr}");
+    assert!(stderr.find("Model: gpt55 (").unwrap() < stderr.find("gptmini (").unwrap());
 }
 
 #[test]
@@ -2872,21 +2837,22 @@ model = "claude-opus-4-6""#;
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert!(stderr.contains("no linked harness available for model `gpt55`"));
+    assert!(stderr.contains("model fallback candidates exhausted for `gpt55`"));
     assert!(!stderr.contains("fell back to `sonnet`"));
 }
 
 #[test]
 fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &[]);
+    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
 name: reviewer
-model: unknown-model-token
+model: gpt-5
 ---
 Review code changes."#;
 
     let extra_toml = r#"[settings]
+harness_order = []
 default_harness = "Pi""#;
 
     let (server, project_root) =
@@ -2906,11 +2872,11 @@ default_harness = "Pi""#;
     );
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["match_evidence"].as_str(),
-        Some("passthrough")
+        Some("confirmed")
     );
 }
 
@@ -3086,7 +3052,7 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns() {
+fn build_launch_bundle_explicit_unknown_harness_model_path_rejects_without_clearing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -3109,34 +3075,17 @@ Review code changes."#;
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
-    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
+    let output = cmd.assert().failure().code(2).get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("model fallback candidates exhausted"),
+        "{stderr}"
     );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("passthrough")
+    assert!(stderr.contains("no_model_match"), "{stderr}");
+    assert!(
+        output.stdout.is_empty(),
+        "no default-model launch may be fabricated"
     );
-    assert_eq!(
-        bundle["provenance"]["match_evidence"].as_str(),
-        Some("passthrough")
-    );
-
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        let message = warning.as_str().unwrap_or_default();
-        message.contains("unknown-model-token")
-            && message.contains("cannot run on cli harness 'opencode'; clearing model")
-    }));
 }
 
 #[test]
@@ -3163,8 +3112,9 @@ harness = "codex""#;
 
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("alias harness `codex` cannot run the requested model"));
+    assert!(stderr.contains("model fallback candidates exhausted"));
     assert!(stderr.contains("provider_constraint_unsatisfied"));
+    assert!(output.stdout.is_empty());
 }
 
 #[test]
@@ -3329,14 +3279,14 @@ override = { harness = "opencode", effort = "low" }"#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
     assert_eq!(
         bundle["execution_policy"]["effort"].as_str(),
         Some("medium")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("overlay-model-policy")
+        Some("config-order")
     );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
@@ -3345,6 +3295,11 @@ override = { harness = "opencode", effort = "low" }"#;
     assert_eq!(
         bundle["provenance"]["matched_policy_rule"].as_str(),
         Some("overlay:0")
+    );
+    assert_eq!(selected_attempt(&bundle)["assessments"][0]["harness"], "pi");
+    assert_eq!(
+        selected_attempt(&bundle)["assessments"][0]["verdict"],
+        "unverified"
     );
 }
 

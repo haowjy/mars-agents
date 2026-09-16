@@ -202,7 +202,7 @@ default_harness = "gemini"
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
     assert!(
-        stdout["error"]
+        stdout["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("--no-refresh-models")),
         "expected no-refresh cache error in JSON: {stdout}"

@@ -224,22 +224,11 @@ pub enum MarsError {
     #[error("frozen violation: {message}")]
     FrozenViolation { message: String },
 
-    #[error(
-        "config error: invalid config: no linked harness available for model `{model_token}` — {detail}; installed harnesses: {installed_harnesses}"
-    )]
-    LinkedHarnessExhausted {
-        model_token: String,
-        detail: String,
-        installed_harnesses: String,
-    },
-
-    #[error(
-        "config error: invalid config: no harness available for model `{model_token}` — {detail}; installed harnesses: {installed_harnesses}"
-    )]
-    HarnessUnavailable {
-        model_token: String,
-        detail: String,
-        installed_harnesses: String,
+    #[error("{message}{report}")]
+    Selection {
+        code: &'static str,
+        message: String,
+        report: Box<crate::routing::report::RouteDecisionReport>,
     },
 
     #[error(
@@ -300,8 +289,7 @@ impl MarsError {
             | MarsError::Collision { .. }
             | MarsError::InvalidRequest { .. }
             | MarsError::FrozenViolation { .. }
-            | MarsError::LinkedHarnessExhausted { .. }
-            | MarsError::HarnessUnavailable { .. }
+            | MarsError::Selection { .. }
             | MarsError::LockedCommitUnreachable { .. } => 2,
             MarsError::Source { .. }
             | MarsError::SubpathTraversal { .. }

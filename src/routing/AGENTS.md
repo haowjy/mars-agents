@@ -21,11 +21,14 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 
 ## Evaluation Flow
 
-1. Build candidate list from `settings_harness_order` (when unset, see default order below) or `provider_candidate_order`
-2. Filter by `linked_harnesses` — only `KnownHarness` links filter
-3. Per-candidate gate: installed → native catalog slug match + auth → OpenCode probe → Pi probe → Pi/Cursor passthrough (deferred)
-4. Fallback chain: config `default_harness` → linked fallback → no selection
-5. Link constraints block config-default fallback from routing outside known links
+1. Rank the supplied harness preference first, then configured harness order
+   (registry default when unset), then
+   `default_harness`, then remaining registry harnesses; deduplicate stably.
+2. Intersect candidates with target permission and caller exclusions before probes.
+3. Assess installation and support, then applicable native auth. Auth callbacks
+   return `AuthState`; command-scoped `NativeAuthCache` preserves unknown results.
+4. Prefer eligible routes; defer the first unverified route until all harnesses
+   for this model have been assessed. Blocked routes never become fallback routes.
 
 ### Default `harness_order`
 
@@ -33,12 +36,16 @@ When `settings.harness_order` is omitted, policy loaders supply
 `harness::registry::default_harness_order_names()` — canonical list and rationale live in
 [`src/harness/registry.rs`](../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`).
 
-### Deferred passthrough (Pi, Cursor)
+Reported harness-order positions index the normalized valid-name list (invalid
+entries have already been removed), not the authored configuration array.
 
-`Passthrough` candidates do **not** win immediately. The loop records the first passthrough
-harness and keeps trying stronger candidates (`Confirmed` / `Constrained` exit early). Only
-after the order is exhausted does Mars return that deferred passthrough selection. This lets
-native and probe-backed harnesses outrank universal routers.
+### Eligibility is not support evidence
+
+`CandidateAssessment::eligibility()` distinguishes eligible, unverified and blocked.
+A native auth timeout remains unverified; a known rejection is blocked. Universal
+model-list/probe success proves support, not account authentication or quota.
+No-model native launches still check auth. Native materialization supplies
+`AuthState::NotApplicable` and accepts support without probing runtime accounts.
 
 ### Routing parity with `mars models` and launch-bundle
 
@@ -47,13 +54,6 @@ with the same `RoutingInput` shape: shared capability snapshot, probe caches, an
 `catalog_model_slugs` for native harness matching. Parity drift is a bug — see parity smoke
 in `.context/CONTEXT.md`.
 
-### Linked fallback and prior skips
-
-When auto-routing exhausts candidates under link constraints, `select_linked_fallback_harness`
-walks linked harnesses in `harness_order` (or link declaration order) and **skips** harnesses
-whose assessment has a hard `skip_reason` (`not_installed`, `pi_incompatible`, `no_model_match`,
-etc.). Soft passthrough deferrals do not block linked fallback the same way.
-
 ## Key Types
 
 ### `SelectionKind` (how selected)
@@ -61,33 +61,41 @@ etc.). Soft passthrough deferrals do not block linked fallback the same way.
 |---|---|
 | `Auto` | First acceptable from candidate loop |
 | `Fixed` | Caller committed to specific harness |
-| `ConfigDefault` | Fell through to `settings.default_harness` |
-| `LinkedFallback` | Linked harnesses selected themselves |
 
 ### `MatchEvidence` (what supports it)
 | Value | Meaning |
 |---|---|
-| `Confirmed` | Native provider match + authenticated, or compatible Pi probe |
-| `Constrained` | Same as Confirmed, but provider_constraint was active (includes cursor with provider constraint when probe can't confirm) |
-| `Passthrough` | Universal harness, Pi without probe, config-default fallback |
-| `None` | Rejected candidate |
+| `Confirmed` | Native model/provider match or positive harness support probe |
+| `Constrained` | Provider-constrained support evidence |
+| `Passthrough` | Universal harness or Pi without probe |
+| `None` | No support evidence |
 
 ### `MatchPolicy` (acceptance strictness)
 | Policy | Accepts |
 |---|---|
 | `RequireSlugEvidence` | `Confirmed` or `Constrained` only |
 | `AllowPassthrough` | `Confirmed`, `Constrained`, or `Passthrough` |
-| `InstalledOnly` | Any evidence, as long as harness is installed |
+
+Both policies reject blocked assessments; neither installation nor support evidence
+can override an authentication rejection.
 
 ## Link Filtering
 
-Only `KnownHarness` links (from `config::targets::normalize_link`) filter routing candidates. Generic targets (`.agents`, unknown names) and path-like targets are **invisible** to routing.
+`permission_denial` applies configured scope and caller exclusions before evidence
+collection. It distinguishes `disabled_target` from `excluded_by_caller`; neither
+changes the recorded physical installation state. Automatic fallback candidates
+also remain inside this intersection.
+
+Configured targets permit only their known harnesses. Empty or generic/path-only
+configuration permits none; only absent targets and managed_root are unrestricted.
+The shared assessor rejects disabled fixed routes before installation/auth/support
+checks. Build policy rejects an excluded CLI pin and skips excluded preferences.
 
 ## Patterns
 
 **Test without real auth:**
 ```rust
-let trace = evaluate_candidates_with_auth(&input, |_harness| true);
+let trace = evaluate_candidates_with_auth(&input, |_harness| AuthState::Authenticated);
 ```
 
 **Simulate Pi compatibility:**
@@ -104,4 +112,4 @@ accept_route(&trace, &installed, MatchPolicy::RequireSlugEvidence)?;
 
 - `.context/CONTEXT.md` — detailed contracts, slug semantics, report serialization
 - `src/harness/.context/CONTEXT.md` — harness registry and capability snapshot
-- `src/config/AGENTS.md` — link normalization that produces `linked_harnesses`
+- `src/config/AGENTS.md` — target normalization and `HarnessScope`

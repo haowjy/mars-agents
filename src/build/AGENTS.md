@@ -43,13 +43,15 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 - `harness_model_source: "passthrough"` — expected behavior
 - `harness_model_confidence: "unknown"` — correct answer for passthrough harnesses
 
-`resolve_routing()` emits warnings only for actionable degraded routing states (e.g. explicit harness could not match the configured model — model cleared, harness uses its default). Route facts go to `routing.harness_model_source` and `routing.harness_model_confidence`.
+Policy resolution emits warnings for model fallback. Model/harness conflicts never
+clear the requested model. Route facts go to `routing.harness_model_source` and
+`routing.harness_model_confidence`.
 
 ## Policy Resolution Pipeline
 
 `resolve_policy()` resolves routing, execution, and provenance. Each field resolves
 independently — see [`policy/AGENTS.md`](policy/AGENTS.md) for the full pipeline,
-field independence, and cross-field precedence conflict handling.
+field independence, preference ordering and pin handling.
 
 `resolve_policy` always runs `models::ensure_fresh` on `.mars/` (stale fallback may warn).
 CLI passes `ModelsRefreshControl` from `--refresh-models` / `--no-refresh-models` on

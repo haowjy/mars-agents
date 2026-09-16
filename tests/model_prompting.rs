@@ -376,7 +376,7 @@ prompting = "Use Claude-specific review guidance."
 }
 
 #[test]
-fn models_prompting_agent_does_not_use_pre_routing_token_after_model_clear() {
+fn models_prompting_agent_rejects_unroutable_model_without_clearing() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
     let local = r#"[agents.explorer]
@@ -400,17 +400,25 @@ harness = "opencode"
         .env("MARS_CACHE_DIR", &cache_root)
         .env("MARS_PROBE_CACHE_TTL_SECS", "60")
         .assert()
-        .success()
+        .failure()
+        .code(2)
         .get_output()
         .clone();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
-
-    assert_eq!(json["ref_kind"], "agent");
-    assert_eq!(json["model_alias"], Value::Null);
-    assert_eq!(json["model_name"], Value::Null);
-    assert_eq!(json["prompting"], Value::Null);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["code"], "model_candidates_exhausted");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("model fallback candidates exhausted for `gpt55`")
+    );
+    assert_eq!(value["route_trace"]["outcome"], "exhausted");
+    assert!(value["route_trace"]["selected"].is_null());
+    assert!(value["route_trace"].to_string().contains("no_model_match"));
+    assert!(
+        value.get("prompting").is_none(),
+        "must not return default-model prompting"
+    );
 }
 
 #[test]

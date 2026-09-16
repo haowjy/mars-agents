@@ -188,19 +188,21 @@ fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["harness"].as_str(), Some("opencode"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("miss"));
-    assert_eq!(stdout["availability"].as_str(), Some("runnable"));
+    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
     assert_eq!(
         stdout["availability_source"].as_str(),
-        Some("opencode_probe")
+        Some("route_unverified")
     );
-    assert_eq!(
-        stdout["runnable_paths"],
-        json!([{
-            "harness": "opencode",
-            "mars_provider": "openai",
-            "harness_model_id": "openai/gpt-5"
-        }])
-    );
+    assert_eq!(stdout["runnable_paths"], json!([]));
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == "opencode")
+        .unwrap();
+    assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
+    assert_eq!(assessment["verdict"], "unverified");
+    assert_eq!(assessment["reason"], "auth_unknown");
 }
 
 #[test]
@@ -240,7 +242,7 @@ fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
 
 #[test]
 #[serial]
-fn resolve_raw_model_uses_stale_probe_cache_for_route_selection_by_default() {
+fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
@@ -265,10 +267,10 @@ fn resolve_raw_model_uses_stale_probe_cache_for_route_selection_by_default() {
         .clone();
 
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["harness"].as_str(), Some("opencode"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["probe_cache"].as_str(), Some("stale"));
     assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
-    let assessments = stdout["route_trace"]["assessments"]
+    let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route assessments should be array");
     let opencode = assessments
@@ -276,11 +278,19 @@ fn resolve_raw_model_uses_stale_probe_cache_for_route_selection_by_default() {
         .find(|assessment| assessment["harness"].as_str() == Some("opencode"))
         .expect("opencode assessment should exist");
     assert_eq!(opencode["skip_reason"], Value::Null);
+    assert_eq!(opencode["chosen_slug"], "openai/gpt-5");
+    assert_eq!(opencode["verdict"], "unverified");
+    assert_eq!(opencode["reason"], "auth_unknown");
+    let codex = assessments
+        .iter()
+        .find(|assessment| assessment["harness"] == "codex")
+        .unwrap();
+    assert_eq!(codex["verdict"], "eligible");
 }
 
 #[test]
 #[serial]
-fn resolve_alias_prefix_uses_loaded_live_probe_for_runnable_availability() {
+fn resolve_alias_prefix_uses_loaded_live_probe_for_unverified_availability() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
@@ -303,24 +313,27 @@ fn resolve_alias_prefix_uses_loaded_live_probe_for_runnable_availability() {
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(stdout["source"].as_str(), Some("alias_prefix"));
     assert_eq!(stdout["harness"].as_str(), Some("opencode"));
-    assert_eq!(stdout["availability"].as_str(), Some("runnable"));
+    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
     assert_eq!(
         stdout["availability_source"].as_str(),
-        Some("opencode_probe")
+        Some("route_unverified")
     );
-    assert_eq!(
-        stdout["runnable_paths"],
-        json!([{
-            "harness": "opencode",
-            "mars_provider": "openai",
-            "harness_model_id": "openai/gpt-5"
-        }])
-    );
+    assert_eq!(stdout["runnable_paths"], json!([]));
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == "opencode")
+        .unwrap();
+    assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
+    assert_eq!(assessment["verdict"], "unverified");
+    assert_eq!(assessment["reason"], "auth_unknown");
 }
 
 #[test]
 #[serial]
-fn resolve_passthrough_uses_loaded_live_probe_for_runnable_availability_without_extra_probe_runs() {
+fn resolve_passthrough_uses_loaded_live_probe_for_unverified_availability_without_extra_probe_runs()
+{
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
     let cache_dir = temp.path().join("mars-cache");
@@ -350,19 +363,21 @@ harness_order = ["opencode"]
     let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["harness"].as_str(), Some("opencode"));
-    assert_eq!(stdout["availability"].as_str(), Some("runnable"));
+    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
     assert_eq!(
         stdout["availability_source"].as_str(),
-        Some("opencode_probe")
+        Some("route_unverified")
     );
-    assert_eq!(
-        stdout["runnable_paths"],
-        json!([{
-            "harness": "opencode",
-            "mars_provider": "openai",
-            "harness_model_id": "openai/gpt-5"
-        }])
-    );
+    assert_eq!(stdout["runnable_paths"], json!([]));
+    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|assessment| assessment["harness"] == "opencode")
+        .unwrap();
+    assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
+    assert_eq!(assessment["verdict"], "unverified");
+    assert_eq!(assessment["reason"], "auth_unknown");
 
     let probe_runs = fs::read_to_string(&marker).expect("probe marker should exist");
     assert_eq!(

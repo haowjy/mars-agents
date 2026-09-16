@@ -17,12 +17,14 @@ use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
 
-pub const LAUNCH_BUNDLE_VERSION: u32 = 3;
+pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
     pub model: Option<String>,
+    pub literal_model: bool,
     pub harness: Option<String>,
+    pub excluded_harnesses: Vec<crate::harness::registry::HarnessId>,
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
@@ -32,8 +34,12 @@ pub struct LaunchBundleRequest {
 
 pub fn build_launch_bundle(
     ctx: &MarsContext,
-    request: LaunchBundleRequest,
+    mut request: LaunchBundleRequest,
 ) -> Result<LaunchBundle, MarsError> {
+    let mut seen = std::collections::HashSet::new();
+    request
+        .excluded_harnesses
+        .retain(|harness| seen.insert(*harness));
     let mut warnings: Vec<String> = Vec::new();
     let profile: AgentProfile;
     let agent_body: Option<String>;
@@ -100,7 +106,9 @@ pub fn build_launch_bundle(
             agent: request.agent.as_deref(),
             profile: &profile,
             model_override: request.model.as_deref(),
+            literal_model: request.literal_model,
             harness_override: request.harness.as_deref(),
+            excluded_harnesses: &request.excluded_harnesses,
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
@@ -109,9 +117,18 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(policy.warnings);
+    let with_selection_report = |err: MarsError| match err {
+        MarsError::Config(_) => MarsError::Selection {
+            code: "invalid_config",
+            message: err.to_string(),
+            report: Box::new(policy.routing.route_trace.clone()),
+        },
+        _ => err,
+    };
 
     let mars_dir = ctx.project_root.join(".mars");
-    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)?;
+    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)
+        .map_err(with_selection_report)?;
 
     let prompt = compile_prompt_surface(
         &mars_dir,
@@ -123,10 +140,12 @@ pub fn build_launch_bundle(
         &policy.routing.model,
         &profile.subagents,
         effective_project_config.settings.meridian_fanout_agents(),
-    )?;
+    )
+    .map_err(with_selection_report)?;
 
     warnings.extend(prompt.warnings);
-    let (resolved_tools, tool_warnings) = resolve_bundle_tools(&profile, &policy.routing.harness)?;
+    let (resolved_tools, tool_warnings) =
+        resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
     warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {

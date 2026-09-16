@@ -1,5 +1,7 @@
 use indexmap::IndexMap;
 
+use super::targets::{LinkSource, TargetOrigin, TargetSource};
+
 use super::{
     AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings, SkillOverlay,
 };
@@ -37,7 +39,7 @@ pub fn overlay_skills_replace_by_key(
 }
 
 pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {
-    local.settings.overlay_settings(settings)
+    local.settings.overlay_settings(settings).0
 }
 
 impl LocalSettings {
@@ -57,14 +59,30 @@ impl LocalSettings {
             && self.model_policies.is_none()
     }
 
-    pub(crate) fn overlay_settings(&self, base: &Settings) -> Settings {
+    pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {
         let mut merged = base.clone();
+        let field = base.effective_links().source;
+        let mut target_source = TargetSource {
+            field,
+            origin: if field == LinkSource::None {
+                TargetOrigin::Unset
+            } else {
+                TargetOrigin::Project
+            },
+            path: None,
+        };
 
         if let Some(value) = &self.managed_root {
             merged.managed_root = Some(value.clone());
+            if merged.targets.is_none() {
+                target_source.field = LinkSource::ManagedRoot;
+                target_source.origin = TargetOrigin::Local;
+            }
         }
         if let Some(value) = &self.targets {
             merged.targets = Some(value.clone());
+            target_source.field = LinkSource::Targets;
+            target_source.origin = TargetOrigin::Local;
         }
         if let Some(value) = &self.model_visibility {
             apply_model_visibility_overlay(&mut merged, value);
@@ -103,7 +121,7 @@ impl LocalSettings {
             merged.model_policies = value.clone();
         }
 
-        merged
+        (merged, target_source)
     }
 }
 

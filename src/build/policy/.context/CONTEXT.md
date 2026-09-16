@@ -1,69 +1,39 @@
-# src/build/policy/
+# Policy resolution
 
-## Contracts
+## Harness preferences and pins
 
-### Cross-field precedence soft-fail
+Harness field precedence is CLI → overlay → overlay model-policy → profile →
+profile model-policy → settings model-policy → alias. Resolve this independently
+from model precedence; a CLI model does not suppress the profile harness preference.
 
-When a fixed harness conflicts with a model from a lower-precedence source, the harness
-wins and the model is cleared. Precedence ranks (`PolicySource::precedence_rank()`):
+Only CLI harness is fixed. Its blocked assessment is an exhausted model attempt,
+so implicit model backups can still run on that same harness. A CLI model pin
+prevents those backups. Target/caller exclusion of a CLI harness fails before probes.
 
-| Rank | Sources |
-|------|---------|
-| 5 | CLI |
-| 4 | Overlay, OverlayModelPolicy |
-| 3 | Profile, ProfileModelPolicy, ProfileHarnessOverride |
-| 2 | SettingsModelPolicy, Project, Config |
-| 1 | Alias |
-| 0 | Unset, ConfigOrder, Provider, Default |
+For implicit selection, pass the highest-precedence harness and its source to the
+shared routing evaluator. It leads configured harness order, default_harness and
+remaining permitted registry candidates. Permission filters and stable dedup apply
+to the entire list. The preferred route is assessed once, like any other route;
+installation, provider mismatch or rejected auth cannot turn it into a default-model
+launch. Keep selected field provenance and the matched policy rule when the
+preference wins; otherwise use the selected candidate's source.
 
-**Trigger condition:** fixed harness assessment returns `skip_reason = "no_model_match"` AND
-`harness_source.precedence_rank() > model_source.precedence_rank()`.
+## Model attempts
 
-**Only `no_model_match` triggers soft-fail.** Other rejection reasons (`provider_constraint_unsatisfied`,
-`pi_incompatible`) stay hard errors regardless of precedence rank — clearing the model cannot
-resolve a provider constraint or harness compatibility failure.
+The outer loop evaluates the primary, then the shared profile backup iterator.
+Each attempt independently resolves model identity, provider constraints and
+settings. An eligible route wins immediately; retain the first whole unverified
+attempt only when no attempt has an eligible route. Do not reconstruct that attempt
+from the last iteration's state. Native auth observations are shared across attempts.
 
-**Same-precedence conflicts are hard errors.** CLI harness + CLI model both `no_model_match` →
-error; the user explicitly requested an impossible combination.
-
-### model_override mechanism
-
-`HarnessResolution.model_override: Option<()>` signals the outcome. When `Some(())`, `mod.rs`
-substitutes empty strings for `model`, `model_token`, `provider_constraint`, and `provider_for_order`
-before calling `runnable::resolve_routing` — the harness uses its own default model. A warning
-(`"<source> model '<token>' cannot run on <source> harness '<name>'; clearing model"`) flows
-through the normal warnings pipeline to the bundle's `warnings[]` field.
-
-### Resolution flow in harness.rs
-
-```
-resolve_harness()
-  ├─ resolve_fixed_harness_selection()   → Option<ResolvedField> (CLI > overlay > profile > alias)
-  ├─ [fixed] evaluate_fixed_harness      → assessment
-  │   ├─ [profile + not installed]       → pivot to candidate evaluation
-  │   ├─ [assessment rejected]           → resolve_fixed_harness_rejection()
-  │   │   ├─ not installed               → hard error
-  │   │   ├─ no_model_match + outranks   → soft_fail (clear model, retry with empty model_id)
-  │   │   └─ other / same rank           → hard error
-  │   └─ [assessment ok]                 → use fixed trace
-  └─ [auto] evaluate_candidates          → candidate ordering with probe matching
-```
-
-## Rationale
-
-Cross-field precedence conflict arises from harness shortcuts (`meridian opencode`) that
-set CLI-level harness while the agent profile provides a model. Before this mechanism,
-this was a hard error requiring the user to also override the model. The soft-fail lets
-the higher-precedence field win naturally — the harness proceeds with its own default
-model selection, and the warning tells the user what happened.
-
-Only `no_model_match` is soft-failed because it means "the harness can't find this model
-in its probe results" — clearing the model is a valid recovery (let the harness pick).
-Provider constraints and harness incompatibility are structural — clearing the model
-doesn't help.
+The loop also owns the aggregate `RouteDecisionReport`: append each trace before
+moving to a backup and retain it on selection errors. Final routing projection
+receives that report intact; it must not reconstruct history from the winning trace.
+A configuration rejection before harness assessment records an unassessed model
+attempt, not a fabricated verdict.
 
 ## Related docs
 
-- `../AGENTS.md` — policy resolution mental model and field independence
-- `../../.context/CONTEXT.md` — bundle-level contracts, warning semantics
-- `../../../routing/.context/CONTEXT.md` — candidate evaluation, assessment mechanics
+- [Policy overview](../AGENTS.md)
+- [Bundle contracts](../../.context/CONTEXT.md)
+- [Routing evaluator](../../../routing/.context/CONTEXT.md)

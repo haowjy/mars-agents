@@ -14,7 +14,8 @@ would break the parity invariant.
 `evaluate_fixed_harness_with_auth_and_probes()` evaluates one specific harness
 without fallback, using the caller's probe resolver and authentication check.
 It is used when the caller has already committed to a fixed harness choice
-(CLI `--harness`, profile `harness:`, alias `harness:`). It returns a single
+(CLI `--harness`). Profile and alias harness declarations instead enter the ordered
+evaluator as preferences. The fixed-harness function returns a single
 `CandidateAssessment` — the caller decides what to do with a failed fixed
 selection.
 
@@ -26,29 +27,32 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | Field | Role |
 |---|---|
 | `model_id` | Resolved model identifier (used for OpenCode/Pi slug matching) |
-| `provider_for_order` | Optional provider name (determines native affinity and candidate order) |
+| `provider_for_order` | Optional provider name for native compatibility and model-slug preference |
 | `provider_constraint` | Alias/provider pin from model config — filters probe slug selection and native harness acceptance; shapes `harness_model` via [`resolve_harness_model`](../../models/harness_model.rs) (no blind `provider/model` prefix) |
 | `settings_provider_order` | Raw `provider_order` from config, if set |
+| `preferred_harness` | Highest-precedence authored harness and source; ranked first, not pinned |
 | `settings_harness_order` | Raw `harness_order` from config, if set |
 | `config_default_harness` | Raw `default_harness` from config, if set |
 | `installed_harnesses` | Set of harness names found on PATH |
-| `linked_harnesses` | Known harness names from `config::targets` link normalization |
+| `excluded_harnesses` | Caller restrictions, independent of configured target permission |
+| `harness_scope` | `Unrestricted` or `Only(BTreeSet<HarnessId>)`; empty denies all routes |
 | `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
 | `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
 | `catalog_model_slugs` | Cached models.dev `provider/model` slugs; native harnesses match here before auth-only fallback |
 
-When `settings.harness_order` is unset, `config/routing_settings` and `build/policy/config`
+When `settings.harness_order` is unset, `config/routing_settings` and `build/policy`
 inject [`default_harness_order_names()`](../../harness/registry.rs) — see
 [`src/harness/registry.rs`](../../harness/registry.rs) (`DEFAULT_HARNESS_ORDER`) for the
 canonical ordered list.
 
-### Deferred passthrough
+### Deferred unverified routes
 
-In the auto-routing loop, `MatchEvidence::Passthrough` (Pi without compatible probe, Cursor,
-OpenCode unknown-provider paths) is **held** in `passthrough_selection` while later candidates
-run. `Confirmed` / `Constrained` return immediately. If the order exhausts without stronger
-evidence, Mars returns the first deferred passthrough harness. Without deferral, Pi/Cursor
-would win at their config position and block stronger native/probe matches later in order.
+The evaluator ranks `CandidateAssessment::eligibility()`, independently of support
+match strength. Native authentication yields eligible only after support succeeds;
+unknown native auth and missing universal auth proof remain unverified. Keep the
+first unverified route with its original support evidence and provenance, then
+assess remaining harnesses for an eligible route. A blocked route cannot be deferred.
+This is within-model ranking; the outer build policy owns cross-model traversal.
 
 ### Native catalog slug matching
 
@@ -62,21 +66,21 @@ Empty catalog falls back to provider-native affinity + auth gate only.
 | Value | Meaning |
 |---|---|
 | `Auto` | Selected by candidate evaluation loop (first acceptable harness) |
-| `Fixed` | Caller committed to a specific harness (CLI/profile/alias) |
-| `ConfigDefault` | Fell through to `settings.default_harness` |
-| `LinkedFallback` | No eligible candidates; linked harnesses selected themselves |
-| `HardcodedDefault` | Nothing else matched; defaulting to `pi` |
+| `Fixed` | Caller pinned a specific harness (CLI) |
 
 ### `MatchEvidence` semantics
 
 | Value | Evidence |
 |---|---|
-| `Confirmed` | Native provider match + authenticated, OR compatible Pi probe, OR positive OpenCode probe |
+| `Confirmed` | Native model/provider match, compatible Pi probe, or positive harness model probe |
 | `Constrained` | Same as Confirmed, but a `provider_constraint` was active |
-| `Passthrough` | Universal harness (Cursor), Pi without fresh probe, OpenCode unknown-provider, config-default fallback |
+| `Passthrough` | Universal harness (Cursor), Pi without fresh probe, OpenCode unknown-provider |
 | `None` | No evidence — candidate was rejected |
 
-`RouteSource` records **who** chose the route. `SelectionKind` records **how** the harness was selected. `MatchEvidence` records **what slug evidence exists**. These are orthogonal dimensions — a `ConfigDefault` source is always `ConfigDefault` kind with `Passthrough` evidence; a `Provider` source can be `Auto` kind with `Confirmed`, `Constrained`, or `Passthrough` evidence depending on what matched.
+`RouteSource` records preference provenance, `SelectionKind` distinguishes automatic
+from fixed selection, and `MatchEvidence` describes support evidence. A config-default
+candidate is assessed in the same automatic loop; its source gives it no authority
+to bypass a failed assessment.
 
 ### `slug.rs` contracts
 
@@ -95,65 +99,52 @@ Callers needing owned data use `SlugMatch` or `.to_string()`.
 |---|---|
 | `RequireSlugEvidence` | `Confirmed` or `Constrained` only |
 | `AllowPassthrough` | `Confirmed`, `Constrained`, or `Passthrough` |
-| `InstalledOnly` | Any evidence (or none), as long as harness is installed |
 
 **`accept_route()` vs `accept_assessment()`:**
 - `accept_route(trace, installed, policy)` — validates a full `RoutingTrace` against a policy. Used by callers who need to decide whether to proceed with a routing decision.
-- `accept_assessment(assessment)` — validates a single `CandidateAssessment` (installed + evidence present). Used when evaluating individual candidates.
+- `accept_assessment(assessment)` — validates a single `CandidateAssessment` (not blocked; support and auth remain separate). Used when evaluating individual candidates.
 
-Both share the `RejectionReason` type.
+Both share the `RejectionReason` type and reject blocked assessments. A present
+`MatchEvidence::None` is not support. Native auth rejection cannot be accepted
+merely because a matching slug and an installed binary exist.
 
 ### `report.rs` contracts
 
 **Consumers serialize `RouteDecisionReport`, never `RoutingTrace` directly.**
 `RouteDecisionReport` uses string labels for all enum fields — decouples JSON shape from internal enum changes.
 
-- **Do not construct `RouteDecisionReport` by hand** — use `RouteDecisionReport::from_trace(trace)`.
-- `RouteSummaryReport` is a compact subset for CLI JSON output.
+Report version 2 aggregates `ModelAttemptReport` records, target scope/provenance,
+caller exclusions, and a selected assessment pointer. Build policy owns cross-model
+history; standalone resolution contributes one attempt. `new`/`push`/`select`
+project existing decisions, never evaluate candidates. An exhausted report has no
+selected pointer; a deferred winner can point to an earlier attempt.
+`RouteSummaryReport` is a compact view of the selected attempt only.
 
 ### Link filtering rule
 
-Only `KnownHarness` links (from `config::targets::normalize_link`) filter routing candidates.
-Generic targets (`.agents`, `agents`, unknown names) and path-like targets are **invisible**
-to routing — they are materialization-only. See `config::targets` for normalization details.
+Target permission comes from `config::targets::HarnessScope`. Generic/path targets
+add no harnesses; an explicitly empty scope must not become unrestricted. Fixed
+and automatic assessments reject disabled routes before any auth/support probes.
+Build rejects excluded CLI harness pins and skips excluded implicit preferences.
 
-When known linked harnesses exist:
-- Auto-routing candidates are filtered to the linked set before evaluation
-- `settings.default_harness` outside the linked set is ignored (with diagnostic)
-- Hardcoded fallback is blocked (linked harnesses select themselves instead)
-- `select_linked_fallback_harness` walks `harness_order` (or link order), skipping harnesses
-  with hard `skip_reason` values (`is_hard_assessment_skip`) so a prior `pi_incompatible` or
-  `no_model_match` does not get selected again as linked fallback
+The automatic list starts with configured order (registry default if unset), then
+config default, then remaining registry harnesses. Permission filters and stable
+deduplication apply before assessment. No rejected candidate is retried or promoted;
+no installed executable means no selected route.
 
 ## Architecture
 
+```text
+scope + exclusions → ordered/deduplicated harnesses
+    → support assessment → applicable typed auth observation
+    → eligible: select / unverified: defer / blocked: skip
+    → RoutingTrace → acceptance policy → RouteDecisionReport
 ```
-RoutingInput
-    │
-    ├─ settings_harness_order? → parse + link-filter → ConfigOrder candidates
-    ├─ (no order) → provider_candidate_order → link-filter → Provider candidates
-    │
-    └─ for each candidate:
-           not installed              → skip (not_installed)
-           native provider + auth     → Confirmed ✓
-           native + constraint mismatch → skip (provider_constraint_unsatisfied)
-           opencode + probe success   → Confirmed/Constrained ✓
-           opencode + no model match  → skip (no_model_match)
-           pi + compatible probe      → Confirmed/Constrained ✓
-           pi + incompatible probe    → skip (pi_incompatible)
-           pi + no probe              → Passthrough ✓
-           cursor                     → Passthrough ✓
-           else                       → skip (unsupported_candidate)
 
-    exhausted candidates → config_default_harness → linked fallback → hardcoded pi
-                           (link constraints can block each of these)
-
-Module boundaries:
-    slug.rs       ← stable root: borrowed parsing, normalized matching
-    acceptance.rs ← policy layer: MatchPolicy, RejectionReason
-    report.rs     ← serialization DTO: RouteDecisionReport, string labels
-    mod.rs        ← evaluator: RoutingInput → RoutingTrace
-```
+Auth callbacks are command-scoped: `NativeAuthCache` is shared across aliases and
+model attempts. Native compilation injects NotApplicable, preserving support-only
+materialization without account probes. Report verdict/reason labels never include
+raw AuthState::Unknown details or auth command output.
 
 ## Rationale
 
@@ -176,7 +167,7 @@ Borrowed `SlugParts` avoids allocation in hot scanning loops.
 labels so new evaluator variants don't break serialized output. Consumers
 serialize the report, never the internal `RoutingTrace`.
 
-Link constraints blocking hardcoded/config-default fallback is intentional:
+Permission applies to every ranked candidate:
 `settings.targets = [".opencode"]` signals project intent to use OpenCode.
 Silently routing to Claude as a fallback contradicts that intent.
 
@@ -188,16 +179,14 @@ confidence.
 Route facts (`Passthrough` evidence, `provider-match` source, `unknown`
 harness_model_confidence) are **not warnings**. They belong in routing/provenance
 fields. Warnings are for unexpected user-actionable degraded states — e.g., "linked
-harness constraints left no eligible candidates." The distinction is enforced by
-`build/policy/runnable.rs::resolve_routing()` returning `warnings: Vec::new()` always;
-the caller layer owns warning promotion.
+harness constraints left no eligible candidates." Build policy owns warning promotion; final routing projection does not emit warnings.
 
 ## Patterns
 
 **Test without real auth probes:**
 
 ```rust
-let trace = evaluate_candidates_with_auth(&input, |_harness| true /* always_authed */);
+let trace = evaluate_candidates_with_auth(&input, |_harness| AuthState::Authenticated);
 ```
 
 **Simulate Pi compatibility:**
@@ -232,7 +221,11 @@ accept_assessment(&assessment)?;
 **Serialize for CLI output:**
 
 ```rust
-let report = trace.to_report(); // or RouteDecisionReport::from_trace(&trace)
+let mut report = RouteDecisionReport::new(scope, target_source, excluded);
+let attempt = report.model_attempts.len();
+report.push(token, canonical_model, model_source, &trace);
+// Only after the caller accepts this route:
+report.select(attempt);
 let json = serde_json::to_string(&report)?;
 ```
 

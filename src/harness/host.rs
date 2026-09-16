@@ -1,3 +1,4 @@
+use crate::config::targets::HarnessScope;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -164,16 +165,32 @@ impl CapabilitySession {
         self.cursor_outcome().result().cloned()
     }
 
-    pub fn into_snapshot(mut self) -> CapabilitySnapshot {
-        let opencode = self.opencode.take().unwrap_or_else(|| {
-            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
-        let pi = self.pi.take().unwrap_or_else(|| {
-            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
-        let cursor = self.cursor.take().unwrap_or_else(|| {
-            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-        });
+    pub fn into_snapshot(self) -> CapabilitySnapshot {
+        self.into_scoped_snapshot(&HarnessScope::Unrestricted)
+    }
+
+    pub fn into_scoped_snapshot(mut self, scope: &HarnessScope) -> CapabilitySnapshot {
+        let opencode = if scope.permits("opencode") {
+            self.opencode.take().unwrap_or_else(|| {
+                cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedProbeOutcome::Unavailable
+        };
+        let pi = if scope.permits("pi") {
+            self.pi.take().unwrap_or_else(|| {
+                cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedPiProbeOutcome::Unavailable
+        };
+        let cursor = if scope.permits("cursor") {
+            self.cursor.take().unwrap_or_else(|| {
+                cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+            })
+        } else {
+            CachedCursorProbeOutcome::Unavailable
+        };
 
         CapabilitySnapshot {
             executable: self.executable,
@@ -260,8 +277,26 @@ pub fn collect_capability_snapshot_with_resolver(
     CapabilitySession::collect_with_resolver(options, resolver).into_snapshot()
 }
 
-pub fn native_harness_authenticated(harness: &str) -> bool {
-    native_auth_state_for_name(harness) == AuthState::Authenticated
+/// Native auth is observed lazily once per command, independently of model candidates.
+/// Unknown results are cached too; neither a backup nor another alias retries them.
+#[derive(Debug, Default)]
+pub struct NativeAuthCache {
+    states: std::cell::RefCell<BTreeMap<HarnessId, AuthState>>,
+}
+
+impl NativeAuthCache {
+    pub fn state(&self, harness: &str) -> AuthState {
+        let Some(id) = registry::parse(harness) else {
+            return AuthState::Unknown {
+                reason: "unknown harness".to_string(),
+            };
+        };
+        self.states
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| native_auth_state_for_name(id.as_str()))
+            .clone()
+    }
 }
 
 pub fn native_auth_state_for_name(harness: &str) -> AuthState {

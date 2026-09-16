@@ -30,15 +30,10 @@ Harness-model path facts (`passthrough`, `synthesized`, `unknown` confidence,
 `provider-match`, `cached-probe`) belong in `routing.*` and `provenance.*` fields —
 they are expected route metadata, not problems a user can fix.
 
-`src/build/policy/runnable.rs` enforces this at the outer boundary:
-`resolve_routing()` always returns `warnings: Vec::new()`. Route facts are recorded
-in `routing.harness_model_source` and `routing.harness_model_confidence`. The caller
-layer (`policy/mod.rs`) owns warning promotion for actual degraded states.
-
-Examples of REAL warnings (user can act on them):
-- `"known linked harness constraints left no eligible auto-routing candidates; selecting linked harness \`codex\` without unrelated fallback"` → user should check `settings.targets`
-- `"Cursor is an experimental launch-bundle target. The contract may change without notice."` → user is informed of instability risk
-- `"tool 'X' is not a known <harness> tool; passing through verbatim"` → tool normalization couldn't resolve the name; user may have a typo
+Route facts are recorded in `routing.harness_model_source` and
+`routing.harness_model_confidence`. Build policy owns warnings for selected model
+fallbacks; tool normalization warns about unknown tool names. Exhausted routing
+is an error, never a warning followed by an unassessed replacement route.
 
 Examples that are NOT warnings (they go to routing/provenance fields):
 - `harness_model_source: "passthrough"` — Pi or explicit harness receives the model token as-is; this is expected behavior
@@ -72,11 +67,9 @@ ancestor directory.
 
 ```
 parse_diags           ← frontmatter parse warnings (agent mode only)
-policy.warnings       ← harness resolution issues, model resolution issues,
-                        linked-constraint degradation, experimental harness
+policy.warnings       ← catalog refresh issues, selected model fallback
 prompt.warnings       ← missing skills
 tool_warnings         ← unknown tool names on first-class harnesses
-routing.warnings      ← always empty (see runnable.rs contract)
 ```
 
 All warning vectors are `extend()`-ed into a single `LaunchBundle.warnings` field.
@@ -91,6 +84,28 @@ read-only cache read. TTL and stale fallback follow [`src/models/AGENTS.md`](../
 
 Catalog slugs feed `RoutingInput.catalog_model_slugs` so native harness matching aligns with
 `mars models list|resolve` (same `evaluate_candidates` path).
+
+### Literal model pins
+
+`--model <id> --literal-model` bypasses alias lookup and model backups while
+retaining normal harness permission, support and auth assessment. A provider-qualified
+literal retains its constraint in `routing.provider_constraint`. An explicitly empty
+literal pins harness-default mode instead of falling through to project/profile defaults.
+Continuation consumers use this to revalidate a recorded canonical selection without
+allowing a renamed alias to change the model.
+
+### Selection report and errors
+
+Bundle version 4 carries report version 2 at `routing.route_trace`. Policy resolution
+accumulates every attempted model and its harness assessments, preserving scope and
+winning target-file provenance. `selected` indexes the accepted assessment, including
+an earlier deferred attempt. The report is diagnostic; execution uses routing fields.
+
+JSON failures expose `error: {code, message}` and a top-level `route_trace` once
+selection began. Configuration errors before selection have no report. Configuration
+errors during prompt/skill/tool construction retain the selected report: `selected`
+means route selected, not bundle constructed or process started. Other error handling
+and exit codes remain unchanged.
 
 ### `harness_model` vs `candidate_slugs`
 
@@ -138,7 +153,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
            ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, autocompact)
-           └─ runnable::resolve_routing()              (populate Routing, warnings always empty)
+           └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)
        ├─ compile_prompt_surface()    (system instruction + supplemental docs + inventory)
@@ -180,8 +195,8 @@ to real warnings.
 
 - [policy/AGENTS.md](../policy/AGENTS.md) — policy resolution pipeline, field independence,
   cross-field precedence conflict handling
-- [policy/.context/CONTEXT.md](../policy/.context/CONTEXT.md) — precedence ranks, soft-fail
-  contract, model_override mechanism
+- [policy/.context/CONTEXT.md](../policy/.context/CONTEXT.md) — preference ordering, independent
+  pins, and model-attempt exhaustion
 - [src/models/AGENTS.md](../../models/AGENTS.md) — catalog `ensure_fresh`, `ModelsRefreshControl`
 - [src/routing/.context/CONTEXT.md](../../routing/.context/CONTEXT.md) — harness candidate
   evaluation, selection-kind vs match-evidence semantics, and `RouteDecisionReport`

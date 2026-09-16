@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::build::policy::{PolicyInput, PolicySource};
 use crate::config::AgentOverlay;
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
 use crate::models::{self, ModelAlias, ModelsCache};
 
 pub(super) struct ResolvedModel<'a> {
@@ -12,7 +12,6 @@ pub(super) struct ResolvedModel<'a> {
     pub(super) model_source: PolicySource,
     pub(super) model: String,
     pub(super) alias: Option<&'a ModelAlias>,
-    pub(super) alias_resolution_failed: bool,
     pub(super) provider_for_order: Option<String>,
     pub(super) provider_constraint: Option<String>,
     pub(super) warnings: Vec<String>,
@@ -29,6 +28,14 @@ pub(super) fn resolve_model<'a>(
     aliases: &'a IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> Result<ResolvedModel<'a>, MarsError> {
+    if input.literal_model {
+        let token = input.model_override.ok_or_else(|| {
+            MarsError::Config(ConfigError::Invalid {
+                message: "literal model selection requires a model override".into(),
+            })
+        })?;
+        return Ok(resolve_literal_model(token.to_string(), PolicySource::Cli));
+    }
     let (model_token, model_source) = match input.model_override {
         Some(model) => (model.to_string(), PolicySource::Cli),
         None => match overlay.and_then(|entry| entry.model.as_deref()) {
@@ -56,12 +63,10 @@ pub(super) fn resolve_model_token<'a>(
     let alias = aliases.get(&model_token);
     let (raw_model_token, token_provider_constraint) =
         models::split_provider_constrained_model_token(&model_token);
-    let mut alias_resolution_failed = false;
     let model = if let Some(alias) = alias {
         match models::resolve_model_id_for_alias(alias, cache) {
             Some(model_id) => model_id,
             None => {
-                alias_resolution_failed = true;
                 warnings.push(format!(
                     "model alias `{model_token}` did not resolve from cached catalog; using token as model id"
                 ));
@@ -73,7 +78,7 @@ pub(super) fn resolve_model_token<'a>(
     };
 
     let provider_constraint = alias
-        .and_then(provider_constraint_for_alias)
+        .and_then(models::provider_constraint_for_alias)
         .or(token_provider_constraint.clone());
     let provider_for_order = if let Some(entry) = alias {
         models::resolve_provider_for_alias(entry, cache)
@@ -88,7 +93,6 @@ pub(super) fn resolve_model_token<'a>(
         model_source,
         model,
         alias,
-        alias_resolution_failed,
         provider_for_order,
         provider_constraint,
         warnings,
@@ -110,20 +114,10 @@ pub(super) fn resolve_literal_model(
         model_source,
         model,
         alias: None,
-        alias_resolution_failed: false,
         provider_for_order,
         provider_constraint,
         warnings: Vec::new(),
     }
-}
-
-fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
-    match &alias.spec {
-        models::ModelSpec::Pinned { provider, .. }
-        | models::ModelSpec::PinnedWithMatch { provider, .. } => provider.clone(),
-        models::ModelSpec::AutoResolve { provider, .. } => provider.clone(),
-    }
-    .map(|provider| provider.trim().to_ascii_lowercase())
 }
 
 pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, MarsError> {
@@ -175,7 +169,9 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: Some("claude-opus-4-6"),
+            literal_model: false,
             harness_override: None,
+            excluded_harnesses: &[],
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
@@ -203,7 +199,9 @@ mod tests {
             agent: None,
             profile: &profile,
             model_override: None,
+            literal_model: false,
             harness_override: None,
+            excluded_harnesses: &[],
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
@@ -221,7 +219,6 @@ mod tests {
         assert_eq!(resolved.model_source, PolicySource::Unset);
         assert_eq!(resolved.model, "");
         assert!(resolved.alias.is_none());
-        assert!(!resolved.alias_resolution_failed);
         assert_eq!(resolved.provider_for_order, None);
         assert_eq!(resolved.provider_constraint, None);
         assert!(resolved.warnings.is_empty());

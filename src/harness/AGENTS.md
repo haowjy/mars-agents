@@ -11,7 +11,19 @@ host.rs      →  PATH + probe caches  →  CapabilitySnapshot (clone, share)
 
 **Registry owns identity.** Valid harness names, native provider affinity, and evaluation order live only in `registry`. Other modules call `parse()` / `is_known()` — they do not maintain parallel harness lists.
 
-**Host collects once.** `collect_capability_snapshot(options)` runs at command entry (models list/resolve, launch-bundle policy, etc.). Pass the resulting `CapabilitySnapshot` through the rest of the invocation; do not re-collect mid-command.
+**Host collects once.** Routing commands create a lazy `CapabilitySession` at entry.
+Live model lists use `into_scoped_snapshot()` so excluded probe-backed harnesses
+are not refreshed, even under `--refresh-models`. The snapshot retains physical
+executable facts; permission is not represented by pretending a binary is absent.
+Unscoped snapshots remain available for callers intentionally inspecting all hosts.
+Do not re-collect mid-command.
+
+## Native authentication
+
+`NativeAuthCache` observes each canonical harness lazily once per command, including
+unknown results. Share it across model candidates and live aliases; do not turn
+AuthState into a boolean or cache it across commands. Routing checks permission,
+installation and support before invoking it. Auth status is not credit/quota proof.
 
 ## Capability collection
 

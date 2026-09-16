@@ -8,7 +8,6 @@
 //!
 //! Merge precedence: consumer > deps (declaration order).
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -984,13 +983,10 @@ pub fn auto_resolve(
         .first()
         .map(|model| model.id.clone())
 }
-pub fn resolve_with_alias_prefix_with_probe(
+pub fn resolve_with_alias_prefix_static(
     input: &str,
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
-    opencode_probe: Option<&probes::OpenCodeProbeResult>,
-    pi_probe: Option<&probes::PiProbeResult>,
-    cursor_probe: Option<&probes::CursorProbeResult>,
 ) -> Option<ResolvedAlias> {
     let pattern = if input.contains('*') {
         input.to_string()
@@ -1090,38 +1086,12 @@ pub fn resolve_with_alias_prefix_with_probe(
         }) => (default_effort.clone(), *autocompact, *autocompact_pct),
         _ => (None, None, None),
     };
-    let installed = harness::detect_installed_harnesses();
-    let catalog_slugs = catalog_model_slugs(cache);
-    let default_harness_order = crate::harness::registry::default_harness_order_names();
-    let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-        model_id: &winner.id,
-        provider_for_order: Some(&provider),
-        provider_constraint: None,
-        settings_provider_order: None,
-        settings_harness_order: Some(default_harness_order.as_slice()),
-        config_default_harness: None,
-        installed_harnesses: &installed,
-        linked_harnesses: None,
-        opencode_probe_result: opencode_probe,
-        pi_probe_result: pi_probe,
-        cursor_probe_result: cursor_probe,
-        catalog_model_slugs: Some(catalog_slugs.as_slice()),
-    });
-    let (harness, harness_source) = match crate::routing::acceptance::accept_route(
-        &trace,
-        &installed,
-        crate::routing::acceptance::MatchPolicy::InstalledOnly,
-    ) {
-        Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
-        Err(_) => (None, HarnessSource::Unavailable),
-    };
-
     Some(ResolvedAlias {
         name: input.to_string(),
         model_id: winner.id,
         provider: provider.clone(),
-        harness,
-        harness_source,
+        harness: None,
+        harness_source: HarnessSource::Unavailable,
         harness_candidates: harness::harness_candidates_for_provider(&provider),
         description: winner.description,
         prompting: base_alias.and_then(|a| a.prompting.clone()),
@@ -1132,7 +1102,7 @@ pub fn resolve_with_alias_prefix_with_probe(
     })
 }
 
-fn alias_prefix_base<'a>(
+pub(crate) fn alias_prefix_base<'a>(
     input: &str,
     aliases: &'a IndexMap<String, ModelAlias>,
 ) -> Option<&'a ModelAlias> {
@@ -1425,114 +1395,29 @@ pub fn resolve_all_static(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> IndexMap<String, ResolvedAlias> {
-    let mut resolved = IndexMap::new();
-
-    for (name, alias) in aliases {
-        let Some((model_id, provider)) = resolve_model_and_provider(alias, cache) else {
-            continue; // unresolvable — omit
-        };
-
-        resolved.insert(
-            name.clone(),
-            ResolvedAlias {
-                name: name.clone(),
-                model_id,
-                provider,
-                harness: None,
-                harness_source: HarnessSource::Unavailable,
-                harness_candidates: Vec::new(),
-                description: alias.description.clone(),
-                prompting: alias.prompting.clone(),
-                default_effort: alias.default_effort.clone(),
-                autocompact: alias.autocompact,
-                autocompact_pct: alias.autocompact_pct,
-                availability: None,
-            },
-        );
-    }
-
-    resolved
+    aliases
+        .keys()
+        .filter_map(|name| {
+            resolve_one_static(name, aliases, cache).map(|resolved| (name.clone(), resolved))
+        })
+        .collect()
 }
 
-pub fn resolve_all_with_probe(
-    aliases: &IndexMap<String, ModelAlias>,
-    cache: &ModelsCache,
-    diag: &mut DiagnosticCollector,
-    opencode_probe: Option<&probes::OpenCodeProbeResult>,
-    pi_probe: Option<&probes::PiProbeResult>,
-    cursor_probe: Option<&probes::CursorProbeResult>,
-) -> IndexMap<String, ResolvedAlias> {
-    let _ = diag;
-    let installed = harness::detect_installed_harnesses();
-    let mut resolved = IndexMap::new();
-
-    for (name, alias) in aliases {
-        let Some((model_id, provider)) = resolve_model_and_provider(alias, cache) else {
-            continue; // unresolvable — omit
-        };
-
-        let candidates = harness::harness_candidates_for_provider(&provider);
-        let (h, source) = resolve_harness(
-            alias,
-            &provider,
-            &model_id,
-            &installed,
-            opencode_probe,
-            pi_probe,
-            cursor_probe,
-        );
-
-        resolved.insert(
-            name.clone(),
-            ResolvedAlias {
-                name: name.clone(),
-                model_id,
-                provider,
-                harness: h,
-                harness_source: source,
-                harness_candidates: candidates,
-                description: alias.description.clone(),
-                prompting: alias.prompting.clone(),
-                default_effort: alias.default_effort.clone(),
-                autocompact: alias.autocompact,
-                autocompact_pct: alias.autocompact_pct,
-                availability: None,
-            },
-        );
-    }
-
-    resolved
-}
-pub fn resolve_one_with_probe(
+/// Resolve model identity only; callers supply scoped routing evidence separately.
+pub fn resolve_one_static(
     name: &str,
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
-    diag: &mut DiagnosticCollector,
-    opencode_probe: Option<&probes::OpenCodeProbeResult>,
-    pi_probe: Option<&probes::PiProbeResult>,
-    cursor_probe: Option<&probes::CursorProbeResult>,
 ) -> Option<ResolvedAlias> {
     let alias = aliases.get(name)?;
-    let installed = harness::detect_installed_harnesses();
     let (model_id, provider) = resolve_model_and_provider(alias, cache)?;
-    let candidates = harness::harness_candidates_for_provider(&provider);
-    let (harness, harness_source) = resolve_harness(
-        alias,
-        &provider,
-        &model_id,
-        &installed,
-        opencode_probe,
-        pi_probe,
-        cursor_probe,
-    );
-    let _ = diag;
     Some(ResolvedAlias {
         name: name.to_string(),
         model_id,
         provider,
-        harness,
-        harness_source,
-        harness_candidates: candidates,
+        harness: None,
+        harness_source: HarnessSource::Unavailable,
+        harness_candidates: Vec::new(),
         description: alias.description.clone(),
         prompting: alias.prompting.clone(),
         default_effort: alias.default_effort.clone(),
@@ -1612,23 +1497,9 @@ pub fn filter_by_visibility(
 
 fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option<(String, String)> {
     match &alias.spec {
-        ModelSpec::Pinned {
-            model, provider, ..
-        } => {
-            let p = provider
-                .clone()
-                .or_else(|| infer_provider_from_model_id(model).map(str::to_string))
-                .unwrap_or_else(|| "unknown".to_string());
-            Some((model.clone(), p))
-        }
-        ModelSpec::PinnedWithMatch {
-            model, provider, ..
-        } => {
-            let p = provider
-                .clone()
-                .or_else(|| infer_provider_from_model_id(model).map(str::to_string))
-                .unwrap_or_else(|| "unknown".to_string());
-            Some((model.clone(), p))
+        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
+            let provider = provider_from_alias_spec(alias).unwrap_or_else(|| "unknown".to_string());
+            Some((model.clone(), provider))
         }
         ModelSpec::AutoResolve {
             provider,
@@ -1654,6 +1525,21 @@ fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option
     }
 }
 
+/// Authored provider restriction, never inferred from a preferred harness.
+/// A provider-qualified pinned model supplies a restriction when the field is absent.
+pub(crate) fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
+    let (provider, model) = match &alias.spec {
+        ModelSpec::Pinned { model, provider }
+        | ModelSpec::PinnedWithMatch {
+            model, provider, ..
+        } => (provider.as_deref(), Some(model.as_str())),
+        ModelSpec::AutoResolve { provider, .. } => (provider.as_deref(), None),
+    };
+    provider
+        .map(|provider| provider.trim().to_ascii_lowercase())
+        .or_else(|| model.and_then(|model| split_provider_constrained_model_token(model).1))
+}
+
 fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
     match &alias.spec {
         ModelSpec::Pinned { model, provider }
@@ -1661,19 +1547,10 @@ fn provider_from_alias_spec(alias: &ModelAlias) -> Option<String> {
             model, provider, ..
         } => provider
             .clone()
+            .or_else(|| provider_constraint_for_alias(alias))
             .or_else(|| infer_provider_from_model_id(model).map(str::to_string)),
         ModelSpec::AutoResolve { provider, .. } => provider.clone(),
     }
-}
-
-fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
-    match &alias.spec {
-        ModelSpec::Pinned { provider, .. } | ModelSpec::PinnedWithMatch { provider, .. } => {
-            provider.clone()
-        }
-        ModelSpec::AutoResolve { provider, .. } => provider.clone(),
-    }
-    .map(|provider| provider.trim().to_ascii_lowercase())
 }
 
 fn format_alias_resolution_for_diag(
@@ -1701,48 +1578,6 @@ fn format_alias_resolution_for_diag(
                 Some(model_id) => (format!("{source_name} → {model_id}"), Some(model_id)),
                 None => (format!("{source_name} → <unresolvable>"), None),
             }
-        }
-    }
-}
-
-fn resolve_harness(
-    alias: &ModelAlias,
-    provider: &str,
-    model_id: &str,
-    installed: &HashSet<String>,
-    opencode_probe_result: Option<&probes::OpenCodeProbeResult>,
-    pi_probe_result: Option<&probes::PiProbeResult>,
-    cursor_probe_result: Option<&probes::CursorProbeResult>,
-) -> (Option<String>, HarnessSource) {
-    if let Some(h) = &alias.harness {
-        if installed.contains(h) {
-            (Some(h.clone()), HarnessSource::Explicit)
-        } else {
-            (Some(h.clone()), HarnessSource::Unavailable)
-        }
-    } else {
-        let provider_constraint = provider_constraint_for_alias(alias);
-        let trace = crate::routing::evaluate_candidates(&crate::routing::RoutingInput {
-            model_id,
-            provider_for_order: Some(provider),
-            provider_constraint: provider_constraint.as_deref(),
-            settings_provider_order: None,
-            settings_harness_order: None,
-            config_default_harness: None,
-            installed_harnesses: installed,
-            linked_harnesses: None,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            catalog_model_slugs: None,
-        });
-        match crate::routing::acceptance::accept_route(
-            &trace,
-            installed,
-            crate::routing::acceptance::MatchPolicy::InstalledOnly,
-        ) {
-            Ok(()) => (Some(trace.harness), HarnessSource::AutoDetected),
-            Err(_) => (None, HarnessSource::Unavailable),
         }
     }
 }

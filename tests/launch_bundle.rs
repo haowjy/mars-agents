@@ -8,17 +8,25 @@ mod test_common;
 mod common;
 #[path = "launch_bundle/cursor.rs"]
 mod cursor;
+#[path = "launch_bundle/decision_report.rs"]
+mod decision_report;
 #[path = "launch_bundle/errors.rs"]
 mod errors;
 #[path = "launch_bundle/execution_policy.rs"]
 mod execution_policy;
+#[path = "launch_bundle/model_fallback.rs"]
+mod model_fallback;
 #[path = "launch_bundle/native_config.rs"]
 mod native_config;
 #[path = "launch_bundle/prompt_surface.rs"]
 mod prompt_surface;
 #[path = "launch_bundle/routing.rs"]
 mod routing;
+#[path = "launch_bundle/runnable.rs"]
+mod runnable;
 #[path = "launch_bundle/schema.rs"]
 mod schema;
+#[path = "launch_bundle/target_scope.rs"]
+mod target_scope;
 #[path = "launch_bundle/tool_policy.rs"]
 mod tool_policy;

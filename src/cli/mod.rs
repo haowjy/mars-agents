@@ -197,11 +197,30 @@ pub enum Command {
 /// Dispatch a parsed CLI command to the appropriate handler and map errors to
 /// the final exit code.
 pub fn dispatch(cli: Cli) -> i32 {
+    let json = cli.json;
     match dispatch_result(cli) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("error: {err}");
-            if matches!(err, MarsError::Lock(LockError::Corrupt { .. })) {
+            if json {
+                let (code, message, report) = match &err {
+                    MarsError::Selection {
+                        code,
+                        message,
+                        report,
+                    } => (*code, message.clone(), Some(report)),
+                    MarsError::Config(_) => ("invalid_config", err.to_string(), None),
+                    _ => ("command_failed", err.to_string(), None),
+                };
+                let mut payload =
+                    serde_json::json!({ "error": { "code": code, "message": message } });
+                if let Some(report) = report {
+                    payload["route_trace"] = serde_json::json!(report);
+                }
+                println!("{}", payload);
+            } else {
+                eprintln!("error: {err}");
+            }
+            if !json && matches!(err, MarsError::Lock(LockError::Corrupt { .. })) {
                 eprintln!(
                     "hint: run `{}` to rebuild from mars.toml + dependencies",
                     managed_cmd("mars repair")

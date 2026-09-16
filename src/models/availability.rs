@@ -17,6 +17,8 @@ pub enum AvailabilityStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AvailabilitySource {
+    RouteRejected,
+    RouteUnverified,
     HarnessInstalled,
     UniversalHarness,
     #[serde(rename = "pi_probe")]

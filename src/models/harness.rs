@@ -1,9 +1,6 @@
 // qa-validated: harness-order-settings-audit
 
-use crate::harness::host::{
-    ExecutableResolver, ExecutableState, PathExecutableResolver,
-    native_harness_authenticated as host_native_authed,
-};
+use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableResolver};
 use crate::harness::registry;
 use std::collections::HashSet;
 
@@ -34,30 +31,12 @@ pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn native_harness_authenticated(harness: &str) -> bool {
-    host_native_authed(harness)
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HarnessOrderFailure {
-    Empty,
-    NoneInstalled { valid_candidates: Vec<String> },
-}
-
 pub struct ParsedHarnessOrder {
     pub valid_candidates: Vec<String>,
     pub warnings: Vec<String>,
-    pub failure: Option<HarnessOrderFailure>,
 }
 
 pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
-    if order.is_empty() {
-        return ParsedHarnessOrder {
-            valid_candidates: Vec::new(),
-            warnings: Vec::new(),
-            failure: Some(HarnessOrderFailure::Empty),
-        };
-    }
-
     let mut valid_candidates = Vec::new();
     let mut warnings = Vec::new();
     for candidate in order {
@@ -75,6 +54,5 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
     ParsedHarnessOrder {
         valid_candidates,
         warnings,
-        failure: None,
     }
 }

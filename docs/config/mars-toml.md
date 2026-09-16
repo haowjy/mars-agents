@@ -210,11 +210,22 @@ exclude = ["*-preview*", "*-latest"]         # Then hide these
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
 | `models_cache_ttl_hours` | integer | `24` | Model catalog cache TTL; `0` forces refresh |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
-| `default_harness` | string | unset | Default harness for launch routing when profile/alias/provider cannot resolve one |
+| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
+
+Targets also govern launch permission. `targets = [".codex", ".opencode"]` permits
+only those harnesses, regardless of what is installed or logged in. Explicit empty
+or generic/path-only targets permit no harnesses. When targets are absent,
+managed_root supplies the scope; with neither field supplied, routing may discover
+installed harnesses. Physical target directories are not an eligibility check.
+
+Local targets replace project targets, even with an empty list. A local
+managed_root does not override project targets. An explicit `--harness` cannot
+expand target permission; a disabled profile/alias preference is skipped.
+
 
 `[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 
@@ -239,7 +250,7 @@ approval = "confirm"
 sandbox = "read-only"
 model-invocable = false
 user-invocable = true
-model-policies = [{ match = "gpt-5*", no_fallback = true }]
+model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
 
 [agents.reviewer.tools]
 allowed = ["bash(git *)", "read", "write", "mcp(plugin:demo)"]
@@ -265,7 +276,12 @@ The removed `tools.mcp` overlay key is rejected at parse time — include MCP gr
 `tools.allowed` (e.g. `"mcp(plugin:demo)"`). See
 [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
-`model-policies` rules: each entry has `match` (glob pattern against model ID/alias), `no_fallback` (bool, optional). See `config/mod.rs` for the full `ModelPolicyRule` definition.
+Each `model-policies` rule has a `match` table with exactly one of `alias`, `model`,
+or `model-glob`, plus optional `override` and `no-fallback` fields. Overlay/settings
+rules supply conditional settings. Profile rules also declare launch backups:
+all concrete, unflagged entries participate in declaration order, independently of
+the primary's active settings match. `no-fallback` excludes only its entry; it never
+vetoes the rest of the chain. See [model policies](agent-profiles.md#model-policies).
 
 ### `[skills.<name>]` (overlay)
 

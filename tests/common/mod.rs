@@ -316,3 +316,29 @@ pub fn setup_project(server: &MockServer) -> (tempfile::TempDir, PathBuf) {
     init_project(&project_root, temp.path(), &server.url(API_PATH));
     (temp, project_root)
 }
+
+/// Log every fake harness invocation without executing a native tool.
+pub fn install_logging_harnesses(root: &Path) -> PathBuf {
+    let bin = root.join("logging-harness-bin");
+    fs::create_dir_all(&bin).unwrap();
+    for name in ["claude", "codex", "opencode", "pi", "cursor", "agent"] {
+        #[cfg(windows)]
+        fs::write(
+            bin.join(format!("{name}.bat")),
+            format!("@echo off\r\necho {name} %*>>\"%PROBE_LOG%\"\r\nexit /b 0\r\n"),
+        )
+        .unwrap();
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = bin.join(name);
+            fs::write(
+                &path,
+                format!("#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> \"$PROBE_LOG\"\nexit 0\n"),
+            )
+            .unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    bin
+}

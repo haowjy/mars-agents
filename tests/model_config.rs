@@ -335,10 +335,12 @@ model = "gpt-5"
 fn resolve_alias_prefix_exits_zero() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "opus-4-6"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
@@ -368,7 +370,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["model_id"].as_str(), Some("unknown-xyz"));
     assert!(
-        stdout["error"]
+        stdout["error"]["message"]
             .as_str()
             .expect("error should be present")
             .contains("unknown-xyz")
@@ -379,8 +381,8 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
     assert!(stdout["route_trace"].is_object());
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
-    let assessments = stdout["route_trace"]["assessments"]
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(2));
+    let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let pi_assessment = assessments
@@ -388,7 +390,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         .find(|assessment| assessment["harness"].as_str() == Some("pi"))
         .expect("pi assessment should exist");
     assert_eq!(pi_assessment["skip_reason"].as_str(), Some("not_installed"));
-    assert_eq!(stdout["route"]["harness"].as_str(), Some(""));
+    assert!(stdout["route"].is_null());
 }
 
 #[test]
@@ -568,7 +570,7 @@ fn resolve_prefix_no_match_fails_cleanly() {
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["resolved_model"].as_str(), Some("opus-9-9"));
     assert!(
-        stdout["error"]
+        stdout["error"]["message"]
             .as_str()
             .expect("error should be present")
             .contains("opus-9-9")
@@ -680,7 +682,7 @@ fn resolve_passthrough_provider_model_slug_succeeds_when_harness_reports_match()
         "confirmed passthrough route should not emit warning: {stdout}"
     );
     assert!(stdout["route_trace"].is_object());
-    let assessments = stdout["route_trace"]["assessments"]
+    let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     assert!(
@@ -903,8 +905,16 @@ provider = "openai"
         Some("consumer local (mars.local.toml)")
     );
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5.4-mini"));
-    assert_eq!(stdout["harness"].as_str(), Some("pi"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["spec"]["model"].as_str(), Some("gpt-5.4-mini"));
+    assert_eq!(
+        stdout["route_trace"]["model_attempts"][0]["assessments"][0]["harness"],
+        "pi"
+    );
+    assert_eq!(
+        stdout["route_trace"]["model_attempts"][0]["assessments"][0]["verdict"],
+        "unverified"
+    );
 }
 
 #[test]
@@ -997,7 +1007,7 @@ harness_order = ["codex", "pi"]
 
         assert_eq!(stdout["harness"].as_str(), Some("codex"));
         assert_eq!(stdout["route"]["source"].as_str(), Some("config-order"));
-        let candidates = stdout["route_trace"]["candidates_tried"]
+        let candidates = stdout["route_trace"]["model_attempts"][0]["candidates_tried"]
             .as_array()
             .expect("route_trace.candidates_tried should be an array");
         assert_eq!(
@@ -1024,7 +1034,7 @@ harness_order = ["codex", "pi"]
 
 #[test]
 #[serial]
-fn resolve_exact_alias_fixed_native_harness_fails_when_provider_constraint_is_incompatible() {
+fn resolve_exact_alias_preference_cannot_override_provider_constraint() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
@@ -1058,33 +1068,29 @@ provider = "anthropic"
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
     assert!(
-        stdout["error"]
+        stdout["error"]["message"]
             .as_str()
-            .expect("error should be present")
-            .contains("cannot run resolved model under model-first routing")
+            .unwrap()
+            .contains("No permitted, runnable harness")
     );
-    assert_eq!(stdout["route"]["harness"].as_str(), Some("codex"));
-    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
-    assert_eq!(stdout["route"]["match_evidence"].as_str(), Some("none"));
+    assert!(stdout["harness"].is_null());
+    assert_eq!(stdout["harness_source"], "unavailable");
+    assert!(stdout["route"].is_null());
+    assert!(stdout["route_trace"]["selected"].is_null());
+    assert_eq!(stdout["route_trace"]["outcome"], "exhausted");
     assert_eq!(
-        stdout["route_rejection"]["reason"].as_str(),
-        Some("assessment_failed")
+        stdout["route_trace"]["model_attempts"][0]["candidates_tried"],
+        json!(["codex", "claude", "pi", "cursor", "opencode"])
     );
-    assert_eq!(stdout["route_rejection"]["harness"].as_str(), Some("codex"));
-    assert_eq!(
-        stdout["route_rejection"]["skip_reason"].as_str(),
-        Some("provider_constraint_unsatisfied")
-    );
-    assert_eq!(stdout["route_trace"]["candidates_tried"], json!(["codex"]));
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
-    assert_eq!(stdout["harnesses_tried"], json!(["codex"]));
-    let assessments = stdout["route_trace"]["assessments"]
+    assert_eq!(stdout["route_trace"]["version"], 2);
+    let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
     let codex_assessment = assessments
         .iter()
         .find(|assessment| assessment["harness"].as_str() == Some("codex"))
         .expect("codex assessment should exist");
+    assert_eq!(codex_assessment["verdict"], "blocked");
     assert_eq!(
         codex_assessment["skip_reason"].as_str(),
         Some("provider_constraint_unsatisfied")
@@ -1185,20 +1191,20 @@ provider = "openai"
     assert_eq!(stdout["resolved_model"].as_str(), Some("gpt-5"));
     assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["route"]["source"].as_str(), Some("alias"));
-    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("fixed"));
+    assert_eq!(stdout["route"]["selection_kind"].as_str(), Some("auto"));
     assert_eq!(
         stdout["route"]["match_evidence"].as_str(),
         Some("constrained")
     );
     assert_eq!(
-        stdout["route_trace"]["selection_kind"].as_str(),
-        Some("fixed")
+        stdout["route_trace"]["model_attempts"][0]["selection_kind"].as_str(),
+        Some("auto")
     );
     assert_eq!(
-        stdout["route_trace"]["match_evidence"].as_str(),
+        stdout["route_trace"]["model_attempts"][0]["match_evidence"].as_str(),
         Some("constrained")
     );
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(1));
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(2));
     assert!(
         stdout.get("route_rejection").is_none(),
         "successful exact alias resolves should not emit route_rejection: {stdout}"
@@ -1233,7 +1239,9 @@ match = ["gpt-5*"]
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
     assert_eq!(stdout["name"].as_str(), Some("fast"));
     assert_eq!(stdout["source"].as_str(), Some("consumer (mars.toml)"));
-    let error = stdout["error"].as_str().expect("error should be present");
+    let error = stdout["error"]["message"]
+        .as_str()
+        .expect("error should be present");
     assert!(
         error.starts_with("alias `fast` requires models cache for auto-resolve"),
         "expected alias-specific cache error, got: {error}"
@@ -1320,11 +1328,20 @@ fn models_commands_fail_before_fetch_when_local_settings_cannot_parse() {
         cmd.args(args);
 
         let output = cmd.assert().code(2).get_output().clone();
-        let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-        assert!(
-            stderr.contains("parse error"),
-            "expected parse error for invalid local settings, stderr:\n{stderr}"
-        );
+        if args.contains(&"--json") {
+            let error: Value =
+                serde_json::from_slice(&output.stdout).expect("structured JSON error");
+            assert_eq!(error["error"]["code"], "invalid_config");
+            assert!(
+                error["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("parse error")
+            );
+            assert!(error.get("route_trace").is_none());
+        } else {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("parse error"));
+        }
         assert_eq!(
             mock.hits(),
             0,

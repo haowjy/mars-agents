@@ -137,3 +137,12 @@ pub fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
 pub fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
 }
+
+/// Diagnostic assertions follow the selected attempt, not the last attempted model.
+pub fn selected_attempt(bundle: &Value) -> &Value {
+    let report = &bundle["routing"]["route_trace"];
+    let index = report["selected"]["attempt_index"]
+        .as_u64()
+        .expect("selected attempt") as usize;
+    &report["model_attempts"][index]
+}

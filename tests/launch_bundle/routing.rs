@@ -13,7 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) fn build_launch_bundle_cli_model_alias_harness_beats_profile_harness() {
+#[test]
+fn build_launch_bundle_cli_model_alias_harness_beats_profile_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
@@ -56,8 +57,8 @@ harness = "codex""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_harness()
-{
+#[test]
+fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
@@ -111,8 +112,8 @@ model = "gpt-5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness()
-{
+#[test]
+fn build_launch_bundle_uses_provider_harness_for_openai_model_when_alias_has_no_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -163,7 +164,8 @@ model = "gpt-5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
+#[test]
+fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---
@@ -189,7 +191,8 @@ match = ["definitely-not-a-cached-openai-model-*"]"#;
     assert!(stderr.contains("model fallback candidates exhausted for `openai_alias`"));
 }
 
-pub(crate) fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
+#[test]
+fn build_launch_bundle_uses_settings_default_harness_before_hardcoded_fallback() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &[]);
     let agent_content = r#"---
@@ -246,7 +249,8 @@ default_harness = "pi""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile() {
+#[test]
+fn build_launch_bundle_cli_direct_model_id_prefers_provider_harness_over_profile() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
     let agent_content = r#"---
@@ -283,7 +287,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_uses_settings_default_model_when_profile_and_cli_missing() {
+#[test]
+fn build_launch_bundle_uses_settings_default_model_when_profile_and_cli_missing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -316,7 +321,8 @@ default_model = "gpt-5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_model_override_beats_settings_default_model() {
+#[test]
+fn build_launch_bundle_cli_model_override_beats_settings_default_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -348,7 +354,8 @@ default_model = "gpt-5.4-mini""#;
     assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("cli"));
 }
 
-pub(crate) fn build_launch_bundle_profile_model_beats_settings_default_model() {
+#[test]
+fn build_launch_bundle_profile_model_beats_settings_default_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -380,8 +387,8 @@ default_model = "gpt-5.4-mini""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default()
-{
+#[test]
+fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -431,7 +438,8 @@ default_harness = "invalid-harness""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
+#[test]
+fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["gemini", "pi"]);
     let agent_content = r#"---
@@ -470,7 +478,8 @@ Review code changes."#;
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
 
-pub(crate) fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
+#[test]
+fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -546,7 +555,8 @@ default_harness = "claude""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
+#[test]
+fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
     let agent_content = r#"---
@@ -592,7 +602,8 @@ harness_order = ["codex", "pi"]"#,
     );
 }
 
-pub(crate) fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
+#[test]
+fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -621,7 +632,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
+#[test]
+fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -660,8 +672,8 @@ commit = "abc123"
     );
 }
 
-pub(crate) fn build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug()
-{
+#[test]
+fn build_launch_bundle_provider_order_prefers_configured_provider_over_first_seen_slug() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_opencode_models(
         &temp,
@@ -726,7 +738,8 @@ model = "gpt-5.4-mini""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_provider_order_unknown_provider_warns_in_route_trace() {
+#[test]
+fn build_launch_bundle_provider_order_unknown_provider_warns_in_route_trace() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -781,7 +794,8 @@ model = "gpt-5.4-mini""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match() {
+#[test]
+fn build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -847,7 +861,8 @@ model = "gpt-5.4-mini""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
+#[test]
+fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
     let agent_content = r#"---
@@ -911,7 +926,8 @@ harness_order = ["pi", "opencode"]"#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
+#[test]
+fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "codex", "opencode"]);
     let agent_content = r#"---
@@ -966,7 +982,8 @@ harness_order = ["codex", "opencode"]"#;
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }
 
-pub(crate) fn build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate() {
+#[test]
+fn build_launch_bundle_unavailable_profile_harness_pivots_to_installed_candidate() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
     let agent_content = r#"---
@@ -1044,7 +1061,8 @@ provider = "openai""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
+#[test]
+fn build_launch_bundle_unavailable_profile_harness_errors_without_installed_fallback() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
     let agent_content = r#"---
@@ -1070,8 +1088,8 @@ Review code changes."#;
     assert!(stderr.contains("installed harnesses: codex, opencode"));
 }
 
-pub(crate) fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate()
- {
+#[test]
+fn build_launch_bundle_profile_harness_without_installed_harnesses_uses_passthrough_candidate() {
     let temp = TempDir::new().unwrap();
     let bin_dir = temp.path().join("empty-bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -1111,7 +1129,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
+#[test]
+fn build_launch_bundle_unavailable_cli_harness_errors_without_pivoting() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "opencode"]);
     let agent_content = r#"---
@@ -1145,7 +1164,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing() {
+#[test]
+fn build_launch_bundle_cli_harness_soft_fail_clears_profile_model_in_final_routing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -1208,7 +1228,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
+#[test]
+fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
     let agent_content = r#"---
@@ -1270,8 +1291,8 @@ harness = "codex""#;
     assert!(bundle["provenance"]["harness_order_position"].is_null());
 }
 
-pub(crate) fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness()
- {
+#[test]
+fn build_launch_bundle_cli_model_override_uses_settings_harness_order_before_profile_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude", "opencode"]);
     let agent_content = r#"---
@@ -1338,8 +1359,8 @@ harness_order = ["pi", "opencode"]"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness()
- {
+#[test]
+fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -1386,7 +1407,8 @@ default_harness = "pi""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
+#[test]
+fn build_launch_bundle_harness_order_none_installed_uses_default_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -1433,7 +1455,8 @@ default_harness = "claude""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
+#[test]
+fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -1493,7 +1516,8 @@ model = "gpt-5.5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_openai_falls_back_to_pi_when_codex_missing() {
+#[test]
+fn build_launch_bundle_openai_falls_back_to_pi_when_codex_missing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
@@ -1531,7 +1555,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_openai_falls_back_to_pi_when_codex_auth_fails() {
+#[test]
+fn build_launch_bundle_openai_falls_back_to_pi_when_codex_auth_fails() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_auth_failures(&temp, &["codex", "pi"], &["codex"]);
     let agent_content = r#"---
@@ -1561,7 +1586,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing() {
+#[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
@@ -1599,7 +1625,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails() {
+#[test]
+fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_auth_failures(&temp, &["claude", "pi"], &["claude"]);
     let agent_content = r#"---
@@ -1633,7 +1660,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
+#[test]
+fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "gemini"]);
     let agent_content = r#"---
@@ -1664,8 +1692,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness()
- {
+#[test]
+fn build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "gemini"]);
     let agent_content = r#"---
@@ -1714,7 +1742,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence() {
+#[test]
+fn build_launch_bundle_openai_falls_back_to_opencode_with_cached_capability_evidence() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -1767,7 +1796,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_prefers_pi_over_opencode_even_with_positive_opencode_cache() {
+#[test]
+fn build_launch_bundle_prefers_pi_over_opencode_even_with_positive_opencode_cache() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
     let agent_content = r#"---
@@ -1808,7 +1838,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_prefers_cursor_before_opencode_when_both_installed() {
+#[test]
+fn build_launch_bundle_prefers_cursor_before_opencode_when_both_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -1849,7 +1880,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
+#[test]
+fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -1894,7 +1926,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
+#[test]
+fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
     let cache_root = temp.path().join("mars-cache");
@@ -1944,51 +1977,8 @@ pub(crate) fn build_launch_bundle_cursor_effort_bakes_slug_into_harness_model() 
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_medium_effort_uses_unsuffixed_slug() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
-    let cache_root = temp.path().join("mars-cache");
-    write_cursor_probe_cache(
-        &cache_root,
-        now_unix_secs(),
-        &["gpt-5.5", "gpt-5.5-high", "gpt-5.5-low"],
-    );
-
-    let server = MockServer::start();
-    server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let project = temp.child("cursor-medium-effort-project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\n")
-        .unwrap();
-
-    let mut cmd = mars_cmd(project.path(), temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--model",
-        "gpt-5.5",
-        "--harness",
-        "cursor",
-        "--effort",
-        "medium",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.env("MARS_CACHE_DIR", &cache_root);
-    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some("gpt-5.5"));
-    assert!(bundle["execution_policy"]["effort"].is_null());
-}
-
-pub(crate) fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
+#[test]
+fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(
         &temp,
@@ -2044,7 +2034,8 @@ pub(crate) fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug
     assert!(bundle["execution_policy"]["effort"].is_null());
 }
 
-pub(crate) fn build_launch_bundle_cursor_non_composer_missing_effort_variant_errors() {
+#[test]
+fn build_launch_bundle_cursor_non_composer_missing_effort_variant_errors() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(
         &temp,
@@ -2083,7 +2074,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message() {
+#[test]
+fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
 
@@ -2127,7 +2119,8 @@ pub(crate) fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_pr
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_message() {
+#[test]
+fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_failure_message() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_failing_cursor_probe_harness(&temp, None);
 
@@ -2174,7 +2167,8 @@ pub(crate) fn build_launch_bundle_cursor_effort_probe_failure_errors_with_probe_
     );
 }
 
-pub(crate) fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message() {
+#[test]
+fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_catalog_message() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(
         &temp,
@@ -2219,7 +2213,8 @@ pub(crate) fn build_launch_bundle_cursor_effort_no_prefix_match_errors_with_cata
     );
 }
 
-pub(crate) fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
+#[test]
+fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
     let agent_content = r#"---
@@ -2253,7 +2248,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
+#[test]
+fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -2301,7 +2297,8 @@ harness_order = ["opencode", "cursor"]"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
+#[test]
+fn build_launch_bundle_no_refresh_uses_stale_probe_without_spawning_refresh() {
     let temp = TempDir::new().unwrap();
     let marker_path = temp.path().join("refresh-probe-spawned");
     let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
@@ -2357,7 +2354,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_no_refresh_uses_stale_cursor_probe_without_spawning_refresh() {
+#[test]
+fn build_launch_bundle_no_refresh_uses_stale_cursor_probe_without_spawning_refresh() {
     let temp = TempDir::new().unwrap();
     let marker_path = temp.path().join("cursor-refresh-probe-spawned");
     let bin_dir = install_cursor_probe_harness(
@@ -2415,7 +2413,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
+#[test]
+fn build_launch_bundle_refresh_models_sync_probe_updates_stale_routing() {
     let temp = TempDir::new().unwrap();
     let marker_path = temp.path().join("sync-probe-ran");
     let bin_dir = install_opencode_probe_harness(&temp, "openai/gpt-5.5", Some(&marker_path));
@@ -2471,7 +2470,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_unknown_model_without_passthrough_harness_errors() {
+#[test]
+fn build_launch_bundle_unknown_model_without_passthrough_harness_errors() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -2493,7 +2493,8 @@ Review code changes."#;
     assert!(stderr.contains("model fallback candidates exhausted for `third-party-model-123`"));
 }
 
-pub(crate) fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
+#[test]
+fn build_launch_bundle_settings_harness_order_runs_gate_checks_before_selection() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_opencode_models(
         &temp,
@@ -2542,7 +2543,8 @@ harness_order = ["opencode", "pi"]"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
+#[test]
+fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
     let agent_content = r#"---
@@ -2594,7 +2596,8 @@ targets = [".opencode", ".agents"]"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
+#[test]
+fn build_launch_bundle_link_constraints_block_unrelated_default_fallbacks() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2633,7 +2636,8 @@ default_harness = "pi""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_model_policy_fallback_uses_linked_harness() {
+#[test]
+fn build_launch_bundle_model_policy_fallback_uses_linked_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2692,7 +2696,8 @@ model = "claude-opus-4-6""#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_model_policy_fallback_walks_chain() {
+#[test]
+fn build_launch_bundle_model_policy_fallback_walks_chain() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2738,7 +2743,8 @@ model = "claude-opus-4-6""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
+#[test]
+fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2775,7 +2781,8 @@ model = "gpt-5.4-mini""#;
     assert!(stderr.contains("tried: gpt55, gptmini"));
 }
 
-pub(crate) fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
+#[test]
+fn build_launch_bundle_model_policy_fallback_skips_no_fallback_rules() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2824,7 +2831,8 @@ model = "claude-opus-4-6""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
+#[test]
+fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["claude"]);
     let agent_content = r#"---
@@ -2868,7 +2876,8 @@ model = "claude-opus-4-6""#;
     assert!(!stderr.contains("fell back to `sonnet`"));
 }
 
-pub(crate) fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
+#[test]
+fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &[]);
     let agent_content = r#"---
@@ -2905,7 +2914,8 @@ default_harness = "Pi""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
+#[test]
+fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -2955,7 +2965,8 @@ model = "gpt-5""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_pi_harness_resolves_qualified_harness_model() {
+#[test]
+fn build_launch_bundle_pi_harness_resolves_qualified_harness_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
@@ -2999,7 +3010,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug() {
+#[test]
+fn build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
     let agent_content = r#"---
@@ -3033,7 +3045,8 @@ harness_order = ["pi", "codex"]"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_pi_harness_preserves_qualified_model_token() {
+#[test]
+fn build_launch_bundle_pi_harness_preserves_qualified_model_token() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi"]);
     let agent_content = r#"---
@@ -3072,7 +3085,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns() {
+#[test]
+fn build_launch_bundle_explicit_unknown_harness_model_path_clears_and_warns() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -3125,8 +3139,8 @@ Review code changes."#;
     }));
 }
 
-pub(crate) fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint()
- {
+#[test]
+fn build_launch_bundle_alias_fixed_native_harness_rejects_mismatched_provider_constraint() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -3153,7 +3167,8 @@ harness = "codex""#;
     assert!(stderr.contains("provider_constraint_unsatisfied"));
 }
 
-pub(crate) fn build_launch_bundle_alias_fixed_native_harness_accepts_provider_variant_and_marks_provider_match()
+#[test]
+fn build_launch_bundle_alias_fixed_native_harness_accepts_provider_variant_and_marks_provider_match()
  {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
@@ -3194,7 +3209,8 @@ harness = "codex""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_overlay_model_overrides_profile_model() {
+#[test]
+fn build_launch_bundle_overlay_model_overrides_profile_model() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let agent_content = r#"---
@@ -3228,7 +3244,8 @@ model = "gpt55""#;
     );
 }
 
-pub(crate) fn build_launch_bundle_settings_model_policy_applies_with_provenance() {
+#[test]
+fn build_launch_bundle_settings_model_policy_applies_with_provenance() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -3273,7 +3290,8 @@ override = { harness = "opencode", effort = "medium" }"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_composed_model_policies_overlay_wins() {
+#[test]
+fn build_launch_bundle_composed_model_policies_overlay_wins() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["pi", "codex", "opencode"]);
     let agent_content = r#"---
@@ -3330,7 +3348,8 @@ override = { harness = "opencode", effort = "low" }"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_composed_model_policies_first_match_wins() {
+#[test]
+fn build_launch_bundle_composed_model_policies_first_match_wins() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---
@@ -3374,7 +3393,8 @@ override = { harness = "pi" }"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
+#[test]
+fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---

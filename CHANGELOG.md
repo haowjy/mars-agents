@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Prune test scaffolding and duplicate assertions; retain behavioral ownership and recovery checks.
+- Prune test scaffolding, duplicate assertions and forwarding wrappers. Fix weak safety checks; isolate touched CLI fixtures. Keep ownership and recovery regressions.
 
 ### Fixed
 - Keep native agents present on the first successful retry after an interrupted destination move. Obsolete paths no longer erase surviving ownership.

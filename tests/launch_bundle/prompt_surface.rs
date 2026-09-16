@@ -6,7 +6,8 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
+#[test]
+fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -51,7 +52,8 @@ Review code changes."#;
     assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
 }
 
-pub(crate) fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
+#[test]
+fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -94,7 +96,8 @@ Review code changes."#;
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 }
 
-pub(crate) fn build_launch_bundle_splits_loaded_and_available_skills() {
+#[test]
+fn build_launch_bundle_splits_loaded_and_available_skills() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -163,7 +166,8 @@ Review code changes."#;
     assert!(!system_instruction.contains("Workspace body should stay out of prompt."));
 }
 
-pub(crate) fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
+#[test]
+fn build_launch_bundle_uses_harness_variant_skill_for_codex() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -228,7 +232,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_harness_override_skills_are_passthrough_for_prompt_surface() {
+#[test]
+fn build_launch_bundle_harness_override_skills_are_passthrough_for_prompt_surface() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -297,7 +302,8 @@ Review code changes."#;
     assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
 }
 
-pub(crate) fn build_launch_bundle_loads_model_non_invocable_skills_when_explicit() {
+#[test]
+fn build_launch_bundle_loads_model_non_invocable_skills_when_explicit() {
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile explicitly lists a skill, it loads regardless.
     let temp = TempDir::new().unwrap();
@@ -342,7 +348,8 @@ Review code changes."#;
     assert!(system_instruction.contains("Explicitly referenced content."));
 }
 
-pub(crate) fn build_launch_bundle_includes_inventory_prompt_before_report_block() {
+#[test]
+fn build_launch_bundle_includes_inventory_prompt_before_report_block() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---
 name: reviewer
@@ -399,7 +406,8 @@ Plan work."#;
     assert!(inventory_index < report_index);
 }
 
-pub(crate) fn build_launch_bundle_orders_skills_by_type_and_bookends_principles() {
+#[test]
+fn build_launch_bundle_orders_skills_by_type_and_bookends_principles() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -480,7 +488,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_fanout_agent_dual_lists_in_inventory() {
+#[test]
+fn build_launch_bundle_fanout_agent_dual_lists_in_inventory() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let reviewer_content = r#"---
@@ -535,7 +544,8 @@ agents = ["reviewer"]
     assert!(inventory_prompt.contains("- reviewer: Review implementation"));
 }
 
-pub(crate) fn build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents() {
+#[test]
+fn build_launch_bundle_warns_on_deprecated_agent_copy_fanout_agents() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---
 name: reviewer
@@ -568,7 +578,8 @@ fanout_agents = ["reviewer"]
     }));
 }
 
-pub(crate) fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
+#[test]
+fn build_launch_bundle_inventory_hides_model_non_invocable_agents_and_shows_fanout() {
     let temp = TempDir::new().unwrap();
     let reviewer_content = r#"---
 name: reviewer
@@ -625,7 +636,8 @@ Hidden work."#;
     assert!(!inventory_prompt.contains("hidden-worker"));
 }
 
-pub(crate) fn build_launch_bundle_merges_extra_skills_after_profile_dedupes_and_tracks_missing() {
+#[test]
+fn build_launch_bundle_merges_extra_skills_after_profile_dedupes_and_tracks_missing() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -680,7 +692,8 @@ Review code changes."#;
     assert!(!system_instruction.contains("# Skill: missing_skill"));
 }
 
-pub(crate) fn build_launch_bundle_has_canonical_prompt_surface_for_small_fixture() {
+#[test]
+fn build_launch_bundle_has_canonical_prompt_surface_for_small_fixture() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer

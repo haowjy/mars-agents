@@ -10,7 +10,7 @@ const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\n";
 const SETTINGS: &str = "[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n";
 
 fn sync(root: &Path) -> assert_cmd::Command {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(root);
     cmd.args([
         "sync",
         "--no-refresh-models",
@@ -27,13 +27,16 @@ fn read(root: &Path, path: &str) -> String {
 
 fn assert_noop(root: &Path) {
     let lock = read(root, "mars.lock");
-    sync(root)
+    let output = sync(root)
         .arg("--json")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"installed\":0"))
-        .stdout(predicate::str::contains("\"updated\":0"))
-        .stdout(predicate::str::contains("\"removed\":0"));
+        .get_output()
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for field in ["installed", "updated", "removed"] {
+        assert_eq!(report[field], 0, "{field}: {report}");
+    }
     assert_eq!(read(root, "mars.lock"), lock);
 }
 
@@ -63,7 +66,7 @@ fn declared_package_preserves_native_metadata_resources_and_catalog_across_syncs
             read(dir.path(), ".codex/skills/craft/resources/example.txt"),
             "resource"
         );
-        mars()
+        offline_mars(dir.path())
             .args([
                 "agents",
                 "show",

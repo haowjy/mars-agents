@@ -20,24 +20,35 @@ From the Mars repo root:
 
 ```bash
 export MARS_REPO="$PWD"
+cargo build --locked
+export MARS_BIN="$MARS_REPO/target/debug/mars"
 export SCRATCH="$(mktemp -d)"
+mkdir -p "$SCRATCH/home" "$SCRATCH/config" "$SCRATCH/data"
+export HOME="$SCRATCH/home" USERPROFILE="$SCRATCH/home"
+export XDG_CONFIG_HOME="$SCRATCH/config" APPDATA="$SCRATCH/config"
+export XDG_DATA_HOME="$SCRATCH/data" LOCALAPPDATA="$SCRATCH/data"
 export MARS_CACHE_DIR="$SCRATCH/.cache/mars"
+# Local-only smoke: no network or installed harness discovery.
+export MARS_OFFLINE=1
+export PATH=""
 cd "$SCRATCH"
 ```
 
-Then run the commands in one guide under `tests/smoke/manual/`.
+Then run a guide under `tests/smoke/manual/`. A guide requiring Git, catalog
+HTTP, or harness discovery must explicitly configure its test tools/server and
+PATH; do not silently fall back to the developer environment.
 
 Prefer the local binary while developing:
 
 ```bash
-cargo run --manifest-path "$MARS_REPO/Cargo.toml" -- <mars args>
+"$MARS_BIN" <mars args>
 ```
 
 For example:
 
 ```bash
-cargo run --manifest-path "$MARS_REPO/Cargo.toml" -- init
-cargo run --manifest-path "$MARS_REPO/Cargo.toml" -- models list --json
+"$MARS_BIN" init
+"$MARS_BIN" models list --json
 ```
 
 ## LLM Runner Rules

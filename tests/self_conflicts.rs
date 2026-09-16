@@ -14,7 +14,7 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
         dir.child(path).write_str("# Same bytes\n").unwrap();
     }
     for flags in [vec![], vec!["--force"], vec!["--diff"], vec!["--frozen"]] {
-        mars()
+        offline_mars(dir.path())
             .args([
                 "sync",
                 "--no-refresh-models",
@@ -36,7 +36,7 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
 }
 
 fn sync(root: &std::path::Path) -> assert_cmd::Command {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(root);
     cmd.args([
         "sync",
         "--no-refresh-models",

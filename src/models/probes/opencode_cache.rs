@@ -572,13 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn ttl_override_controls_freshness() {
-        let _guard = EnvGuard::set("MARS_PROBE_CACHE_TTL_SECS", "9999");
-        let recent = entry(now_unix_secs().saturating_sub(10), Some(ok_result()));
-        assert!(is_fresh(&recent));
-    }
-
-    #[test]
     fn write_failure_degrades_gracefully() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("availability");
@@ -612,28 +605,5 @@ mod tests {
         assert_eq!(outcome.cache_status(), "failed");
         assert!(!outcome.result().unwrap().model_probe_success);
         assert_eq!(outcome.result().unwrap().error.as_deref(), Some("boom"));
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        prev: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let prev = std::env::var_os(key);
-            unsafe { std::env::set_var(key, value) };
-            Self { key, prev }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(prev) = &self.prev {
-                unsafe { std::env::set_var(self.key, prev) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
     }
 }

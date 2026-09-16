@@ -3,7 +3,8 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
+#[test]
+fn build_launch_bundle_cli_overrides_profile_execution_policy_fields() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
@@ -54,7 +55,8 @@ Review code changes."#;
     assert_eq!(bundle["provenance"]["sandbox_source"].as_str(), Some("cli"));
 }
 
-pub(crate) fn build_launch_bundle_harness_override_is_passthrough_not_execution_policy() {
+#[test]
+fn build_launch_bundle_harness_override_is_passthrough_not_execution_policy() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -156,7 +158,8 @@ autocompact_pct = 55"#;
     );
 }
 
-pub(crate) fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
+#[test]
+fn build_launch_bundle_profile_execution_policy_flows_without_cli_override() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---

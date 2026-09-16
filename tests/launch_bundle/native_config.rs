@@ -5,8 +5,8 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 use serde_json::Value;
 
-pub(crate) fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt_clean()
-{
+#[test]
+fn build_launch_bundle_emits_native_config_for_resolved_harness_and_keeps_prompt_clean() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -58,7 +58,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_native_config_shape_is_passthrough() {
+#[test]
+fn build_launch_bundle_native_config_shape_is_passthrough() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -92,7 +93,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings() {
+#[test]
+fn build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -151,7 +153,8 @@ Review code changes."#;
     }
 }
 
-pub(crate) fn build_launch_bundle_unknown_harness_override_warns_and_preserves_block() {
+#[test]
+fn build_launch_bundle_unknown_harness_override_warns_and_preserves_block() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---

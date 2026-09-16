@@ -6,7 +6,7 @@ use mars_agents::lock;
 use std::{fs, path::Path};
 
 fn sync(root: &Path) -> assert_cmd::Command {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(root);
     cmd.args([
         "sync",
         "--no-refresh-models",
@@ -216,7 +216,7 @@ fn stale_or_corrupt_intent_does_not_claim_unowned_outputs() {
         let lock_before = fs::read(dir.path().join("mars.lock")).ok();
         let intent_before = fs::read(dir.path().join(INTENT)).unwrap();
         sync(dir.path()).assert().failure();
-        mars()
+        offline_mars(dir.path())
             .args(["repair", "--root", dir.path().to_str().unwrap()])
             .assert()
             .failure();
@@ -290,7 +290,7 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
         .unwrap();
     for text in ["# Muse\n", "# Revised\n", "# Revised again\n"] {
         dir.child("agents/muse.md").write_str(text).unwrap();
-        mars()
+        offline_mars(dir.path())
             .args(["repair", "--root", dir.path().to_str().unwrap()])
             .env("MARS_OFFLINE", "1")
             .assert()
@@ -301,7 +301,7 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
         );
     }
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    mars()
+    offline_mars(dir.path())
         .args(["repair", "--root", dir.path().to_str().unwrap()])
         .env("MARS_OFFLINE", "1")
         .assert()

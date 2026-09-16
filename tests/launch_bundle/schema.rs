@@ -13,7 +13,8 @@ fn assert_field_absent_or_null(bundle: &Value, field: &str) {
     );
 }
 
-pub(crate) fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
+#[test]
+fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -113,7 +114,8 @@ Review code changes.
     }
 }
 
-pub(crate) fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
+#[test]
+fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -159,7 +161,8 @@ Review code changes."#;
     );
 }
 
-pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
+#[test]
+fn build_launch_bundle_ad_hoc_without_mars_toml() {
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -196,8 +199,8 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_mars_toml() {
     assert_eq!(bundle["warnings"], serde_json::json!([]));
 }
 
-pub(crate) fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides()
-{
+#[test]
+fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -275,7 +278,8 @@ Review code changes."#;
     assert!(bundle["routing"]["harness_model"].is_string());
 }
 
-pub(crate) fn build_launch_bundle_rejects_prompt_file_flag() {
+#[test]
+fn build_launch_bundle_rejects_prompt_file_flag() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---
 name: reviewer
@@ -302,7 +306,8 @@ Review code changes."#;
         .stderr(predicates::str::contains("--prompt-file"));
 }
 
-pub(crate) fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
+#[test]
+fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
@@ -331,7 +336,8 @@ Review code changes."#;
     assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
 }
 
-pub(crate) fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default() {
+#[test]
+fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default() {
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
@@ -356,7 +362,8 @@ pub(crate) fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_de
     assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
 }
 
-pub(crate) fn build_launch_bundle_resolves_model_alias_from_consumer_config() {
+#[test]
+fn build_launch_bundle_resolves_model_alias_from_consumer_config() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---

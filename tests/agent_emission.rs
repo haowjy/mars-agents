@@ -33,7 +33,7 @@ path = "{}"
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 
-    let mut cmd = mars();
+    let mut cmd = offline_mars(project.path());
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
     match meridian_managed {
         Some(value) => {
@@ -69,7 +69,7 @@ fn native_agent_path(project: &assert_fs::fixture::ChildPath) -> std::path::Path
 }
 
 fn sync_project(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(project.path());
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
     match meridian_managed {
         Some(value) => {
@@ -97,13 +97,19 @@ fn default_auto_standalone_emits_native_agent() {
 #[test]
 fn auto_meridian_managed_suppresses_native_agent() {
     let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, None, Some("1"));
+    let project = setup_project(
+        &dir,
+        Some("[settings]\ntargets = [\".claude\"]\n"),
+        Some("1"),
+    );
 
     assert_canonical_agent_exists(&project);
     assert!(
         !native_agent_path(&project).exists(),
         "MERIDIAN_MANAGED=1 auto mode should suppress native harness agent"
     );
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(!lock.contains_output(".claude", "agents/coder.md"));
 }
 
 #[test]
@@ -125,27 +131,19 @@ fn always_meridian_managed_still_emits_native_agent() {
 #[test]
 fn never_suppresses_native_agent() {
     let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, Some("[settings]\nagent_emission = \"never\"\n"), None);
+    let project = setup_project(
+        &dir,
+        Some("[settings]\nagent_emission = \"never\"\ntargets = [\".claude\"]\n"),
+        None,
+    );
 
     assert_canonical_agent_exists(&project);
     assert!(
         !native_agent_path(&project).exists(),
         "never mode should suppress native harness agent"
     );
-}
-
-#[test]
-fn standalone_sync_is_idempotent() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_project(&dir, Some("[settings]\ntargets = [\".claude\"]\n"), None);
-
-    sync_project(&project, None);
-
-    assert_canonical_agent_exists(&project);
-    assert!(
-        native_agent_path(&project).exists(),
-        "second standalone sync should keep native harness agent"
-    );
+    let lock = mars_agents::lock::load(project.path()).unwrap();
+    assert!(!lock.contains_output(".claude", "agents/coder.md"));
 }
 
 #[test]
@@ -265,7 +263,7 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
 }
 
 fn sync_capture(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) -> String {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(project.path());
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
     match meridian_managed {
         Some(value) => {

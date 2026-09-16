@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Prune test scaffolding and duplicate assertions; retain behavioral ownership and recovery checks.
+
 ### Fixed
 - Keep native agents present on the first successful retry after an interrupted destination move. Obsolete paths no longer erase surviving ownership.
 - Recover new canonical outputs after failed or interrupted sync using durable write intent. Repeated updates and destination moves retain ownership until finalization.

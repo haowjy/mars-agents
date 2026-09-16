@@ -20,15 +20,3 @@ pub struct SyncOptions {
     /// Skip package `requires-meridian` compatibility checks.
     pub ignore_requires_meridian: bool,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::SyncOptions;
-
-    #[test]
-    fn default_no_refresh_models_is_false() {
-        let options = SyncOptions::default();
-        assert!(!options.no_refresh_models);
-        assert!(!options.refresh_models);
-    }
-}

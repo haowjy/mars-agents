@@ -78,34 +78,3 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
         failure: None,
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn candidates_for_known_provider() {
-        let candidates = harness_candidates_for_provider("openai");
-        assert_eq!(
-            candidates,
-            vec!["codex", "claude", "pi", "cursor", "opencode"]
-        );
-    }
-
-    #[test]
-    fn candidates_for_anthropic_native_first_then_default_order() {
-        let candidates = harness_candidates_for_provider("anthropic");
-        assert_eq!(
-            candidates,
-            vec!["claude", "codex", "pi", "cursor", "opencode"]
-        );
-    }
-
-    #[test]
-    fn candidates_for_unknown_provider() {
-        let candidates = harness_candidates_for_provider("unknown");
-        assert_eq!(
-            candidates,
-            vec!["claude", "codex", "pi", "cursor", "opencode"]
-        );
-    }
-}

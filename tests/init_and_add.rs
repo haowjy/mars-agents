@@ -93,18 +93,18 @@ fn add_auto_inits_project_when_root_has_no_mars_toml() {
     let source = create_source(&dir, "bootstrap-source", &[("coder", "# Coder agent")], &[]);
     let project = dir.child("project");
 
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
+    mars_cmd(project.path(), dir.path(), "http://127.0.0.1:9/api.json")
+        .env("MARS_OFFLINE", "1")
+        .args(["add", source.to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("auto-initialized"));
 
-    assert!(project.child("mars.toml").exists());
+    let saved = mars_agents::config::load(project.path()).unwrap();
+    assert_eq!(
+        saved.dependencies["bootstrap-source"].path.as_deref(),
+        Some(source.as_path())
+    );
     assert!(project.child(".mars").exists());
     assert!(
         project

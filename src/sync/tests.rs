@@ -703,33 +703,6 @@ fn planned_bump_entries_preserve_filters_and_renames() {
 }
 
 #[test]
-fn execute_auto_inits_config_for_mutation() {
-    let project_root = TempDir::new().unwrap();
-    let source = TempDir::new().unwrap();
-    fs::create_dir_all(source.path().join("agents")).unwrap();
-    fs::write(source.path().join("agents/coder.md"), "# Coder").unwrap();
-
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: Some(ConfigMutation::UpsertDependency {
-            name: "base".into(),
-            entry: path_dependency_entry(source.path()),
-        }),
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-
-    let ctx = MarsContext::for_test(project_root.path().to_path_buf());
-    let report = execute(&ctx, &request).unwrap();
-    assert!(!report.applied.outcomes.is_empty());
-    assert!(project_root.path().join("mars.toml").exists());
-
-    let saved = crate::config::load(project_root.path()).unwrap();
-    assert!(saved.dependencies.contains_key("base"));
-}
-
-#[test]
 fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
     let managed_root = project_root.path().join(".agents");

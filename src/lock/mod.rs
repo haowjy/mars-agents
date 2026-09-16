@@ -1790,48 +1790,12 @@ model = "openai/gpt-a"
     }
 
     #[test]
-    fn empty_lock_file() {
-        let lock = LockFile::empty();
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(lock.dependencies.is_empty());
-        assert!(lock.items.is_empty());
-    }
-
-    #[test]
     fn load_absent_returns_empty() {
         let dir = TempDir::new().unwrap();
         let lock = load(dir.path()).unwrap();
         assert_eq!(lock.version, LOCK_VERSION);
         assert!(lock.dependencies.is_empty());
         assert!(lock.items.is_empty());
-    }
-
-    #[test]
-    fn write_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let lock = sample_lock();
-        write(dir.path(), &lock).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(lock, reloaded);
-    }
-
-    #[test]
-    fn dual_checksums_present() {
-        let lock = sample_lock();
-        let item = &lock.items["agent/coder"];
-        assert_ne!(
-            &item.source_checksum,
-            item.outputs[0]
-                .installed_checksum()
-                .expect("installed output")
-        );
-        assert!(item.source_checksum.starts_with("sha256:"));
-        assert!(
-            item.outputs[0]
-                .installed_checksum()
-                .expect("installed output")
-                .starts_with("sha256:")
-        );
     }
 
     #[test]

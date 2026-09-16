@@ -197,14 +197,4 @@ mod tests {
         let v = resolve_visibility(ItemKind::Hook, "pre-commit", None);
         assert!(!can_cross_package_boundary(&v));
     }
-
-    #[test]
-    fn multi_hop_exported_agent_remains_visible() {
-        // Simulate 3-hop dependency chain: A -> B -> C -> agent
-        let v = resolve_visibility(ItemKind::Agent, "deep-agent", None);
-        // Passive exported items pass through any number of hops.
-        assert!(can_cross_package_boundary(&v));
-        // And repeating the check doesn't change anything.
-        assert!(can_cross_package_boundary(&v));
-    }
 }

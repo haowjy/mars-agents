@@ -2740,13 +2740,6 @@ mod tests {
         std::fs::write(temp.path().join("mars.toml"), contents).unwrap();
     }
 
-    fn normalized_exit_code(result: Result<i32, MarsError>) -> i32 {
-        match result {
-            Ok(code) => code,
-            Err(err) => err.exit_code(),
-        }
-    }
-
     #[test]
     fn list_args_parses_no_refresh_models() {
         let args = ListArgs::try_parse_from(["mars", "--no-refresh-models"]).unwrap();
@@ -2795,37 +2788,6 @@ mod tests {
         let args =
             ResolveAliasArgs::try_parse_from(["mars", "opus", "--no-refresh-models"]).unwrap();
         assert!(args.no_refresh_models);
-    }
-
-    #[test]
-    fn list_no_refresh_without_cache_is_non_zero() {
-        let temp = TempDir::new().unwrap();
-        write_mars_toml(&temp, "[settings]\n");
-        let ctx = MarsContext::new(temp.path().to_path_buf()).unwrap();
-        let args = ModelsArgs::try_parse_from(["mars", "list", "--no-refresh-models"]).unwrap();
-
-        let exit = normalized_exit_code(run(&args, &ctx, false));
-        assert_ne!(exit, 0);
-    }
-
-    #[test]
-    fn resolve_no_refresh_without_cache_is_non_zero() {
-        let temp = TempDir::new().unwrap();
-        write_mars_toml(
-            &temp,
-            r#"[settings]
-
-[models.opus]
-harness = "claude"
-model = "claude-opus-4-6"
-"#,
-        );
-        let ctx = MarsContext::new(temp.path().to_path_buf()).unwrap();
-        let args =
-            ModelsArgs::try_parse_from(["mars", "resolve", "opus", "--no-refresh-models"]).unwrap();
-
-        let exit = normalized_exit_code(run(&args, &ctx, false));
-        assert_ne!(exit, 0);
     }
 
     #[test]

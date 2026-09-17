@@ -91,8 +91,7 @@ fn sort_constraint_for_probe<'a>(
     known_provider_for_order: Option<&str>,
 ) -> Option<&'a str> {
     let constraint = provider_constraint.filter(|provider| !provider.trim().is_empty())?;
-    if known_provider_for_order
-        .is_some_and(|order| slug::providers_exact_match(constraint, order))
+    if known_provider_for_order.is_some_and(|order| slug::providers_exact_match(constraint, order))
     {
         return None;
     }

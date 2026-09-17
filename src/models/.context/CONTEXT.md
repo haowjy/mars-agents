@@ -8,7 +8,9 @@ selection**, not an unconditional `provider/model` prefix.
 
 1. **Empty `model_id`** → empty `harness_model`, `passthrough`, `unknown` confidence.
 2. **Pi / OpenCode** → probe slug selection (`select_probe_slug`) when probe cache is
-   compatible; `provider_constraint` biases slug choice only (see `probe_constraint_for_selection`).
+   compatible. `provider_constraint` always filters slugs. When it equals
+   `provider_for_order`, sort uses variant preference (`openai-codex` over `openai`)
+   instead of exact-tier, so unrelated providers (`opencode-go` vs `xai`) stay out.
    Without a usable probe → `constraint_qualified_passthrough` when the constraint is already
    qualified (`openai-codex/foo`), else bare passthrough.
 3. **Native harnesses (`codex`, `claude`)** → when `provider_constraint` or `provider_for_order`

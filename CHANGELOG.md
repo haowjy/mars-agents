@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Honor alias `provider` when resolving OpenCode/Pi `harness_model`. A pin such as
+  `xai` no longer drops its filter and pick OpenCode Zen (`opencode-go/…`) over
+  `xai/…`. Broad `openai` pins still prefer `openai-codex` variants.
+
 ## [0.14.0] - 2026-09-16
 
 ### Added

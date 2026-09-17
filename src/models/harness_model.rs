@@ -100,7 +100,7 @@ fn probe_slug_or_passthrough<'a>(
 ) -> ResolvedRunnablePath {
     let selection = select_probe_slug(
         model_id,
-        probe_constraint_for_selection(provider_constraint, provider_for_order),
+        provider_constraint,
         provider_for_order,
         settings_provider_order,
         slugs,
@@ -114,20 +114,6 @@ fn probe_slug_or_passthrough<'a>(
     }
 
     constraint_qualified_passthrough(model_id, provider_constraint)
-}
-
-/// Broad alias constraints (e.g. `openai`) must not force an exact-tier probe pick
-/// before variant preference; keep the constraint for qualified passthrough fallback.
-fn probe_constraint_for_selection<'a>(
-    provider_constraint: Option<&'a str>,
-    provider_for_order: Option<&'a str>,
-) -> Option<&'a str> {
-    let constraint = provider_constraint.filter(|provider| !provider.trim().is_empty())?;
-    let order = provider_for_order.filter(|provider| !provider.trim().is_empty());
-    if order.is_some_and(|order| slug::providers_exact_match(constraint, order)) {
-        return None;
-    }
-    Some(constraint)
 }
 
 fn constraint_qualified_passthrough(
@@ -285,6 +271,32 @@ mod tests {
         assert_eq!(resolved.harness_model_id, "gpt-5.4-mini");
         assert_eq!(resolved.source, RunnablePathSource::ProviderMatch);
         assert_eq!(resolved.confidence, RunnableConfidence::Likely);
+    }
+
+    #[test]
+    fn opencode_xai_constraint_does_not_select_zen_slug() {
+        let opencode_probe = OpenCodeProbeResult {
+            model_slugs: vec![
+                "opencode-go/grok-4.6".to_string(),
+                "xai/grok-4.6".to_string(),
+            ],
+            model_probe_success: true,
+            error: None,
+        };
+
+        let resolved = resolve_harness_model(HarnessModelInput {
+            harness: "opencode",
+            model_id: "grok-4.6",
+            provider_constraint: Some("xai"),
+            provider_for_order: Some("xai"),
+            settings_provider_order: None,
+            opencode_probe: Some(&opencode_probe),
+            pi_probe: None,
+        });
+
+        assert_eq!(resolved.harness_model_id, "xai/grok-4.6");
+        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
+        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
     }
 
     #[test]

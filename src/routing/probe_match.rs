@@ -47,7 +47,7 @@ pub fn select_probe_slug<'a>(
     } else {
         sort_probe_matches(
             &mut constrained_matches,
-            provider_constraint,
+            sort_constraint_for_probe(provider_constraint, known_provider_for_order),
             known_provider_for_order,
             provider_order,
         );
@@ -80,6 +80,22 @@ pub(crate) fn provider_order_rank(provider: &str, provider_order: &[String]) -> 
         .iter()
         .position(|configured| slug::normalize_provider(configured) == key)
         .unwrap_or(usize::MAX)
+}
+
+/// Filter always uses `provider_constraint`. Exact-tier sort does not: a broad alias
+/// pin equal to `provider_for_order` (`openai` == `openai`) must still prefer variants
+/// (`openai-codex`) instead of collapsing to the exact key. Unrelated providers
+/// (`opencode-go` vs `xai`) stay excluded by the filter.
+fn sort_constraint_for_probe<'a>(
+    provider_constraint: Option<&'a str>,
+    known_provider_for_order: Option<&str>,
+) -> Option<&'a str> {
+    let constraint = provider_constraint.filter(|provider| !provider.trim().is_empty())?;
+    if known_provider_for_order.is_some_and(|order| slug::providers_exact_match(constraint, order))
+    {
+        return None;
+    }
+    Some(constraint)
 }
 
 /// Prefer more specific provider variants (e.g. `openai-codex`) over collapsed keys (`openai`).
@@ -175,6 +191,34 @@ mod tests {
             "gpt-5.4-mini",
             Some("openai-codex"),
             None,
+            None,
+            ["openai/gpt-5.4-mini", "openai-codex/gpt-5.4-mini"],
+        );
+        assert_eq!(
+            selection.chosen_slug.as_deref(),
+            Some("openai-codex/gpt-5.4-mini")
+        );
+    }
+
+    #[test]
+    fn equal_constraint_and_order_still_filters_unrelated_providers() {
+        let selection = select_probe_slug(
+            "grok-4.6",
+            Some("xai"),
+            Some("xai"),
+            None,
+            ["opencode-go/grok-4.6", "xai/grok-4.6"],
+        );
+        assert_eq!(selection.chosen_slug.as_deref(), Some("xai/grok-4.6"));
+        assert_eq!(selection.filtered_slugs, vec!["xai/grok-4.6".to_string()]);
+    }
+
+    #[test]
+    fn broad_openai_constraint_prefers_variant_over_exact_tier() {
+        let selection = select_probe_slug(
+            "gpt-5.4-mini",
+            Some("openai"),
+            Some("openai"),
             None,
             ["openai/gpt-5.4-mini", "openai-codex/gpt-5.4-mini"],
         );

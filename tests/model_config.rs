@@ -553,6 +553,153 @@ include = ["gpt-5.4-mini"]
 
 #[test]
 #[serial]
+fn models_list_providers_filter_keeps_declared_only() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings.model_visibility]
+providers = ["openai"]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+
+[models.grok]
+harness = "opencode"
+model = "grok-4.7"
+provider = "xai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![
+            json!({
+                "id": "gpt-5",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+            json!({
+                "id": "grok-4.7",
+                "provider": "xai",
+                "release_date": "2026-01-01"
+            }),
+        ],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    let names: Vec<_> = aliases
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+
+    assert_eq!(names, vec!["fast"]);
+}
+
+#[test]
+#[serial]
+fn models_list_no_visibility_flag_bypasses_provider_filter() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings.model_visibility]
+providers = ["openai"]
+
+[models.fast]
+harness = "codex"
+model = "gpt-5"
+provider = "openai"
+
+[models.grok]
+harness = "opencode"
+model = "grok-4.7"
+provider = "xai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+    write_cache(
+        &project_root,
+        vec![
+            json!({
+                "id": "gpt-5",
+                "provider": "OpenAI",
+                "release_date": "2026-01-01"
+            }),
+            json!({
+                "id": "grok-4.7",
+                "provider": "xai",
+                "release_date": "2026-01-01"
+            }),
+        ],
+        &fresh_fetched_at(),
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "list", "--no-visibility"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
+    let aliases = stdout["aliases"]
+        .as_array()
+        .expect("models list JSON should include aliases");
+    let names: Vec<_> = aliases
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+
+    assert!(names.contains(&"fast"), "names: {names:?}");
+    assert!(names.contains(&"grok"), "names: {names:?}");
+}
+
+#[test]
+#[serial]
+fn resolve_provider_filtered_alias_still_resolves() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
+    fs::write(
+        project_root.join("mars.toml"),
+        r#"[settings.model_visibility]
+providers = ["openai"]
+
+[models.grok]
+harness = "opencode"
+model = "grok-4.7"
+provider = "xai"
+"#,
+    )
+    .expect("failed to write mars.toml");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "resolve", "grok", "--no-refresh-models"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
+    assert_eq!(stdout["name"].as_str(), Some("grok"));
+    assert_eq!(stdout["resolved_model"].as_str(), Some("grok-4.7"));
+}
+
+#[test]
+#[serial]
 fn resolve_prefix_no_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);

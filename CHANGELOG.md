@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `settings.model_visibility.providers` filters `mars models list` to the declared
+  providers (exact, case-insensitive, variant-collapsing). Display-only: a hidden
+  alias still resolves when named, and a plain model string still passes through.
+- `mars models list --providers` overrides config; `--no-visibility` shows every
+  alias regardless of config or flags.
+
 ## [0.14.2] - 2026-09-22
 
 ### Fixed

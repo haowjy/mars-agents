@@ -67,11 +67,17 @@ pub struct ListArgs {
     #[arg(long, conflicts_with = "refresh_models")]
     no_refresh_models: bool,
     /// Only show aliases matching these patterns (overrides config).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
     include: Option<Vec<String>>,
     /// Hide aliases matching these patterns (overrides config).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
     exclude: Option<Vec<String>>,
+    /// Show only aliases whose resolved provider matches one of these keys (overrides config).
+    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
+    providers: Option<Vec<String>>,
+    /// Ignore all visibility filters (config and flags); show every alias.
+    #[arg(long)]
+    no_visibility: bool,
     /// Show raw models.dev cache entries (diagnostic view). Ignores aliases.
     #[arg(long, conflicts_with = "all")]
     catalog: bool,
@@ -1390,10 +1396,14 @@ fn effective_visibility(
     project_config: Option<&crate::config::LoadedProjectConfig>,
     args: &ListArgs,
 ) -> crate::config::ModelVisibility {
-    if args.include.is_some() || args.exclude.is_some() {
+    if args.no_visibility {
+        return crate::config::ModelVisibility::default();
+    }
+    if args.include.is_some() || args.exclude.is_some() || args.providers.is_some() {
         return crate::config::ModelVisibility {
             include: args.include.clone(),
             exclude: args.exclude.clone(),
+            providers: args.providers.clone(),
         };
     }
 
@@ -1472,7 +1482,10 @@ fn filter_model_entries_by_visibility(
     entries: Vec<ListModelEntry>,
     visibility: &crate::config::ModelVisibility,
 ) -> Vec<ListModelEntry> {
-    if visibility.include.is_none() && visibility.exclude.is_none() {
+    if visibility.include.is_none()
+        && visibility.exclude.is_none()
+        && visibility.providers.is_none()
+    {
         return entries;
     }
 
@@ -1484,17 +1497,7 @@ fn filter_model_entries_by_visibility(
                 .as_ref()
                 .map(|availability| availability.runnable_paths.as_slice())
                 .unwrap_or(&[]);
-            let included = visibility.include.as_ref().is_none_or(|includes| {
-                includes.iter().any(|pattern| {
-                    models::matches_visibility_pattern(pattern, &entry.id, &entry.provider, paths)
-                })
-            });
-            let excluded = visibility.exclude.as_ref().is_some_and(|excludes| {
-                excludes.iter().any(|pattern| {
-                    models::matches_visibility_pattern(pattern, &entry.id, &entry.provider, paths)
-                })
-            });
-            included && !excluded
+            models::visibility_permits(visibility, &entry.id, &entry.provider, paths)
         })
         .collect()
 }

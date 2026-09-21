@@ -199,6 +199,7 @@ include_fanout = false
 [settings.model_visibility]
 include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
 exclude = ["*-preview*", "*-latest"]         # Then hide these
+providers = ["xai", "deepseek", "openai"]  # Show only these resolved providers
 ```
 
 | Field | Type | Default | Description |
@@ -312,23 +313,34 @@ Configure which models appear in `mars models list`. Consumer-only - not merged 
 
 ```toml
 [settings.model_visibility]
-include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
-exclude = ["*-preview*", "*-latest"]         # Then hide these
+include = ["anthropic/*", "openai/gpt-5*"]  # Show only these (glob)
+exclude = ["*-preview*", "*-latest"]         # Then hide these (glob)
+providers = ["xai", "deepseek", "openai"]    # Show only these resolved providers
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `include` | string[] | Glob patterns; only matching aliases are shown |
 | `exclude` | string[] | Glob patterns; matching aliases are hidden |
+| `providers` | string[] | Only aliases whose resolved provider matches one of these keys are shown. Exact, case-insensitive, with variant collapsing (`openai-codex` matches `openai`). Unset means no provider filter; an empty list is rejected. |
 
 ### Behavior
 
-- `include` alone: show only matching models
-- `exclude` alone: show all except matching models
-- Both: apply include first, then exclude from that set
-- Neither: show all (no filtering)
+- `include` and `providers` both narrow (intersection); `exclude` then removes from that set
+- Any field left unset places no constraint
+- All fields unset: show all (no filtering)
 
-CLI `--include`/`--exclude` replace config entirely for that invocation.
+`providers` matches the alias's **resolved** provider, not the harness or the access
+channel: `grok` is `provider = xai` routed through opencode, so declaring `xai`
+admits it. A model reached through a reseller key must declare that key
+(`opencode-go`), not the upstream one.
+
+This is a **display filter only**. A hidden alias still resolves when named
+(`mars models resolve`, `-m <alias>`, profiles, model-policies), and a plain model
+string still passes through to the harness.
+
+CLI flags replace config entirely for that invocation: `--include` / `--exclude` /
+`--providers`. `--no-visibility` ignores all filters and shows every alias.
 
 ## OpenCode Probe
 

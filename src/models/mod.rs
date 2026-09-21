@@ -1446,52 +1446,56 @@ pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Op
     provider.filter(|value| !value.eq_ignore_ascii_case("unknown"))
 }
 
+/// Whether a model passes the configured display visibility filter.
+///
+/// `include` and `providers` both narrow (intersection); `exclude` then removes.
+/// `providers` matches the resolved provider exactly with variant collapsing,
+/// not as a glob.
+pub fn visibility_permits(
+    visibility: &crate::config::ModelVisibility,
+    model_id: &str,
+    provider: &str,
+    runnable_paths: &[availability::RunnablePath],
+) -> bool {
+    let include = visibility.include.as_ref().filter(|p| !p.is_empty());
+    let providers = visibility.providers.as_ref().filter(|p| !p.is_empty());
+    let exclude = visibility.exclude.as_ref().filter(|p| !p.is_empty());
+
+    let included = include.is_none_or(|patterns| {
+        patterns
+            .iter()
+            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
+    });
+    let provider_ok = providers.is_none_or(|keys| {
+        keys.iter()
+            .any(|key| crate::routing::slug::providers_match(key, provider))
+    });
+    let excluded = exclude.is_some_and(|patterns| {
+        patterns
+            .iter()
+            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
+    });
+
+    included && provider_ok && !excluded
+}
+
 /// Filter resolved aliases by visibility config.
 /// - `include` patterns: keep only aliases where at least one pattern matches
 /// - `exclude` patterns: remove aliases where any pattern matches
-/// - No config (both None): return all aliases unchanged
+/// - `providers` keys: keep only aliases whose resolved provider matches
+/// - No config: return all aliases unchanged
 pub fn filter_by_visibility(
     mut aliases: IndexMap<String, ResolvedAlias>,
     visibility: &crate::config::ModelVisibility,
 ) -> IndexMap<String, ResolvedAlias> {
-    let include = visibility
-        .include
-        .as_ref()
-        .filter(|patterns| !patterns.is_empty());
-    let exclude = visibility
-        .exclude
-        .as_ref()
-        .filter(|patterns| !patterns.is_empty());
-
-    if include.is_none() && exclude.is_none() {
-        return aliases;
-    }
-
-    if let Some(includes) = include {
-        aliases.retain(|_, alias| {
-            let paths = alias
-                .availability
-                .as_ref()
-                .map(|availability| availability.runnable_paths.as_slice())
-                .unwrap_or(&[]);
-            includes.iter().any(|pattern| {
-                matches_visibility_pattern(pattern, &alias.model_id, &alias.provider, paths)
-            })
-        });
-    }
-
-    if let Some(excludes) = exclude {
-        aliases.retain(|_, alias| {
-            let paths = alias
-                .availability
-                .as_ref()
-                .map(|availability| availability.runnable_paths.as_slice())
-                .unwrap_or(&[]);
-            !excludes.iter().any(|pattern| {
-                matches_visibility_pattern(pattern, &alias.model_id, &alias.provider, paths)
-            })
-        });
-    }
+    aliases.retain(|_, alias| {
+        let paths = alias
+            .availability
+            .as_ref()
+            .map(|availability| availability.runnable_paths.as_slice())
+            .unwrap_or(&[]);
+        visibility_permits(visibility, &alias.model_id, &alias.provider, paths)
+    });
     aliases
 }
 
@@ -2371,6 +2375,13 @@ mod tests {
         }
     }
 
+    fn make_resolved_alias_provider(name: &str, provider: &str) -> ResolvedAlias {
+        ResolvedAlias {
+            provider: provider.to_string(),
+            ..make_resolved_alias(name)
+        }
+    }
+
     #[test]
     fn filter_by_visibility_include_mode_keeps_matches_only() {
         let mut aliases = IndexMap::new();
@@ -2383,6 +2394,7 @@ mod tests {
             &crate::config::ModelVisibility {
                 include: Some(vec!["model-opus*".to_string(), "model-gpt-*".to_string()]),
                 exclude: None,
+                providers: None,
             },
         );
 
@@ -2410,6 +2422,7 @@ mod tests {
                     "model-test-*".to_string(),
                     "model-deprecated-*".to_string(),
                 ]),
+                providers: None,
             },
         );
 
@@ -2440,6 +2453,7 @@ mod tests {
             &crate::config::ModelVisibility {
                 include: Some(Vec::new()),
                 exclude: Some(Vec::new()),
+                providers: None,
             },
         );
         assert_eq!(filtered.len(), 2);
@@ -2493,6 +2507,7 @@ mod tests {
             &crate::config::ModelVisibility {
                 include: Some(vec!["openai/model-*".to_string()]),
                 exclude: Some(vec!["model-gpt-4".to_string()]),
+                providers: None,
             },
         );
 
@@ -2500,6 +2515,112 @@ mod tests {
         assert!(filtered.contains_key("opus"));
         assert!(filtered.contains_key("gpt-5"));
         assert!(!filtered.contains_key("gpt-4"));
+    }
+
+    #[test]
+    fn filter_by_visibility_providers_allow_list_keeps_matching_only() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok", "xai"),
+        );
+        aliases.insert(
+            "opus".to_string(),
+            make_resolved_alias_provider("opus", "Anthropic"),
+        );
+        aliases.insert(
+            "gpt".to_string(),
+            make_resolved_alias_provider("gpt", "openai"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".to_string(), "openai".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains_key("grok"));
+        assert!(filtered.contains_key("gpt"));
+        assert!(!filtered.contains_key("opus"));
+    }
+
+    #[test]
+    fn filter_by_visibility_providers_match_case_and_variants() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "gpt".to_string(),
+            make_resolved_alias_provider("gpt", "openai-codex"),
+        );
+        aliases.insert(
+            "opus".to_string(),
+            make_resolved_alias_provider("opus", "anthropic-claude"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["OpenAI".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("gpt"));
+    }
+
+    #[test]
+    fn filter_by_visibility_providers_then_exclude() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "grok-4.7".to_string(),
+            make_resolved_alias_provider("grok-4.7", "xai"),
+        );
+        aliases.insert(
+            "grok-imagine-image".to_string(),
+            make_resolved_alias_provider("grok-imagine-image", "xai"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: Some(vec!["model-*imagine*".to_string()]),
+                providers: Some(vec!["xai".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("grok-4.7"));
+    }
+
+    #[test]
+    fn filter_by_visibility_providers_drops_unknown_provider() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "kimi".to_string(),
+            make_resolved_alias_provider("kimi", "unknown"),
+        );
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok", "xai"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("grok"));
     }
 
     #[test]

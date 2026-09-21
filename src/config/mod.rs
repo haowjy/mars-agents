@@ -194,15 +194,34 @@ pub struct ModelVisibility {
     /// Hide aliases matching these glob patterns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+    /// Show only aliases whose resolved provider matches one of these keys.
+    /// Exact, case-insensitive match with provider-variant collapsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<String>>,
 }
 
 impl ModelVisibility {
     pub fn validate(&self) -> Result<(), MarsError> {
+        if let Some(providers) = &self.providers {
+            if providers.is_empty() {
+                return Err(ConfigError::Invalid {
+                    message: "settings.model_visibility.providers must not be empty; omit it to disable the provider filter".into(),
+                }
+                .into());
+            }
+            if providers.iter().any(|provider| provider.trim().is_empty()) {
+                return Err(ConfigError::Invalid {
+                    message: "settings.model_visibility.providers contains an empty provider key"
+                        .into(),
+                }
+                .into());
+            }
+        }
         Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.include.is_none() && self.exclude.is_none()
+        self.include.is_none() && self.exclude.is_none() && self.providers.is_none()
     }
 }
 
@@ -548,6 +567,8 @@ pub struct LocalModelVisibility {
     pub include: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<String>>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -2064,6 +2085,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
             model_visibility: ModelVisibility {
                 include: Some(vec!["openai/*".to_string()]),
                 exclude: Some(vec!["*-preview".to_string()]),
+                providers: Some(vec!["openai".to_string()]),
             },
             ..Settings::default()
         };
@@ -2072,6 +2094,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
                 model_visibility: Some(LocalModelVisibility {
                     include: Some(vec!["anthropic/*".to_string()]),
                     exclude: None,
+                    providers: None,
                 }),
                 ..LocalSettings::default()
             },
@@ -2086,6 +2109,35 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         assert_eq!(
             merged.model_visibility.exclude,
             Some(vec!["*-preview".to_string()])
+        );
+    }
+
+    #[test]
+    fn merged_settings_local_providers_replace_project_providers() {
+        let settings = Settings {
+            model_visibility: ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".to_string(), "openai".to_string()]),
+            },
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                model_visibility: Some(LocalModelVisibility {
+                    include: None,
+                    exclude: None,
+                    providers: Some(vec!["xai".to_string()]),
+                }),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(
+            merged.model_visibility.providers,
+            Some(vec!["xai".to_string()])
         );
     }
 
@@ -2108,6 +2160,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
             model_visibility: ModelVisibility {
                 include: Some(vec!["anthropic/*".to_string()]),
                 exclude: None,
+                providers: None,
             },
             models_cache_ttl_hours: 24,
             min_mars_version: Some("0.1.0".to_string()),
@@ -2120,6 +2173,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
                 model_visibility: Some(LocalModelVisibility {
                     include: None,
                     exclude: Some(vec!["*-preview*".to_string()]),
+                    providers: None,
                 }),
                 models_cache_ttl_hours: Some(48),
                 min_mars_version: Some("0.2.0".to_string()),
@@ -3138,6 +3192,7 @@ harness_order = ["pi", "opencode", "codex", "claude"]
         let visibility = ModelVisibility {
             include: Some(vec!["opus*".into()]),
             exclude: Some(vec!["test*".into()]),
+            providers: Some(vec!["anthropic".into()]),
         };
         visibility.validate().unwrap();
     }
@@ -3147,12 +3202,14 @@ harness_order = ["pi", "opencode", "codex", "claude"]
         ModelVisibility {
             include: Some(vec!["opus*".into()]),
             exclude: None,
+            providers: None,
         }
         .validate()
         .unwrap();
         ModelVisibility {
             include: None,
             exclude: Some(vec!["test*".into()]),
+            providers: Some(vec!["openai".into()]),
         }
         .validate()
         .unwrap();
@@ -3166,6 +3223,7 @@ harness_order = ["pi", "opencode", "codex", "claude"]
             !ModelVisibility {
                 include: Some(vec!["opus*".into()]),
                 exclude: None,
+                providers: None,
             }
             .is_empty()
         );
@@ -3173,9 +3231,38 @@ harness_order = ["pi", "opencode", "codex", "claude"]
             !ModelVisibility {
                 include: None,
                 exclude: Some(vec!["test*".into()]),
+                providers: None,
             }
             .is_empty()
         );
+        assert!(
+            !ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".into()]),
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn model_visibility_validate_rejects_empty_providers() {
+        let visibility = ModelVisibility {
+            include: None,
+            exclude: None,
+            providers: Some(Vec::new()),
+        };
+        assert!(visibility.validate().is_err());
+    }
+
+    #[test]
+    fn model_visibility_validate_rejects_blank_provider() {
+        let visibility = ModelVisibility {
+            include: None,
+            exclude: None,
+            providers: Some(vec!["   ".into()]),
+        };
+        assert!(visibility.validate().is_err());
     }
 
     #[test]

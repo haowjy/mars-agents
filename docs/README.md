@@ -106,6 +106,12 @@ Mars accepts several source forms:
 | [internals/lock-file.md](internals/lock-file.md) | Lock file format and semantics |
 | [internals/conflicts.md](internals/conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
 
+### Design
+
+| Document | Contents |
+|---|---|
+| [design/model-provider-visibility.md](design/model-provider-visibility.md) | `settings.model_visibility.providers`: display-only provider filter for `mars models list` |
+
 ### Dev
 
 | Document | Contents |

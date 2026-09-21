@@ -322,13 +322,14 @@ providers = ["xai", "deepseek", "openai"]    # Show only these resolved provider
 |---|---|---|
 | `include` | string[] | Glob patterns; only matching aliases are shown |
 | `exclude` | string[] | Glob patterns; matching aliases are hidden |
-| `providers` | string[] | Only aliases whose resolved provider matches one of these keys are shown. Exact, case-insensitive, with variant collapsing (`openai-codex` matches `openai`). Unset means no provider filter; an empty list is rejected. |
+| `providers` | string[] | Only aliases whose resolved provider matches one of these keys are shown. Exact, case-insensitive, with variant collapsing (`openai-codex` matches `openai`). Unset, empty, and blank-only lists mean no provider filter. Aliases whose provider cannot be resolved (`unknown`) are never shown while the filter is active. |
 
 ### Behavior
 
 - `include` and `providers` both narrow (intersection); `exclude` then removes from that set
 - Any field left unset places no constraint
-- All fields unset: show all (no filtering)
+- Empty and blank entries are ignored; an empty or blank-only list places no constraint, so `providers = []` behaves like unset
+- All fields unset or empty: show all (no filtering)
 
 `providers` matches the alias's **resolved** provider, not the harness or the access
 channel: `grok` is `provider = xai` routed through opencode, so declaring `xai`

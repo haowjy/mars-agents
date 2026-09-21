@@ -1482,10 +1482,7 @@ fn filter_model_entries_by_visibility(
     entries: Vec<ListModelEntry>,
     visibility: &crate::config::ModelVisibility,
 ) -> Vec<ListModelEntry> {
-    if visibility.include.is_none()
-        && visibility.exclude.is_none()
-        && visibility.providers.is_none()
-    {
+    if visibility.is_empty() {
         return entries;
     }
 

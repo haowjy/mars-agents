@@ -1450,33 +1450,59 @@ pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Op
 ///
 /// `include` and `providers` both narrow (intersection); `exclude` then removes.
 /// `providers` matches the resolved provider exactly with variant collapsing,
-/// not as a glob.
+/// not as a glob. Empty and blank entries are ignored, so an effectively-empty
+/// list disables that filter — unset and `[]` behave the same, matching
+/// `include` and `exclude`.
 pub fn visibility_permits(
     visibility: &crate::config::ModelVisibility,
     model_id: &str,
     provider: &str,
     runnable_paths: &[availability::RunnablePath],
 ) -> bool {
-    let include = visibility.include.as_ref().filter(|p| !p.is_empty());
-    let providers = visibility.providers.as_ref().filter(|p| !p.is_empty());
-    let exclude = visibility.exclude.as_ref().filter(|p| !p.is_empty());
+    let include_ok = visibility
+        .include
+        .as_ref()
+        .filter(|p| !p.is_empty())
+        .is_none_or(|patterns| {
+            patterns.iter().any(|pattern| {
+                matches_visibility_pattern(pattern, model_id, provider, runnable_paths)
+            })
+        });
+    if !include_ok {
+        return false;
+    }
 
-    let included = include.is_none_or(|patterns| {
-        patterns
+    let provider_keys: Vec<&str> = visibility
+        .providers
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+        .collect();
+    if !provider_keys.is_empty() {
+        // `unknown` is a resolution sentinel, not a provider name. Declaring a
+        // provider key must not re-admit an alias whose provider could not be
+        // resolved.
+        let unresolved = provider.trim().is_empty() || provider.eq_ignore_ascii_case("unknown");
+        let matched = provider_keys
             .iter()
-            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
-    });
-    let provider_ok = providers.is_none_or(|keys| {
-        keys.iter()
-            .any(|key| crate::routing::slug::providers_match(key, provider))
-    });
-    let excluded = exclude.is_some_and(|patterns| {
-        patterns
-            .iter()
-            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
-    });
+            .any(|key| crate::routing::slug::providers_match(key, provider));
+        if unresolved || !matched {
+            return false;
+        }
+    }
 
-    included && provider_ok && !excluded
+    let excluded = visibility
+        .exclude
+        .as_ref()
+        .filter(|p| !p.is_empty())
+        .is_some_and(|patterns| {
+            patterns.iter().any(|pattern| {
+                matches_visibility_pattern(pattern, model_id, provider, runnable_paths)
+            })
+        });
+    !excluded
 }
 
 /// Filter resolved aliases by visibility config.
@@ -1488,6 +1514,9 @@ pub fn filter_by_visibility(
     mut aliases: IndexMap<String, ResolvedAlias>,
     visibility: &crate::config::ModelVisibility,
 ) -> IndexMap<String, ResolvedAlias> {
+    if visibility.is_empty() {
+        return aliases;
+    }
     aliases.retain(|_, alias| {
         let paths = alias
             .availability
@@ -2616,6 +2645,80 @@ mod tests {
                 include: None,
                 exclude: None,
                 providers: Some(vec!["xai".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("grok"));
+    }
+
+    #[test]
+    fn filter_by_visibility_unknown_key_does_not_readmit_unknown_provider() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "kimi".to_string(),
+            make_resolved_alias_provider("kimi", "unknown"),
+        );
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok", "xai"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["unknown".to_string()]),
+            },
+        );
+
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_by_visibility_blank_and_empty_provider_keys_disable_filter() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "kimi".to_string(),
+            make_resolved_alias_provider("kimi", "unknown"),
+        );
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok", "xai"),
+        );
+
+        for keys in [Vec::new(), vec!["   ".to_string()]] {
+            let filtered = filter_by_visibility(
+                aliases.clone(),
+                &crate::config::ModelVisibility {
+                    include: None,
+                    exclude: None,
+                    providers: Some(keys),
+                },
+            );
+            assert_eq!(filtered.len(), 2);
+        }
+    }
+
+    #[test]
+    fn filter_by_visibility_provider_keys_are_trimmed() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok", "xai"),
+        );
+        aliases.insert(
+            "gpt".to_string(),
+            make_resolved_alias_provider("gpt", "openai"),
+        );
+
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["  xai  ".to_string()]),
             },
         );
 

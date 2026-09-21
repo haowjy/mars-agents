@@ -77,8 +77,9 @@ filter with no provider semantics.
   invocation, consistent with `--include`/`--exclude`.
 - **R7** `mars models list --no-visibility` bypasses all visibility filters and
   shows every alias.
-- **R8** `providers = []` is a validation error; a present-but-empty allow-list
-  is almost always a mistake.
+- **R8** Empty and blank entries are ignored; an effectively-empty allow-list
+  disables the provider filter, consistent with `include`/`exclude` and with
+  leaving `providers` unset.
 - **R9** Applies to every list view: default, `--all`, `--live`, `--catalog`.
 - **R10** Matching is case-insensitive and collapses known provider variants
   (`openai-codex` matches `openai`, `anthropic-claude` matches `anthropic`).
@@ -199,8 +200,9 @@ $ mars spawn -a coder -m claude-opus-4-6     # plain id passes through
   visibility accordingly.
 - **Pinned aliases**: same rule; pinned aliases are not exempt (unlike
   `catalog_providers`, which only constrains auto-resolve).
-- **Empty vs unset**: unset = no filter; `providers = []` = validation error.
-- **Whitespace/empty entries** in the list: trim and reject empty strings.
+- **Empty vs unset**: unset and `providers = []` both mean no filter. The
+  predicate trims entries and drops blanks, so a list of only blanks is also
+  treated as unset.
 - **`--catalog`**: the raw catalog view honors `providers` via the same
   predicate.
 
@@ -210,8 +212,9 @@ $ mars spawn -a coder -m claude-opus-4-6     # plain id passes through
    - Add `providers: Option<Vec<String>>` to `ModelVisibility` and
      `LocalModelVisibility`.
    - Extend `ModelVisibility::is_empty` to include `providers`.
-   - Extend `ModelVisibility::validate` to reject a present-but-empty list and
-     empty strings.
+   - No new validation rule: empty/blank handling lives in the predicate so the
+     config and CLI paths behave identically (the list path does not run
+     `validate`).
 2. `src/config/layering.rs`
    - `apply_model_visibility_overlay` copies `providers` (replace).
 3. `src/models/mod.rs`
@@ -233,12 +236,14 @@ $ mars spawn -a coder -m claude-opus-4-6     # plain id passes through
 
 - Unit (`src/models/mod.rs`): providers allow-list keeps only matching;
   providers + exclude ordering; variant collapsing (`openai` matches
-  `openai-codex`); case-insensitivity; unknown provider dropped; empty
-  visibility returns all.
-- Config (`src/config/mod.rs`): `validate` rejects `providers = []` and blank
-  entries; overlay replaces the project list; roundtrip preserves `providers`.
-- Integration (`tests/model_config.rs`): `mars models list --providers` and
-  `--no-visibility` on a fixture project; `resolve` still works for a hidden
+  `openai-codex`); case-insensitivity; unknown provider dropped; `unknown`
+  declared as a key does not re-admit unresolved aliases; empty/blank lists and
+  blank entries are ignored; entries are trimmed.
+- Config (`src/config/mod.rs`): overlay replaces the project list; roundtrip
+  preserves `providers`.
+- Integration (`tests/model_config.rs`): config `providers` filtering and
+  `mars.local.toml` override; `--providers` flag override; `--no-visibility`
+  and its conflict with `--providers`; `resolve` still works for a hidden
   alias.
 
 ## Decisions
@@ -249,5 +254,7 @@ $ mars spawn -a coder -m claude-opus-4-6     # plain id passes through
   allow-list you cannot narrow is not an allow-list.
 - **Exact normalized match, not glob,** for providers. Avoids the
   slash-segment limitation and keeps the schema readable.
-- **Validation error for empty.** Unset means "no filter"; an explicit empty
-  list implies intent we cannot guess, so we reject it.
+- **Empty means unset.** `providers = []` and blank entries disable the filter,
+  matching `include`/`exclude`. Validation that fired only in `mars validate`
+  (not `models list`) split the two paths; normalizing in the predicate keeps
+  them identical.

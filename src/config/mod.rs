@@ -201,25 +201,6 @@ pub struct ModelVisibility {
 }
 
 impl ModelVisibility {
-    pub fn validate(&self) -> Result<(), MarsError> {
-        if let Some(providers) = &self.providers {
-            if providers.is_empty() {
-                return Err(ConfigError::Invalid {
-                    message: "settings.model_visibility.providers must not be empty; omit it to disable the provider filter".into(),
-                }
-                .into());
-            }
-            if providers.iter().any(|provider| provider.trim().is_empty()) {
-                return Err(ConfigError::Invalid {
-                    message: "settings.model_visibility.providers contains an empty provider key"
-                        .into(),
-                }
-                .into());
-            }
-        }
-        Ok(())
-    }
-
     pub fn is_empty(&self) -> bool {
         self.include.is_none() && self.exclude.is_none() && self.providers.is_none()
     }
@@ -1031,7 +1012,6 @@ pub fn merge_with_root(
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
     let merged_settings = merged_settings(&config.settings, &local);
-    merged_settings.model_visibility.validate()?;
     let mut dependencies = IndexMap::new();
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
@@ -3188,35 +3168,6 @@ harness_order = ["pi", "opencode", "codex", "claude"]
     }
 
     #[test]
-    fn model_visibility_validate_allows_include_and_exclude() {
-        let visibility = ModelVisibility {
-            include: Some(vec!["opus*".into()]),
-            exclude: Some(vec!["test*".into()]),
-            providers: Some(vec!["anthropic".into()]),
-        };
-        visibility.validate().unwrap();
-    }
-
-    #[test]
-    fn model_visibility_validate_allows_include_only_exclude_only_and_empty() {
-        ModelVisibility {
-            include: Some(vec!["opus*".into()]),
-            exclude: None,
-            providers: None,
-        }
-        .validate()
-        .unwrap();
-        ModelVisibility {
-            include: None,
-            exclude: Some(vec!["test*".into()]),
-            providers: Some(vec!["openai".into()]),
-        }
-        .validate()
-        .unwrap();
-        ModelVisibility::default().validate().unwrap();
-    }
-
-    #[test]
     fn model_visibility_is_empty_reports_state() {
         assert!(ModelVisibility::default().is_empty());
         assert!(
@@ -3243,26 +3194,6 @@ harness_order = ["pi", "opencode", "codex", "claude"]
             }
             .is_empty()
         );
-    }
-
-    #[test]
-    fn model_visibility_validate_rejects_empty_providers() {
-        let visibility = ModelVisibility {
-            include: None,
-            exclude: None,
-            providers: Some(Vec::new()),
-        };
-        assert!(visibility.validate().is_err());
-    }
-
-    #[test]
-    fn model_visibility_validate_rejects_blank_provider() {
-        let visibility = ModelVisibility {
-            include: None,
-            exclude: None,
-            providers: Some(vec!["   ".into()]),
-        };
-        assert!(visibility.validate().is_err());
     }
 
     #[test]

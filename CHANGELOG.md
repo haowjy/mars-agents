@@ -14,6 +14,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars models list --providers` overrides config; `--no-visibility` shows every
   alias regardless of config or flags.
 
+### Changed
+- `settings.model_visibility` ignores blank entries in `include`, `exclude`, and
+  `providers`, so a blank-only list behaves like unset for all three. Previously a
+  blank `include`/`exclude` entry was a literal pattern that matched nothing.
+
 ## [0.14.2] - 2026-09-22
 
 ### Fixed

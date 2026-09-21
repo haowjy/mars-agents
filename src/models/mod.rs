@@ -1443,66 +1443,73 @@ pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Op
         .map(|(_model_id, provider)| provider)
         .or_else(|| provider_from_alias_spec(alias));
 
-    provider.filter(|value| !value.eq_ignore_ascii_case("unknown"))
+    provider.filter(|value| crate::routing::slug::provider_is_resolved(value))
 }
 
 /// Whether a model passes the configured display visibility filter.
 ///
 /// `include` and `providers` both narrow (intersection); `exclude` then removes.
 /// `providers` matches the resolved provider exactly with variant collapsing,
-/// not as a glob. Empty and blank entries are ignored, so an effectively-empty
-/// list disables that filter — unset and `[]` behave the same, matching
-/// `include` and `exclude`.
+/// not as a glob. Empty and blank entries are ignored for all three fields, so
+/// an effectively-empty list places no constraint.
 pub fn visibility_permits(
     visibility: &crate::config::ModelVisibility,
     model_id: &str,
     provider: &str,
     runnable_paths: &[availability::RunnablePath],
 ) -> bool {
-    let include_ok = visibility
-        .include
-        .as_ref()
-        .filter(|p| !p.is_empty())
-        .is_none_or(|patterns| {
-            patterns.iter().any(|pattern| {
-                matches_visibility_pattern(pattern, model_id, provider, runnable_paths)
-            })
-        });
+    let include = normalized_patterns(&visibility.include);
+    let exclude = normalized_patterns(&visibility.exclude);
+    let provider_keys = normalized_patterns(&visibility.providers);
+
+    let include_ok = include.is_none_or(|patterns| {
+        patterns
+            .iter()
+            .copied()
+            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
+    });
     if !include_ok {
         return false;
     }
 
-    let provider_keys: Vec<&str> = visibility
-        .providers
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|key| key.trim())
-        .filter(|key| !key.is_empty())
-        .collect();
-    if !provider_keys.is_empty() {
-        // `unknown` is a resolution sentinel, not a provider name. Declaring a
-        // provider key must not re-admit an alias whose provider could not be
-        // resolved.
-        let unresolved = provider.trim().is_empty() || provider.eq_ignore_ascii_case("unknown");
-        let matched = provider_keys
+    if let Some(keys) = provider_keys {
+        // `unknown` and blank are resolution sentinels, not provider names.
+        // Declaring a key must not re-admit an alias whose provider is unknown.
+        if !crate::routing::slug::provider_is_resolved(provider) {
+            return false;
+        }
+        if !keys
             .iter()
-            .any(|key| crate::routing::slug::providers_match(key, provider));
-        if unresolved || !matched {
+            .copied()
+            .any(|key| crate::routing::slug::providers_match(key, provider))
+        {
             return false;
         }
     }
 
-    let excluded = visibility
-        .exclude
-        .as_ref()
-        .filter(|p| !p.is_empty())
-        .is_some_and(|patterns| {
-            patterns.iter().any(|pattern| {
-                matches_visibility_pattern(pattern, model_id, provider, runnable_paths)
-            })
-        });
+    let excluded = exclude.is_some_and(|patterns| {
+        patterns
+            .iter()
+            .copied()
+            .any(|pattern| matches_visibility_pattern(pattern, model_id, provider, runnable_paths))
+    });
     !excluded
+}
+
+/// Trim a visibility pattern list and drop blank entries.
+///
+/// Returns `None` when nothing usable remains, so an empty or blank-only list
+/// places no constraint. `include`, `exclude`, and `providers` share this rule,
+/// keeping "empty" to one meaning across the three fields.
+fn normalized_patterns(patterns: &Option<Vec<String>>) -> Option<Vec<&str>> {
+    let normalized: Vec<&str> = patterns
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|pattern| pattern.trim())
+        .filter(|pattern| !pattern.is_empty())
+        .collect();
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 /// Filter resolved aliases by visibility config.
@@ -2719,6 +2726,58 @@ mod tests {
                 include: None,
                 exclude: None,
                 providers: Some(vec!["  xai  ".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("grok"));
+    }
+
+    #[test]
+    fn filter_by_visibility_include_and_providers_intersect() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "gpt".to_string(),
+            make_resolved_alias_provider("gpt-5", "openai"),
+        );
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok-4.7", "xai"),
+        );
+
+        // include matches both models, but providers keeps only xai.
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: Some(vec![
+                    "model-gpt-5".to_string(),
+                    "model-grok-4.7".to_string(),
+                ]),
+                exclude: None,
+                providers: Some(vec!["xai".to_string()]),
+            },
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("grok"));
+    }
+
+    #[test]
+    fn filter_by_visibility_blank_include_entry_is_ignored() {
+        let mut aliases = IndexMap::new();
+        aliases.insert(
+            "grok".to_string(),
+            make_resolved_alias_provider("grok-4.7", "xai"),
+        );
+
+        // A blank entry is not a pattern; the list is effectively empty, so it
+        // places no constraint instead of hiding everything.
+        let filtered = filter_by_visibility(
+            aliases,
+            &crate::config::ModelVisibility {
+                include: Some(vec!["  ".to_string()]),
+                exclude: None,
+                providers: None,
             },
         );
 

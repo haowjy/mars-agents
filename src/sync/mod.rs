@@ -604,20 +604,46 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
-        if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-            && disk_path.symlink_metadata().is_ok()
-        {
+        let unowned_collision = !old_lock_index
+            .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
+            && disk_path.symlink_metadata().is_ok();
+        let adoptable = unowned_collision
+            && force_adoptable_self_destination(&disk_path, managed_root, item.discovered.id.kind);
+        if unowned_collision && !(request.options.force && adoptable) {
+            let guidance = if adoptable {
+                format!(
+                    "use `{}` to replace and adopt this regular destination",
+                    managed_cmd("mars sync --force")
+                )
+            } else {
+                "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()
+            };
             return Err(MarsError::Source {
                 source_name: local_source_name.to_string(),
                 message: format!(
-                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; \
-                     relocate the destination and retry sync (even identical bytes and --force do not establish self ownership)",
+                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; {guidance}",
                     item.discovered.id.kind,
                     item.discovered.id.name,
                     item.disk_path().display(),
                     disk_path.display(),
                 ),
             });
+        }
+        if request.options.force && adoptable {
+            let action = if request.options.dry_run {
+                "would replace and adopt"
+            } else {
+                "will replace and adopt"
+            };
+            diag.warn(
+                "self-adopt",
+                format!(
+                    "selected self {} `{}` {action} existing canonical destination `{}`",
+                    item.discovered.id.kind,
+                    item.discovered.id.name,
+                    disk_path.display()
+                ),
+            );
         }
 
         target_state.items.insert(
@@ -1235,6 +1261,36 @@ fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
         ItemKind::Hook => DestPath::from(format!("hooks/{name}")),
         ItemKind::McpServer => DestPath::from(format!("mcp/{name}")),
         ItemKind::BootstrapDoc => DestPath::from(format!("bootstrap/{name}/BOOTSTRAP.md")),
+    }
+}
+
+fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
+    let Some(relative) = path.strip_prefix(managed_root).ok() else {
+        return false;
+    };
+    let Ok(root_metadata) = managed_root.symlink_metadata() else {
+        return false;
+    };
+    if root_metadata.file_type().is_symlink() {
+        return false;
+    }
+    let mut current = managed_root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let Ok(metadata) = current.symlink_metadata() else {
+            break;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    match path.symlink_metadata() {
+        Ok(metadata) => match kind {
+            ItemKind::Agent => metadata.is_file(),
+            ItemKind::Skill => metadata.is_dir(),
+            _ => false,
+        },
+        Err(_) => false,
     }
 }
 

@@ -604,26 +604,38 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
+        let adoptable =
+            force_adoptable_self_destination(&disk_path, managed_root, item.discovered.id.kind);
         if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
-            && !(request.options.force
-                && force_adoptable_self_destination(
-                    &disk_path,
-                    managed_root,
-                    item.discovered.id.kind,
-                ))
+            && !(request.options.force && adoptable)
         {
+            let guidance = if adoptable {
+                "use `mars sync --force` to replace and adopt this regular destination"
+            } else {
+                "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)"
+            };
             return Err(MarsError::Source {
                 source_name: local_source_name.to_string(),
                 message: format!(
-                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; \
-                     relocate the destination and retry sync, or use `mars sync --force` for a regular file or skill directory",
+                    "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; {guidance}",
                     item.discovered.id.kind,
                     item.discovered.id.name,
                     item.disk_path().display(),
                     disk_path.display(),
                 ),
             });
+        }
+        if request.options.force && adoptable {
+            diag.warn(
+                "self-adopt",
+                format!(
+                    "selected self {} `{}` will replace and adopt existing canonical destination `{}`",
+                    item.discovered.id.kind,
+                    item.discovered.id.name,
+                    disk_path.display()
+                ),
+            );
         }
 
         target_state.items.insert(
@@ -1248,6 +1260,12 @@ fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: Item
     let Some(relative) = path.strip_prefix(managed_root).ok() else {
         return false;
     };
+    let Ok(root_metadata) = managed_root.symlink_metadata() else {
+        return false;
+    };
+    if root_metadata.file_type().is_symlink() {
+        return false;
+    }
     let mut current = managed_root.to_path_buf();
     for component in relative.components() {
         current.push(component.as_os_str());

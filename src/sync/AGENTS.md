@@ -82,7 +82,7 @@ This protects new canonical writes, not native/config emission (#149).
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse blocked canonical self items (including under force); prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |

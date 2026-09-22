@@ -26,7 +26,7 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
             .failure()
             .stderr(predicate::str::is_match(r"\.mars-src[/\\]agents[/\\]local\.md").unwrap())
             .stderr(predicate::str::is_match(r"\.mars[/\\]agents[/\\]local\.md").unwrap())
-            .stderr(predicate::str::contains("relocate"));
+            .stderr(predicate::str::is_match("relocate|--force").unwrap());
         assert_eq!(
             fs::read_to_string(dir.child(".mars/agents/local.md").path()).unwrap(),
             "# Same bytes\n"
@@ -65,12 +65,25 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                     destination.child("SKILL.md").write_str(original).unwrap();
                 }
                 sync(dir.path()).assert().failure();
+                let before = if kind == "agent" {
+                    fs::read(destination.path()).unwrap()
+                } else {
+                    fs::read(destination.child("SKILL.md").path()).unwrap()
+                };
                 sync(dir.path())
                     .arg("--force")
                     .arg("--diff")
                     .assert()
                     .success();
                 assert!(!dir.child("mars.lock").exists());
+                assert_eq!(
+                    if kind == "agent" {
+                        fs::read(destination.path()).unwrap()
+                    } else {
+                        fs::read(destination.child("SKILL.md").path()).unwrap()
+                    },
+                    before
+                );
                 sync(dir.path()).arg("--force").assert().success();
                 let lock = fs::read_to_string(dir.child("mars.lock").path()).unwrap();
                 assert!(
@@ -93,6 +106,61 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                     lock
                 );
             }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn force_rejects_symlinked_canonical_root_and_ancestors() {
+    use std::os::unix::fs::symlink;
+    for kind in ["agent", "skill"] {
+        for link_level in ["root", "ancestor", "destination"] {
+            let dir = TempDir::new().unwrap();
+            let project = dir.child("project");
+            project
+                .child("mars.toml")
+                .write_str("[dependencies]\n")
+                .unwrap();
+            let (source, relative, referent) = if kind == "agent" {
+                (".mars-src/agents/muse.md", "agents/muse.md", "# Authored\n")
+            } else {
+                (
+                    ".mars-src/skills/craft/SKILL.md",
+                    "skills/craft",
+                    "# Authored\n",
+                )
+            };
+            project.child(source).write_str("# Selected\n").unwrap();
+            let authored = dir.child("authored");
+            authored.child(relative).write_str(referent).unwrap();
+            let canonical = project.child(".mars");
+            match link_level {
+                "root" => symlink(authored.path(), canonical.path()).unwrap(),
+                "ancestor" => {
+                    fs::create_dir_all(canonical.path()).unwrap();
+                    symlink(
+                        authored
+                            .child(if kind == "agent" { "agents" } else { "skills" })
+                            .path(),
+                        canonical
+                            .child(if kind == "agent" { "agents" } else { "skills" })
+                            .path(),
+                    )
+                    .unwrap();
+                }
+                _ => {
+                    let destination = canonical.join(relative);
+                    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+                    symlink(authored.join(relative), destination).unwrap();
+                }
+            }
+            sync(project.path()).arg("--force").assert().failure();
+            assert_eq!(
+                fs::read_to_string(authored.child(relative).path()).unwrap(),
+                referent
+            );
+            assert!(!project.child("mars.lock").exists());
         }
     }
 }

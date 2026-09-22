@@ -13,7 +13,7 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
     for path in [".mars-src/agents/local.md", ".mars/agents/local.md"] {
         dir.child(path).write_str("# Same bytes\n").unwrap();
     }
-    for flags in [vec![], vec!["--force"], vec!["--diff"], vec!["--frozen"]] {
+    for flags in [vec![], vec!["--diff"], vec!["--frozen"]] {
         offline_mars(dir.path())
             .args([
                 "sync",
@@ -32,6 +32,68 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
             "# Same bytes\n"
         );
         assert!(!dir.child("mars.lock").exists());
+    }
+}
+
+#[test]
+fn force_adopts_unowned_self_agent_and_skill_outputs() {
+    for (layer, source_root) in [("package", ""), ("mars-src", ".mars-src/")] {
+        for (kind, source_rel, dest_rel) in [
+            ("agent", "agents/muse.md", ".mars/agents/muse.md"),
+            ("skill", "skills/craft/SKILL.md", ".mars/skills/craft"),
+        ] {
+            for same_bytes in [true, false] {
+                let dir = TempDir::new().unwrap();
+                let config = if layer == "package" {
+                    "[package]\nname = 'demo'\nversion = '1.0.0'\n"
+                } else {
+                    "[dependencies]\n"
+                };
+                dir.child("mars.toml").write_str(config).unwrap();
+                let source = dir.child(format!("{source_root}{source_rel}"));
+                let original = if same_bytes {
+                    "# Same\n"
+                } else {
+                    "# Existing\n"
+                };
+                let desired = if same_bytes { original } else { "# Desired\n" };
+                source.write_str(desired).unwrap();
+                let destination = dir.child(dest_rel);
+                if kind == "agent" {
+                    destination.write_str(original).unwrap();
+                } else {
+                    destination.child("SKILL.md").write_str(original).unwrap();
+                }
+                sync(dir.path()).assert().failure();
+                sync(dir.path())
+                    .arg("--force")
+                    .arg("--diff")
+                    .assert()
+                    .success();
+                assert!(!dir.child("mars.lock").exists());
+                sync(dir.path()).arg("--force").assert().success();
+                let lock = fs::read_to_string(dir.child("mars.lock").path()).unwrap();
+                assert!(
+                    lock.contains("source = \"_self\""),
+                    "{kind} {layer}: {lock}"
+                );
+                assert!(
+                    lock.contains("checksum"),
+                    "{kind} {layer}: missing checksum"
+                );
+                let installed = if kind == "agent" {
+                    fs::read_to_string(destination.path()).unwrap()
+                } else {
+                    fs::read_to_string(destination.child("SKILL.md").path()).unwrap()
+                };
+                assert_eq!(installed, desired);
+                sync(dir.path()).assert().success();
+                assert_eq!(
+                    fs::read_to_string(dir.child("mars.lock").path()).unwrap(),
+                    lock
+                );
+            }
+        }
     }
 }
 

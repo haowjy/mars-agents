@@ -606,12 +606,18 @@ pub(crate) fn build_target(
         let disk_path = dest_path.resolve(managed_root);
         if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
             && disk_path.symlink_metadata().is_ok()
+            && !(request.options.force
+                && force_adoptable_self_destination(
+                    &disk_path,
+                    managed_root,
+                    item.discovered.id.kind,
+                ))
         {
             return Err(MarsError::Source {
                 source_name: local_source_name.to_string(),
                 message: format!(
                     "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; \
-                     relocate the destination and retry sync (even identical bytes and --force do not establish self ownership)",
+                     relocate the destination and retry sync, or use `mars sync --force` for a regular file or skill directory",
                     item.discovered.id.kind,
                     item.discovered.id.name,
                     item.disk_path().display(),
@@ -1235,6 +1241,30 @@ fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
         ItemKind::Hook => DestPath::from(format!("hooks/{name}")),
         ItemKind::McpServer => DestPath::from(format!("mcp/{name}")),
         ItemKind::BootstrapDoc => DestPath::from(format!("bootstrap/{name}/BOOTSTRAP.md")),
+    }
+}
+
+fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
+    let Some(relative) = path.strip_prefix(managed_root).ok() else {
+        return false;
+    };
+    let mut current = managed_root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let Ok(metadata) = current.symlink_metadata() else {
+            break;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    match path.symlink_metadata() {
+        Ok(metadata) => match kind {
+            ItemKind::Agent => metadata.is_file(),
+            ItemKind::Skill => metadata.is_dir(),
+            _ => false,
+        },
+        Err(_) => false,
     }
 }
 

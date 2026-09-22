@@ -669,7 +669,9 @@ fn opencode_native_emission_preserves_qualified_input_and_skips_unavailable_bare
     );
     let aliases = IndexMap::new();
     let qualified_probe = crate::models::probes::OpenCodeProbeResult {
-        model_slugs: vec!["openai/gpt-5.4".into()],
+        // The explicit provider must win over the broad provider-variant
+        // preference used for aliases.
+        model_slugs: vec!["openai/gpt-5.4".into(), "openai-codex/gpt-5.4".into()],
         model_probe_success: true,
         error: None,
     };

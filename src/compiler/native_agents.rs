@@ -84,6 +84,9 @@ struct NativeResolvedModel<'a> {
     model_id: String,
     provider_for_order: Option<String>,
     provider_constraint: Option<String>,
+    /// An explicit `provider/model` token is an exact route, unlike a broad
+    /// provider constraint supplied by an alias.
+    explicit_provider: bool,
     alias: Option<&'a ModelAlias>,
 }
 
@@ -285,7 +288,11 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             let input = crate::routing::RoutingInput {
                 preferred_harness: None,
                 model_id: &route_model_id,
-                provider_for_order: resolved.provider_for_order.as_deref(),
+                provider_for_order: if resolved.explicit_provider {
+                    None
+                } else {
+                    resolved.provider_for_order.as_deref()
+                },
                 provider_constraint: resolved.provider_constraint.as_deref(),
                 settings_provider_order: provider_order.as_deref(),
                 settings_harness_order: harness_order.as_deref(),
@@ -355,7 +362,11 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                     harness: harness_name.as_str(),
                     model_id: &resolved.model_id,
                     provider_constraint: resolved.provider_constraint.as_deref(),
-                    provider_for_order: resolved.provider_for_order.as_deref(),
+                    provider_for_order: if resolved.explicit_provider {
+                        None
+                    } else {
+                        resolved.provider_for_order.as_deref()
+                    },
                     settings_provider_order: provider_order.as_deref(),
                     opencode_probe: opencode_probe.as_ref(),
                     pi_probe: None,
@@ -365,7 +376,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             // Never emit a bare model id in that case: OpenCode requires a
             // provider/model slug, so skip this native projection instead.
             return (!resolved.harness_model_id.is_empty()
-                && (resolved.harness_model_id.contains('/') || routed_model_id.contains('/')))
+                && resolved.harness_model_id.contains('/'))
             .then_some(resolved.harness_model_id);
         }
         if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
@@ -390,6 +401,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         let alias = self.aliases.get(token);
         let (raw_model_token, token_provider_constraint) =
             crate::models::split_provider_constrained_model_token(token);
+        let explicit_provider = token_provider_constraint.is_some();
         let model_id = match alias {
             Some(alias) => crate::models::resolve_model_id_for_alias(alias, self.cache)?,
             None => raw_model_token.clone(),
@@ -413,6 +425,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             model_id,
             provider_for_order,
             provider_constraint,
+            explicit_provider,
             alias,
         })
     }

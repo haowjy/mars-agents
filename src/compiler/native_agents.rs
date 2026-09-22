@@ -319,7 +319,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 continue;
             }
 
-            return Some(self.native_model_id(profile, target_harness, &resolved, &route_model_id));
+            return self.native_model_id(profile, target_harness, &resolved, &route_model_id);
         }
         None
     }
@@ -345,12 +345,12 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         target_harness: &crate::compiler::agents::HarnessKind,
         resolved: &NativeResolvedModel<'_>,
         routed_model_id: &str,
-    ) -> String {
+    ) -> Option<String> {
         if *target_harness == crate::compiler::agents::HarnessKind::OpenCode {
             let provider_order = self.routing_settings.provider_order_names();
             let opencode_probe = self.session.opencode_probe_result();
             let harness_name = target_harness.to_harness_id();
-            return crate::models::harness_model::resolve_harness_model(
+            let resolved = crate::models::harness_model::resolve_harness_model(
                 crate::models::harness_model::HarnessModelInput {
                     harness: harness_name.as_str(),
                     model_id: &resolved.model_id,
@@ -360,16 +360,21 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                     opencode_probe: opencode_probe.as_ref(),
                     pi_probe: None,
                 },
-            )
-            .harness_model_id;
+            );
+            // Routing acceptance can succeed without a usable OpenCode probe.
+            // Never emit a bare model id in that case: OpenCode requires a
+            // provider/model slug, so skip this native projection instead.
+            return (!resolved.harness_model_id.is_empty()
+                && (resolved.harness_model_id.contains('/') || routed_model_id.contains('/')))
+            .then_some(resolved.harness_model_id);
         }
         if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
-            return resolved.model_id.clone();
+            return Some(resolved.model_id.clone());
         }
 
         let effort = cursor_effective_effort(profile, resolved.alias).unwrap_or("medium");
         let Some(cursor_probe) = self.session.cursor_probe_result() else {
-            return routed_model_id.to_string();
+            return Some(routed_model_id.to_string());
         };
         crate::models::probes::cursor::resolve_cursor_effort_slug(
             routed_model_id,
@@ -378,6 +383,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         )
         .map(|resolution| resolution.slug)
         .unwrap_or_else(|_| routed_model_id.to_string())
+        .into()
     }
 
     fn resolve_candidate(&self, token: &str) -> Option<NativeResolvedModel<'a>> {

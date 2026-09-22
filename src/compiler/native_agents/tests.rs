@@ -571,6 +571,129 @@ fn compile_emit_all_agents(
     )
 }
 
+fn compile_emit_all_opencode(
+    dir: &Path,
+    agent: &MarsCanonicalAgent,
+    aliases: &IndexMap<String, ModelAlias>,
+    probe: Option<crate::models::probes::OpenCodeProbeResult>,
+    provider_order: Option<Vec<String>>,
+) -> Vec<CompiledNativeOutput> {
+    let mut diag = DiagnosticCollector::new();
+    let cache = empty_models_cache();
+    let settings = crate::config::Settings {
+        provider_order,
+        ..Default::default()
+    };
+    let routing = ResolvedRoutingSettings::from_settings(&settings);
+    let session = CapabilitySession::collect_with_resolver(
+        &CapabilityCollectionOptions {
+            offline: true,
+            probe_refresh: crate::models::probes::ProbeRefreshMode::Skip,
+        },
+        &MissingResolver,
+    );
+    let mut router = NativeModelRoutingRuntime::with_session(aliases, &cache, routing, session);
+    if let Some(probe) = probe {
+        router.session.set_opencode_probe_for_test(probe);
+    }
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir,
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: &[HarnessKind::OpenCode],
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+        fanout_agents: &[],
+    };
+    compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        std::slice::from_ref(agent),
+        &mut router,
+        &mut diag,
+    )
+}
+
+#[test]
+fn opencode_native_emission_qualifies_alias_and_honors_provider_preference() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".opencode/agents")).unwrap();
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "gpt".to_string(),
+        ModelAlias {
+            harness: Some("opencode".to_string()),
+            description: None,
+            prompting: None,
+            default_effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            spec: ModelSpec::Pinned {
+                model: "gpt-5.4".into(),
+                provider: None,
+            },
+        },
+    );
+    let agent = parse_mars_agent("---\nname: worker\nmodel: gpt\n---\n# Worker\n", "worker");
+    let probe = crate::models::probes::OpenCodeProbeResult {
+        model_slugs: vec!["openai/gpt-5.4".into(), "openrouter/gpt-5.4".into()],
+        model_probe_success: true,
+        error: None,
+    };
+    let records = compile_emit_all_opencode(
+        dir.path(),
+        &agent,
+        &aliases,
+        Some(probe),
+        Some(vec!["openrouter".into()]),
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".opencode/agents/worker.md")).unwrap();
+    assert!(native.contains("model: openrouter/gpt-5.4"), "{native}");
+}
+
+#[test]
+fn opencode_native_emission_preserves_qualified_input_and_skips_unavailable_bare_route() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".opencode/agents")).unwrap();
+    let qualified = parse_mars_agent(
+        "---\nname: qualified\nmodel: openai/gpt-5.4\n---\n# Qualified\n",
+        "qualified",
+    );
+    let unavailable = parse_mars_agent(
+        "---\nname: unavailable\nmodel: unknown-model\n---\n# Unknown\n",
+        "unavailable",
+    );
+    let aliases = IndexMap::new();
+    let qualified_probe = crate::models::probes::OpenCodeProbeResult {
+        model_slugs: vec!["openai/gpt-5.4".into()],
+        model_probe_success: true,
+        error: None,
+    };
+    let records = compile_emit_all_opencode(
+        dir.path(),
+        &qualified,
+        &aliases,
+        Some(qualified_probe),
+        None,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".opencode/agents/qualified.md")).unwrap();
+    assert!(native.contains("model: openai/gpt-5.4"), "{native}");
+    let unavailable_records =
+        compile_emit_all_opencode(dir.path(), &unavailable, &aliases, None, None);
+    assert_eq!(unavailable_records.len(), 1);
+    let unavailable_native =
+        std::fs::read_to_string(dir.path().join(".opencode/agents/unavailable.md")).unwrap();
+    assert!(
+        !unavailable_native.contains("model: unknown-model"),
+        "{unavailable_native}"
+    );
+}
+
 #[test]
 fn emit_all_emits_every_agent_to_single_configured_claude_target() {
     let dir = TempDir::new().unwrap();

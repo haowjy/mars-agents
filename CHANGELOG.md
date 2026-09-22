@@ -26,6 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - OpenCode native agents now emit the provider-qualified model route selected by the OpenCode probe instead of a bare canonical model id.
+- Native-emission coverage now verifies provider preference, qualified inputs, and unavailable-route fallback.
 
 ## [0.14.1] - 2026-09-17
 

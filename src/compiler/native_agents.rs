@@ -346,6 +346,23 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         resolved: &NativeResolvedModel<'_>,
         routed_model_id: &str,
     ) -> String {
+        if *target_harness == crate::compiler::agents::HarnessKind::OpenCode {
+            let provider_order = self.routing_settings.provider_order_names();
+            let opencode_probe = self.session.opencode_probe_result();
+            let harness_name = target_harness.to_harness_id();
+            return crate::models::harness_model::resolve_harness_model(
+                crate::models::harness_model::HarnessModelInput {
+                    harness: harness_name.as_str(),
+                    model_id: &resolved.model_id,
+                    provider_constraint: resolved.provider_constraint.as_deref(),
+                    provider_for_order: resolved.provider_for_order.as_deref(),
+                    settings_provider_order: provider_order.as_deref(),
+                    opencode_probe: opencode_probe.as_ref(),
+                    pi_probe: None,
+                },
+            )
+            .harness_model_id;
+        }
         if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
             return resolved.model_id.clone();
         }

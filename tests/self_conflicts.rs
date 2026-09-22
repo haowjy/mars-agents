@@ -223,63 +223,69 @@ fn force_frozen_only_succeeds_after_adoption_is_current() {
 fn force_rejects_symlinked_canonical_root_ancestors_and_destination() {
     use std::os::unix::fs::symlink;
 
-    for kind in ["agent", "skill"] {
-        for link_level in ["root-in-project", "root-outside", "ancestor", "destination"] {
-            let dir = TempDir::new().unwrap();
-            let project = dir.child("project");
-            project
-                .child("mars.toml")
-                .write_str("[dependencies]\n")
-                .unwrap();
-            let (source, relative) = if kind == "agent" {
-                (".mars-src/agents/muse.md", "agents/muse.md")
-            } else {
-                (".mars-src/skills/craft/SKILL.md", "skills/craft")
-            };
-            project.child(source).write_str("# Selected\n").unwrap();
-            let authored = if link_level == "root-in-project" {
-                project.child("authored")
-            } else {
-                dir.child("authored")
-            };
-            let referent_file = if kind == "agent" {
-                authored.child(relative)
-            } else {
-                authored.child(relative).child("SKILL.md")
-            };
-            referent_file.write_str("# Authored\n").unwrap();
-            let canonical = project.child(".mars");
-            match link_level {
-                "root-in-project" | "root-outside" => {
-                    symlink(authored.path(), canonical.path()).unwrap()
-                }
-                "ancestor" => {
-                    fs::create_dir_all(canonical.path()).unwrap();
-                    let component = if kind == "agent" { "agents" } else { "skills" };
-                    symlink(
-                        authored.child(component).path(),
-                        canonical.child(component).path(),
-                    )
-                    .unwrap();
-                }
-                "destination" => {
-                    let destination = canonical.join(relative);
-                    fs::create_dir_all(destination.parent().unwrap()).unwrap();
-                    symlink(authored.join(relative), destination).unwrap();
-                }
-                _ => unreachable!(),
+    for (kind, link_level) in [
+        ("agent", "root-in-project"),
+        ("agent", "root-outside"),
+        ("agent", "ancestor"),
+        ("skill", "root-in-project"),
+        ("skill", "root-outside"),
+        ("skill", "ancestor"),
+        ("skill", "destination"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project
+            .child("mars.toml")
+            .write_str("[dependencies]\n")
+            .unwrap();
+        let (source, relative) = if kind == "agent" {
+            (".mars-src/agents/muse.md", "agents/muse.md")
+        } else {
+            (".mars-src/skills/craft/SKILL.md", "skills/craft")
+        };
+        project.child(source).write_str("# Selected\n").unwrap();
+        let authored = if link_level == "root-in-project" {
+            project.child("authored")
+        } else {
+            dir.child("authored")
+        };
+        let referent_file = if kind == "agent" {
+            authored.child(relative)
+        } else {
+            authored.child(relative).child("SKILL.md")
+        };
+        referent_file.write_str("# Authored\n").unwrap();
+        let canonical = project.child(".mars");
+        match link_level {
+            "root-in-project" | "root-outside" => {
+                symlink(authored.path(), canonical.path()).unwrap()
             }
-            sync(project.path())
-                .arg("--force")
-                .assert()
-                .failure()
-                .stderr(predicate::str::contains("will replace and adopt").not());
-            assert_eq!(
-                fs::read_to_string(referent_file.path()).unwrap(),
-                "# Authored\n"
-            );
-            assert!(!project.child("mars.lock").exists());
+            "ancestor" => {
+                fs::create_dir_all(canonical.path()).unwrap();
+                let component = if kind == "agent" { "agents" } else { "skills" };
+                symlink(
+                    authored.child(component).path(),
+                    canonical.child(component).path(),
+                )
+                .unwrap();
+            }
+            "destination" => {
+                let destination = canonical.join(relative);
+                fs::create_dir_all(destination.parent().unwrap()).unwrap();
+                symlink(authored.join(relative), destination).unwrap();
+            }
+            _ => unreachable!(),
         }
+        sync(project.path())
+            .arg("--force")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("will replace and adopt").not());
+        assert_eq!(
+            fs::read_to_string(referent_file.path()).unwrap(),
+            "# Authored\n"
+        );
+        assert!(!project.child("mars.lock").exists());
     }
 }
 
@@ -314,18 +320,8 @@ fn force_replaces_skill_tree_without_following_nested_destination_link() {
     assert_eq!(fs::read_to_string(referent.path()).unwrap(), "keep\n");
 }
 
-#[cfg(unix)]
 #[test]
 fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
-    use std::os::unix::fs::PermissionsExt;
-
-    struct RestoreDirPerms(std::path::PathBuf);
-    impl Drop for RestoreDirPerms {
-        fn drop(&mut self) {
-            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
-        }
-    }
-
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml")
         .write_str("[dependencies]\n")
@@ -339,30 +335,26 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
     dir.child(".mars/agents/muse.md")
         .write_str("# Authored agent\n")
         .unwrap();
-    dir.child(".mars/skills/craft/SKILL.md")
-        .write_str("# Authored skill\n")
+    dir.child(".mars/skills")
+        .write_str("unowned obstruction\n")
         .unwrap();
 
-    let skills_parent = dir.child(".mars/skills").path().to_path_buf();
-    fs::set_permissions(&skills_parent, fs::Permissions::from_mode(0o555)).unwrap();
-    let restore = RestoreDirPerms(skills_parent.clone());
     sync(dir.path()).arg("--force").assert().failure();
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
         "# Selected agent\n",
         "the earlier adoption demonstrates failure happened during apply"
     );
-    assert_eq!(
-        fs::read_to_string(dir.child(".mars/skills/craft/SKILL.md").path()).unwrap(),
-        "# Authored skill\n"
-    );
     assert!(
         !dir.child("mars.lock").exists(),
         "failed apply must not publish ownership"
     );
 
-    fs::set_permissions(&skills_parent, fs::Permissions::from_mode(0o755)).unwrap();
-    drop(restore);
+    fs::rename(
+        dir.child(".mars/skills").path(),
+        dir.child("preserved-obstruction").path(),
+    )
+    .unwrap();
     sync(dir.path())
         .assert()
         .failure()

@@ -75,6 +75,8 @@ after lock publication. Dry-run and resolution failure never publish recovery.
 `--frozen` refuses uncommitted recovered claims even when output bytes need no
 changes. No-op sync creates no journal. Existing installed claims remain authoritative.
 This protects new canonical writes, not native/config emission (#149).
+Preexisting outputs selected for explicit force adoption are intentionally not journaled: a later
+apply failure leaves the lock unpublished, and the next sync must use `--force` again.
 
 ### Key Operations
 

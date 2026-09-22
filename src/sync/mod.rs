@@ -604,16 +604,19 @@ pub(crate) fn build_target(
         }
 
         let disk_path = dest_path.resolve(managed_root);
-        let adoptable =
-            force_adoptable_self_destination(&disk_path, managed_root, item.discovered.id.kind);
-        if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-            && disk_path.symlink_metadata().is_ok()
-            && !(request.options.force && adoptable)
-        {
+        let unowned_collision = !old_lock_index
+            .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
+            && disk_path.symlink_metadata().is_ok();
+        let adoptable = unowned_collision
+            && force_adoptable_self_destination(&disk_path, managed_root, item.discovered.id.kind);
+        if unowned_collision && !(request.options.force && adoptable) {
             let guidance = if adoptable {
-                "use `mars sync --force` to replace and adopt this regular destination"
+                format!(
+                    "use `{}` to replace and adopt this regular destination",
+                    managed_cmd("mars sync --force")
+                )
             } else {
-                "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)"
+                "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()
             };
             return Err(MarsError::Source {
                 source_name: local_source_name.to_string(),
@@ -627,10 +630,15 @@ pub(crate) fn build_target(
             });
         }
         if request.options.force && adoptable {
+            let action = if request.options.dry_run {
+                "would replace and adopt"
+            } else {
+                "will replace and adopt"
+            };
             diag.warn(
                 "self-adopt",
                 format!(
-                    "selected self {} `{}` will replace and adopt existing canonical destination `{}`",
+                    "selected self {} `{}` {action} existing canonical destination `{}`",
                     item.discovered.id.kind,
                     item.discovered.id.name,
                     disk_path.display()

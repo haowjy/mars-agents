@@ -65,6 +65,11 @@ pub struct CapabilitySession {
 }
 
 impl CapabilitySession {
+    #[cfg(test)]
+    pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
+        self.opencode = Some(CachedProbeOutcome::Hit(result));
+    }
+
     pub fn collect(options: &CapabilityCollectionOptions) -> Self {
         Self::collect_with_resolver(options, &PathExecutableResolver)
     }

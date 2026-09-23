@@ -23,7 +23,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Allow `mars sync --force` to explicitly adopt unowned regular self agent files and skill directories, recording normal `_self` ownership while continuing to reject symlink destinations.
-### Fixed
 
 - OpenCode native agents now emit the provider-qualified model route selected by the OpenCode probe instead of a bare canonical model id.
 - Native-emission coverage now verifies provider preference, qualified inputs, and unavailable-route fallback.

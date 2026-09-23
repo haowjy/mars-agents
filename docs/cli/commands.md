@@ -357,7 +357,7 @@ Use this before `models list`/`models resolve` when you want fresh auto-resolve 
 List model aliases with availability information.
 
 ```bash
-mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--include PATTERN,...] [--exclude PATTERN,...]
+mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--include PATTERN,...] [--exclude PATTERN,...] [--providers PROVIDER,...] [--no-visibility]
 ```
 
 #### Flags
@@ -365,11 +365,13 @@ mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--in
 | Flag | Description |
 |---|---|
 | `--all` | Show all alias candidates with availability info. Does NOT show raw catalog - use `--catalog` for that. |
-| `--catalog` | Show raw models.dev cache entries (diagnostic view). Ignores aliases and visibility config. |
+| `--catalog` | Show raw models.dev cache entries (diagnostic view). Ignores aliases but still honors visibility filters. |
 | `--unavailable` | Include unavailable models in output (normally pruned from default view). |
 | `--no-refresh-models` | Skip automatic cache refresh; use existing cache. OpenCode probing also skipped. |
 | `--include <patterns>` | Show only aliases matching these comma-separated glob patterns. Overrides config. |
 | `--exclude <patterns>` | Hide aliases matching these comma-separated glob patterns. Overrides config. |
+| `--providers <providers>` | Show only entries whose resolved provider matches one of these comma-separated keys. Overrides config; matching is case-insensitive and collapses known provider variants such as `openai-codex` → `openai`. |
+| `--no-visibility` | Ignore `include`, `exclude`, and `providers` filters and show every entry. |
 
 #### Output
 
@@ -401,7 +403,15 @@ mars models list --catalog
 mars models list --unavailable
 mars models list --include "opus*,sonnet*"
 mars models list --exclude "experimental-*"
+mars models list --providers "openai,deepseek,xai"
+mars models list --no-visibility
 ```
+
+Provider visibility can also be configured per project or machine in
+`[settings.model_visibility]`; see [config/mars-toml.md](../config/mars-toml.md)
+and the [provider visibility design](../design/model-provider-visibility.md).
+The filter is display-only: explicitly named aliases still resolve, and empty
+or blank-only provider lists behave like an unset filter.
 
 ### `mars models resolve`
 

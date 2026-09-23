@@ -132,4 +132,7 @@ fn apply_model_visibility_overlay(merged: &mut Settings, overlay: &LocalModelVis
     if let Some(exclude) = &overlay.exclude {
         merged.model_visibility.exclude = Some(exclude.clone());
     }
+    if let Some(providers) = &overlay.providers {
+        merged.model_visibility.providers = Some(providers.clone());
+    }
 }

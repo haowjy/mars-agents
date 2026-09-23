@@ -4,6 +4,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `settings.model_visibility.providers` filters `mars models list` to the declared
+  providers (exact, case-insensitive, variant-collapsing). Display-only: a hidden
+  alias still resolves when named, and a plain model string still passes through.
+  Empty and blank entries are ignored, so `providers = []` behaves like unset, and
+  aliases that resolve to the `unknown` provider are never shown while the filter
+  is active.
+- `mars models list --providers` overrides config; `--no-visibility` shows every
+  alias regardless of config or flags.
+
+### Changed
+- `settings.model_visibility` ignores blank entries in `include`, `exclude`, and
+  `providers`, so a blank-only list behaves like unset for all three. Previously a
+  blank `include`/`exclude` entry was a literal pattern that matched nothing.
+
 ## [0.14.2] - 2026-09-22
 
 ### Fixed

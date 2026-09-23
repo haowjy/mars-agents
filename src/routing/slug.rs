@@ -54,6 +54,14 @@ pub fn providers_match(a: &str, b: &str) -> bool {
     normalize_provider(a) == normalize_provider(b)
 }
 
+/// Whether a provider value names a real provider.
+///
+/// `unknown` (any case) and blank are resolution sentinels, not providers.
+pub fn provider_is_resolved(provider: &str) -> bool {
+    let trimmed = provider.trim();
+    !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown")
+}
+
 /// Exact provider-name match (case-insensitive, no variant collapsing).
 pub fn providers_exact_match(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())

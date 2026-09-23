@@ -194,15 +194,15 @@ pub struct ModelVisibility {
     /// Hide aliases matching these glob patterns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+    /// Show only aliases whose resolved provider matches one of these keys.
+    /// Exact, case-insensitive match with provider-variant collapsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<String>>,
 }
 
 impl ModelVisibility {
-    pub fn validate(&self) -> Result<(), MarsError> {
-        Ok(())
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.include.is_none() && self.exclude.is_none()
+        self.include.is_none() && self.exclude.is_none() && self.providers.is_none()
     }
 }
 
@@ -548,6 +548,8 @@ pub struct LocalModelVisibility {
     pub include: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<String>>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -1010,7 +1012,6 @@ pub fn merge_with_root(
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
     let merged_settings = merged_settings(&config.settings, &local);
-    merged_settings.model_visibility.validate()?;
     let mut dependencies = IndexMap::new();
     let mut diagnostics = Vec::new();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
@@ -2064,6 +2065,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
             model_visibility: ModelVisibility {
                 include: Some(vec!["openai/*".to_string()]),
                 exclude: Some(vec!["*-preview".to_string()]),
+                providers: Some(vec!["openai".to_string()]),
             },
             ..Settings::default()
         };
@@ -2072,6 +2074,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
                 model_visibility: Some(LocalModelVisibility {
                     include: Some(vec!["anthropic/*".to_string()]),
                     exclude: None,
+                    providers: None,
                 }),
                 ..LocalSettings::default()
             },
@@ -2086,6 +2089,35 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         assert_eq!(
             merged.model_visibility.exclude,
             Some(vec!["*-preview".to_string()])
+        );
+    }
+
+    #[test]
+    fn merged_settings_local_providers_replace_project_providers() {
+        let settings = Settings {
+            model_visibility: ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".to_string(), "openai".to_string()]),
+            },
+            ..Settings::default()
+        };
+        let local = LocalConfig {
+            settings: LocalSettings {
+                model_visibility: Some(LocalModelVisibility {
+                    include: None,
+                    exclude: None,
+                    providers: Some(vec!["xai".to_string()]),
+                }),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+
+        let merged = merged_settings(&settings, &local);
+        assert_eq!(
+            merged.model_visibility.providers,
+            Some(vec!["xai".to_string()])
         );
     }
 
@@ -2108,6 +2140,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
             model_visibility: ModelVisibility {
                 include: Some(vec!["anthropic/*".to_string()]),
                 exclude: None,
+                providers: None,
             },
             models_cache_ttl_hours: 24,
             min_mars_version: Some("0.1.0".to_string()),
@@ -2120,6 +2153,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
                 model_visibility: Some(LocalModelVisibility {
                     include: None,
                     exclude: Some(vec!["*-preview*".to_string()]),
+                    providers: None,
                 }),
                 models_cache_ttl_hours: Some(48),
                 min_mars_version: Some("0.2.0".to_string()),
@@ -3134,38 +3168,13 @@ harness_order = ["pi", "opencode", "codex", "claude"]
     }
 
     #[test]
-    fn model_visibility_validate_allows_include_and_exclude() {
-        let visibility = ModelVisibility {
-            include: Some(vec!["opus*".into()]),
-            exclude: Some(vec!["test*".into()]),
-        };
-        visibility.validate().unwrap();
-    }
-
-    #[test]
-    fn model_visibility_validate_allows_include_only_exclude_only_and_empty() {
-        ModelVisibility {
-            include: Some(vec!["opus*".into()]),
-            exclude: None,
-        }
-        .validate()
-        .unwrap();
-        ModelVisibility {
-            include: None,
-            exclude: Some(vec!["test*".into()]),
-        }
-        .validate()
-        .unwrap();
-        ModelVisibility::default().validate().unwrap();
-    }
-
-    #[test]
     fn model_visibility_is_empty_reports_state() {
         assert!(ModelVisibility::default().is_empty());
         assert!(
             !ModelVisibility {
                 include: Some(vec!["opus*".into()]),
                 exclude: None,
+                providers: None,
             }
             .is_empty()
         );
@@ -3173,6 +3182,15 @@ harness_order = ["pi", "opencode", "codex", "claude"]
             !ModelVisibility {
                 include: None,
                 exclude: Some(vec!["test*".into()]),
+                providers: None,
+            }
+            .is_empty()
+        );
+        assert!(
+            !ModelVisibility {
+                include: None,
+                exclude: None,
+                providers: Some(vec!["xai".into()]),
             }
             .is_empty()
         );

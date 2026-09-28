@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-28
+
 ### Breaking
 - `mars models list` is now the curated harness×model display, not the alias
   inventory; `--all` bypasses curation, not a raw catalog switch. The former

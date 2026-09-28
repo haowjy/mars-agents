@@ -40,9 +40,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - On Windows, detach stale-catalog workers without inheriting captured output
   handles, so catalog commands return before background network work finishes.
 - Bound catalog HTTP work end-to-end below the refresh-claim lease, including
-  DNS and redirects. Recheck generation, cache freshness, and failure cooldown
+  DNS and redirects. Recheck snapshot revision, cache freshness, and failure cooldown
   under the claim lock so paused readers neither launch after a peer completes
   nor bypass a peer's cooldown.
+- Store catalog data, fetch time, and revision in one atomic snapshot; legacy
+  generation sidecars are ignored. Centralize detached catalog and probe worker
+  launches behind one no-inherited-handles platform API.
 - Surface one top-level diagnostic per retained harness listing whose latest
   refresh failed, even when curation hides every row; distinguish this from a
   cold unavailable listing. Unknown prompting refs now point to alias inventory.

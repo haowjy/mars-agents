@@ -9,7 +9,7 @@
 //! - Cross-process file locks
 //! - Durable file writes (atomic writes)
 //! - Generated directory replacement and cache publication
-//! - External process invocation (git)
+//! - External process invocation (git and detached background workers)
 //!
 //! What stays direct: PathBuf joins under resolved roots, fs::read/read_dir,
 //! config reads, content hashing, domain validation in SourceSubpath.

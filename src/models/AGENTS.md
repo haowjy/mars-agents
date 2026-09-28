@@ -3,6 +3,12 @@
 Model aliases, catalog caching, derived Possible rows, auto-resolve against
 models.dev API, and dependency-tree merge. See `probes/` for harness caches.
 
+`catalog_api.rs` owns models.dev transport and provider decoding;
+`catalog_cache.rs` owns the persisted snapshot, refresh-after policy, claim
+lease/cooldown, and hidden worker lifecycle. Alias resolution remains in
+`mod.rs`. Detached process mechanics for catalog and probe workers live in
+`platform::process::spawn_detached`.
+
 ## Mental Model
 
 ```
@@ -74,7 +80,7 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - **Force** — synchronous fetch regardless of cache age (used by `mars models refresh` and `--refresh-models`)
 - **Offline** — disk only; error if no usable cache
 
-`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, provider allowlist, generation, and claim token as arguments; it uses no shell or caller stdio handles, and rechecks the cache lock/freshness. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must resolve to that root's `.mars` and remain inside the project. POSIX callers reap the child on a background thread; Windows starts it detached without inheriting handles and closes its parent process handles immediately.
+`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, repeated typed provider arguments, expected snapshot revision, and claim token; it uses no shell or caller stdio handles, and rechecks the cache lock/freshness. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must resolve to that root's `.mars` and remain inside the project. POSIX callers reap the child on a background thread; Windows starts it detached without inheriting handles and closes its parent process handles immediately.
 
 ### Cache Behavior
 
@@ -83,8 +89,8 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - A failed/empty refresh retains the last-good catalog and stores the failure reason for later diagnostics
 - Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
 - `RefreshOutcome::Stale` reports `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`; it never claims the asynchronous fetch succeeded. `peer_refreshed` means another worker completed between the reader's initial cache read and claim check.
-- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. Before writing a claim, readers recheck generation, cache freshness, live claim, and failure cooldown under this lock and return that cache snapshot. The worker removes only its own token; an expired 120-second lease recovers crashes. The models.dev HTTP call has a 60-second global deadline (DNS through body, across redirects), leaving a minute for worker startup, parsing, and cache writes.
-- Successful writes advance `.models-cache.generation` under the cache lock; workers recheck their observed generation so even `refresh-after = 0` coalesces concurrent fetches
+- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. Before writing a claim, readers recheck snapshot revision, cache freshness, live claim, and failure cooldown under this lock and return that cache snapshot. The worker removes only its own token; an expired 120-second lease recovers crashes. The models.dev HTTP call has a 60-second global deadline (DNS through body, across redirects), leaving a minute for worker startup, parsing, and cache writes.
+- Successful writes atomically replace one snapshot containing models, fetched timestamp, and monotonic revision under the cache lock. Workers recheck their observed revision so even `refresh-after = 0` coalesces concurrent fetches. Old snapshots without revision load as zero; legacy `.models-cache.generation` files are ignored.
 - `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
 
 ### `MARS_OFFLINE` vs probe `Skip`

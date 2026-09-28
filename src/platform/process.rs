@@ -2,8 +2,67 @@
 //!
 //! Centralizes git and other external tool execution.
 
+use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::Path;
 use std::process::Command;
+#[cfg(not(windows))]
+use std::process::Stdio;
+
+#[cfg(windows)]
+mod detached_windows;
+
+/// Launch an independent child from explicit program/argv, without a shell.
+///
+/// The child inherits the ambient environment and current directory, but no
+/// caller stdio handles. On POSIX it starts a new session and is reaped on a
+/// background thread; on Windows it has no inherited handles and its process
+/// handles are closed immediately. No exit status is returned to the caller.
+pub fn spawn_detached(program: &OsStr, args: &[OsString]) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        detached_windows::spawn(program, args)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+        }
+        // Create the reaper first so a successful spawn never leaves a zombie.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<std::process::Child>(1);
+        std::thread::Builder::new()
+            .name("mars-detached-reaper".to_string())
+            .spawn(move || {
+                if let Ok(mut child) = rx.recv() {
+                    let _ = child.wait();
+                }
+            })?;
+        let child = command.spawn()?;
+        if let Err(error) = tx.send(child) {
+            let mut child = error.0;
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("detached child reaper exited early"));
+        }
+        Ok(())
+    }
+}
 
 use crate::error::MarsError;
 
@@ -194,5 +253,58 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("HEAD;echo shell-injected"));
         assert!(!message.contains("shell-injected\n"));
+    }
+
+    #[test]
+    fn detached_launch_reports_missing_executable() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("missing-worker");
+        let error = spawn_detached(missing.as_os_str(), &[]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detached_launch_passes_argv_without_shell_expansion_and_inherits_cwd() {
+        use std::ffi::OsString;
+        use std::time::{Duration, Instant};
+
+        let tmp = TempDir::new().unwrap();
+        let output = tmp.path().join("child output.txt");
+        let literal = "literal; $(touch should-not-exist) \\\"quoted\\\"";
+        // The shell is the *explicit executable* here, not an implicit layer
+        // inserted by the launcher. Its positional parameter is the argv probe.
+        spawn_detached(
+            std::ffi::OsStr::new("/bin/sh"),
+            &[
+                OsString::from("-c"),
+                OsString::from("printf '%s\\n%s\\n' \"$1\" \"$PWD\" > \"$2\""),
+                OsString::from("--"),
+                OsString::from(literal),
+                output.as_os_str().to_os_string(),
+            ],
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            if let Ok(result) = std::fs::read_to_string(&output)
+                && result.ends_with('\n')
+                && result.lines().count() >= 2
+            {
+                break result;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "detached child should write result"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut lines = result.lines();
+        assert_eq!(lines.next(), Some(literal));
+        assert_eq!(
+            lines.next(),
+            Some(std::env::current_dir().unwrap().to_str().unwrap())
+        );
+        assert!(!tmp.path().join("should-not-exist").exists());
     }
 }

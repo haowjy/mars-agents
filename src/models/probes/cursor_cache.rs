@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
@@ -216,7 +216,19 @@ pub fn probe_cached_observed(
         probe_refresh,
         &cache_path().ok(),
         super::cursor::probe,
-        || spawn_detached_refresh().map_err(|_| ()),
+        || {
+            let program = std::env::current_exe().map_err(|_| ())?;
+            crate::platform::process::spawn_detached(
+                program.as_os_str(),
+                &[
+                    OsString::from("models"),
+                    OsString::from("__refresh-probe"),
+                    OsString::from("--target"),
+                    OsString::from("cursor"),
+                ],
+            )
+            .map_err(|_| ())
+        },
     )
 }
 
@@ -476,35 +488,6 @@ fn write_failed_attempt(path: &Path, existing: &ProbeCacheEntry, failed_probe: &
     if let Err(e) = write_cache_at(path, &entry) {
         eprintln!("debug: probe cache write failed: {e}");
     }
-}
-
-fn spawn_detached_refresh() -> std::io::Result<()> {
-    let mars_bin = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(mars_bin);
-    cmd.args(["models", "__refresh-probe", "--target", "cursor"]);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000008);
-    }
-
-    cmd.spawn()?;
-    Ok(())
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {

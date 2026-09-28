@@ -116,9 +116,10 @@ pub struct RefreshCatalogArgs {
     #[arg(long)]
     refresh_after_hours: u32,
     #[arg(long)]
-    providers_json: String,
+    #[arg(long = "provider")]
+    providers: Vec<String>,
     #[arg(long)]
-    expected_generation: u64,
+    expected_revision: u64,
     #[arg(long)]
     claim_token: String,
 }
@@ -153,17 +154,11 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
                     message: "internal catalog worker path does not match project root".to_string(),
                 }));
             }
-            let providers: Vec<String> =
-                serde_json::from_str(&a.providers_json).map_err(|error| {
-                    MarsError::Config(crate::error::ConfigError::Invalid {
-                        message: format!("invalid internal catalog worker providers: {error}"),
-                    })
-                })?;
             models::run_background_refresh(
                 &a.mars_dir,
                 a.refresh_after_hours,
-                &providers,
-                a.expected_generation,
+                &a.providers,
+                a.expected_revision,
                 &a.claim_token,
             )?;
             Ok(0)

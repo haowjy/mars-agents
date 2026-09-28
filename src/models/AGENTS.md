@@ -1,6 +1,7 @@
 # src/models/ — Model Catalog & Alias Resolution
 
-Model aliases, catalog caching, auto-resolve against models.dev API, and dependency-tree merge. 4 files + probes/, ~7000 lines.
+Model aliases, catalog caching, derived Possible rows, auto-resolve against
+models.dev API, and dependency-tree merge. See `probes/` for harness caches.
 
 ## Mental Model
 
@@ -41,6 +42,18 @@ through harness probes.
 - `mars build launch-bundle` — same flags via build policy (`models_refresh` on policy input)
 
 Probe subprocess behavior for list/resolve/launch-bundle is tied to the same flags; see [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) for per-harness probe contracts and cache paths.
+
+`possible.rs` provides a derived, non-persisted harness×model projection over
+this catalog and the existing probe caches. `SessionPossibleSource::rows_for`
+loads one installed, permitted harness lazily; `all_rows` collects the display
+inventory. It never reads aliases or curation. Probe-backed rows carry listing
+time, last-error, auth-gated and latest-attempt provenance; native rows are
+inferred from catalog providers. See [possible.rs](possible.rs).
+
+Authored `mars.curated.toml` display rules live in `src/curation/` and are not
+imported by model resolution, routing, or launch-bundle policy. P3 will wire the
+Possible/Curated projection to the `mars models list` renderer; P2 does not
+rename or take over that command.
 
 ### Refresh control (`ModelsRefreshControl`)
 

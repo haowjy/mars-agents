@@ -284,7 +284,7 @@ impl ProbeResolver for StaticProbeResolver {
     }
 
     fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
-        ListingEvidenceSet::from_results(
+        ListingEvidenceSet::from_results_assuming_latest_ok(
             self.opencode_probe_result.as_ref(),
             self.pi_probe_result.as_ref(),
             self.cursor_probe_result.as_ref(),

@@ -54,7 +54,9 @@ pub struct ListingEvidenceSet {
 }
 
 impl ListingEvidenceSet {
-    pub fn from_results(
+    /// For static input and fixtures only. A real cache outcome must use
+    /// `from_outcomes` so failed refreshes are not treated as latest success.
+    pub fn from_results_assuming_latest_ok(
         opencode: Option<&OpenCodeProbeResult>,
         pi: Option<&PiProbeResult>,
         cursor: Option<&CursorProbeResult>,
@@ -81,7 +83,7 @@ impl ListingEvidenceSet {
         pi: Option<&CachedPiProbeOutcome>,
         cursor: Option<&CachedCursorProbeOutcome>,
     ) -> Self {
-        let mut evidence = Self::from_results(
+        let mut evidence = Self::from_results_assuming_latest_ok(
             opencode.and_then(CachedProbeOutcome::result),
             pi.and_then(CachedPiProbeOutcome::result),
             cursor.and_then(CachedCursorProbeOutcome::result),
@@ -138,6 +140,16 @@ impl CapabilitySession {
     #[cfg(test)]
     pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
         self.opencode = Some(CachedProbeOutcome::Hit(result));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_opencode_outcome_for_test(&mut self, outcome: CachedProbeOutcome) {
+        self.opencode = Some(outcome);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedPiProbeOutcome) {
+        self.pi = Some(outcome);
     }
 
     #[cfg(test)]

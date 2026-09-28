@@ -89,6 +89,10 @@ record `last_error`. Pi/Cursor routing uses their last-good slugs for support,
 but `ListingFailed` rather than listing-implied auth until a later success.
 Background refresh is asynchronous: the first stale command can use the prior
 auth flag; the next command sees the failed refresh.
+Possible reads `ProbeObservation` (last successful `fetched_at` and
+`last_error`) from these same cache entries; listing success and latest-attempt
+policy still come from `CapabilitySession::listing_evidence(HarnessId)`. No
+separate Possible cache is written.
 If a refresh cannot acquire its lock, it returns usable cached evidence without
 probing or writing; with no usable cache, it may probe for this command only and
 does not persist the result. This avoids racing another writer.

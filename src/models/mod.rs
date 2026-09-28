@@ -21,6 +21,7 @@ pub mod availability;
 mod dependencies;
 pub mod harness;
 pub mod harness_model;
+pub mod possible;
 pub mod probes;
 
 pub use availability::ModelAvailability;

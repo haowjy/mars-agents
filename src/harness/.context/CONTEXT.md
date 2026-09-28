@@ -37,6 +37,8 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
   success and latest-attempt state shared by session, snapshot, and routing.
   OpenCode is ungated for auth but its latest-attempt state is still available
   to Possible projections.
+  `from_results_assuming_latest_ok` is restricted to static/test-style inputs;
+  cached production outcomes use `from_outcomes` so stale-failed status survives.
 
 `CapabilitySnapshot` fields:
 - `executable: BTreeMap<HarnessId, ExecutableState>` — PATH lookup result per harness

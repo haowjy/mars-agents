@@ -2521,7 +2521,7 @@ fn passthrough_rejection_message(
             "model '{model_name}' selected harness '{harness}', but that harness is not installed"
         ),
         crate::routing::acceptance::RejectionReason::NoSlugEvidence { .. } => format!(
-            "model '{model_name}' did not match any harness-reported model slug under model-first routing"
+            "model '{model_name}' could not be confirmed by an available harness model listing"
         ),
         crate::routing::acceptance::RejectionReason::AssessmentFailed {
             harness,
@@ -2910,7 +2910,7 @@ description = "Old alias"
                 opencode_probe_result,
                 pi_probe_result,
                 cursor_probe_result,
-                listing_evidence: ListingEvidenceSet::from_results(
+                listing_evidence: ListingEvidenceSet::from_results_assuming_latest_ok(
                     opencode_probe_result,
                     pi_probe_result,
                     cursor_probe_result,
@@ -2963,7 +2963,7 @@ description = "Old alias"
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
-            listing_evidence: ListingEvidenceSet::from_results(
+            listing_evidence: ListingEvidenceSet::from_results_assuming_latest_ok(
                 opencode_probe_result,
                 pi_probe_result,
                 cursor_probe_result,

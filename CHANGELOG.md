@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Add a non-persisted Possible harness-model projection from the models.dev
+  catalog and retained Pi/Cursor/OpenCode listings, including listing provenance.
+- Add strict, display-only user/project/local curated TOML rule loading and
+  deterministic tier evaluation. The `mars models list` command is unchanged
+  until its separate command migration.
+
 ### Changed
 - Honor supported authored harness preferences even when native auth is inconclusive
   or an ungated listing leaves auth unchecked; stop model fallback at that route.
@@ -14,7 +21,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of independently rechecking support. Native launch IDs preserve the
   requested punctuation/case, while probe-backed IDs use the selected slug.
 - Treat a cold failed Pi model listing as support-unknown passthrough, not a
-  negative model match. Share typed listing evidence across routing consumers.
+  negative model match. Such an unverified route may launch when no better
+  candidate exists; `models resolve` now says available listings cannot confirm
+  it rather than claiming a model mismatch. Share typed listing evidence across
+  routing consumers.
 - Include `selected_by_preference` in route decision JSON (report version 3).
 
 ## [0.14.4] - 2026-09-23

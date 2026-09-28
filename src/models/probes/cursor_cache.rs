@@ -112,6 +112,17 @@ fn read_cache_tolerant() -> Option<ProbeCacheEntry> {
     read_cache_tolerant_at(&cache_path().ok()?)
 }
 
+pub(crate) fn read_cache_observation() -> Option<super::ProbeObservation> {
+    let entry = read_cache_tolerant()?;
+    if !is_usable(&entry) {
+        return None;
+    }
+    Some(super::ProbeObservation {
+        observed_at: Some(entry.fetched_at),
+        last_error: entry.last_error,
+    })
+}
+
 fn read_cache_tolerant_at(path: &Path) -> Option<ProbeCacheEntry> {
     let content = std::fs::read_to_string(path).ok()?;
     let entry: ProbeCacheEntry = serde_json::from_str(&content).ok()?;

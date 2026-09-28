@@ -44,7 +44,8 @@ cli → sync → compiler → target adapters
 - `target/` per-target compilation adapters (`.claude`, `.codex`, etc.)
 - `target_sync/` copies from `.mars/` to configured target directories
 - `surface_ownership/` gates linked-target deletes and copy/install on per-target lock records
-- `models/` model catalog, alias resolution, auto-resolve against cached catalog
+- `models/` model catalog, alias resolution, derived Possible harness-model rows
+- `curation/` authored display-only filters over Possible; never a routing input
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
 - `build/` launch bundle construction (serializable artifact for harness runtime)
@@ -59,6 +60,7 @@ cli → sync → compiler → target adapters
 | Config schema change | `config/mod.rs`, `config/routing_settings.rs` |
 | Sync pipeline phase | `sync/mod.rs` (phase struct + function) |
 | Model resolution | `models/mod.rs`, `models/availability.rs` |
+| Possible/Curated display | `models/possible.rs`, `curation/` |
 | Routing logic | `routing/mod.rs` only — single evaluator invariant |
 
 ## Anti-Patterns

@@ -160,6 +160,15 @@ fn live_aliases_share_native_auth_evidence_for_the_invocation() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let bin = test_common::install_logging_harnesses(root);
+    #[cfg(windows)]
+    let claude = bin.join("claude.bat");
+    #[cfg(not(windows))]
+    let claude = bin.join("claude");
+    assert!(
+        claude.is_file(),
+        "missing fake native harness: {}",
+        claude.display()
+    );
     std::fs::create_dir(root.join(".mars")).unwrap();
     std::fs::write(
         root.join(".mars/models-cache.json"),
@@ -174,11 +183,24 @@ fn live_aliases_share_native_auth_evidence_for_the_invocation() {
         .env("PROBE_LOG", &log)
         .output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "status={} stdout={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     let rows = value["models"].as_array().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["aliases"], serde_json::json!(["first", "second"]));
+    assert_eq!(rows.len(), 1, "{value}");
+    assert_eq!(rows[0]["harness"], "claude", "{value}");
+    assert_eq!(rows[0]["harness_model_id"], "claude-opus-4-6", "{value}");
+    assert_eq!(
+        rows[0]["aliases"],
+        serde_json::json!(["first", "second"]),
+        "{value}"
+    );
+    assert_eq!(rows[0]["eligibility"], "eligible", "{value}");
     assert_eq!(
         std::fs::read_to_string(log)
             .unwrap()

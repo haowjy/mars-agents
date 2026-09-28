@@ -14,7 +14,7 @@ use common::*;
 
 #[test]
 #[serial]
-fn scenario_a_cold_cache_refreshes_on_models_list() {
+fn scenario_a_cold_cache_refreshes_on_models_catalog() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -24,13 +24,14 @@ fn scenario_a_cold_cache_refreshes_on_models_list() {
     let (temp, project_root) = setup_project(&server);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
+    cmd.args(["--json", "models", "catalog"]);
 
     let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-
-    assert!(stdout["models"].is_array(), "expected models array in JSON");
+    let catalog_ids = model_ids_from_catalog_json(&output.stdout);
+    assert!(
+        catalog_ids.contains("gpt-5"),
+        "expected fetched catalog entry"
+    );
 
     let cache = read_cache_json(&project_root);
     assert!(
@@ -62,12 +63,12 @@ fn scenario_b_fresh_cache_skips_fetch() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list", "--all"]);
+    cmd.args(["--json", "models", "catalog"]);
     let output = cmd.assert().success().get_output().clone();
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let catalog_ids = model_ids_from_catalog_json(&output.stdout);
     assert!(
-        stdout.contains("gpt-5"),
-        "expected cached model id in list output:\n{stdout}"
+        catalog_ids.contains("gpt-5"),
+        "expected cached model id in catalog: {catalog_ids:?}"
     );
 
     let after = read_cache_raw(&project_root);
@@ -89,18 +90,21 @@ fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list", "--all"]);
+    cmd.args(["--json", "models", "catalog"]);
 
     let output = cmd.assert().success().get_output().clone();
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models catalog --json should return JSON");
     assert!(
-        stderr.contains("models cache refresh failed") && stderr.contains("stale cache"),
-        "expected stale cache warning, stderr:\n{stderr}"
+        stdout["cache_warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("models cache refresh failed")
+                && warning.contains("stale cache")),
+        "expected stale cache warning in catalog JSON: {stdout}"
     );
     assert!(
-        stdout.contains("gpt-5"),
-        "expected cached model id in list output:\n{stdout}"
+        model_ids_from_catalog_json(&output.stdout).contains("gpt-5"),
+        "expected cached model id in catalog JSON: {stdout}"
     );
 
     let after = read_cache_raw(&project_root);
@@ -363,7 +367,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
                     .arg("models")
                     .arg("catalog")
                     .output()
-                    .expect("failed to execute concurrent mars models list")
+                    .expect("failed to execute concurrent mars models catalog")
             })
         })
         .collect();
@@ -436,7 +440,7 @@ fn scenario_j_ttl_zero_always_refreshes() {
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list"]);
+    cmd.args(["models", "catalog"]);
     cmd.assert().success();
 
     let cache = read_cache_json(&project_root);

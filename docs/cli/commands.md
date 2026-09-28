@@ -375,7 +375,9 @@ includes `probe`, `observed_at`, `auth_gated`, `latest_attempt_ok`, and
 Top-level `diagnostics`, `routing_diagnostics`, and `cache_warning` report
 problems without dropping rows. An installed in-scope harness without a
 retained listing appears in `diagnostics`; a failed attempt includes its last
-error.
+error. A retained listing with a failed latest refresh remains visible in row
+provenance and also emits one top-level diagnostic per harness, even if every
+row is hidden by curation.
 
 ### `mars models aliases`
 

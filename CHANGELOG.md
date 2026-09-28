@@ -27,6 +27,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   deterministic tier evaluation for the `mars models list` command.
 
 ### Changed
+- Surface one top-level diagnostic per retained harness listing whose latest
+  refresh failed, even when curation hides every row; distinguish this from a
+  cold unavailable listing. Unknown prompting refs now point to alias inventory.
 - Canonical `opencode` harness/probe JSON names, cold listing-failure diagnostics,
   exact per-provider-variant live verdicts, and stable nullable live fields in
   list JSON. Static aliases JSON no longer asserts an unavailable harness source.

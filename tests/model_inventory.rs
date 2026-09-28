@@ -398,6 +398,118 @@ fn provider_specific_list_rows_keep_independent_provenance() {
 }
 
 #[test]
+fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
+    let server = MockServer::start();
+    let (temp, root) = setup_project(&server);
+    let bin = install_logging_harnesses(temp.path());
+    fs::write(
+        root.join("mars.toml"),
+        "[settings]\ntargets=[\".pi\",\".cursor\",\".opencode\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("mars.curated.toml"),
+        "[[hide]]\nharness=\"*\"\nmodel=\"*\"\n",
+    )
+    .unwrap();
+    write_cache(
+        &root,
+        vec![json!({"id":"unused","provider":"xai"})],
+        &fresh_fetched_at(),
+    );
+    let dir = temp.path().join("mars-cache/availability");
+    fs::create_dir_all(&dir).unwrap();
+    let now = now();
+    let old = now - 120;
+    fs::write(dir.join("pi.json"), serde_json::to_vec(&json!({
+        "schema_version":3,"harness":"pi","fetched_at":old,"last_attempt_at":now,
+        "last_error":"pi refresh timed out","result":{"binary_path":"pi","version":"1.0","compatible":true,
+        "model_probe_success":true,"help_surface_tokens_present":[],"help_surface_tokens_missing":[],
+        "model_slugs":["openai/gpt-5","openai-codex/gpt-5"],"error":null}
+    })).unwrap()).unwrap();
+    fs::write(dir.join("cursor-probe.json"), serde_json::to_vec(&json!({
+        "schema_version":1,"fetched_at":old,"last_attempt_at":now,
+        "last_error":"cursor auth expired","result":{"slugs":["composer-2.5"],"model_probe_success":true,"error":null}
+    })).unwrap()).unwrap();
+    fs::write(dir.join("opencode-probe.json"), serde_json::to_vec(&json!({
+        "schema_version":1,"fetched_at":old,"last_attempt_at":now,
+        "last_error":"opencode refresh timed out","result":{"model_slugs":["openai/gpt-5","xai/grok-4"],
+        "model_probe_success":true,"error":null}
+    })).unwrap()).unwrap();
+
+    let hidden = run(
+        &root,
+        temp.path(),
+        &server.url(API_PATH),
+        &bin,
+        &["--json", "models", "list", "--no-refresh-models"],
+    );
+    assert!(hidden["models"].as_array().unwrap().is_empty(), "{hidden}");
+    let diagnostics = hidden["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 3, "{hidden}");
+    for (harness, error) in [
+        ("pi", "pi refresh timed out"),
+        ("cursor", "cursor auth expired"),
+        ("opencode", "opencode refresh timed out"),
+    ] {
+        let expected =
+            format!("{harness}: refresh failed; serving last successful listing: {error}");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|value| value.as_str() == Some(&expected))
+                .count(),
+            1,
+            "{hidden}"
+        );
+    }
+
+    let all = run(
+        &root,
+        temp.path(),
+        &server.url(API_PATH),
+        &bin,
+        &[
+            "--json",
+            "models",
+            "list",
+            "--all",
+            "--live",
+            "--no-refresh-models",
+        ],
+    );
+    assert_eq!(all["models"].as_array().unwrap().len(), 5, "{all}");
+    assert_eq!(all["diagnostics"], hidden["diagnostics"], "{all}");
+    for row in all["models"].as_array().unwrap() {
+        assert_eq!(row["provenance"]["latest_attempt_ok"], false, "{all}");
+        assert!(row["provenance"]["last_error"].is_string(), "{all}");
+        if row["harness"] == "pi" || row["harness"] == "cursor" {
+            assert_eq!(row["reason"], "auth_listing_failed", "{all}");
+        }
+    }
+    let output = mars_cmd(&root, temp.path(), &server.url(API_PATH))
+        .args(["models", "list", "--no-refresh-models"])
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for harness in ["pi", "cursor", "opencode"] {
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.contains(&format!(
+                    "warning: {harness}: refresh failed; serving last successful listing"
+                )))
+                .count(),
+            1,
+            "{stderr}"
+        );
+    }
+    assert!(!stderr.contains("listing unavailable"), "{stderr}");
+}
+
+#[test]
 fn pi_provider_variants_get_independent_live_verdicts() {
     let server = MockServer::start();
     let (temp, root) = setup_project(&server);

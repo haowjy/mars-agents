@@ -621,4 +621,20 @@ fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     assert_eq!(json["ref_kind"], Value::Null);
     assert_eq!(json["found"], false);
     assert_eq!(json["prompting"], Value::Null);
+
+    let text = mars()
+        .args([
+            "models",
+            "prompting",
+            "missing",
+            "--root",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&text.stderr);
+    assert!(stderr.contains("mars models aliases"), "{stderr}");
+    assert!(!stderr.contains("mars models list"), "{stderr}");
 }

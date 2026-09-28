@@ -63,6 +63,20 @@ pub enum HarnessPossible {
     Unlisted(UnlistedReason),
 }
 
+/// One diagnostic per harness, derived from the same session outcome as its
+/// Possible rows. A retained failed refresh is distinct from no listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListingIssue {
+    Unavailable {
+        harness: HarnessId,
+        last_error: Option<String>,
+    },
+    RetainedAfterFailedRefresh {
+        harness: HarnessId,
+        last_error: Option<String>,
+    },
+}
+
 pub trait PossibleSource {
     fn rows_for(&mut self, harness: HarnessId) -> &HarnessPossible;
 }
@@ -107,24 +121,38 @@ impl<'a> SessionPossibleSource<'a> {
             .collect()
     }
 
-    /// Missing listings for installed, in-scope probe-backed harnesses, with
-    /// the last error if an attempt failed. This never starts another probe.
-    pub fn listing_failures(&mut self) -> Vec<(HarnessId, Option<String>)> {
+    /// Report listing trouble for installed, in-scope probe-backed harnesses
+    /// already projected into the memo. Display calls `all_rows` first; this
+    /// method never reads a probe cache again.
+    pub fn listing_issues(&mut self) -> Vec<ListingIssue> {
         self.memo
             .iter()
-            .filter(|(_, state)| {
-                matches!(
-                    state,
-                    HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable)
-                )
-            })
-            .map(|(harness, _)| {
-                (
-                    *harness,
-                    self.session
-                        .probe_observation(*harness)
-                        .and_then(|observation| observation.last_error),
-                )
+            .filter_map(|(harness, state)| {
+                let retained = match state {
+                    HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable) => false,
+                    HarnessPossible::Listed(_) if harness.native_provider().is_none() => {
+                        if self.session.listing_evidence(*harness).latest_attempt_ok {
+                            return None;
+                        }
+                        true
+                    }
+                    _ => return None,
+                };
+                let last_error = self
+                    .session
+                    .probe_observation(*harness)
+                    .and_then(|observation| observation.last_error);
+                Some(if retained {
+                    ListingIssue::RetainedAfterFailedRefresh {
+                        harness: *harness,
+                        last_error,
+                    }
+                } else {
+                    ListingIssue::Unavailable {
+                        harness: *harness,
+                        last_error,
+                    }
+                })
             })
             .collect()
     }

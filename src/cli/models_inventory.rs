@@ -6,7 +6,7 @@ use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, NativeAuthCache};
 use crate::harness::registry;
 use crate::models::harness_model::resolve_harness_model;
-use crate::models::possible::{Provenance, SessionPossibleSource};
+use crate::models::possible::{ListingIssue, Provenance, SessionPossibleSource};
 use crate::models::{self, ModelsCache};
 use crate::routing::{self, RoutingInput, slug};
 use crate::types::MarsContext;
@@ -219,11 +219,25 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         let mut source = SessionPossibleSource::new(&cache, &mut session, scope);
         let rows = source.all_rows();
         let diagnostics = source
-            .listing_failures()
+            .listing_issues()
             .into_iter()
-            .map(|(harness, error)| match error {
-                Some(error) => format!("{harness}: listing unavailable: {error}"),
-                None => format!("{harness}: listing unavailable"),
+            .map(|issue| match issue {
+                ListingIssue::Unavailable {
+                    harness,
+                    last_error,
+                } => match last_error {
+                    Some(error) => format!("{harness}: listing unavailable: {error}"),
+                    None => format!("{harness}: listing unavailable"),
+                },
+                ListingIssue::RetainedAfterFailedRefresh {
+                    harness,
+                    last_error,
+                } => match last_error {
+                    Some(error) => format!(
+                        "{harness}: refresh failed; serving last successful listing: {error}"
+                    ),
+                    None => format!("{harness}: refresh failed; serving last successful listing"),
+                },
             })
             .collect::<Vec<_>>();
         (rows, diagnostics)

@@ -50,7 +50,7 @@ pub fn run(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
         print_prompt_target(&target);
     } else {
         eprintln!(
-            "Unknown agent or model ref `{}`. Run `mars agents` or `mars models list` to see available refs.",
+            "Unknown agent or model ref `{}`. Run `mars agents` or `mars models aliases` to see available refs.",
             args.reference
         );
         eprintln!("Examples:");

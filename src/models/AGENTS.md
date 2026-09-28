@@ -49,8 +49,9 @@ loads one installed, permitted harness lazily; `all_rows` collects the display
 inventory. It never reads aliases or curation. Probe-backed rows carry listing
 time, last-error, auth-gated and latest-attempt provenance; native rows are
 inferred from catalog providers. See [possible.rs](possible.rs).
-`listing_failures` exposes no-last-good listing failures from the same session
-observation for human diagnostics; an unavailable row is never fabricated.
+`listing_issues` exposes both no-last-good failures and retained listings whose
+latest refresh failed from the same session observation, once per harness for
+human diagnostics; an unavailable row is never fabricated.
 
 Authored `mars.curated.toml` display rules live in `src/curation/` and are not
 imported by model resolution, routing, or launch-bundle policy. Only the

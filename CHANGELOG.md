@@ -21,15 +21,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Split `mars models` into curated harness-model `list`, uncurated `aliases`,
   and raw `catalog` commands. `list --all` includes hidden rows; `--live` adds
   fixed-harness eligibility. JSON includes full Possible provenance and curation.
-- Canonical `opencode` harness/probe JSON names, cold listing-failure diagnostics,
-  exact per-provider-variant live verdicts, and stable nullable live fields in
-  list JSON. Static aliases JSON no longer asserts an unavailable harness source.
 - Add a non-persisted Possible harness-model projection from the models.dev
   catalog and retained Pi/Cursor/OpenCode listings, including listing provenance.
 - Add strict, display-only user/project/local curated TOML rule loading and
   deterministic tier evaluation for the `mars models list` command.
 
 ### Changed
+- Canonical `opencode` harness/probe JSON names, cold listing-failure diagnostics,
+  exact per-provider-variant live verdicts, and stable nullable live fields in
+  list JSON. Static aliases JSON no longer asserts an unavailable harness source.
 - Remove `settings.model_visibility` and its old `models list` flags. Project
   and local legacy tables now fail with file-named curation migration examples.
 - Preserve failed cold probe errors in command-local observation snapshots.

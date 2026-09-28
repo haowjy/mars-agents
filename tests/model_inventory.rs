@@ -391,6 +391,10 @@ fn provider_specific_list_rows_keep_independent_provenance() {
         "{text}"
     );
     assert!(!text.contains("open_code"), "{text}");
+    let curation_column = text.lines().next().unwrap().find("CURATION").unwrap();
+    for line in text.lines().filter(|line| line.starts_with("opencode ")) {
+        assert!(line[curation_column..].starts_with("shown"), "{text}");
+    }
 }
 
 #[test]

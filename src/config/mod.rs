@@ -821,7 +821,11 @@ fn visibility_migration(legacy: &toml::Value) -> String {
             for pattern in patterns.iter().filter_map(toml::Value::as_str) {
                 let (harness, provider, model) =
                     match pattern.split('/').collect::<Vec<_>>().as_slice() {
-                        [provider, "*"] if !provider.is_empty() => ("*", Some(*provider), "*"),
+                        [provider, model]
+                            if !provider.is_empty() && *provider != "*" && !model.is_empty() =>
+                        {
+                            ("*", Some(*provider), *model)
+                        }
                         [_, _, _, ..] => ("opencode", None, pattern),
                         _ => ("*", None, pattern),
                     };
@@ -2265,14 +2269,16 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[settings.model_visibility]\ninclude=['gpt-6*','anthropic/*']\nexclude=['openrouter/anthropic/*','xai/grok-*']\nproviders=['openai-codex']\n",
+            "[settings.model_visibility]\ninclude=['gpt-6*','anthropic/*','openai/gpt-5*']\nexclude=['openrouter/anthropic/*','xai/grok-*','anthropic/claude-*']\nproviders=['openai-codex']\n",
         ).unwrap();
         let error = load(dir.path()).unwrap_err().to_string();
         for expected in [
             "include = \"gpt-6*\" → [[show]] harness=\"*\" model=\"gpt-6*\"",
             "include = \"anthropic/*\" → [[show]] harness=\"*\" provider=\"anthropic\" model=\"*\"",
+            "include = \"openai/gpt-5*\" → [[show]] harness=\"*\" provider=\"openai\" model=\"gpt-5*\"",
             "exclude = \"openrouter/anthropic/*\" → [[hide]] harness=\"opencode\" model=\"openrouter/anthropic/*\"",
-            "exclude = \"xai/grok-*\" → [[hide]] harness=\"*\" model=\"xai/grok-*\"",
+            "exclude = \"xai/grok-*\" → [[hide]] harness=\"*\" provider=\"xai\" model=\"grok-*\"",
+            "exclude = \"anthropic/claude-*\" → [[hide]] harness=\"*\" provider=\"anthropic\" model=\"claude-*\"",
             "providers = \"openai-codex\" → [[show]] harness=\"*\" provider=\"openai-codex\" model=\"*\"",
         ] {
             assert!(error.contains(expected), "missing {expected}: {error}");

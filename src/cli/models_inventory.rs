@@ -320,13 +320,19 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         for diagnostic in &diagnostics {
             eprintln!("warning: {diagnostic}");
         }
+        let via_width = rows
+            .iter()
+            .filter_map(|row| row["via"].as_str().map(str::len))
+            .max()
+            .unwrap_or(0)
+            .max(18);
         println!(
-            "{:<10} {:<36} {:<16} {:<10} {:<18} {:<18} {:<12} ALIASES",
+            "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} ALIASES",
             "HARNESS", "MODEL", "PROVIDER", "ORIGIN", "VIA", "CURATION", "ELIGIBILITY"
         );
         for row in &rows {
             println!(
-                "{:<10} {:<36} {:<16} {:<10} {:<18} {:<18} {:<12} {}",
+                "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} {}",
                 row["harness"].as_str().unwrap_or(""),
                 row["harness_model_id"].as_str().unwrap_or(""),
                 row["provider"].as_str().unwrap_or("—"),

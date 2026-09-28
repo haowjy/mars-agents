@@ -45,7 +45,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nor bypass a peer's cooldown.
 - Store catalog data, fetch time, and revision in one atomic snapshot; legacy
   generation sidecars are ignored. Centralize detached catalog and probe worker
-  launches behind one no-inherited-handles platform API.
+  launches behind one no-inherited-handles platform API. Keep cache lifecycle
+  methods together and test fixtures separate from the production source.
 - Surface one top-level diagnostic per retained harness listing whose latest
   refresh failed, even when curation hides every row; distinguish this from a
   cold unavailable listing. Unknown prompting refs now point to alias inventory.

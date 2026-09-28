@@ -8,6 +8,7 @@ pub enum HarnessId {
     Claude,
     Codex,
     Pi,
+    #[serde(rename = "opencode")]
     OpenCode,
     Cursor,
 }
@@ -211,6 +212,16 @@ mod tests {
         assert_eq!(parse("OpenCode"), Some(HarnessId::OpenCode));
         assert_eq!(normalize_name(" OpenCode "), Some("opencode".to_string()));
         assert_eq!(parse("gemini"), None);
+    }
+
+    #[test]
+    fn serde_names_round_trip_registry_names() {
+        for &harness in all() {
+            let json = serde_json::to_string(&harness).unwrap();
+            assert_eq!(json, format!("\"{}\"", harness.as_str()));
+            assert_eq!(serde_json::from_str::<HarnessId>(&json).unwrap(), harness);
+        }
+        assert!(serde_json::from_str::<HarnessId>("\"open_code\"").is_err());
     }
 
     #[test]

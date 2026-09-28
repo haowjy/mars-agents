@@ -10,13 +10,15 @@ host.rs      →  PATH + probe caches  →  CapabilitySnapshot (clone, share)
 ```
 
 **Registry owns identity.** Valid harness names, native provider affinity, and evaluation order live only in `registry`. Other modules call `parse()` / `is_known()` — they do not maintain parallel harness lists.
+`HarnessId` JSON serializes to registry names (not Rust snake-case variant
+names): `OpenCode` is `opencode`, never `open_code`.
 
 **Host collects once.** Routing commands create a lazy `CapabilitySession` at entry.
-Live model lists use `into_scoped_snapshot()` so excluded probe-backed harnesses
-are not refreshed, even under `--refresh-models`. The snapshot retains physical
-executable facts; permission is not represented by pretending a binary is absent.
-Unscoped snapshots remain available for callers intentionally inspecting all hosts.
-Do not re-collect mid-command.
+Live model lists use one `CapabilitySession` through `SessionPossibleSource`;
+excluded probe-backed harnesses are not refreshed, even under
+`--refresh-models`. The session retains physical executable facts; permission
+is not represented by pretending a binary is absent. Do not re-collect
+mid-command.
 
 ## Authentication evidence
 

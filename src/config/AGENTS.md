@@ -27,6 +27,9 @@ pipeline operates on EffectiveConfig only
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
 - Model and agent overlays are **replace-by-key** (entire alias/agent entry replaces lower layer).
+- Removed `[settings.model_visibility]` is an error only for the consumer's
+  project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
+  exported package sections, ignoring an upstream package's consumer settings.
 
 ## Dependency Entry Validation
 

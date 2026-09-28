@@ -114,6 +114,10 @@ pub(super) fn run_aliases(
             .values()
             .map(|alias| {
                 let mut value = serde_json::to_value(alias).unwrap();
+                // Static aliases have no routing assessment. The shared
+                // ResolvedAlias default `harness_source=unavailable` is not an
+                // authored source and would mislead machine consumers here.
+                value.as_object_mut().unwrap().remove("harness_source");
                 value["resolved_model"] = serde_json::json!(alias.model_id);
                 value["description"] = serde_json::json!(alias.description);
                 value["mode"] = serde_json::json!(alias_mode(aliases.get(&alias.name)));
@@ -211,11 +215,26 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         probe_refresh: refresh.probe_refresh,
     });
     let installed = session.installed_harnesses();
-    let possible = {
+    let (possible, listing_diagnostics) = {
         let mut source = SessionPossibleSource::new(&cache, &mut session, scope);
-        source.all_rows()
+        let rows = source.all_rows();
+        let diagnostics = source
+            .listing_failures()
+            .into_iter()
+            .map(|(harness, error)| match error {
+                Some(error) => format!("{harness}: listing unavailable: {error}"),
+                None => format!("{harness}: listing unavailable"),
+            })
+            .collect::<Vec<_>>();
+        (rows, diagnostics)
     };
     let view = rules.project(&possible, scope);
+    let diagnostics = view
+        .diagnostics
+        .iter()
+        .cloned()
+        .chain(listing_diagnostics)
+        .collect::<Vec<_>>();
     let resolved = models::resolve_all_static(&aliases, &cache);
     let native_auth = NativeAuthCache::default();
     let catalog_slugs = models::catalog_model_slugs(&cache);
@@ -270,7 +289,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             Decision::Hidden { tier } => ("hidden", tier),
             Decision::Unmatched => ("unmatched", None),
         };
-        let mut entry = serde_json::json!({
+        let entry = serde_json::json!({
             "harness": row.key.harness,
             "harness_model_id": row.key.harness_model_id,
             "model_id": row.key.model_id,
@@ -280,11 +299,9 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             "via": via(row),
             "aliases": alias_names,
             "curated": {"decision": decision, "tier": tier},
+            "eligibility": eligibility,
+            "reason": reason,
         });
-        if args.live {
-            entry["eligibility"] = serde_json::json!(eligibility);
-            entry["reason"] = serde_json::json!(reason);
-        }
         rows.push(entry);
     }
     if json {
@@ -292,7 +309,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "models": rows,
-                "diagnostics": view.diagnostics,
+                "diagnostics": diagnostics,
                 "routing_diagnostics": routing_diagnostics,
                 "cache_warning": warning(&outcome),
             }))
@@ -300,7 +317,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         );
     } else {
         print_warning(&outcome);
-        for diagnostic in &view.diagnostics {
+        for diagnostic in &diagnostics {
             eprintln!("warning: {diagnostic}");
         }
         println!(
@@ -342,8 +359,16 @@ fn assess(
     if !installed.contains(row.key.harness.as_str()) {
         return Some(("blocked".into(), Some("not_installed")));
     }
+    // Probe-backed inventories are keyed by exact launch slug. A broad
+    // provider constraint intentionally groups variants for ordinary routing,
+    // but would score the wrong displayed row here.
+    let model_id = if row.key.harness.native_provider().is_none() {
+        &row.key.harness_model_id
+    } else {
+        &row.key.model_id
+    };
     let evidence = routing::RoutingSettingsEvidence::new(
-        &row.key.model_id,
+        model_id,
         row.key.provider.as_deref(),
         row.key.provider.as_deref(),
         installed,
@@ -403,7 +428,7 @@ fn via(row: &CuratedRow) -> String {
             if *latest_attempt_ok {
                 format!("listed {age}")
             } else {
-                format!("listed {age} stale")
+                format!("listed {age}, refresh failed")
             }
         }
         Some(Provenance::Inferred { .. }) => "catalog".into(),

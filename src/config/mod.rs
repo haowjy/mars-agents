@@ -167,6 +167,17 @@ pub struct Manifest {
     pub models: IndexMap<String, crate::models::ModelAlias>,
 }
 
+/// Parse only exported sections of a package manifest. Consumer settings in
+/// the source belong to that source's project, not to its dependents.
+#[derive(Deserialize)]
+struct SourceManifestSections {
+    package: Option<PackageInfo>,
+    #[serde(default)]
+    dependencies: IndexMap<SourceName, InstallDep>,
+    #[serde(default)]
+    models: IndexMap<String, crate::models::ModelAlias>,
+}
+
 /// Shared include/exclude/rename filter configuration for a source.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FilterConfig {
@@ -786,15 +797,14 @@ fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     path: &Path,
 ) -> Result<T, MarsError> {
     let value: toml::Value = toml::from_str(content).map_err(ConfigError::Parse)?;
-    if value
+    if let Some(legacy) = value
         .get("settings")
         .and_then(|settings| settings.get("model_visibility"))
-        .is_some()
     {
         return Err(ConfigError::Invalid {
             message: format!(
-                "{}: [settings.model_visibility] was removed. Move display rules to mars.curated.toml (or mars.curated.local.toml for local overrides):\n  include = ['gpt-5*'] → [[show]] harness='*' model='gpt-5*'\n  include = ['anthropic/*'] → [[show]] harness='*' provider='anthropic' model='*'\n  include = ['openrouter/anthropic/*'] → [[show]] harness='opencode' model='openrouter/anthropic/*'\n  exclude uses the same shapes under [[hide]]; providers = ['openai'] → [[show]] harness='*' provider='openai' model='*'.",
-                path.display()
+                "{}: [settings.model_visibility] was removed. Move these display rules to mars.curated.toml (or mars.curated.local.toml for local overrides); review harness×model semantics before applying. Mars will not write the new file:\n{}",
+                path.display(), visibility_migration(legacy)
             ),
         }.into());
     }
@@ -802,6 +812,46 @@ fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     // round-tripping through Value reorders declaration-keyed tables and can
     // change the first dependency alias winner.
     toml::from_str(content).map_err(|error| ConfigError::Parse(error).into())
+}
+
+fn visibility_migration(legacy: &toml::Value) -> String {
+    let mut suggestions = Vec::new();
+    for (key, section) in [("include", "show"), ("exclude", "hide")] {
+        if let Some(patterns) = legacy.get(key).and_then(toml::Value::as_array) {
+            for pattern in patterns.iter().filter_map(toml::Value::as_str) {
+                let (harness, provider, model) =
+                    match pattern.split('/').collect::<Vec<_>>().as_slice() {
+                        [provider, "*"] if !provider.is_empty() => ("*", Some(*provider), "*"),
+                        [_, _, _, ..] => ("opencode", None, pattern),
+                        _ => ("*", None, pattern),
+                    };
+                let provider = provider
+                    .map(|value| format!(" provider={}", toml::Value::String(value.into())))
+                    .unwrap_or_default();
+                suggestions.push(format!(
+                    "  {key} = {} → [[{section}]] harness={}{} model={}",
+                    toml::Value::String(pattern.into()),
+                    toml::Value::String(harness.into()),
+                    provider,
+                    toml::Value::String(model.into())
+                ));
+            }
+        }
+    }
+    if let Some(providers) = legacy.get("providers").and_then(toml::Value::as_array) {
+        for provider in providers.iter().filter_map(toml::Value::as_str) {
+            suggestions.push(format!(
+                "  providers = {} → [[show]] harness=\"*\" provider={} model=\"*\"",
+                toml::Value::String(provider.into()),
+                toml::Value::String(provider.into())
+            ));
+        }
+    }
+    if suggestions.is_empty() {
+        "  Translate include to [[show]], exclude to [[hide]], and providers to [[show]].".into()
+    } else {
+        suggestions.join("\n")
+    }
 }
 
 /// Load mars.toml from the given root directory.
@@ -831,11 +881,12 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
     let diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
-            let parsed: Config =
-                parse_without_removed_visibility(&content, &path).map_err(|e| {
-                    crate::error::ConfigError::Invalid {
-                        message: format!("failed to parse {}: {e}", path.display()),
-                    }
+            // A package manifest may also contain consumer-only settings. They
+            // are not this project's settings and cannot require the consumer
+            // to migrate an upstream package before syncing it.
+            let parsed: SourceManifestSections =
+                toml::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
+                    message: format!("failed to parse {}: {e}", path.display()),
                 })?;
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
@@ -2204,8 +2255,28 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         let error = load(dir.path()).unwrap_err().to_string();
         assert!(error.contains("mars.toml"), "{error}");
         assert!(error.contains("mars.curated.toml"), "{error}");
-        assert!(error.contains("provider='anthropic'"), "{error}");
-        assert!(error.contains("openrouter/anthropic/*"), "{error}");
+        assert!(error.contains("provider=\"anthropic\""), "{error}");
+        assert!(error.contains("[[show]]"), "{error}");
+        assert!(!error.contains("openrouter/anthropic/*"), "{error}");
+    }
+
+    #[test]
+    fn removed_visibility_migration_uses_actual_values_and_direction() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings.model_visibility]\ninclude=['gpt-6*','anthropic/*']\nexclude=['openrouter/anthropic/*','xai/grok-*']\nproviders=['openai-codex']\n",
+        ).unwrap();
+        let error = load(dir.path()).unwrap_err().to_string();
+        for expected in [
+            "include = \"gpt-6*\" → [[show]] harness=\"*\" model=\"gpt-6*\"",
+            "include = \"anthropic/*\" → [[show]] harness=\"*\" provider=\"anthropic\" model=\"*\"",
+            "exclude = \"openrouter/anthropic/*\" → [[hide]] harness=\"opencode\" model=\"openrouter/anthropic/*\"",
+            "exclude = \"xai/grok-*\" → [[hide]] harness=\"*\" model=\"xai/grok-*\"",
+            "providers = \"openai-codex\" → [[show]] harness=\"*\" provider=\"openai-codex\" model=\"*\"",
+        ] {
+            assert!(error.contains(expected), "missing {expected}: {error}");
+        }
     }
 
     #[test]

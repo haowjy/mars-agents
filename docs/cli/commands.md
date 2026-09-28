@@ -361,33 +361,55 @@ Probe-backed rows use retained listing evidence. A declared row for an
 uninstalled harness is shown with `blocked/not_installed` under `--live`.
 
 Text columns are HARNESS, MODEL (exact harness launch ID), PROVIDER, ORIGIN
-(`possible`, `both`, or `declared`), VIA (`catalog`, `listed <age>`, or `—`),
+(`possible`, `both`, or `declared`), VIA (`catalog`, `listed <age>`,
+`listed <age>, refresh failed`, or `—`),
 CURATION, ELIGIBILITY, and ALIASES. `--json` returns `models` rows with
 `harness`, `harness_model_id`, `model_id`, `provider`, `origin`, full `provenance`,
-`via`, `aliases`, `curated: {decision,tier}`, and optional `eligibility`/`reason`.
+`via`, `aliases`, `curated: {decision,tier}`, and `eligibility`/`reason`.
+`eligibility` and `reason` are always present: both are `null` without
+`--live`; with `--live`, eligibility is a string or `null` if no assessment
+can be associated with that exact row, and reason is a string or `null`.
+`provider` and `provenance` may be `null`; enumerated provenance
+includes `probe`, `observed_at`, `auth_gated`, `latest_attempt_ok`, and
+`last_error`. Harness and probe IDs use registry names, including `opencode`.
 Top-level `diagnostics`, `routing_diagnostics`, and `cache_warning` report
-problems without dropping rows.
+problems without dropping rows. An installed in-scope harness without a
+retained listing appears in `diagnostics`; a failed attempt includes its last
+error.
 
 ### `mars models aliases`
 
 Lists statically resolved consumer, dependency, and built-in model aliases.
 It never applies curation or probes harnesses. `--json` returns `aliases`
 with `name`, `model_id`, `provider`, `harness`, `harness_candidates`, `mode`,
-and alias metadata. Meridian's alias inventory should use this command.
+and alias metadata. `harness` is nullable static authored preference;
+`harness_source` is not emitted because no route has been assessed. Meridian's
+alias inventory should use this command.
 
 ### `mars models catalog`
 
 Lists raw models.dev cache entries, independent of curation, installed
 harnesses, and harness scope. It never probes harnesses. `--json` returns
 `catalog` with each entry's `id`, `provider`, `description`, `release_date`,
-context/output limits, and `cost_*` fields. Meridian's exact-ID guard and
-catalog sync should use this command.
+`context_window`, `max_output`, and `cost_input`, `cost_output`,
+`cost_cache_read`, `cost_cache_write`, `cost_reasoning` fields (optional
+metadata and numeric fields are nullable). Meridian's exact-ID guard and
+catalog sync should use this command. The old list-all `harness`,
+`harness_candidates`, `matched_aliases`, `runnable_paths`, and `availability`
+fields do not exist here; P4 must derive or drop them.
+
+**Breaking release contract:** Meridian P4 must change `models list --json`
+to `models aliases --json` and `models list --all --json` to
+`models catalog --json`. Release these together or pin Mars version bounds
+until P4 lands; neither unilateral release order preserves the machine API.
 
 `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
 `--unavailable` were removed from `models list`. Put display rules in
 [`mars.curated.toml`](../config/mars-curated.md). Legacy
 `[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a targeted
-error with translation examples; Mars does not rewrite config automatically.
+error translating the file's actual values; Mars does not rewrite config
+automatically. A dependency package's consumer-only settings are ignored by
+manifest loading and never require the consumer to migrate upstream files.
 
 ### `mars models resolve`
 

@@ -312,7 +312,10 @@ entries.
 
 The removed `[settings.model_visibility]` table is not silently ignored.
 Mars reports a file-named migration error with `[[show]]`/`[[hide]]` examples
-for either `mars.toml` or `mars.local.toml`.
+derived from the actual values for either project `mars.toml` or
+`mars.local.toml`. This is a **breaking** project configuration change.
+Dependency package manifests are read for exported package data; their own
+consumer-only settings do not block a consumer's `mars sync`.
 
 ## OpenCode Probe
 

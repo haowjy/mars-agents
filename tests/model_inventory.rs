@@ -64,6 +64,8 @@ fn list_all_live_aliases_catalog_and_curated_contract() {
     assert_eq!(row["aliases"], json!(["fast", "qualified"]));
     assert_eq!(row["curated"], json!({"decision":"shown","tier":"project"}));
     assert!(row["eligibility"].is_null());
+    assert!(row.get("eligibility").is_some());
+    assert!(row.get("reason").is_some());
     assert!(shown["diagnostics"].is_array());
     let all = run(
         &root,
@@ -122,6 +124,13 @@ fn list_all_live_aliases_catalog_and_curated_contract() {
             .unwrap()
             .iter()
             .any(|a| a["name"] == "fast")
+    );
+    assert!(
+        aliases["aliases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a.get("harness_source").is_none())
     );
     assert!(aliases.get("models").is_none());
     assert!(
@@ -263,6 +272,14 @@ fn removed_flags_and_visibility_config_report_migration() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(2), "{flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let destination = match flag {
+            "--catalog" => "mars models catalog",
+            "--no-visibility" => "models list --all",
+            "--unavailable" => "models list --all --live",
+            _ => "mars.curated.toml",
+        };
+        assert!(stderr.contains(destination), "{flag}: {stderr}");
     }
     let invalid = mars_cmd(&root, temp.path(), &server.url(API_PATH))
         .args([
@@ -302,10 +319,13 @@ fn removed_flags_and_visibility_config_report_migration() {
         assert_eq!(output.status.code(), Some(2));
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         let msg = value["error"]["message"].as_str().unwrap();
-        assert!(
-            msg.contains(name) && msg.contains("[[show]]") && msg.contains("[[hide]]"),
-            "{msg}"
-        );
+        assert!(msg.contains(name), "{msg}");
+        if name == "mars.toml" {
+            assert!(msg.contains("include = \"gpt-*\" → [[show]]"), "{msg}");
+            assert!(!msg.contains("[[hide]]"), "{msg}");
+        } else {
+            assert!(msg.contains("providers = \"openai\" → [[show]]"), "{msg}");
+        }
         fs::write(&path, "[settings]\n").unwrap();
     }
 }
@@ -351,9 +371,121 @@ fn provider_specific_list_rows_keep_independent_provenance() {
     assert_eq!(rows.len(), 2, "{value}");
     assert_ne!(rows[0]["provider"], rows[1]["provider"]);
     for row in rows {
+        assert_eq!(row["harness"], "opencode");
+        assert_eq!(row["provenance"]["probe"], "opencode");
         assert_eq!(row["provenance"]["kind"], "enumerated");
         assert_eq!(row["provenance"]["latest_attempt_ok"], false);
         assert_eq!(row["provenance"]["last_error"], "transient failure");
         assert!(row["eligibility"].is_string());
+        assert!(row["via"].as_str().unwrap().contains("refresh failed"));
     }
+    let text = mars_cmd(&root, temp.path(), &server.url(API_PATH))
+        .args(["models", "list", "--all", "--no-refresh-models"])
+        .env("PATH", &bin)
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.lines().any(|line| line.starts_with("opencode ")),
+        "{text}"
+    );
+    assert!(!text.contains("open_code"), "{text}");
+}
+
+#[test]
+fn pi_provider_variants_get_independent_live_verdicts() {
+    let server = MockServer::start();
+    let (temp, root) = setup_project(&server);
+    let bin = install_logging_harnesses(temp.path());
+    fs::write(root.join("mars.toml"), "[settings]\ntargets=[\".pi\"]\n").unwrap();
+    write_cache(
+        &root,
+        vec![json!({"id":"unused","provider":"xai"})],
+        &fresh_fetched_at(),
+    );
+    let dir = temp.path().join("mars-cache/availability");
+    fs::create_dir_all(&dir).unwrap();
+    let now = now();
+    fs::write(dir.join("pi.json"), serde_json::to_vec(&json!({
+        "schema_version":3,"harness":"pi","fetched_at":now,"last_attempt_at":now,
+        "last_error":null,"result":{"binary_path":"pi","version":"1.0","compatible":true,
+        "model_probe_success":true,"help_surface_tokens_present":[],"help_surface_tokens_missing":[],
+        "model_slugs":["openai/gpt-5.6-sol","openai-codex/gpt-5.6-sol"],"error":null}
+    })).unwrap()).unwrap();
+    let value = run(
+        &root,
+        temp.path(),
+        &server.url(API_PATH),
+        &bin,
+        &[
+            "--json",
+            "models",
+            "list",
+            "--all",
+            "--live",
+            "--harness",
+            "pi",
+            "--no-refresh-models",
+        ],
+    );
+    let rows = value["models"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{value}");
+    for row in rows {
+        assert_eq!(row["eligibility"], "eligible", "{value}");
+        assert!(row["reason"].is_null(), "{value}");
+    }
+    assert_ne!(rows[0]["harness_model_id"], rows[1]["harness_model_id"]);
+}
+
+#[test]
+fn cold_pi_listing_failure_is_reported_without_possible_rows() {
+    let server = MockServer::start();
+    let (temp, root) = setup_project(&server);
+    let bin = install_logging_harnesses(temp.path());
+    fs::write(root.join("mars.toml"), "[settings]\ntargets=[\".pi\"]\n").unwrap();
+    write_cache(
+        &root,
+        vec![json!({"id":"unused","provider":"xai"})],
+        &fresh_fetched_at(),
+    );
+    let dir = temp.path().join("mars-cache/availability");
+    fs::create_dir_all(&dir).unwrap();
+    let now = now();
+    fs::write(
+        dir.join("pi.json"),
+        serde_json::to_vec(&json!({
+            "schema_version":3,"harness":"pi","fetched_at":0,"last_attempt_at":now,
+            "last_error":"pi --list-models timed out","result":null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let value = run(
+        &root,
+        temp.path(),
+        &server.url(API_PATH),
+        &bin,
+        &[
+            "--json",
+            "models",
+            "list",
+            "--all",
+            "--harness",
+            "pi",
+            "--no-refresh-models",
+        ],
+    );
+    assert!(value["models"].as_array().unwrap().is_empty(), "{value}");
+    assert!(
+        value["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message
+                .as_str()
+                .unwrap()
+                .contains("pi: listing unavailable: pi --list-models timed out")),
+        "{value}"
+    );
 }

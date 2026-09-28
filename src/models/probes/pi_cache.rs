@@ -274,11 +274,6 @@ where
             return synchronous_probe_with_observation(path, probe);
         }
     };
-    let observation = if matches!(outcome, CachedPiProbeOutcome::Unavailable) {
-        None
-    } else {
-        observation
-    };
     super::ObservedOutcome {
         outcome,
         observation,

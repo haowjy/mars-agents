@@ -12,6 +12,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use common::*;
 
 #[test]
+fn sync_ignores_dependency_manifest_consumer_visibility_settings() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "source", &[("fixture", "# Fixture")], &[]);
+    fs::write(
+        source.join("mars.toml"),
+        "[package]\nname=\"source\"\nversion=\"0.1.0\"\n[settings]\ntargets=42\n[settings.model_visibility]\ninclude=[\"gpt-5*\"]\n",
+    )
+    .unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.source]\npath=\"{}\"\n",
+            portable_path(&source)
+        ))
+        .unwrap();
+    offline_mars(dir.path())
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    assert!(project.child(".mars/agents/fixture.md").exists());
+}
+
+#[test]
 fn sync_diff_does_not_modify_files() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("agent", "# Agent content")], &[]);

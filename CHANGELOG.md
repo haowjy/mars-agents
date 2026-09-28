@@ -4,10 +4,26 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking
+- `mars models list` is now the curated harness×model display, not the alias
+  inventory; `--all` bypasses curation, not a raw catalog switch. The former
+  `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
+  `--unavailable` flags and project/local `[settings.model_visibility]` are
+  removed. Move authored display rules to `mars.curated.toml` or
+  `mars.curated.local.toml`. Dependency package consumer settings are ignored
+  when reading manifests and do not block sync.
+- Meridian P4 must migrate `models list --json` to `models aliases --json`
+  and `models list --all --json` to `models catalog --json` before it consumes
+  this Mars command contract. Coordinate the two releases or pin Mars version
+  bounds until P4 is deployed; neither unilateral release order is safe.
+
 ### Added
 - Split `mars models` into curated harness-model `list`, uncurated `aliases`,
   and raw `catalog` commands. `list --all` includes hidden rows; `--live` adds
   fixed-harness eligibility. JSON includes full Possible provenance and curation.
+- Canonical `opencode` harness/probe JSON names, cold listing-failure diagnostics,
+  exact per-provider-variant live verdicts, and stable nullable live fields in
+  list JSON. Static aliases JSON no longer asserts an unavailable harness source.
 - Add a non-persisted Possible harness-model projection from the models.dev
   catalog and retained Pi/Cursor/OpenCode listings, including listing provenance.
 - Add strict, display-only user/project/local curated TOML rule loading and

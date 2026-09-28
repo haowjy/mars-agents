@@ -27,6 +27,7 @@ pub struct PossibleRow {
 pub enum ProbeKind {
     Pi,
     Cursor,
+    #[serde(rename = "opencode")]
     OpenCode,
 }
 
@@ -102,6 +103,28 @@ impl<'a> SessionPossibleSource<'a> {
             .flat_map(|harness| match self.rows_for(*harness) {
                 HarnessPossible::Listed(rows) => rows.clone(),
                 HarnessPossible::Unlisted(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Missing listings for installed, in-scope probe-backed harnesses, with
+    /// the last error if an attempt failed. This never starts another probe.
+    pub fn listing_failures(&mut self) -> Vec<(HarnessId, Option<String>)> {
+        self.memo
+            .iter()
+            .filter(|(_, state)| {
+                matches!(
+                    state,
+                    HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable)
+                )
+            })
+            .map(|(harness, _)| {
+                (
+                    *harness,
+                    self.session
+                        .probe_observation(*harness)
+                        .and_then(|observation| observation.last_error),
+                )
             })
             .collect()
     }

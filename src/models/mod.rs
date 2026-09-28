@@ -923,7 +923,7 @@ fn spawn_background_refresh(
         // its configured null stdio. A detached worker could therefore hold a
         // caller's captured output pipes open until its HTTP request finishes.
         // CreateProcessW with handle inheritance disabled avoids that leak.
-        return catalog_worker_windows::spawn(&cmd);
+        catalog_worker_windows::spawn(&cmd)
     }
     #[cfg(not(windows))]
     {

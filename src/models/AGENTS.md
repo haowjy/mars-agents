@@ -74,7 +74,7 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - **Force** — synchronous fetch regardless of cache age (used by `mars models refresh` and `--refresh-models`)
 - **Offline** — disk only; error if no usable cache
 
-`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, provider allowlist, generation, and claim token as arguments; it uses null stdio, no shell, and the cache lock/freshness recheck. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must still match that root. A reaper thread waits for the child in long-lived callers without blocking the stale read.
+`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, provider allowlist, generation, and claim token as arguments; it uses no shell or caller stdio handles, and rechecks the cache lock/freshness. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must resolve to that root's `.mars` and remain inside the project. POSIX callers reap the child on a background thread; Windows starts it detached without inheriting handles and closes its parent process handles immediately.
 
 ### Cache Behavior
 

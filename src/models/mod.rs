@@ -19,6 +19,8 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
 pub mod availability;
+#[cfg(windows)]
+mod catalog_worker_windows;
 mod dependencies;
 pub mod harness;
 pub mod harness_model;
@@ -917,28 +919,33 @@ fn spawn_background_refresh(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000008);
+        // Command::spawn inherits *all* inheritable Windows handles, not only
+        // its configured null stdio. A detached worker could therefore hold a
+        // caller's captured output pipes open until its HTTP request finishes.
+        // CreateProcessW with handle inheritance disabled avoids that leak.
+        return catalog_worker_windows::spawn(&cmd);
     }
-    // Start the reaper before launching the child. A long-lived library caller
-    // must not accumulate zombies; waiting happens on this thread, not on the
-    // stale read's critical path. This also works with detached Windows children.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<std::process::Child>(1);
-    std::thread::Builder::new()
-        .name("mars-catalog-reaper".to_string())
-        .spawn(move || {
-            if let Ok(mut child) = rx.recv() {
-                let _ = child.wait();
-            }
-        })?;
-    let child = cmd.spawn()?;
-    if let Err(error) = tx.send(child) {
-        let mut child = error.0;
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(std::io::Error::other("catalog worker reaper exited early"));
+    #[cfg(not(windows))]
+    {
+        // POSIX children need reaping in long-lived library callers. Waiting
+        // happens on this thread, never on the stale read's critical path.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<std::process::Child>(1);
+        std::thread::Builder::new()
+            .name("mars-catalog-reaper".to_string())
+            .spawn(move || {
+                if let Ok(mut child) = rx.recv() {
+                    let _ = child.wait();
+                }
+            })?;
+        let child = cmd.spawn()?;
+        if let Err(error) = tx.send(child) {
+            let mut child = error.0;
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other("catalog worker reaper exited early"));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Entry point for the hidden worker command. Never selects Background, so it cannot recurse.

@@ -69,15 +69,18 @@ fn stale_catalog_returns_before_blocked_refresh_completes() {
         second_before_release.or_else(|_| second_rx.recv_timeout(Duration::from_secs(5)));
     command_thread.join().unwrap();
     second_thread.join().unwrap();
-    server_thread.join().unwrap();
+    let server_result = server_thread.join();
     assert!(
         returned_early,
-        "stale command or a descendant held output pipes until network response"
+        "stale command or a descendant held output pipes until network response; after release: {}",
+        output_diagnostic(&output)
     );
     assert!(
         second_returned_early,
-        "claim check waited behind the network/cache lock"
+        "claim check waited behind the network/cache lock; after release: {}",
+        output_diagnostic(&second_output)
     );
+    server_result.unwrap();
     let second_document: Value = serde_json::from_slice(&second_output.unwrap().stdout).unwrap();
     assert_eq!(
         second_document["cache_refresh"]["refresh"]["status"],
@@ -130,30 +133,66 @@ fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
         )
         .unwrap();
     });
-    let handles: Vec<_> = (0..4)
+    let commands: Vec<_> = (0..4)
         .map(|_| {
             let root = project_root.clone();
             let env_root = temp.path().to_path_buf();
             let url = api_url.clone();
-            thread::spawn(move || {
+            let (output_tx, output_rx) = mpsc::channel();
+            let handle = thread::spawn(move || {
                 let mut cmd = StdCommand::new(cargo_bin("mars"));
                 configure_std_cmd(&mut cmd, &env_root, &url);
-                cmd.arg("--root")
+                let output = cmd
+                    .arg("--root")
                     .arg(root)
                     .args(["--json", "models", "catalog"])
                     .output()
-                    .unwrap()
-            })
+                    .unwrap();
+                output_tx.send(output).unwrap();
+            });
+            (handle, output_rx)
         })
         .collect();
     seen_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("background refresh did not start");
+    let before_release: Vec<_> = commands
+        .iter()
+        .map(|(_, output_rx)| output_rx.recv_timeout(Duration::from_secs(2)))
+        .collect();
+    let returned_early = before_release
+        .iter()
+        .filter(|result| result.is_ok())
+        .count();
+    release_tx.send(()).unwrap();
+    let outputs: Vec<_> = before_release
+        .into_iter()
+        .zip(&commands)
+        .map(|(result, (_, output_rx))| {
+            result.or_else(|_| output_rx.recv_timeout(Duration::from_secs(5)))
+        })
+        .collect();
+    for (handle, _) in commands {
+        handle.join().unwrap();
+    }
+    let server_result = server_thread.join();
+    assert_eq!(
+        returned_early,
+        4,
+        "all stale commands must close their output pipes before worker response; after release: {:?}; server: {:?}",
+        outputs.iter().map(output_diagnostic).collect::<Vec<_>>(),
+        server_result
+    );
+    server_result.unwrap();
     let mut spawned = 0;
     let mut in_progress = 0;
-    for handle in handles {
-        let output = handle.join().unwrap();
-        assert!(output.status.success());
+    for output in outputs {
+        let output = output.unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let document: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(document["cache_refresh"]["status"], "stale");
         match document["cache_refresh"]["refresh"]["status"].as_str() {
@@ -164,8 +203,6 @@ fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
     }
     assert_eq!(spawned, 1, "only one stale reader may launch a worker");
     assert_eq!(in_progress, 3);
-    release_tx.send(()).unwrap();
-    server_thread.join().unwrap();
     wait_until(Duration::from_secs(5), || {
         read_cache_json(&project_root)["fetched_at"]
             .as_str()
@@ -175,6 +212,18 @@ fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
             > stale_fetched_at().parse::<u64>().unwrap()
     });
     // A second request would fail: this listener accepts only one connection.
+}
+
+fn output_diagnostic(output: &Result<Output, mpsc::RecvTimeoutError>) -> String {
+    match output {
+        Ok(output) => format!(
+            "status={}; stderr={:?}; stdout={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        ),
+        Err(error) => error.to_string(),
+    }
 }
 
 #[test]
@@ -303,6 +352,12 @@ fn hidden_worker_uses_portable_arguments_without_shell() {
     let project_root = temp.path().join("project with spaces");
     fs::rename(&original_root, &project_root).unwrap();
     let mars_dir = project_root.join(".mars");
+    // The same directory may arrive with lexical `..` components (and Windows
+    // may canonicalize the project root's casing independently).
+    let equivalent_mars_dir = project_root
+        .join("..")
+        .join(project_root.file_name().unwrap())
+        .join(".mars");
     write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
     fs::write(
         mars_dir.join(".models-cache.refresh-claim"),
@@ -316,7 +371,7 @@ fn hidden_worker_uses_portable_arguments_without_shell() {
         .arg("--root")
         .arg(&project_root)
         .args(["models", "__refresh-catalog", "--mars-dir"])
-        .arg(&mars_dir)
+        .arg(&equivalent_mars_dir)
         .args([
             "--refresh-after-hours",
             "24",

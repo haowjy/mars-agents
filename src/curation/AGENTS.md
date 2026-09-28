@@ -20,7 +20,7 @@ writes them and never participates in routing, build, or alias resolution.
   Out-of-scope declarations are dropped with one diagnostic per distinct rule;
   uninstalled declarations remain. Installation state belongs to `--live`, not
   curation's default diagnostics.
-- `project` retains hidden rows for P3's `--all` view; `shown_rows` supplies the
+- `project` retains hidden rows for `mars models list --all`; `shown_rows` supplies the
   default display subset. Neither function changes Possible or Selection.
 - `matcher(possible)` precomputes literal/full-launch precedence once; use its
   `decide` for bulk decisions rather than rebuilding context per row.
@@ -29,6 +29,6 @@ writes them and never participates in routing, build, or alias resolution.
 
 Curation may import `models::possible`, `routing::slug` matching helpers, and
 `harness::registry`. `routing/`, `build/`, and `models::possible` must never
-import `curation`. P3's `cli/models` renderer is the intended consumer.
+import `curation`. `cli/models_inventory.rs` is the sole consumer.
 
 Tests live in `tests.rs` and exercise the full tier fold and file diagnostics.

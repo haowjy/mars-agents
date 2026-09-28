@@ -14,8 +14,13 @@ pub fn resolve_harness_model(
     provider_for_order: Option<&str>,
 ) -> ResolvedRunnablePath {
     let requested = requested.trim();
+    let mars_provider = chosen_slug
+        .and_then(slug::parse)
+        .map(|parts| parts.provider.to_string())
+        .or_else(|| provider_constraint.map(str::to_string))
+        .or_else(|| provider_for_order.map(str::to_string));
     if requested.is_empty() {
-        return passthrough(requested);
+        return passthrough(requested, mars_provider);
     }
 
     if harness.native_provider().is_some() {
@@ -28,6 +33,7 @@ pub fn resolve_harness_model(
             || provider_for_order.is_some_and(provider_matches);
         return ResolvedRunnablePath {
             harness_model_id: requested.to_string(),
+            mars_provider,
             source: if matched {
                 RunnablePathSource::ProviderMatch
             } else {
@@ -44,6 +50,7 @@ pub fn resolve_harness_model(
     if let Some(selected) = chosen_slug.or(chosen_model) {
         return ResolvedRunnablePath {
             harness_model_id: selected.to_string(),
+            mars_provider,
             source: RunnablePathSource::CachedProbe,
             confidence: RunnableConfidence::Confirmed,
         };
@@ -57,16 +64,18 @@ pub fn resolve_harness_model(
     {
         return ResolvedRunnablePath {
             harness_model_id: format!("{}/{}", constraint.trim(), requested),
+            mars_provider,
             source: RunnablePathSource::Passthrough,
             confidence: RunnableConfidence::Confirmed,
         };
     }
-    passthrough(requested)
+    passthrough(requested, mars_provider)
 }
 
-fn passthrough(model_id: &str) -> ResolvedRunnablePath {
+fn passthrough(model_id: &str, mars_provider: Option<String>) -> ResolvedRunnablePath {
     ResolvedRunnablePath {
         harness_model_id: model_id.to_string(),
+        mars_provider,
         source: RunnablePathSource::Passthrough,
         confidence: RunnableConfidence::Unknown,
     }
@@ -102,6 +111,20 @@ mod tests {
             let resolved = resolve_harness_model(HarnessId::Pi, "GPT-5", slug, model, None, None);
             assert_eq!(resolved.harness_model_id, expected);
         }
+    }
+
+    #[test]
+    fn selected_slug_owns_provider_and_launch_id_together() {
+        let resolved = resolve_harness_model(
+            HarnessId::OpenCode,
+            "gpt-5",
+            Some("openai-codex/gpt-5"),
+            Some("gpt-5"),
+            None,
+            Some("openai"),
+        );
+        assert_eq!(resolved.harness_model_id, "openai-codex/gpt-5");
+        assert_eq!(resolved.mars_provider.as_deref(), Some("openai-codex"));
     }
 
     #[test]

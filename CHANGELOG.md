@@ -5,13 +5,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Split `mars models` into curated harness-model `list`, uncurated `aliases`,
+  and raw `catalog` commands. `list --all` includes hidden rows; `--live` adds
+  fixed-harness eligibility. JSON includes full Possible provenance and curation.
 - Add a non-persisted Possible harness-model projection from the models.dev
   catalog and retained Pi/Cursor/OpenCode listings, including listing provenance.
 - Add strict, display-only user/project/local curated TOML rule loading and
-  deterministic tier evaluation. The `mars models list` command is unchanged
-  until its separate command migration.
+  deterministic tier evaluation for the `mars models list` command.
 
 ### Changed
+- Remove `settings.model_visibility` and its old `models list` flags. Project
+  and local legacy tables now fail with file-named curation migration examples.
+- Preserve failed cold probe errors in command-local observation snapshots.
+- Project runnable provider and launch ID together from the selected route;
+  use typed harness IDs for Cursor build policy.
 - Canonicalize provider-qualified Claude/Codex curation literals to native
   model IDs, preventing phantom declared rows. Precompute literal match context
   for catalog-sized lists; retain probe provenance atomically with outcomes.

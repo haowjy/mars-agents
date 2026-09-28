@@ -30,10 +30,7 @@ fn scenario_a_cold_cache_refreshes_on_models_list() {
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
 
-    assert!(
-        stdout["aliases"].is_array(),
-        "expected aliases array in JSON"
-    );
+    assert!(stdout["models"].is_array(), "expected models array in JSON");
 
     let cache = read_cache_json(&project_root);
     assert!(
@@ -364,8 +361,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
                     .arg(root)
                     .arg("--json")
                     .arg("models")
-                    .arg("list")
-                    .arg("--unavailable")
+                    .arg("catalog")
                     .output()
                     .expect("failed to execute concurrent mars models list")
             })
@@ -389,7 +385,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
             "expected success, stderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let model_ids = resolved_model_ids_from_models_list_json(&output.stdout);
+        let model_ids = model_ids_from_catalog_json(&output.stdout);
         let catalog_ids_seen: BTreeSet<String> = model_ids
             .intersection(&expected_catalog_ids)
             .cloned()

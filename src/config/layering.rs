@@ -2,9 +2,7 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{
-    AgentOverlay, LocalConfig, LocalModelVisibility, LocalSettings, Settings, SkillOverlay,
-};
+use super::{AgentOverlay, LocalConfig, LocalSettings, Settings, SkillOverlay};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
@@ -46,7 +44,6 @@ impl LocalSettings {
     pub(crate) fn is_empty(&self) -> bool {
         self.managed_root.is_none()
             && self.targets.is_none()
-            && self.model_visibility.is_none()
             && self.models_cache_ttl_hours.is_none()
             && self.min_mars_version.is_none()
             && self.default_harness.is_none()
@@ -84,9 +81,6 @@ impl LocalSettings {
             target_source.field = LinkSource::Targets;
             target_source.origin = TargetOrigin::Local;
         }
-        if let Some(value) = &self.model_visibility {
-            apply_model_visibility_overlay(&mut merged, value);
-        }
         if let Some(value) = self.models_cache_ttl_hours {
             merged.models_cache_ttl_hours = value;
         }
@@ -122,17 +116,5 @@ impl LocalSettings {
         }
 
         (merged, target_source)
-    }
-}
-
-fn apply_model_visibility_overlay(merged: &mut Settings, overlay: &LocalModelVisibility) {
-    if let Some(include) = &overlay.include {
-        merged.model_visibility.include = Some(include.clone());
-    }
-    if let Some(exclude) = &overlay.exclude {
-        merged.model_visibility.exclude = Some(exclude.clone());
-    }
-    if let Some(providers) = &overlay.providers {
-        merged.model_visibility.providers = Some(providers.clone());
     }
 }

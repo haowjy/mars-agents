@@ -522,7 +522,8 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let needs_cursor_probe = selected_harness.eq_ignore_ascii_case("cursor");
+    let needs_cursor_probe = crate::harness::registry::parse(&selected_harness)
+        == Some(crate::harness::registry::HarnessId::Cursor);
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
@@ -554,10 +555,7 @@ pub fn resolve_policy(
             "effort_applied_to_harness_model".to_string(),
             "true".to_string(),
         );
-    } else if harness_resolution
-        .harness
-        .value
-        .eq_ignore_ascii_case("cursor")
+    } else if needs_cursor_probe
         && let Some(cursor_effort) = effort
             .as_deref()
             .map(str::trim)

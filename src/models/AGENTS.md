@@ -37,7 +37,7 @@ through harness probes.
 ## Catalog Lifecycle
 
 - `mars models refresh` — explicit catalog fetch (`RefreshMode::Force`); does not accept refresh flags
-- `mars models list` / `mars models resolve <alias>` — merge + resolve; honor `--refresh-models` / `--no-refresh-models`
+- `mars models aliases` / `mars models resolve <alias>` — merge + resolve; honor `--refresh-models` / `--no-refresh-models`
 - `mars sync` — same refresh flags for best-effort catalog refresh before merge write
 - `mars build launch-bundle` — same flags via build policy (`models_refresh` on policy input)
 
@@ -51,9 +51,8 @@ time, last-error, auth-gated and latest-attempt provenance; native rows are
 inferred from catalog providers. See [possible.rs](possible.rs).
 
 Authored `mars.curated.toml` display rules live in `src/curation/` and are not
-imported by model resolution, routing, or launch-bundle policy. P3 will wire the
-Possible/Curated projection to the `mars models list` renderer; P2 does not
-rename or take over that command.
+imported by model resolution, routing, or launch-bundle policy. Only the
+`mars models list` renderer projects Possible through Curated.
 
 ### Refresh control (`ModelsRefreshControl`)
 
@@ -123,7 +122,8 @@ model. Provider inference may use the model family, never the preferred harness.
 ## Launch `harness_model` (argv model id)
 
 After harness selection, `resolve_harness_model()` in `harness_model.rs` projects
-the **selected assessment** into `routing.harness_model` and live availability.
+the **selected assessment** into the launch ID and provider used by
+`routing.harness_model` and live availability.
 Alias `provider` is **not** a blind `provider/model` prefix: native Codex/Claude
 preserve the requested spelling; probe-backed harnesses use the selected slug.
 Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
@@ -149,4 +149,4 @@ identity resolution.
 - [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) — probe semantics, refresh-mode table, effort slug rules
 - [../harness/AGENTS.md](../harness/AGENTS.md) — capability snapshot collection (once per command)
 - `src/routing/AGENTS.md` — uses resolved aliases for harness routing
-- `src/config/AGENTS.md` — model visibility settings
+- `src/config/AGENTS.md` — model settings; `src/curation/AGENTS.md` — display-only curation

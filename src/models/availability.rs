@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::harness::registry::{self, HarnessId};
 use crate::models::harness_model::resolve_harness_model;
-use crate::routing::{Eligibility, RoutingTrace, slug};
+use crate::routing::{Eligibility, RoutingTrace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +78,8 @@ impl RunnableConfidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRunnablePath {
     pub harness_model_id: String,
+    /// Provider selected by the same evidence that chose the launch ID.
+    pub mars_provider: Option<String>,
     pub source: RunnablePathSource,
     pub confidence: RunnableConfidence,
 }
@@ -126,12 +128,9 @@ pub fn from_routing_trace(
                 None,
                 Some(provider),
             );
-            let mars_provider = assessment
-                .chosen_slug
-                .as_deref()
-                .and_then(slug::parse)
-                .map(|parts| parts.provider)
-                .unwrap_or(provider);
+            let mars_provider = runnable
+                .mars_provider
+                .unwrap_or_else(|| provider.to_string());
             let source = match harness {
                 HarnessId::Pi => AvailabilitySource::PiProbe,
                 HarnessId::OpenCode => AvailabilitySource::OpenCodeProbe,
@@ -143,7 +142,7 @@ pub fn from_routing_trace(
                 source,
                 runnable_paths: vec![RunnablePath {
                     harness: trace.harness.clone(),
-                    mars_provider: mars_provider.to_string(),
+                    mars_provider,
                     harness_model_id: runnable.harness_model_id,
                 }],
             }

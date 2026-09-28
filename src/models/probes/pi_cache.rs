@@ -335,6 +335,16 @@ where
             };
         }
         let probe_result = probe();
+        let last_error = if probe_result.model_probe_success && probe_result.error.is_none() {
+            None
+        } else {
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "pi probe failed".to_string()),
+            )
+        };
         let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
             CachedPiProbeOutcome::Miss(probe_result)
         } else {
@@ -344,7 +354,7 @@ where
             outcome,
             observation: Some(super::ProbeObservation {
                 observed_at: Some(now_unix_secs()),
-                last_error: None,
+                last_error,
             }),
         };
     }
@@ -401,6 +411,16 @@ where
     }
     drop(lock);
 
+    let last_error = if probe_result.model_probe_success && probe_result.error.is_none() {
+        None
+    } else {
+        Some(
+            probe_result
+                .error
+                .clone()
+                .unwrap_or_else(|| "pi probe failed".to_string()),
+        )
+    };
     let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
         CachedPiProbeOutcome::Miss(probe_result)
     } else {
@@ -410,7 +430,7 @@ where
         outcome,
         observation: Some(super::ProbeObservation {
             observed_at: Some(now_unix_secs()),
-            last_error: None,
+            last_error,
         }),
     }
 }
@@ -575,6 +595,29 @@ mod tests {
 
     fn write_entry(path: &Path, entry: &PiProbeCacheEntry) {
         write_cache_at(path, entry).unwrap();
+    }
+
+    #[test]
+    fn cold_failed_observation_keeps_error_without_last_good_cache() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        let observed = probe_cached_impl_observed(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path),
+            || PiProbeResult {
+                compatible: true,
+                model_probe_success: false,
+                error: Some("boom".to_string()),
+                ..PiProbeResult::default()
+            },
+            || Ok(()),
+        );
+        assert!(matches!(observed.outcome, CachedPiProbeOutcome::Failed(_)));
+        assert_eq!(
+            observed.observation.unwrap().last_error.as_deref(),
+            Some("boom")
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# Curated model rules (P2 foundation)
+# Curated model rules
 
 Mars can load display-only model curation from three TOML files, in increasing
 precedence:
@@ -8,8 +8,8 @@ precedence:
 2. `<project>/mars.curated.toml` (shareable);
 3. `<project>/mars.curated.local.toml` (gitignored, machine-local).
 
-**These rules do not affect routing, launch bundles, alias resolution, or the
-current `mars models list` output.** The list command will adopt them in P3.
+**These rules affect only `mars models list` display.** They do not affect
+routing, launch bundles, or alias resolution.
 No Possible catalog is persisted: Mars derives harness-model rows from the
 existing models.dev cache and retained harness listings.
 
@@ -40,11 +40,15 @@ literals can match every provider copy of that model. A literal `[[show]]` for a
 concrete harness can declare a row absent from the discovered Possible catalog;
 `*` harnesses and glob patterns cannot declare rows. Out-of-scope declarations
 are dropped with a deduplicated diagnostic. Uninstalled declarations remain
-visible; the future `--live` view reports their `not_installed` availability.
+visible; `mars models list --live` reports their `not_installed` availability.
 
 For native Claude/Codex rules, a matching provider-qualified literal such as
 `anthropic/claude-opus-4-6` names the same row as its bare model ID. Its
 launch ID remains bare; an incompatible provider qualifier is diagnosed.
+
+For native provider globs, use `provider = "openai"` (or `"anthropic"`) plus
+a model glob such as `model = "gpt-*"`; `model = "openai/gpt-*"` is not a
+second native-glob dialect.
 
 If no rule matches, the highest explicit `default` wins. Otherwise, project or
 local files with any `[[show]]` imply `hide`; a user-only `[[show]]` remains

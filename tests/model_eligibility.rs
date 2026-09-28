@@ -169,21 +169,16 @@ fn live_aliases_share_native_auth_evidence_for_the_invocation() {
     std::fs::write(root.join("mars.toml"), "[settings]\ntargets=[\".claude\"]\n[models.first]\nmodel=\"claude-opus-4-6\"\nprovider=\"anthropic\"\n[models.second]\nmodel=\"claude-opus-4-6\"\nprovider=\"anthropic\"\n").unwrap();
     let log = root.join("commands.log");
     let output = test_common::mars_cmd(root, root, "http://127.0.0.1:1")
-        .args([
-            "models",
-            "list",
-            "--live",
-            "--unavailable",
-            "--no-refresh-models",
-            "--json",
-        ])
+        .args(["models", "list", "--live", "--no-refresh-models", "--json"])
         .env("PATH", &bin)
         .env("PROBE_LOG", &log)
         .output()
         .unwrap();
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["aliases"].as_array().unwrap().len(), 2);
+    let rows = value["models"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["aliases"], serde_json::json!(["first", "second"]));
     assert_eq!(
         std::fs::read_to_string(log)
             .unwrap()

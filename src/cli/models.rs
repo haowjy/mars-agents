@@ -10,8 +10,7 @@ use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{
-    CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, ListingEvidence,
-    ListingEvidenceSet, NativeAuthCache,
+    CapabilityCollectionOptions, CapabilitySession, ListingEvidence, NativeAuthCache,
 };
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
@@ -41,8 +40,12 @@ pub struct ModelsArgs {
 pub enum ModelsCommand {
     /// Fetch models from API and update the local cache.
     Refresh,
-    /// List all model aliases (consumer + deps) with resolved IDs.
+    /// List curated harness models.
     List(ListArgs),
+    /// List model aliases without probing harnesses.
+    Aliases(CatalogViewArgs),
+    /// List raw models.dev catalog entries.
+    Catalog(CatalogViewArgs),
     /// Show resolution chain for a specific alias.
     Resolve(ResolveAliasArgs),
     /// Show prompting guidance for an agent or model alias.
@@ -55,36 +58,34 @@ pub enum ModelsCommand {
 
 #[derive(Debug, Parser)]
 pub struct ListArgs {
-    /// Show all alias candidates. Does NOT show raw catalog - use --catalog for that.
-    #[arg(long, conflicts_with = "catalog", conflicts_with = "unavailable")]
-    all: bool,
-    /// Enable routed live availability details (selected harness, availability, runnable paths).
+    /// Include hidden curated rows.
     #[arg(long)]
-    live: bool,
+    pub all: bool,
+    /// Assess runtime eligibility for each displayed harness model.
+    #[arg(long)]
+    pub live: bool,
+    /// Narrow to one registered harness.
+    #[arg(long)]
+    pub harness: Option<String>,
+    /// Narrow by glob against the launch model ID.
+    #[arg(long)]
+    pub r#match: Option<String>,
     /// Refresh models.dev catalog and harness probes synchronously before running (blocks until complete).
     #[arg(long, conflicts_with = "no_refresh_models")]
-    refresh_models: bool,
+    pub refresh_models: bool,
     /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
     #[arg(long, conflicts_with = "refresh_models")]
-    no_refresh_models: bool,
-    /// Only show aliases matching these patterns (overrides config).
-    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
-    include: Option<Vec<String>>,
-    /// Hide aliases matching these patterns (overrides config).
-    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
-    exclude: Option<Vec<String>>,
-    /// Show only aliases whose resolved provider matches one of these keys (overrides config).
-    #[arg(long, value_delimiter = ',', conflicts_with = "no_visibility")]
-    providers: Option<Vec<String>>,
-    /// Ignore all visibility filters (config and flags); show every alias.
-    #[arg(long)]
-    no_visibility: bool,
-    /// Show raw models.dev cache entries (diagnostic view). Ignores aliases.
-    #[arg(long, conflicts_with = "all")]
-    catalog: bool,
-    /// Include unavailable models in output (only affects --live output).
-    #[arg(long)]
-    unavailable: bool,
+    pub no_refresh_models: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct CatalogViewArgs {
+    /// Force a models.dev catalog refresh (does not probe harnesses).
+    #[arg(long, conflicts_with = "no_refresh_models")]
+    pub refresh_models: bool,
+    /// Use the catalog cache without refreshing it.
+    #[arg(long, conflicts_with = "refresh_models")]
+    pub no_refresh_models: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -122,7 +123,9 @@ pub struct AddAliasArgs {
 pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         ModelsCommand::Refresh => run_refresh(ctx, json),
-        ModelsCommand::List(args) => run_list(args, ctx, json),
+        ModelsCommand::List(args) => super::models_inventory::run_list(args, ctx, json),
+        ModelsCommand::Aliases(args) => super::models_inventory::run_aliases(args, ctx, json),
+        ModelsCommand::Catalog(args) => super::models_inventory::run_catalog(args, ctx, json),
         ModelsCommand::Resolve(a) => run_resolve(a, ctx, json),
         ModelsCommand::Prompting(a) => super::models_prompting::run(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
@@ -132,17 +135,6 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
 
 fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
     ctx.project_root.join(".mars")
-}
-
-fn collect_models_capability_snapshot(
-    refresh: &models::ModelsRefreshControl,
-    scope: &crate::config::targets::HarnessScope,
-) -> CapabilitySnapshot {
-    CapabilitySession::collect(&CapabilityCollectionOptions {
-        offline: models::is_mars_offline(),
-        probe_refresh: refresh.probe_refresh,
-    })
-    .into_scoped_snapshot(scope)
 }
 
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -192,260 +184,9 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     Ok(0)
 }
 
-fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let native_auth = NativeAuthCache::default();
-    let mars = mars_dir(ctx);
-    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
-    let ttl = models_cache_ttl_hours(project_config.as_ref());
-    let refresh =
-        models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
-    let mode = refresh.catalog_mode;
-    let default_settings = crate::config::Settings::default();
-    let settings = project_config
-        .as_ref()
-        .map(|loaded| &loaded.effective.settings)
-        .unwrap_or(&default_settings);
-    let mut routing_settings = ResolvedRoutingSettings::from_settings(settings);
-    routing_settings.target_source = project_config
-        .as_ref()
-        .map(|config| config.effective.target_source.clone())
-        .unwrap_or_default();
-    let routing_diagnostics = routing_settings.diagnostic_messages();
-    let visibility = effective_visibility(project_config.as_ref(), args);
-    if !json {
-        emit_routing_settings_warnings(&routing_diagnostics);
-    }
-
-    // Load runtime aliases before cache refresh so legacy locks that predate
-    // dependency alias authority fail with an explicit sync remediation instead
-    // of surfacing an unrelated cache error first.
-    let merged = (!args.catalog)
-        .then(|| load_merged_aliases(&ctx.project_root, project_config.as_ref()))
-        .transpose()?;
-
-    let providers = catalog_providers(project_config.as_ref());
-    let (cache, outcome) = match ensure_fresh_or_json_error(&mars, ttl, mode, json, &providers)? {
-        FreshOrJsonError::Fresh(cache, outcome) => (cache, outcome),
-        FreshOrJsonError::JsonError(error_message) => {
-            let mut out = serde_json::json!({
-                "error": {"code": "model_cache_unavailable", "message": error_message},
-            });
-            add_routing_diagnostics_json(&mut out, &routing_diagnostics);
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
-            return Ok(1);
-        }
-    };
-    if args.catalog {
-        if !args.live {
-            return run_list_catalog_static(ListCatalogStaticInput {
-                cache: &cache,
-                outcome: &outcome,
-                visibility: &visibility,
-                routing_diagnostics: &routing_diagnostics,
-                json,
-            });
-        }
-        let capability_snapshot =
-            collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
-        return run_list_catalog(ListCatalogInput {
-            cache: &cache,
-            outcome: &outcome,
-            visibility: &visibility,
-            routing_settings: &routing_settings,
-            routing_diagnostics: &routing_diagnostics,
-            capability_snapshot: &capability_snapshot,
-            json,
-        });
-    }
-
-    let merged = merged.expect("non-catalog models list loaded runtime aliases");
-    if args.all {
-        if !args.live {
-            return run_list_all_static(
-                &merged,
-                &cache,
-                &outcome,
-                &visibility,
-                &routing_diagnostics,
-                json,
-            );
-        }
-        let capability_snapshot =
-            collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
-        let installed = capability_snapshot.installed_harnesses();
-        let opencode_probe_result = capability_snapshot.opencode.result().cloned();
-        let pi_probe_result = capability_snapshot.pi.result().cloned();
-        let cursor_probe_result = capability_snapshot.cursor.result().cloned();
-        let catalog_slugs = models::catalog_model_slugs(&cache);
-        let availability_ctx = AvailabilityContext {
-            auth: &native_auth,
-            installed: &installed,
-            opencode_probe_result: opencode_probe_result.as_ref(),
-            pi_probe_result: pi_probe_result.as_ref(),
-            cursor_probe_result: cursor_probe_result.as_ref(),
-            listing_evidence: capability_snapshot.listing_evidence_set(),
-            catalog_model_slugs: Some(catalog_slugs.as_slice()),
-            routing_settings: &routing_settings,
-        };
-        return run_list_all(
-            &merged,
-            &cache,
-            &outcome,
-            &visibility,
-            availability_ctx,
-            &routing_diagnostics,
-            json,
-        );
-    }
-
-    if !args.live {
-        return run_list_aliases_static(
-            &merged,
-            &cache,
-            &outcome,
-            &visibility,
-            &routing_diagnostics,
-            json,
-        );
-    }
-
-    let capability_snapshot =
-        collect_models_capability_snapshot(&refresh, &routing_settings.harness_scope);
-    let installed = capability_snapshot.installed_harnesses();
-    let opencode_probe_result = capability_snapshot.opencode.result().cloned();
-    let pi_probe_result = capability_snapshot.pi.result().cloned();
-    let cursor_probe_result = capability_snapshot.cursor.result().cloned();
-    let cache_warning = cache_warning(&outcome);
-    let mut diag = DiagnosticCollector::new();
-    let catalog_slugs = models::catalog_model_slugs(&cache);
-
-    let mut resolved = models::resolve_all_static(&merged, &cache);
-    let availability_ctx = AvailabilityContext {
-        auth: &native_auth,
-        installed: &installed,
-        opencode_probe_result: opencode_probe_result.as_ref(),
-        pi_probe_result: pi_probe_result.as_ref(),
-        cursor_probe_result: cursor_probe_result.as_ref(),
-        listing_evidence: capability_snapshot.listing_evidence_set(),
-        catalog_model_slugs: Some(catalog_slugs.as_slice()),
-        routing_settings: &routing_settings,
-    };
-    let reports =
-        apply_routing_settings_to_resolved_aliases(&mut resolved, &merged, availability_ctx);
-    if !args.unavailable {
-        prune_unavailable(&mut resolved);
-    }
-
-    // Build effective visibility: CLI overrides config entirely.
-    let resolved = models::filter_by_visibility(resolved, &visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = resolved
-            .values()
-            .map(|r| {
-                let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
-                let mut obj = serde_json::json!({
-                    "name": r.name,
-                    "harness": r.harness,
-                    "harness_source": r.harness_source,
-                    "harness_candidates": r.harness_candidates,
-                    "provider": r.provider,
-                    "mode": mode,
-                    "model_id": r.model_id,
-                    "resolved_model": r.model_id,
-                    "description": r.description,
-                });
-                if let Some(error) = unavailable_harness_error(r) {
-                    obj["error"] = serde_json::json!(error);
-                }
-                if let Some(default_effort) = &r.default_effort {
-                    obj["default_effort"] = serde_json::json!(default_effort);
-                }
-                if let Some(autocompact) = r.autocompact {
-                    obj["autocompact"] = serde_json::json!(autocompact);
-                }
-                if let Some(autocompact_pct) = r.autocompact_pct {
-                    obj["autocompact_pct"] = serde_json::json!(autocompact_pct);
-                }
-                if let Some(model) = cache.models.iter().find(|model| model.id == r.model_id) {
-                    add_cost_json_fields(&mut obj, model);
-                }
-                add_route_json_fields(&mut obj, &reports[&r.name]);
-                add_availability_json_fields(&mut obj, r.availability.as_ref());
-                obj
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "aliases": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        add_probe_results_json(
-            &mut out,
-            opencode_probe_result.as_ref(),
-            pi_probe_result.as_ref(),
-            cursor_probe_result.as_ref(),
-        );
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        if let Some(diagnostics) = drain_diagnostics_json(&mut diag) {
-            out["diagnostics"] = diagnostics;
-        }
-        add_routing_diagnostics_json(&mut out, &routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    } else {
-        if let Some(warning) = cache_warning.as_deref() {
-            eprintln!("warning: {warning}");
-        }
-        // Table output
-        println!(
-            "{:<12} {:<10} {:<14} {:<30} {:<12} {}",
-            "ALIAS", "HARNESS", "MODE", "RESOLVED", "AVAILABILITY", "DESCRIPTION"
-        );
-        for r in resolved.values() {
-            let harness = r.harness.as_deref().unwrap_or("—");
-            let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
-            let availability = availability_status_label(r.availability.as_ref());
-            let desc = r.description.clone().unwrap_or_default();
-            println!(
-                "{:<12} {:<10} {:<14} {:<30} {:<12} {}",
-                r.name, harness, mode, r.model_id, availability, desc
-            );
-        }
-        emit_text_diagnostics(&mut diag);
-    }
-
-    Ok(0)
-}
-
-#[derive(Debug, Clone)]
-struct ListModelEntry {
-    route_report: Option<RouteDecisionReport>,
-    id: String,
-    provider: String,
-    release_date: Option<String>,
-    harness: Option<String>,
-    harness_source: HarnessSource,
-    harness_candidates: Vec<String>,
-    description: Option<String>,
-    cost_input: Option<f64>,
-    cost_output: Option<f64>,
-    cost_cache_read: Option<f64>,
-    cost_cache_write: Option<f64>,
-    cost_reasoning: Option<f64>,
-    matched_aliases: Vec<String>,
-    availability: Option<ModelAvailability>,
-}
-
 #[derive(Clone, Copy)]
 struct AvailabilityContext<'a> {
-    auth: &'a NativeAuthCache,
     installed: &'a HashSet<String>,
-    opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pi_probe_result: Option<&'a PiProbeResult>,
-    cursor_probe_result: Option<&'a CursorProbeResult>,
-    listing_evidence: ListingEvidenceSet,
-    catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
@@ -473,26 +214,8 @@ struct RouteTraceInput<'a> {
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
-struct SessionProbeResolver<'a> {
-    session: &'a mut CapabilitySession,
-}
-
-impl crate::routing::ProbeResolver for AvailabilityContext<'_> {
-    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
-        self.opencode_probe_result.cloned()
-    }
-    fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
-        self.pi_probe_result.cloned()
-    }
-    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
-        self.cursor_probe_result.cloned()
-    }
-    fn listing_evidence(
-        &mut self,
-        harness: crate::harness::registry::HarnessId,
-    ) -> ListingEvidence {
-        self.listing_evidence.get(harness)
-    }
+pub(super) struct SessionProbeResolver<'a> {
+    pub(super) session: &'a mut CapabilitySession,
 }
 
 impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
@@ -514,24 +237,6 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
     ) -> ListingEvidence {
         self.session.listing_evidence(harness)
     }
-}
-
-struct ListCatalogInput<'a> {
-    cache: &'a models::ModelsCache,
-    outcome: &'a models::RefreshOutcome,
-    visibility: &'a crate::config::ModelVisibility,
-    routing_settings: &'a ResolvedRoutingSettings,
-    routing_diagnostics: &'a [String],
-    capability_snapshot: &'a CapabilitySnapshot,
-    json: bool,
-}
-
-struct ListCatalogStaticInput<'a> {
-    cache: &'a models::ModelsCache,
-    outcome: &'a models::RefreshOutcome,
-    visibility: &'a crate::config::ModelVisibility,
-    routing_diagnostics: &'a [String],
-    json: bool,
 }
 
 struct OutputResolvedInput<'a> {
@@ -560,748 +265,6 @@ struct OutputPassthroughInput<'a> {
     json: bool,
 }
 
-fn run_list_all(
-    merged: &IndexMap<String, ModelAlias>,
-    cache: &models::ModelsCache,
-    outcome: &models::RefreshOutcome,
-    visibility: &crate::config::ModelVisibility,
-    availability_ctx: AvailabilityContext<'_>,
-    routing_diagnostics: &[String],
-    json: bool,
-) -> Result<i32, MarsError> {
-    let cache_warning = cache_warning(outcome);
-    let models = collect_all_model_entries(merged, cache, availability_ctx);
-    let models = filter_model_entries_by_visibility(models, visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = models
-            .into_iter()
-            .map(|model| {
-                let mut obj = serde_json::json!({
-                    "id": model.id,
-                    "provider": model.provider,
-                    "release_date": model.release_date,
-                    "harness": model.harness,
-                    "harness_source": model.harness_source,
-                    "harness_candidates": model.harness_candidates,
-                    "description": model.description,
-                    "cost_input": model.cost_input,
-                    "cost_output": model.cost_output,
-                    "cost_cache_read": model.cost_cache_read,
-                    "cost_cache_write": model.cost_cache_write,
-                    "cost_reasoning": model.cost_reasoning,
-                    "matched_aliases": model.matched_aliases,
-                });
-                if let Some(report) = &model.route_report {
-                    add_route_json_fields(&mut obj, report);
-                }
-                add_availability_json_fields(&mut obj, model.availability.as_ref());
-                obj
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "models": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        add_probe_results_json(
-            &mut out,
-            availability_ctx.opencode_probe_result,
-            availability_ctx.pi_probe_result,
-            availability_ctx.cursor_probe_result,
-        );
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    } else {
-        if let Some(warning) = cache_warning.as_deref() {
-            eprintln!("warning: {warning}");
-        }
-        println!(
-            "{:<10} {:<34} {:<12} {:<10} {:<12} {}",
-            "PROVIDER", "MODEL ID", "RELEASE", "HARNESS", "AVAILABILITY", "ALIASES"
-        );
-        for model in models {
-            let release = model.release_date.as_deref().unwrap_or("—");
-            let harness = model.harness.as_deref().unwrap_or("—");
-            let availability = availability_status_label(model.availability.as_ref());
-            println!(
-                "{:<10} {:<34} {:<12} {:<10} {:<12} {}",
-                model.provider,
-                model.id,
-                release,
-                harness,
-                availability,
-                model.matched_aliases.join(",")
-            );
-        }
-    }
-
-    Ok(0)
-}
-
-fn run_list_aliases_static(
-    merged: &IndexMap<String, ModelAlias>,
-    cache: &models::ModelsCache,
-    outcome: &models::RefreshOutcome,
-    visibility: &crate::config::ModelVisibility,
-    routing_diagnostics: &[String],
-    json: bool,
-) -> Result<i32, MarsError> {
-    let cache_warning = cache_warning(outcome);
-    let resolved = models::resolve_all_static(merged, cache);
-    let resolved = models::filter_by_visibility(resolved, visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = resolved
-            .values()
-            .map(|r| {
-                let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
-                serde_json::json!({
-                    "name": r.name,
-                    "provider": r.provider,
-                    "mode": mode,
-                    "model_id": r.model_id,
-                    "resolved_model": r.model_id,
-                    "description": r.description,
-                })
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "aliases": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        return Ok(0);
-    }
-
-    if let Some(warning) = cache_warning.as_deref() {
-        eprintln!("warning: {warning}");
-    }
-    println!(
-        "{:<12} {:<14} {:<30} {}",
-        "ALIAS", "MODE", "RESOLVED", "DESCRIPTION"
-    );
-    for r in resolved.values() {
-        let mode = mode_for_alias(merged.get(&r.name).map(|a| &a.spec));
-        let desc = r.description.clone().unwrap_or_default();
-        println!("{:<12} {:<14} {:<30} {}", r.name, mode, r.model_id, desc);
-    }
-    Ok(0)
-}
-
-fn run_list_all_static(
-    merged: &IndexMap<String, ModelAlias>,
-    cache: &models::ModelsCache,
-    outcome: &models::RefreshOutcome,
-    visibility: &crate::config::ModelVisibility,
-    routing_diagnostics: &[String],
-    json: bool,
-) -> Result<i32, MarsError> {
-    let cache_warning = cache_warning(outcome);
-    let models = collect_all_model_entries_static(merged, cache);
-    let models = filter_model_entries_by_visibility(models, visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = models
-            .into_iter()
-            .map(|model| {
-                serde_json::json!({
-                    "id": model.id,
-                    "provider": model.provider,
-                    "release_date": model.release_date,
-                    "description": model.description,
-                    "cost_input": model.cost_input,
-                    "cost_output": model.cost_output,
-                    "cost_cache_read": model.cost_cache_read,
-                    "cost_cache_write": model.cost_cache_write,
-                    "cost_reasoning": model.cost_reasoning,
-                    "matched_aliases": model.matched_aliases,
-                })
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "models": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        return Ok(0);
-    }
-
-    if let Some(warning) = cache_warning.as_deref() {
-        eprintln!("warning: {warning}");
-    }
-    println!(
-        "{:<10} {:<34} {:<12} {}",
-        "PROVIDER", "MODEL ID", "RELEASE", "ALIASES"
-    );
-    for model in models {
-        let release = model.release_date.as_deref().unwrap_or("—");
-        println!(
-            "{:<10} {:<34} {:<12} {}",
-            model.provider,
-            model.id,
-            release,
-            model.matched_aliases.join(",")
-        );
-    }
-    Ok(0)
-}
-
-fn run_list_catalog_static(input: ListCatalogStaticInput<'_>) -> Result<i32, MarsError> {
-    let ListCatalogStaticInput {
-        cache,
-        outcome,
-        visibility,
-        routing_diagnostics,
-        json,
-    } = input;
-    let cache_warning = cache_warning(outcome);
-    let models = collect_catalog_model_entries_static(cache);
-    let models = filter_model_entries_by_visibility(models, visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = models
-            .into_iter()
-            .map(|model| {
-                serde_json::json!({
-                    "provider": model.provider,
-                    "id": model.id,
-                    "release_date": model.release_date,
-                    "description": model.description,
-                    "cost_input": model.cost_input,
-                    "cost_output": model.cost_output,
-                    "cost_cache_read": model.cost_cache_read,
-                    "cost_cache_write": model.cost_cache_write,
-                    "cost_reasoning": model.cost_reasoning,
-                })
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "catalog": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        return Ok(0);
-    }
-
-    if let Some(warning) = cache_warning.as_deref() {
-        eprintln!("warning: {warning}");
-    }
-    println!("{:<10} {:<34} {:<12}", "PROVIDER", "MODEL ID", "RELEASE");
-    for model in models {
-        let release = model.release_date.as_deref().unwrap_or("—");
-        println!("{:<10} {:<34} {:<12}", model.provider, model.id, release);
-    }
-    Ok(0)
-}
-
-fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
-    let ListCatalogInput {
-        cache,
-        outcome,
-        visibility,
-        routing_settings,
-        routing_diagnostics,
-        capability_snapshot,
-        json,
-    } = input;
-    let cache_warning = cache_warning(outcome);
-    let installed = capability_snapshot.installed_harnesses();
-    let probe_result = capability_snapshot.opencode.result().cloned();
-    let pi_probe_result = capability_snapshot.pi.result().cloned();
-    let cursor_probe_result = capability_snapshot.cursor.result().cloned();
-    let catalog_slugs = models::catalog_model_slugs(cache);
-    let native_auth = NativeAuthCache::default();
-    let availability_ctx = AvailabilityContext {
-        auth: &native_auth,
-        installed: &installed,
-        opencode_probe_result: probe_result.as_ref(),
-        pi_probe_result: pi_probe_result.as_ref(),
-        cursor_probe_result: cursor_probe_result.as_ref(),
-        listing_evidence: capability_snapshot.listing_evidence_set(),
-        catalog_model_slugs: Some(catalog_slugs.as_slice()),
-        routing_settings,
-    };
-    let models = collect_catalog_model_entries(cache, availability_ctx);
-    let models = filter_model_entries_by_visibility(models, visibility);
-
-    if json {
-        let entries: Vec<serde_json::Value> = models
-            .into_iter()
-            .map(|model| {
-                let mut obj = serde_json::json!({
-                    "id": model.id,
-                    "provider": model.provider,
-                    "release_date": model.release_date,
-                    "harness": model.harness,
-                    "harness_source": model.harness_source,
-                    "harness_candidates": model.harness_candidates,
-                    "description": model.description,
-                    "cost_input": model.cost_input,
-                    "cost_output": model.cost_output,
-                    "cost_cache_read": model.cost_cache_read,
-                    "cost_cache_write": model.cost_cache_write,
-                    "cost_reasoning": model.cost_reasoning,
-                });
-                if let Some(report) = &model.route_report {
-                    add_route_json_fields(&mut obj, report);
-                }
-                add_availability_json_fields(&mut obj, model.availability.as_ref());
-                obj
-            })
-            .collect();
-        let mut out = serde_json::json!({
-            "models": entries,
-            "cache_available": cache.fetched_at.is_some(),
-        });
-        add_probe_results_json(
-            &mut out,
-            probe_result.as_ref(),
-            pi_probe_result.as_ref(),
-            cursor_probe_result.as_ref(),
-        );
-        if let Some(warning) = cache_warning.as_deref() {
-            out["cache_warning"] = serde_json::json!(warning);
-        }
-        add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    } else {
-        if let Some(warning) = cache_warning.as_deref() {
-            eprintln!("warning: {warning}");
-        }
-        println!(
-            "{:<10} {:<34} {:<12} {:<10} {:<12}",
-            "PROVIDER", "MODEL ID", "RELEASE", "HARNESS", "AVAILABILITY"
-        );
-        for model in models {
-            let release = model.release_date.as_deref().unwrap_or("—");
-            let harness = model.harness.as_deref().unwrap_or("—");
-            let availability = availability_status_label(model.availability.as_ref());
-            println!(
-                "{:<10} {:<34} {:<12} {:<10} {:<12}",
-                model.provider, model.id, release, harness, availability
-            );
-        }
-    }
-
-    Ok(0)
-}
-
-fn collect_all_model_entries(
-    merged: &IndexMap<String, ModelAlias>,
-    cache: &models::ModelsCache,
-    availability_ctx: AvailabilityContext<'_>,
-) -> Vec<ListModelEntry> {
-    let mut by_model_id: IndexMap<String, ListModelEntry> = IndexMap::new();
-
-    for (alias_name, alias) in merged {
-        match &alias.spec {
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                for matched in models::auto_resolve_all(
-                    provider.as_deref(),
-                    match_patterns,
-                    exclude_patterns,
-                    cache,
-                ) {
-                    append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
-                }
-            }
-            ModelSpec::Pinned {
-                model, provider, ..
-            } => {
-                if let Some(matched) = cache
-                    .models
-                    .iter()
-                    .find(|cache_model| cache_model.id == *model)
-                {
-                    append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
-                } else {
-                    append_pinned_alias_match(
-                        &mut by_model_id,
-                        model,
-                        provider.as_deref(),
-                        alias.description.as_deref(),
-                        availability_ctx,
-                        alias_name,
-                    );
-                }
-            }
-            ModelSpec::PinnedWithMatch {
-                model,
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                if let Some(matched) = cache
-                    .models
-                    .iter()
-                    .find(|cache_model| cache_model.id == *model)
-                {
-                    append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
-                } else {
-                    append_pinned_alias_match(
-                        &mut by_model_id,
-                        model,
-                        provider.as_deref(),
-                        alias.description.as_deref(),
-                        availability_ctx,
-                        alias_name,
-                    );
-                }
-
-                let provider_for_discovery = provider
-                    .as_deref()
-                    .or_else(|| models::infer_provider_from_model_id(model));
-                for matched in models::auto_resolve_all(
-                    provider_for_discovery,
-                    match_patterns,
-                    exclude_patterns,
-                    cache,
-                ) {
-                    append_alias_match(&mut by_model_id, matched, availability_ctx, alias_name);
-                }
-            }
-        }
-    }
-
-    let mut out: Vec<ListModelEntry> = by_model_id.into_values().collect();
-    sort_list_model_entries(&mut out);
-    out
-}
-
-fn collect_catalog_model_entries(
-    cache: &models::ModelsCache,
-    availability_ctx: AvailabilityContext<'_>,
-) -> Vec<ListModelEntry> {
-    let mut out: Vec<ListModelEntry> = cache
-        .models
-        .iter()
-        .map(|model| model_entry_for_cached(model, availability_ctx))
-        .collect();
-    sort_list_model_entries(&mut out);
-    out
-}
-
-fn collect_all_model_entries_static(
-    merged: &IndexMap<String, ModelAlias>,
-    cache: &models::ModelsCache,
-) -> Vec<ListModelEntry> {
-    let mut by_model_id: IndexMap<String, ListModelEntry> = IndexMap::new();
-
-    for (alias_name, alias) in merged {
-        match &alias.spec {
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                for matched in models::auto_resolve_all(
-                    provider.as_deref(),
-                    match_patterns,
-                    exclude_patterns,
-                    cache,
-                ) {
-                    let entry = by_model_id
-                        .entry(matched.id.clone())
-                        .or_insert_with(|| model_entry_for_cached_static(matched));
-                    append_alias_name(entry, alias_name);
-                }
-            }
-            ModelSpec::Pinned {
-                model, provider, ..
-            } => {
-                let entry = by_model_id.entry(model.clone()).or_insert_with(|| {
-                    cache
-                        .models
-                        .iter()
-                        .find(|cache_model| cache_model.id == *model)
-                        .map(model_entry_for_cached_static)
-                        .unwrap_or_else(|| {
-                            model_entry_for_pinned_static(
-                                model,
-                                provider.as_deref(),
-                                alias.description.as_deref(),
-                            )
-                        })
-                });
-                append_alias_name(entry, alias_name);
-            }
-            ModelSpec::PinnedWithMatch {
-                model,
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                let entry = by_model_id.entry(model.clone()).or_insert_with(|| {
-                    cache
-                        .models
-                        .iter()
-                        .find(|cache_model| cache_model.id == *model)
-                        .map(model_entry_for_cached_static)
-                        .unwrap_or_else(|| {
-                            model_entry_for_pinned_static(
-                                model,
-                                provider.as_deref(),
-                                alias.description.as_deref(),
-                            )
-                        })
-                });
-                append_alias_name(entry, alias_name);
-
-                let provider_for_discovery = provider
-                    .as_deref()
-                    .or_else(|| models::infer_provider_from_model_id(model));
-                for matched in models::auto_resolve_all(
-                    provider_for_discovery,
-                    match_patterns,
-                    exclude_patterns,
-                    cache,
-                ) {
-                    let entry = by_model_id
-                        .entry(matched.id.clone())
-                        .or_insert_with(|| model_entry_for_cached_static(matched));
-                    append_alias_name(entry, alias_name);
-                }
-            }
-        }
-    }
-
-    let mut out: Vec<ListModelEntry> = by_model_id.into_values().collect();
-    sort_list_model_entries(&mut out);
-    out
-}
-
-fn collect_catalog_model_entries_static(cache: &models::ModelsCache) -> Vec<ListModelEntry> {
-    let mut out: Vec<ListModelEntry> = cache
-        .models
-        .iter()
-        .map(model_entry_for_cached_static)
-        .collect();
-    sort_list_model_entries(&mut out);
-    out
-}
-
-fn append_alias_match(
-    by_model_id: &mut IndexMap<String, ListModelEntry>,
-    model: &models::CachedModel,
-    availability_ctx: AvailabilityContext<'_>,
-    alias_name: &str,
-) {
-    let entry = by_model_id
-        .entry(model.id.clone())
-        .or_insert_with(|| model_entry_for_cached(model, availability_ctx));
-
-    append_alias_name(entry, alias_name);
-}
-
-fn append_pinned_alias_match(
-    by_model_id: &mut IndexMap<String, ListModelEntry>,
-    model_id: &str,
-    provider: Option<&str>,
-    description: Option<&str>,
-    availability_ctx: AvailabilityContext<'_>,
-    alias_name: &str,
-) {
-    let entry = by_model_id.entry(model_id.to_string()).or_insert_with(|| {
-        model_entry_for_pinned(model_id, provider, description, availability_ctx)
-    });
-
-    append_alias_name(entry, alias_name);
-}
-
-fn append_alias_name(entry: &mut ListModelEntry, alias_name: &str) {
-    if !entry
-        .matched_aliases
-        .iter()
-        .any(|existing| existing == alias_name)
-    {
-        entry.matched_aliases.push(alias_name.to_string());
-    }
-}
-
-fn model_entry_for_cached(
-    model: &models::CachedModel,
-    availability_ctx: AvailabilityContext<'_>,
-) -> ListModelEntry {
-    model_entry_for_cached_with_auth(model, availability_ctx, |harness| {
-        availability_ctx.auth.state(harness)
-    })
-}
-
-fn model_entry_for_cached_with_auth<F>(
-    model: &models::CachedModel,
-    availability_ctx: AvailabilityContext<'_>,
-    auth_check: F,
-) -> ListModelEntry
-where
-    F: Fn(&str) -> crate::harness::host::AuthState,
-{
-    let trace =
-        resolve_model_route_with_auth(&model.provider, &model.id, availability_ctx, auth_check);
-    let harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
-    let harness_source = if harness.is_some() {
-        HarnessSource::AutoDetected
-    } else {
-        HarnessSource::Unavailable
-    };
-
-    ListModelEntry {
-        id: model.id.clone(),
-        provider: model.provider.clone(),
-        release_date: model.release_date.clone(),
-        harness,
-        harness_source,
-        harness_candidates: models::harness::harness_candidates_for_provider(&model.provider),
-        description: model.description.clone(),
-        cost_input: model.cost_input,
-        cost_output: model.cost_output,
-        cost_cache_read: model.cost_cache_read,
-        cost_cache_write: model.cost_cache_write,
-        cost_reasoning: model.cost_reasoning,
-        matched_aliases: Vec::new(),
-        availability: Some(models::availability::from_routing_trace(
-            &model.id,
-            &model.provider,
-            &trace,
-        )),
-        route_report: Some(model_report(
-            &model.id,
-            &model.id,
-            "catalog",
-            availability_ctx.routing_settings,
-            &trace,
-        )),
-    }
-}
-
-fn model_entry_for_pinned(
-    model_id: &str,
-    provider: Option<&str>,
-    description: Option<&str>,
-    availability_ctx: AvailabilityContext<'_>,
-) -> ListModelEntry {
-    let provider = provider
-        .map(str::to_string)
-        .or_else(|| models::infer_provider_from_model_id(model_id).map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string());
-    let trace = resolve_model_route_with_auth(&provider, model_id, availability_ctx, |harness| {
-        availability_ctx.auth.state(harness)
-    });
-    let harness = (!trace.harness.is_empty()).then(|| trace.harness.clone());
-    let harness_source = if harness.is_some() {
-        HarnessSource::AutoDetected
-    } else {
-        HarnessSource::Unavailable
-    };
-
-    ListModelEntry {
-        id: model_id.to_string(),
-        provider: provider.clone(),
-        release_date: None,
-        harness,
-        harness_source,
-        harness_candidates: models::harness::harness_candidates_for_provider(&provider),
-        description: description.map(str::to_string),
-        cost_input: None,
-        cost_output: None,
-        cost_cache_read: None,
-        cost_cache_write: None,
-        cost_reasoning: None,
-        matched_aliases: Vec::new(),
-        availability: Some(models::availability::from_routing_trace(
-            model_id, &provider, &trace,
-        )),
-        route_report: Some(model_report(
-            model_id,
-            model_id,
-            "pinned",
-            availability_ctx.routing_settings,
-            &trace,
-        )),
-    }
-}
-
-fn model_entry_for_cached_static(model: &models::CachedModel) -> ListModelEntry {
-    ListModelEntry {
-        id: model.id.clone(),
-        provider: model.provider.clone(),
-        release_date: model.release_date.clone(),
-        harness: None,
-        harness_source: HarnessSource::Unavailable,
-        harness_candidates: Vec::new(),
-        description: model.description.clone(),
-        cost_input: model.cost_input,
-        cost_output: model.cost_output,
-        cost_cache_read: model.cost_cache_read,
-        cost_cache_write: model.cost_cache_write,
-        cost_reasoning: model.cost_reasoning,
-        matched_aliases: Vec::new(),
-        availability: None,
-        route_report: None,
-    }
-}
-
-fn model_entry_for_pinned_static(
-    model_id: &str,
-    provider: Option<&str>,
-    description: Option<&str>,
-) -> ListModelEntry {
-    let provider = provider
-        .map(str::to_string)
-        .or_else(|| models::infer_provider_from_model_id(model_id).map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string());
-    ListModelEntry {
-        id: model_id.to_string(),
-        provider,
-        release_date: None,
-        harness: None,
-        harness_source: HarnessSource::Unavailable,
-        harness_candidates: Vec::new(),
-        description: description.map(str::to_string),
-        cost_input: None,
-        cost_output: None,
-        cost_cache_read: None,
-        cost_cache_write: None,
-        cost_reasoning: None,
-        matched_aliases: Vec::new(),
-        availability: None,
-        route_report: None,
-    }
-}
-
-fn sort_list_model_entries(entries: &mut [ListModelEntry]) {
-    entries.sort_by(|a, b| {
-        a.provider
-            .to_ascii_lowercase()
-            .cmp(&b.provider.to_ascii_lowercase())
-            .then_with(|| {
-                b.release_date
-                    .as_deref()
-                    .unwrap_or("")
-                    .cmp(a.release_date.as_deref().unwrap_or(""))
-            })
-            .then_with(|| a.id.cmp(&b.id))
-    });
-}
-
 fn routing_settings_evidence<'a>(
     input: &'a RouteTraceInput<'a>,
 ) -> crate::routing::RoutingSettingsEvidence<'a> {
@@ -1318,48 +281,6 @@ fn routing_settings_evidence<'a>(
     )
 }
 
-fn resolve_model_route_with_auth<F>(
-    provider: &str,
-    model_id: &str,
-    availability_ctx: AvailabilityContext<'_>,
-    auth_check: F,
-) -> crate::routing::RoutingTrace
-where
-    F: Fn(&str) -> crate::harness::host::AuthState,
-{
-    let route_input = RouteTraceInput {
-        preferred_harness: None,
-        auth: availability_ctx.auth,
-        model_id,
-        provider_for_order: provider,
-        provider_constraint: None,
-        installed: availability_ctx.installed,
-        opencode_probe_result: availability_ctx.opencode_probe_result,
-        pi_probe_result: availability_ctx.pi_probe_result,
-        cursor_probe_result: availability_ctx.cursor_probe_result,
-        catalog_model_slugs: availability_ctx.catalog_model_slugs,
-        routing_settings: availability_ctx.routing_settings,
-    };
-    let routing_evidence = routing_settings_evidence(&route_input);
-    let mut probes = availability_ctx;
-    crate::routing::evaluate_candidates(&routing_evidence.routing_input(), &mut probes, auth_check)
-}
-
-fn route_trace_for_resolved_model(
-    input: &RouteTraceInput<'_>,
-    context: AvailabilityContext<'_>,
-) -> crate::routing::RoutingTrace {
-    let routing_evidence = routing_settings_evidence(input);
-    let mut routing_input = routing_evidence.routing_input();
-    routing_input.preferred_harness = input
-        .preferred_harness
-        .map(|harness| (harness, crate::routing::RouteSource::Alias));
-    let mut probes = context;
-    crate::routing::evaluate_candidates(&routing_input, &mut probes, |harness| {
-        input.auth.state(harness)
-    })
-}
-
 fn route_trace_for_resolved_model_with_probes(
     input: &RouteTraceInput<'_>,
     probe_resolver: &mut dyn crate::routing::ProbeResolver,
@@ -1374,113 +295,6 @@ fn route_trace_for_resolved_model_with_probes(
     })
 }
 
-fn effective_visibility(
-    project_config: Option<&crate::config::LoadedProjectConfig>,
-    args: &ListArgs,
-) -> crate::config::ModelVisibility {
-    if args.no_visibility {
-        return crate::config::ModelVisibility::default();
-    }
-    if args.include.is_some() || args.exclude.is_some() || args.providers.is_some() {
-        return crate::config::ModelVisibility {
-            include: args.include.clone(),
-            exclude: args.exclude.clone(),
-            providers: args.providers.clone(),
-        };
-    }
-
-    project_config
-        .map(|loaded| loaded.effective.settings.model_visibility.clone())
-        .unwrap_or_default()
-}
-
-fn apply_routing_settings_to_resolved_aliases(
-    resolved: &mut IndexMap<String, models::ResolvedAlias>,
-    aliases: &IndexMap<String, ModelAlias>,
-    context: AvailabilityContext<'_>,
-) -> IndexMap<String, RouteDecisionReport> {
-    resolved
-        .values_mut()
-        .map(|alias| {
-            let report =
-                apply_routing_settings_to_resolved_alias(alias, aliases.get(&alias.name), context);
-            (alias.name.clone(), report)
-        })
-        .collect()
-}
-
-fn apply_routing_settings_to_resolved_alias(
-    alias: &mut models::ResolvedAlias,
-    source_alias: Option<&ModelAlias>,
-    context: AvailabilityContext<'_>,
-) -> RouteDecisionReport {
-    let AvailabilityContext {
-        installed,
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
-        catalog_model_slugs,
-        routing_settings,
-        ..
-    } = context;
-    let provider_for_order =
-        models::infer_provider_from_model_id(&alias.model_id).unwrap_or(alias.provider.as_str());
-    let provider_constraint = source_alias.and_then(models::provider_constraint_for_alias);
-    let route_input = RouteTraceInput {
-        preferred_harness: source_alias.and_then(|source| source.harness.as_deref()),
-        auth: context.auth,
-        model_id: &alias.model_id,
-        provider_for_order,
-        provider_constraint: provider_constraint.as_deref(),
-        installed,
-        opencode_probe_result,
-        pi_probe_result,
-        cursor_probe_result,
-        catalog_model_slugs,
-        routing_settings,
-    };
-    let trace = route_trace_for_resolved_model(&route_input, context);
-    apply_route_to_resolved_alias(alias, &trace, context);
-    model_report(
-        &alias.name,
-        &alias.model_id,
-        "alias",
-        routing_settings,
-        &trace,
-    )
-}
-
-fn prune_unavailable(resolved: &mut IndexMap<String, models::ResolvedAlias>) {
-    resolved.retain(|_, alias| {
-        alias
-            .availability
-            .as_ref()
-            .map(|availability| availability.status != AvailabilityStatus::Unavailable)
-            .unwrap_or(true)
-    });
-}
-
-fn filter_model_entries_by_visibility(
-    entries: Vec<ListModelEntry>,
-    visibility: &crate::config::ModelVisibility,
-) -> Vec<ListModelEntry> {
-    if visibility.is_empty() {
-        return entries;
-    }
-
-    entries
-        .into_iter()
-        .filter(|entry| {
-            let paths = entry
-                .availability
-                .as_ref()
-                .map(|availability| availability.runnable_paths.as_slice())
-                .unwrap_or(&[]);
-            models::visibility_permits(visibility, &entry.id, &entry.provider, paths)
-        })
-        .collect()
-}
-
 fn add_availability_json_fields(
     obj: &mut serde_json::Value,
     availability: Option<&ModelAvailability>,
@@ -1489,49 +303,6 @@ fn add_availability_json_fields(
         obj["availability"] = serde_json::json!(availability.status);
         obj["availability_source"] = serde_json::json!(availability.source);
         obj["runnable_paths"] = serde_json::json!(availability.runnable_paths);
-    }
-}
-
-fn add_cost_json_fields(obj: &mut serde_json::Value, model: &models::CachedModel) {
-    obj["cost_input"] = serde_json::json!(model.cost_input);
-    obj["cost_output"] = serde_json::json!(model.cost_output);
-    obj["cost_cache_read"] = serde_json::json!(model.cost_cache_read);
-    obj["cost_cache_write"] = serde_json::json!(model.cost_cache_write);
-    obj["cost_reasoning"] = serde_json::json!(model.cost_reasoning);
-}
-
-fn add_probe_results_json(
-    out: &mut serde_json::Value,
-    probe_result: Option<&OpenCodeProbeResult>,
-    pi_probe_result: Option<&PiProbeResult>,
-    cursor_probe_result: Option<&CursorProbeResult>,
-) {
-    if let Some(probe) = probe_result {
-        out["probe_results"] = serde_json::json!({
-            "opencode": {
-                "success": probe.model_probe_success,
-                "models_found": probe.model_slugs.len(),
-            }
-        });
-    }
-    if let Some(probe) = pi_probe_result {
-        if out.get("probe_results").is_none() {
-            out["probe_results"] = serde_json::json!({});
-        }
-        out["probe_results"]["pi"] = serde_json::json!({
-            "compatible": probe.compatible,
-            "version": probe.version,
-            "missing_surface_tokens": probe.help_surface_tokens_missing,
-        });
-    }
-    if let Some(probe) = cursor_probe_result {
-        if out.get("probe_results").is_none() {
-            out["probe_results"] = serde_json::json!({});
-        }
-        out["probe_results"]["cursor"] = serde_json::json!({
-            "success": probe.model_probe_success,
-            "models_found": probe.slugs.len(),
-        });
     }
 }
 
@@ -1758,13 +529,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             &mut resolved,
             &route_trace,
             AvailabilityContext {
-                auth: &native_auth,
                 installed: &installed,
-                opencode_probe_result: capability_session.loaded_opencode_probe_result(),
-                pi_probe_result: capability_session.loaded_pi_probe_result(),
-                cursor_probe_result: capability_session.loaded_cursor_probe_result(),
-                listing_evidence: capability_session.loaded_listing_evidence_set(),
-                catalog_model_slugs: None,
                 routing_settings: &routing_settings,
             },
         );
@@ -1950,13 +715,7 @@ fn run_resolve_exact_alias(
                 r,
                 trace,
                 AvailabilityContext {
-                    auth: runtime.auth,
                     installed: runtime.installed,
-                    opencode_probe_result: capability_session.loaded_opencode_probe_result(),
-                    pi_probe_result: capability_session.loaded_pi_probe_result(),
-                    cursor_probe_result: capability_session.loaded_cursor_probe_result(),
-                    listing_evidence: capability_session.loaded_listing_evidence_set(),
-                    catalog_model_slugs: None,
                     routing_settings: runtime.routing_settings,
                 },
             );
@@ -2481,14 +1240,6 @@ fn format_spec(spec: &ModelSpec) -> serde_json::Value {
     }
 }
 
-fn mode_for_alias(spec: Option<&ModelSpec>) -> &'static str {
-    match spec {
-        Some(ModelSpec::Pinned { .. }) | Some(ModelSpec::PinnedWithMatch { .. }) => "pinned",
-        Some(ModelSpec::AutoResolve { .. }) => "auto-resolve",
-        None => "unknown",
-    }
-}
-
 fn harness_source_label(source: &HarnessSource) -> &'static str {
     match source {
         HarnessSource::Explicit => "explicit",
@@ -2617,25 +1368,11 @@ fn diagnostics_to_json_entries(diagnostics: &[Diagnostic]) -> Vec<serde_json::Va
         .collect()
 }
 
-fn drain_diagnostics_json(diag: &mut DiagnosticCollector) -> Option<serde_json::Value> {
-    let diagnostics = diag.drain();
-    if diagnostics.is_empty() {
-        None
-    } else {
-        Some(serde_json::json!(diagnostics_to_json_entries(&diagnostics)))
-    }
-}
-
 fn emit_drained_text_diagnostics(diagnostics: &[Diagnostic]) {
     for diagnostic in diagnostics {
         let label = diagnostic_level_label(diagnostic.level);
         eprintln!("{label}: {}", diagnostic.message);
     }
-}
-
-fn emit_text_diagnostics(diag: &mut DiagnosticCollector) {
-    let diagnostics = diag.drain();
-    emit_drained_text_diagnostics(&diagnostics);
 }
 
 fn diagnostic_level_label(level: DiagnosticLevel) -> &'static str {
@@ -2650,7 +1387,6 @@ fn diagnostic_level_label(level: DiagnosticLevel) -> &'static str {
 mod tests {
     use super::*;
     use clap::Parser;
-    use indexmap::IndexMap;
     use tempfile::TempDir;
 
     fn write_mars_toml(temp: &TempDir, contents: &str) {
@@ -2677,27 +1413,51 @@ mod tests {
     }
 
     #[test]
-    fn list_args_parses_catalog() {
-        let args = ListArgs::try_parse_from(["mars", "--catalog"]).unwrap();
-        assert!(args.catalog);
-    }
-
-    #[test]
-    fn list_all_and_catalog_conflict() {
-        let parsed = ModelsArgs::try_parse_from(["mars", "list", "--all", "--catalog"]);
-        assert!(parsed.is_err());
-    }
-
-    #[test]
-    fn list_all_and_include_can_combine() {
-        let parsed = ModelsArgs::try_parse_from(["mars", "list", "--all", "--include", "opus"]);
-        assert!(parsed.is_ok());
-    }
-
-    #[test]
-    fn list_catalog_and_include_can_combine() {
-        let parsed = ModelsArgs::try_parse_from(["mars", "list", "--catalog", "--include", "opus"]);
-        assert!(parsed.is_ok());
+    fn command_matrix_keeps_aliases_catalog_and_new_list_flags_distinct() {
+        for command in [
+            "list",
+            "aliases",
+            "catalog",
+            "resolve",
+            "prompting",
+            "alias",
+            "refresh",
+        ] {
+            assert!(
+                ModelsArgs::try_parse_from(["mars", command, "--help"]).is_err(),
+                "{command} should have its own help surface"
+            );
+        }
+        assert!(
+            ModelsArgs::try_parse_from([
+                "mars",
+                "list",
+                "--all",
+                "--live",
+                "--harness",
+                "codex",
+                "--match",
+                "gpt-*"
+            ])
+            .is_ok()
+        );
+        for command in ["aliases", "catalog"] {
+            assert!(ModelsArgs::try_parse_from(["mars", command, "--no-refresh-models"]).is_ok());
+            assert!(ModelsArgs::try_parse_from(["mars", command, "--live"]).is_err());
+        }
+        for flag in [
+            "--include",
+            "--exclude",
+            "--providers",
+            "--no-visibility",
+            "--catalog",
+            "--unavailable",
+        ] {
+            assert!(
+                ModelsArgs::try_parse_from(["mars", "list", flag]).is_err(),
+                "{flag}"
+            );
+        }
     }
 
     #[test]
@@ -2786,446 +1546,6 @@ description = "Old alias"
         assert_eq!(alias.harness.as_deref(), Some("opencode"));
     }
 
-    fn auto_alias(
-        provider: &str,
-        match_patterns: &[&str],
-        exclude_patterns: &[&str],
-    ) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::AutoResolve {
-                provider: Some(provider.to_string()),
-                match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
-                exclude_patterns: exclude_patterns.iter().map(|v| (*v).to_string()).collect(),
-            },
-        }
-    }
-
-    fn pinned_with_match_alias(
-        model: &str,
-        provider: &str,
-        match_patterns: &[&str],
-        exclude_patterns: &[&str],
-    ) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::PinnedWithMatch {
-                model: model.to_string(),
-                provider: Some(provider.to_string()),
-                match_patterns: match_patterns.iter().map(|v| (*v).to_string()).collect(),
-                exclude_patterns: exclude_patterns.iter().map(|v| (*v).to_string()).collect(),
-            },
-        }
-    }
-
-    fn pinned_alias(model: &str) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: model.to_string(),
-                provider: None,
-            },
-        }
-    }
-
-    fn pinned_alias_with_provider(model: &str, provider: &str) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: model.to_string(),
-                provider: Some(provider.to_string()),
-            },
-        }
-    }
-
-    fn cached_model(id: &str, provider: &str, release_date: Option<&str>) -> models::CachedModel {
-        models::CachedModel {
-            id: id.to_string(),
-            provider: provider.to_string(),
-            release_date: release_date.map(|value| value.to_string()),
-            description: Some(format!("desc-{id}")),
-            context_window: None,
-            max_output: None,
-            cost_input: None,
-            cost_output: None,
-            cost_cache_read: None,
-            cost_cache_write: None,
-            cost_reasoning: None,
-        }
-    }
-
-    fn cache(models: Vec<models::CachedModel>) -> models::ModelsCache {
-        models::ModelsCache {
-            models,
-            fetched_at: Some("123".to_string()),
-        }
-    }
-
-    fn installed(names: &[&str]) -> HashSet<String> {
-        names.iter().map(|name| (*name).to_string()).collect()
-    }
-
-    fn default_routing_settings() -> ResolvedRoutingSettings {
-        crate::config::routing_settings::resolve(&crate::config::Settings::default())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn collect_all_model_entries(
-        merged: &IndexMap<String, ModelAlias>,
-        cache: &models::ModelsCache,
-        installed: &HashSet<String>,
-        opencode_probe_result: Option<&OpenCodeProbeResult>,
-        pi_probe_result: Option<&PiProbeResult>,
-        cursor_probe_result: Option<&CursorProbeResult>,
-        _is_offline: bool,
-        routing_settings: &ResolvedRoutingSettings,
-    ) -> Vec<ListModelEntry> {
-        let catalog_slugs = models::catalog_model_slugs(cache);
-        super::collect_all_model_entries(
-            merged,
-            cache,
-            AvailabilityContext {
-                auth: &NativeAuthCache::default(),
-                installed,
-                opencode_probe_result,
-                pi_probe_result,
-                cursor_probe_result,
-                listing_evidence: ListingEvidenceSet::from_results_assuming_latest_ok(
-                    opencode_probe_result,
-                    pi_probe_result,
-                    cursor_probe_result,
-                ),
-                catalog_model_slugs: Some(catalog_slugs.as_slice()),
-                routing_settings,
-            },
-        )
-    }
-
-    fn collect_catalog_model_entries(
-        cache: &models::ModelsCache,
-        installed: &HashSet<String>,
-        opencode_probe_result: Option<&OpenCodeProbeResult>,
-        pi_probe_result: Option<&PiProbeResult>,
-        cursor_probe_result: Option<&CursorProbeResult>,
-        is_offline: bool,
-        routing_settings: &ResolvedRoutingSettings,
-    ) -> Vec<ListModelEntry> {
-        collect_catalog_model_entries_with_auth(
-            cache,
-            installed,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            is_offline,
-            routing_settings,
-            crate::harness::host::native_auth_state_for_name,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn collect_catalog_model_entries_with_auth<F>(
-        cache: &models::ModelsCache,
-        installed: &HashSet<String>,
-        opencode_probe_result: Option<&OpenCodeProbeResult>,
-        pi_probe_result: Option<&PiProbeResult>,
-        cursor_probe_result: Option<&CursorProbeResult>,
-        _is_offline: bool,
-        routing_settings: &ResolvedRoutingSettings,
-        auth_check: F,
-    ) -> Vec<ListModelEntry>
-    where
-        F: Fn(&str) -> crate::harness::host::AuthState + Copy,
-    {
-        let catalog_slugs = models::catalog_model_slugs(cache);
-        let availability_ctx = AvailabilityContext {
-            auth: &NativeAuthCache::default(),
-            installed,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
-            listing_evidence: ListingEvidenceSet::from_results_assuming_latest_ok(
-                opencode_probe_result,
-                pi_probe_result,
-                cursor_probe_result,
-            ),
-            catalog_model_slugs: Some(catalog_slugs.as_slice()),
-            routing_settings,
-        };
-        let mut out: Vec<ListModelEntry> = cache
-            .models
-            .iter()
-            .map(|model| {
-                super::model_entry_for_cached_with_auth(model, availability_ctx, auth_check)
-            })
-            .collect();
-        super::sort_list_model_entries(&mut out);
-        out
-    }
-
-    #[test]
-    fn list_all_shows_multiple_per_alias() {
-        let mut merged = IndexMap::new();
-        merged.insert(
-            "opus".to_string(),
-            auto_alias("Anthropic", &["claude-opus-*"], &[]),
-        );
-
-        let models_cache = cache(vec![
-            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
-            cached_model("claude-opus-4-7", "Anthropic", Some("2026-04-01")),
-        ]);
-
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id, "claude-opus-4-7");
-        assert_eq!(rows[1].id, "claude-opus-4-6");
-    }
-
-    #[test]
-    fn list_all_includes_matched_aliases_with_dedup() {
-        let mut merged = IndexMap::new();
-        merged.insert(
-            "opus".to_string(),
-            auto_alias("Anthropic", &["claude-opus-*"], &[]),
-        );
-        merged.insert(
-            "legacy".to_string(),
-            auto_alias("Anthropic", &["*4-6"], &[]),
-        );
-
-        let models_cache = cache(vec![cached_model(
-            "claude-opus-4-6",
-            "Anthropic",
-            Some("2026-02-05"),
-        )]);
-
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "claude-opus-4-6");
-        assert_eq!(rows[0].matched_aliases, vec!["opus", "legacy"]);
-    }
-
-    #[test]
-    fn list_all_includes_pinned_cache_entries() {
-        let mut merged = IndexMap::new();
-        merged.insert("fixed".to_string(), pinned_alias("gpt-5.3-codex"));
-
-        let models_cache = cache(vec![cached_model(
-            "gpt-5.3-codex",
-            "OpenAI",
-            Some("2026-01-01"),
-        )]);
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "gpt-5.3-codex");
-        assert_eq!(rows[0].matched_aliases, vec!["fixed"]);
-    }
-
-    #[test]
-    fn list_all_includes_pinned_cache_miss_entries() {
-        let mut merged = IndexMap::new();
-        merged.insert("fixed".to_string(), pinned_alias("gpt-5.3-codex"));
-
-        let models_cache = cache(Vec::new());
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "gpt-5.3-codex");
-        assert!(rows[0].provider.eq_ignore_ascii_case("openai"));
-        assert_eq!(rows[0].release_date, None);
-        assert_eq!(rows[0].matched_aliases, vec!["fixed"]);
-    }
-
-    #[test]
-    fn list_all_uses_declared_provider_for_pinned_cache_miss_entries() {
-        let mut merged = IndexMap::new();
-        merged.insert(
-            "custom".to_string(),
-            pinned_alias_with_provider("custom-model-id", "Anthropic"),
-        );
-
-        let models_cache = cache(Vec::new());
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "custom-model-id");
-        assert_eq!(rows[0].provider, "Anthropic");
-        assert_eq!(rows[0].release_date, None);
-        assert_eq!(rows[0].matched_aliases, vec!["custom"]);
-    }
-
-    #[test]
-    fn list_all_includes_unavailable_harness_entries_with_fallback_candidates() {
-        let mut merged = IndexMap::new();
-        merged.insert("x".to_string(), auto_alias("Unknown", &["x-*"], &[]));
-        let models_cache = cache(vec![cached_model("x-1", "Unknown", Some("2026-01-01"))]);
-
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].harness, None);
-        assert_eq!(rows[0].harness_source, HarnessSource::Unavailable);
-        assert_eq!(
-            rows[0].harness_candidates,
-            vec!["claude", "codex", "pi", "cursor", "opencode"]
-        );
-    }
-
-    #[test]
-    fn list_catalog_shows_all_cache_sorted() {
-        let models_cache = cache(vec![
-            cached_model("gpt-5", "OpenAI", Some("2025-06-01")),
-            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
-            cached_model("claude-sonnet-4-5", "Anthropic", Some("2025-08-01")),
-        ]);
-
-        let installed = installed(&[]);
-        let rows = collect_catalog_model_entries(
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].id, "claude-opus-4-6");
-        assert_eq!(rows[1].id, "claude-sonnet-4-5");
-        assert_eq!(rows[2].id, "gpt-5");
-    }
-
-    #[test]
-    fn list_catalog_uses_catalog_slugs_for_native_harness_matching() {
-        let models_cache = cache(vec![cached_model(
-            "claude-opus-4-6",
-            "Anthropic",
-            Some("2026-02-05"),
-        )]);
-
-        let installed = installed(&["claude"]);
-        let rows = collect_catalog_model_entries_with_auth(
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-            |_| crate::harness::host::AuthState::Authenticated,
-        );
-
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].harness.as_deref(), Some("claude"));
-        assert_eq!(rows[0].harness_source, HarnessSource::AutoDetected);
-    }
-
-    #[test]
-    fn list_all_includes_pinned_with_match_discovery_candidates() {
-        let mut merged = IndexMap::new();
-        merged.insert(
-            "opus".to_string(),
-            pinned_with_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
-        );
-        let models_cache = cache(vec![
-            cached_model("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
-            cached_model("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
-        ]);
-
-        let installed = installed(&[]);
-        let rows = collect_all_model_entries(
-            &merged,
-            &models_cache,
-            &installed,
-            None,
-            None,
-            None,
-            false,
-            &default_routing_settings(),
-        );
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id, "claude-opus-4-7");
-        assert_eq!(rows[1].id, "claude-opus-4-6");
-        assert_eq!(rows[0].matched_aliases, vec!["opus"]);
-        assert_eq!(rows[1].matched_aliases, vec!["opus"]);
-    }
     fn passthrough_trace(
         match_evidence: crate::routing::MatchEvidence,
     ) -> crate::routing::RoutingTrace {
@@ -3269,48 +1589,5 @@ description = "Old alias"
         )
         .expect("passthrough warning expected");
         assert!(warning.contains("not found in catalog"));
-    }
-
-    #[test]
-    fn static_live_route_drops_auth_after_failed_cursor_refresh() {
-        let auth = NativeAuthCache::default();
-        let installed = installed(&["cursor"]);
-        let settings = default_routing_settings();
-        let cursor = CursorProbeResult {
-            slugs: vec!["gpt-5.5".into()],
-            model_probe_success: true,
-            error: None,
-        };
-        let context = AvailabilityContext {
-            auth: &auth,
-            installed: &installed,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: Some(&cursor),
-            listing_evidence: ListingEvidenceSet::from_outcomes(
-                None,
-                None,
-                Some(
-                    &crate::models::probes::cursor_cache::CachedCursorProbeOutcome::StaleFailed(
-                        cursor.clone(),
-                    ),
-                ),
-            ),
-            catalog_model_slugs: None,
-            routing_settings: &settings,
-        };
-        let trace = resolve_model_route_with_auth("cursor", "gpt-5.5", context, |_| {
-            crate::harness::host::AuthState::Authenticated
-        });
-        let assessment = trace
-            .assessments
-            .iter()
-            .find(|item| item.harness == "cursor")
-            .unwrap();
-        assert_eq!(assessment.eligibility_reason(), Some("auth_listing_failed"));
-        assert_eq!(
-            models::availability::from_routing_trace("gpt-5.5", "cursor", &trace).status,
-            AvailabilityStatus::Unknown
-        );
     }
 }

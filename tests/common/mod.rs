@@ -210,19 +210,14 @@ description = "fixture alias for models cache tests"
     source_root
 }
 
-pub fn resolved_model_ids_from_models_list_json(stdout: &[u8]) -> BTreeSet<String> {
+pub fn model_ids_from_catalog_json(stdout: &[u8]) -> BTreeSet<String> {
     let payload: Value =
-        serde_json::from_slice(stdout).expect("models list --json must be valid JSON");
-    payload["aliases"]
+        serde_json::from_slice(stdout).expect("models catalog --json must be valid JSON");
+    payload["catalog"]
         .as_array()
-        .expect("models list JSON should include aliases array")
+        .expect("models catalog JSON should include catalog array")
         .iter()
-        .filter_map(|alias| {
-            alias["resolved_model"]
-                .as_str()
-                .or_else(|| alias["model_id"].as_str())
-                .map(ToOwned::to_owned)
-        })
+        .filter_map(|model| model["id"].as_str().map(ToOwned::to_owned))
         .collect()
 }
 

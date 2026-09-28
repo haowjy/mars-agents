@@ -59,58 +59,50 @@ fn model_command(
 }
 
 #[test]
-fn exact_and_live_aliases_skip_excluded_or_unverified_preferences() {
+fn exact_aliases_skip_excluded_or_unverified_preferences() {
     for preference in ["claude", "opencode"] {
-        for args in [
-            vec!["models", "resolve", "fast"],
-            vec!["models", "list", "--live"],
-        ] {
-            let (value, status, calls) = model_command(
-                "targets=[\".codex\",\".opencode\"]\nharness_order=[\"opencode\",\"codex\"]",
-                &format!(
-                    "[models.fast]\nmodel=\"gpt-5\"\nprovider=\"openai\"\nharness=\"{preference}\""
-                ),
-                &args,
-                false,
-            );
-            assert_eq!(status, 0, "{args:?}: {value}");
-            let entry = value
-                .get("aliases")
-                .map(|aliases| &aliases[0])
-                .unwrap_or(&value);
-            assert_eq!(entry["model_id"], "gpt-5", "{value}");
-            assert_eq!(entry["harness"], "codex", "{value}");
-            assert_eq!(entry["harness_source"], "auto_detected", "{value}");
-            assert_eq!(entry["availability"], "runnable", "{value}");
-            assert_eq!(calls, ["codex login status"], "{value}");
-        }
-    }
-}
-
-#[test]
-fn rejected_preference_can_yield_to_an_unverified_route_without_changing_model() {
-    for args in [
-        vec!["models", "resolve", "fast"],
-        vec!["models", "list", "--live"],
-    ] {
+        let args = ["models", "resolve", "fast"];
         let (value, status, calls) = model_command(
-            "targets=[\".codex\",\".opencode\"]",
-            "[models.fast]\nmodel=\"gpt-5\"\nprovider=\"openai\"\nharness=\"codex\"",
+            "targets=[\".codex\",\".opencode\"]\nharness_order=[\"opencode\",\"codex\"]",
+            &format!(
+                "[models.fast]\nmodel=\"gpt-5\"\nprovider=\"openai\"\nharness=\"{preference}\""
+            ),
             &args,
-            true,
+            false,
         );
-        assert_eq!(status, 0, "{value}");
+        assert_eq!(status, 0, "{args:?}: {value}");
         let entry = value
             .get("aliases")
             .map(|aliases| &aliases[0])
             .unwrap_or(&value);
         assert_eq!(entry["model_id"], "gpt-5", "{value}");
-        assert_eq!(entry["harness"], "opencode", "{value}");
+        assert_eq!(entry["harness"], "codex", "{value}");
         assert_eq!(entry["harness_source"], "auto_detected", "{value}");
-        assert_eq!(entry["availability"], "unknown", "{value}");
-        assert_eq!(entry["runnable_paths"], serde_json::json!([]), "{value}");
+        assert_eq!(entry["availability"], "runnable", "{value}");
         assert_eq!(calls, ["codex login status"], "{value}");
     }
+}
+
+#[test]
+fn rejected_preference_can_yield_to_an_unverified_route_without_changing_model() {
+    let args = ["models", "resolve", "fast"];
+    let (value, status, calls) = model_command(
+        "targets=[\".codex\",\".opencode\"]",
+        "[models.fast]\nmodel=\"gpt-5\"\nprovider=\"openai\"\nharness=\"codex\"",
+        &args,
+        true,
+    );
+    assert_eq!(status, 0, "{value}");
+    let entry = value
+        .get("aliases")
+        .map(|aliases| &aliases[0])
+        .unwrap_or(&value);
+    assert_eq!(entry["model_id"], "gpt-5", "{value}");
+    assert_eq!(entry["harness"], "opencode", "{value}");
+    assert_eq!(entry["harness_source"], "auto_detected", "{value}");
+    assert_eq!(entry["availability"], "unknown", "{value}");
+    assert_eq!(entry["runnable_paths"], serde_json::json!([]), "{value}");
+    assert_eq!(calls, ["codex login status"], "{value}");
 }
 
 #[test]

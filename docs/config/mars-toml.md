@@ -196,10 +196,6 @@ catalog_providers = ["anthropic", "openai", "google", "meta", "deepseek", "xai",
 harnesses = ["claude"]
 include_fanout = false
 
-[settings.model_visibility]
-include = ["anthropic/*", "openai/gpt-5*"]  # Show only these
-exclude = ["*-preview*", "*-latest"]         # Then hide these
-providers = ["xai", "deepseek", "openai"]  # Show only these resolved providers
 ```
 
 | Field | Type | Default | Description |
@@ -213,7 +209,6 @@ providers = ["xai", "deepseek", "openai"]  # Show only these resolved providers
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
-| `model_visibility` | table | `{}` | Consumer-only display filter for `mars models list` output |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
@@ -305,43 +300,19 @@ disallowed = ["agent"]
 | `user-invocable` | bool | Override user invocability |
 | `tools` | table | Tool policy: `allowed` and `disallowed` string arrays (MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`) |
 
-## Model Visibility
+## Curated model display
 
-Configure which models appear in `mars models list`. Consumer-only - not merged from dependencies.
+Configure the human `mars models list` view in `mars.curated.toml`,
+`mars.curated.local.toml`, or the user XDG `mars/curated.toml` file. See
+[mars-curated.md](mars-curated.md) for the strict schema and merge semantics.
+Curation never affects routing, launch bundles, or alias resolution. Use
+`mars models list --all` to inspect hidden rows; use `mars models aliases`
+for the uncurated alias inventory and `mars models catalog` for raw models.dev
+entries.
 
-### Example
-
-```toml
-[settings.model_visibility]
-include = ["anthropic/*", "openai/gpt-5*"]  # Show only these (glob)
-exclude = ["*-preview*", "*-latest"]         # Then hide these (glob)
-providers = ["xai", "deepseek", "openai"]    # Show only these resolved providers
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `include` | string[] | Glob patterns; only matching aliases are shown |
-| `exclude` | string[] | Glob patterns; matching aliases are hidden |
-| `providers` | string[] | Only aliases whose resolved provider matches one of these keys are shown. Exact, case-insensitive, with variant collapsing (`openai-codex` matches `openai`). Unset, empty, and blank-only lists mean no provider filter. Aliases whose provider cannot be resolved (`unknown`) are never shown while the filter is active. |
-
-### Behavior
-
-- `include` and `providers` both narrow (intersection); `exclude` then removes from that set
-- Any field left unset places no constraint
-- Empty and blank entries are ignored; an empty or blank-only list places no constraint, so `providers = []` behaves like unset
-- All fields unset or empty: show all (no filtering)
-
-`providers` matches the alias's **resolved** provider, not the harness or the access
-channel: `grok` is `provider = xai` routed through opencode, so declaring `xai`
-admits it. A model reached through a reseller key must declare that key
-(`opencode-go`), not the upstream one.
-
-This is a **display filter only**. A hidden alias still resolves when named
-(`mars models resolve`, `-m <alias>`, profiles, model-policies), and a plain model
-string still passes through to the harness.
-
-CLI flags replace config entirely for that invocation: `--include` / `--exclude` /
-`--providers`. `--no-visibility` ignores all filters and shows every alias.
+The removed `[settings.model_visibility]` table is not silently ignored.
+Mars reports a file-named migration error with `[[show]]`/`[[hide]]` examples
+for either `mars.toml` or `mars.local.toml`.
 
 ## OpenCode Probe
 
@@ -418,7 +389,7 @@ exclude = ["thinking"]
 | `harness` | string | yes | Which harness runs this model (`claude`, `codex`, `opencode`, etc.) |
 | `model` | string | no | Explicit model ID. If set, skips auto-resolution. |
 | `provider` | string | no | API provider name for auto-resolution filtering |
-| `description` | string | no | Human-readable description shown in `mars models list` |
+| `description` | string | no | Human-readable alias description shown in `mars models aliases` |
 | `match` | string[] | no | Glob patterns matched against the model catalog |
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
 | `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
@@ -475,7 +446,7 @@ Conflicts never block sync — they warn and continue.
 
 ### Persistence
 
-Dependency-sourced alias winners are persisted in committed `mars.lock` under `dependency_model_aliases` during finalize. Consumer aliases are **not** baked into lock state — `mars models list` overlays fresh consumer config at read time.
+Dependency-sourced alias winners are persisted in committed `mars.lock` under `dependency_model_aliases` during finalize. Consumer aliases are **not** baked into lock state — `mars models aliases` overlays fresh consumer config at read time.
 
 ## `mars.local.toml`
 

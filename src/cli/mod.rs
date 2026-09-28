@@ -21,6 +21,7 @@ pub mod link;
 pub mod list;
 pub mod models;
 mod models_common;
+mod models_inventory;
 mod models_prompting;
 pub mod outdated;
 pub mod output;

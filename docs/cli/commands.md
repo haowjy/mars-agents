@@ -336,82 +336,58 @@ mars unlink .claude          # Stop managing .claude
 
 ## `mars models`
 
-Manage model aliases and the local models cache.
-
-```bash
-mars models <refresh|list|resolve|alias> ...
-```
-
-### `mars models refresh`
-
-Fetch model metadata from the API and update `.mars/models-cache.json`.
+Model identity, catalog metadata, and the human harness-model inventory are
+separate commands:
 
 ```bash
 mars models refresh
+mars models list [--all] [--live] [--harness NAME] [--match GLOB] [--refresh-models|--no-refresh-models]
+mars models aliases [--refresh-models|--no-refresh-models]
+mars models catalog [--refresh-models|--no-refresh-models]
 ```
 
-Use this before `models list`/`models resolve` when you want fresh auto-resolve results.
+`mars models refresh` fetches models.dev metadata into `.mars/models-cache.json`.
 
 ### `mars models list`
 
-List model aliases with availability information.
+Lists curated harness×model rows from installed-harness Possible evidence plus
+literal declarations. The default view shows effective `show` rows; `--all`
+includes hidden rows and their decision tier. `--harness` accepts a registered
+harness name; `--match` is an ad-hoc case-insensitive glob over the exact launch
+model ID (`*` crosses `/`). Neither narrowing option changes curation or routing.
+`--live` adds fixed-harness routing eligibility (`eligible`, `unverified`, or
+`blocked`) and its reason; it never substitutes a different provider's model.
+Probe-backed rows use retained listing evidence. A declared row for an
+uninstalled harness is shown with `blocked/not_installed` under `--live`.
 
-```bash
-mars models list [--all] [--catalog] [--unavailable] [--no-refresh-models] [--include PATTERN,...] [--exclude PATTERN,...] [--providers PROVIDER,...] [--no-visibility]
-```
+Text columns are HARNESS, MODEL (exact harness launch ID), PROVIDER, ORIGIN
+(`possible`, `both`, or `declared`), VIA (`catalog`, `listed <age>`, or `—`),
+CURATION, ELIGIBILITY, and ALIASES. `--json` returns `models` rows with
+`harness`, `harness_model_id`, `model_id`, `provider`, `origin`, full `provenance`,
+`via`, `aliases`, `curated: {decision,tier}`, and optional `eligibility`/`reason`.
+Top-level `diagnostics`, `routing_diagnostics`, and `cache_warning` report
+problems without dropping rows.
 
-#### Flags
+### `mars models aliases`
 
-| Flag | Description |
-|---|---|
-| `--all` | Show all alias candidates with availability info. Does NOT show raw catalog - use `--catalog` for that. |
-| `--catalog` | Show raw models.dev cache entries (diagnostic view). Ignores aliases but still honors visibility filters. |
-| `--unavailable` | Include unavailable models in output (normally pruned from default view). |
-| `--no-refresh-models` | Skip automatic cache refresh; use existing cache. OpenCode probing also skipped. |
-| `--include <patterns>` | Show only aliases matching these comma-separated glob patterns. Overrides config. |
-| `--exclude <patterns>` | Hide aliases matching these comma-separated glob patterns. Overrides config. |
-| `--providers <providers>` | Show only entries whose resolved provider matches one of these comma-separated keys. Overrides config; matching is case-insensitive and collapses known provider variants such as `openai-codex` → `openai`. |
-| `--no-visibility` | Ignore `include`, `exclude`, and `providers` filters and show every entry. |
+Lists statically resolved consumer, dependency, and built-in model aliases.
+It never applies curation or probes harnesses. `--json` returns `aliases`
+with `name`, `model_id`, `provider`, `harness`, `harness_candidates`, `mode`,
+and alias metadata. Meridian's alias inventory should use this command.
 
-#### Output
+### `mars models catalog`
 
-With `--live`, the default alias view applies availability pruning:
-- `runnable` models are shown
-- `unknown` models are shown (conservative)
-- `unavailable` models are pruned unless `--unavailable` is set
+Lists raw models.dev cache entries, independent of curation, installed
+harnesses, and harness scope. It never probes harnesses. `--json` returns
+`catalog` with each entry's `id`, `provider`, `description`, `release_date`,
+context/output limits, and `cost_*` fields. Meridian's exact-ID guard and
+catalog sync should use this command.
 
-Live JSON output includes:
-- `availability`: `runnable`, `unavailable`, or `unknown`
-- `availability_source`: assessment source; `route_rejected` means no accepted route, while `route_unverified` means support or authentication remains unverified
-- `runnable_paths`: `{harness, mars_provider, harness_model_id}` tuples for the selected route; empty for rejected routes
-- `probe_results.opencode`: summary when OpenCode probing ran
-
-#### Visibility Patterns
-
-Patterns use glob matching with `*` wildcards (does not span `/`):
-
-| Pattern Form | Matches Against |
-|--------------|-----------------|
-| `gpt-5*` (no slash) | Bare model ID |
-| `anthropic/*` (one slash) | `{provider}/{model_id}` |
-| `openrouter/anthropic/*` (two slashes) | OpenCode runnable path slug |
-
-```bash
-mars models list
-mars models list --all
-mars models list --catalog
-mars models list --unavailable
-mars models list --include "opus*,sonnet*"
-mars models list --exclude "experimental-*"
-mars models list --providers "openai,deepseek,xai"
-mars models list --no-visibility
-```
-
-Provider visibility can also be configured per project or machine in
-`[settings.model_visibility]`; see [config/mars-toml.md](../config/mars-toml.md)
-and the [provider visibility design](../design/model-provider-visibility.md).
-The filter is display-only: explicitly named aliases still resolve, and empty
-or blank-only provider lists behave like an unset filter.
+`--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
+`--unavailable` were removed from `models list`. Put display rules in
+[`mars.curated.toml`](../config/mars-curated.md). Legacy
+`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a targeted
+error with translation examples; Mars does not rewrite config automatically.
 
 ### `mars models resolve`
 

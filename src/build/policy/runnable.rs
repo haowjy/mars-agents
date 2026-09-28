@@ -1,5 +1,5 @@
 use crate::build::bundle::Routing;
-use crate::harness::registry;
+use crate::harness::registry::{self, HarnessId};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::CursorProbeResult;
@@ -55,8 +55,9 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .into_iter()
         .flat_map(|attempt| &attempt.assessments)
         .find(|assessment| assessment.harness == harness);
+    let harness_id = registry::parse(&harness).expect("selected harness is registered");
     let runnable = resolve_harness_model(
-        registry::parse(&harness).expect("selected harness is registered"),
+        harness_id,
         &model,
         selected_assessment.and_then(|assessment| assessment.chosen_slug.as_deref()),
         selected_assessment.and_then(|assessment| assessment.chosen_model.as_deref()),
@@ -83,7 +84,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
 
-    if harness.eq_ignore_ascii_case("cursor")
+    if harness_id == HarnessId::Cursor
         && !routing.model.trim().is_empty()
         && let Some(effort) = effort.filter(|value| !value.trim().is_empty())
     {

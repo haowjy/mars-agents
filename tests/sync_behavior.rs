@@ -1697,8 +1697,7 @@ path = "{}"
         .args([
             "--json",
             "models",
-            "list",
-            "--unavailable",
+            "aliases",
             "--no-refresh-models",
             "--root",
             project.path().to_str().unwrap(),
@@ -1707,14 +1706,14 @@ path = "{}"
         .unwrap();
     assert!(
         output.status.success(),
-        "models list should succeed, stdout:\n{}\nstderr:\n{}",
+        "models aliases should succeed, stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let shared = stdout["aliases"]
         .as_array()
-        .expect("models list should include aliases")
+        .expect("models aliases should include aliases")
         .iter()
         .find(|alias| alias["name"].as_str() == Some("shared"))
         .expect("shared dependency alias should be listed");

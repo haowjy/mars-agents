@@ -290,7 +290,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
-            models_refresh: crate::models::ModelsRefreshControl::auto(),
+            models_refresh: crate::models::ModelsRefreshControl::background(),
         }
     }
 
@@ -365,6 +365,13 @@ mod tests {
 
         fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
             self.cursor.clone()
+        }
+
+        fn listing_evidence(
+            &mut self,
+            _harness: crate::harness::registry::HarnessId,
+        ) -> crate::harness::host::ListingEvidence {
+            crate::harness::host::ListingEvidence::default()
         }
     }
 

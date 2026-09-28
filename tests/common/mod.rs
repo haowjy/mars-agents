@@ -210,19 +210,14 @@ description = "fixture alias for models cache tests"
     source_root
 }
 
-pub fn resolved_model_ids_from_models_list_json(stdout: &[u8]) -> BTreeSet<String> {
+pub fn model_ids_from_catalog_json(stdout: &[u8]) -> BTreeSet<String> {
     let payload: Value =
-        serde_json::from_slice(stdout).expect("models list --json must be valid JSON");
-    payload["aliases"]
+        serde_json::from_slice(stdout).expect("models catalog --json must be valid JSON");
+    payload["catalog"]
         .as_array()
-        .expect("models list JSON should include aliases array")
+        .expect("models catalog JSON should include catalog array")
         .iter()
-        .filter_map(|alias| {
-            alias["resolved_model"]
-                .as_str()
-                .or_else(|| alias["model_id"].as_str())
-                .map(ToOwned::to_owned)
-        })
+        .filter_map(|model| model["id"].as_str().map(ToOwned::to_owned))
         .collect()
 }
 
@@ -253,9 +248,10 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
     let xdg_data = temp_root.join("xdg-data");
+    let mars_config = temp_root.join("mars-config");
     let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [&home, &xdg_config, &xdg_data, &mars_cache] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_config, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
@@ -266,6 +262,7 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
         .env("LOCALAPPDATA", &xdg_data)
         .env("XDG_CONFIG_HOME", &xdg_config)
         .env("XDG_DATA_HOME", &xdg_data)
+        .env("MARS_CONFIG_DIR", &mars_config)
         .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
         .env_remove("MARS_OFFLINE")
@@ -276,9 +273,10 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
     let xdg_data = temp_root.join("xdg-data");
+    let mars_config = temp_root.join("mars-config");
     let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [&home, &xdg_config, &xdg_data, &mars_cache] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_config, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
@@ -289,6 +287,7 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
         .env("LOCALAPPDATA", &xdg_data)
         .env("XDG_CONFIG_HOME", &xdg_config)
         .env("XDG_DATA_HOME", &xdg_data)
+        .env("MARS_CONFIG_DIR", &mars_config)
         .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
         .env_remove("MARS_OFFLINE")

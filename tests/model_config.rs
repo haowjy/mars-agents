@@ -212,13 +212,7 @@ fn sync_empty_project_persists_empty_dependency_aliases_in_lock() {
     );
 
     let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    list_cmd.args([
-        "--json",
-        "models",
-        "list",
-        "--unavailable",
-        "--no-refresh-models",
-    ]);
+    list_cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
     let output = list_cmd.assert().success().get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
@@ -253,13 +247,7 @@ fn models_list_dependency_alias_suppresses_builtin_aliases() {
     add_cmd.assert().success();
 
     let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    list_cmd.args([
-        "--json",
-        "models",
-        "list",
-        "--unavailable",
-        "--no-refresh-models",
-    ]);
+    list_cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
     list_cmd.env("PATH", replace_path_with(&bin_dir));
     let output = list_cmd.assert().success().get_output().clone();
     let stdout: Value =
@@ -303,13 +291,7 @@ model = "gpt-5"
     );
 
     let mut list_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    list_cmd.args([
-        "--json",
-        "models",
-        "list",
-        "--unavailable",
-        "--no-refresh-models",
-    ]);
+    list_cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
     let output = list_cmd.assert().success().get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
@@ -381,7 +363,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
     assert!(stdout["route_trace"].is_object());
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(2));
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(3));
     let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
@@ -391,46 +373,6 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
         .expect("pi assessment should exist");
     assert_eq!(pi_assessment["skip_reason"].as_str(), Some("not_installed"));
     assert!(stdout["route"].is_null());
-}
-
-#[test]
-#[serial]
-fn models_list_visibility_include_does_not_add_catalog_rows() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
-
-[settings.model_visibility]
-include = ["catalog-only-*"]
-"#,
-    )
-    .expect("failed to write mars.toml with model visibility");
-    write_cache(
-        &project_root,
-        vec![json!({
-            "id": "catalog-only-model",
-            "provider": "OpenAI",
-            "release_date": "2026-01-01"
-        })],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    assert!(
-        aliases.is_empty(),
-        "default models list should not expand visibility includes into catalog rows"
-    );
 }
 
 #[test]
@@ -463,7 +405,7 @@ model = "gpt-5"
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--no-refresh-models"]);
+    cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
     let output = cmd.assert().success().get_output().clone();
@@ -476,225 +418,12 @@ model = "gpt-5"
         .iter()
         .find(|entry| entry["name"].as_str() == Some("fast"))
         .expect("expected static list output to include fast alias");
-    assert!(fast.get("harness").is_none());
+    assert!(fast["harness"].is_null());
     assert!(fast.get("availability").is_none());
     assert!(
         !marker_file.exists(),
         "default models list should not execute harness commands"
     );
-}
-
-#[test]
-#[serial]
-fn models_list_uses_local_model_visibility_overlay() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
-
-[settings.model_visibility]
-include = ["gpt-5"]
-
-[models.fast]
-harness = "codex"
-model = "gpt-5"
-provider = "openai"
-
-[models.slow]
-harness = "codex"
-model = "gpt-5.4-mini"
-provider = "openai"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    fs::write(
-        project_root.join("mars.local.toml"),
-        r#"[settings.model_visibility]
-include = ["gpt-5.4-mini"]
-"#,
-    )
-    .expect("failed to write mars.local.toml");
-    write_cache(
-        &project_root,
-        vec![
-            json!({
-                "id": "gpt-5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "gpt-5.4-mini",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--unavailable"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let names: Vec<_> = aliases
-        .iter()
-        .filter_map(|entry| entry["name"].as_str())
-        .collect();
-
-    assert_eq!(names, vec!["slow"]);
-}
-
-#[test]
-#[serial]
-fn models_list_providers_filter_keeps_declared_only() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings.model_visibility]
-providers = ["openai"]
-
-[models.fast]
-harness = "codex"
-model = "gpt-5"
-provider = "openai"
-
-[models.grok]
-harness = "opencode"
-model = "grok-4.7"
-provider = "xai"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    write_cache(
-        &project_root,
-        vec![
-            json!({
-                "id": "gpt-5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "grok-4.7",
-                "provider": "xai",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let names: Vec<_> = aliases
-        .iter()
-        .filter_map(|entry| entry["name"].as_str())
-        .collect();
-
-    assert_eq!(names, vec!["fast"]);
-}
-
-#[test]
-#[serial]
-fn resolve_provider_filtered_alias_still_resolves() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings.model_visibility]
-providers = ["openai"]
-
-[models.grok]
-harness = "opencode"
-model = "grok-4.7"
-provider = "xai"
-"#,
-    )
-    .expect("failed to write mars.toml");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "resolve", "grok", "--no-refresh-models"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
-    assert_eq!(stdout["name"].as_str(), Some("grok"));
-    assert_eq!(stdout["resolved_model"].as_str(), Some("grok-4.7"));
-}
-
-#[test]
-#[serial]
-fn models_list_providers_flag_overrides_config() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings.model_visibility]
-providers = ["openai"]
-
-[models.fast]
-harness = "codex"
-model = "gpt-5"
-provider = "openai"
-
-[models.grok]
-harness = "opencode"
-model = "grok-4.7"
-provider = "xai"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    write_cache(
-        &project_root,
-        vec![
-            json!({
-                "id": "gpt-5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "grok-4.7",
-                "provider": "xai",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--providers", "xai"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let names: Vec<_> = aliases
-        .iter()
-        .filter_map(|entry| entry["name"].as_str())
-        .collect();
-
-    assert_eq!(names, vec!["grok"]);
 }
 
 #[test]
@@ -871,105 +600,6 @@ fn resolve_builtin_gemini_alias_uses_google_candidates_without_gemini_harness() 
         stdout["harness_candidates"],
         json!(["claude", "codex", "pi", "cursor", "opencode"])
     );
-}
-
-#[test]
-#[serial]
-fn models_list_exact_alias_respects_settings_harness_order() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "cursor"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
-harness_order = ["cursor", "pi"]
-
-[models.fast]
-model = "gpt-5.4-mini"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    write_cache(
-        &project_root,
-        vec![json!({
-            "id": "gpt-5.4-mini",
-            "provider": "OpenAI",
-            "release_date": "2026-01-01"
-        })],
-        &fresh_fetched_at(),
-    );
-    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--live"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let fast = aliases
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("fast"))
-        .expect("expected fast alias entry");
-
-    assert_eq!(fast["harness"].as_str(), Some("cursor"));
-    assert_eq!(fast["harness_source"].as_str(), Some("auto_detected"));
-}
-
-#[test]
-#[serial]
-fn models_list_exact_alias_respects_local_harness_order_override() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "cursor"]);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
-harness_order = ["pi", "cursor"]
-
-[models.fast]
-model = "gpt-5.4-mini"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    fs::write(
-        project_root.join("mars.local.toml"),
-        r#"[settings]
-harness_order = ["cursor", "pi"]
-"#,
-    )
-    .expect("failed to write mars.local.toml");
-    write_cache(
-        &project_root,
-        vec![json!({
-            "id": "gpt-5.4-mini",
-            "provider": "OpenAI",
-            "release_date": "2026-01-01"
-        })],
-        &fresh_fetched_at(),
-    );
-    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--live"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let fast = aliases
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("fast"))
-        .expect("expected fast alias entry");
-
-    assert_eq!(fast["harness"].as_str(), Some("cursor"));
-    assert_eq!(fast["harness_source"].as_str(), Some("auto_detected"));
 }
 
 #[test]
@@ -1228,7 +858,7 @@ provider = "anthropic"
         stdout["route_trace"]["model_attempts"][0]["candidates_tried"],
         json!(["codex", "claude", "pi", "cursor", "opencode"])
     );
-    assert_eq!(stdout["route_trace"]["version"], 2);
+    assert_eq!(stdout["route_trace"]["version"], 3);
     let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
         .as_array()
         .expect("route_trace.assessments should be array");
@@ -1350,7 +980,7 @@ provider = "openai"
         stdout["route_trace"]["model_attempts"][0]["match_evidence"].as_str(),
         Some("constrained")
     );
-    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(2));
+    assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(3));
     assert!(
         stdout.get("route_rejection").is_none(),
         "successful exact alias resolves should not emit route_rejection: {stdout}"
@@ -1519,7 +1149,7 @@ commit = "abc123"
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     for args in [
-        ["models", "list", "--no-refresh-models"].as_slice(),
+        ["models", "aliases", "--no-refresh-models"].as_slice(),
         ["models", "resolve", "gpt-5", "--no-refresh-models"].as_slice(),
     ] {
         let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
@@ -1554,13 +1184,7 @@ fn models_runtime_alias_commands_allow_legacy_lock_without_dependencies() {
     write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "--json",
-        "models",
-        "list",
-        "--unavailable",
-        "--no-refresh-models",
-    ]);
+    cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
 
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =

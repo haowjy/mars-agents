@@ -1,6 +1,13 @@
 # src/models/ — Model Catalog & Alias Resolution
 
-Model aliases, catalog caching, auto-resolve against models.dev API, and dependency-tree merge. 4 files + probes/, ~7000 lines.
+Model aliases, catalog caching, derived Possible rows, auto-resolve against
+models.dev API, and dependency-tree merge. See `probes/` for harness caches.
+
+`catalog_api.rs` owns models.dev transport and provider decoding;
+`catalog_cache.rs` owns the persisted snapshot, refresh-after policy, claim
+lease/cooldown, and hidden worker lifecycle. Alias resolution remains in
+`mod.rs`. Detached process mechanics for catalog and probe workers live in
+`platform::process::spawn_detached`.
 
 ## Mental Model
 
@@ -36,11 +43,25 @@ through harness probes.
 ## Catalog Lifecycle
 
 - `mars models refresh` — explicit catalog fetch (`RefreshMode::Force`); does not accept refresh flags
-- `mars models list` / `mars models resolve <alias>` — merge + resolve; honor `--refresh-models` / `--no-refresh-models`
+- `mars models aliases` / `mars models resolve <alias>` — merge + resolve; honor `--refresh-models` / `--no-refresh-models`
 - `mars sync` — same refresh flags for best-effort catalog refresh before merge write
 - `mars build launch-bundle` — same flags via build policy (`models_refresh` on policy input)
 
 Probe subprocess behavior for list/resolve/launch-bundle is tied to the same flags; see [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) for per-harness probe contracts and cache paths.
+
+`possible.rs` provides a derived, non-persisted harness×model projection over
+this catalog and the existing probe caches. `SessionPossibleSource::rows_for`
+loads one installed, permitted harness lazily; `all_rows` collects the display
+inventory. It never reads aliases or curation. Probe-backed rows carry listing
+time, last-error, auth-gated and latest-attempt provenance; native rows are
+inferred from catalog providers. See [possible.rs](possible.rs).
+`listing_issues` exposes both no-last-good failures and retained listings whose
+latest refresh failed from the same session observation, once per harness for
+human diagnostics; an unavailable row is never fabricated.
+
+Authored `mars.curated.toml` display rules live in `src/curation/` and are not
+imported by model resolution, routing, or launch-bundle policy. Only the
+`mars models list` renderer projects Possible through Curated.
 
 ### Refresh control (`ModelsRefreshControl`)
 
@@ -48,23 +69,28 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 
 | Input | `catalog_mode` (`RefreshMode`) | `probe_refresh` (`ProbeRefreshMode`) |
 |---|---|---|
-| default | `Auto` | `Background` |
+| default | `Background` | `Background` |
 | `--refresh-models` | `Force` | `Synchronous` |
 | `--no-refresh-models` | `Offline` | `Skip` |
 
 `RefreshMode` drives `ensure_fresh()` against `.mars/models-cache.json`:
 
-- **Auto** — fetch when TTL stale; stale cache on fetch failure (cooldown/backoff)
-- **Force** — always attempt fetch (used by `mars models refresh` and `--refresh-models`)
+- **Background** — fresh data returns immediately; stale usable data returns immediately and starts detached `models __refresh-catalog`; cold or unusable cache fetches synchronously
+- **Synchronous** — internal worker mode; rechecks freshness under the cache lock before fetching and never starts another worker
+- **Force** — synchronous fetch regardless of cache age (used by `mars models refresh` and `--refresh-models`)
 - **Offline** — disk only; error if no usable cache
 
-`ensure_fresh` coerces **Auto → Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing.
+`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, repeated typed provider arguments, expected snapshot revision, and claim token; it uses no shell or caller stdio handles, and rechecks the cache lock/freshness. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must resolve to that root's `.mars` and remain inside the project. POSIX callers reap the child on a background thread; Windows starts it detached without inheriting handles and closes its parent process handles immediately.
 
 ### Cache Behavior
 
-- TTL: 24h default, configurable via `settings.models_cache_ttl_hours`
-- Stale fallback: uses existing cache if fetch fails (with diagnostic)
+- No hard read expiry: a nonempty valid catalog is last-known-good data, even after the refresh-after interval
+- Refresh-after: 24h default, configurable via `settings.models_cache_ttl_hours`; `0` makes every normal command eligible to trigger a background refresh
+- A failed/empty refresh retains the last-good catalog and stores the failure reason for later diagnostics
 - Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
+- `RefreshOutcome::Stale` reports `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`; it never claims the asynchronous fetch succeeded. `peer_refreshed` means another worker completed between the reader's initial cache read and claim check.
+- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. Before writing a claim, readers recheck snapshot revision, cache freshness, live claim, and failure cooldown under this lock and return that cache snapshot. The worker removes only its own token; an expired 120-second lease recovers crashes. The models.dev HTTP call has a 60-second global deadline (DNS through body, across redirects), leaving a minute for worker startup, parsing, and cache writes.
+- Successful writes atomically replace one snapshot containing models, fetched timestamp, and monotonic revision under the cache lock. Workers recheck their observed revision so even `refresh-after = 0` coalesces concurrent fetches. Old snapshots without revision load as zero; legacy `.models-cache.generation` files are ignored.
 - `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
 
 ### `MARS_OFFLINE` vs probe `Skip`
@@ -109,10 +135,17 @@ model. Provider inference may use the model family, never the preferred harness.
 
 ## Launch `harness_model` (argv model id)
 
-After harness selection, `resolve_harness_model()` in `harness_model.rs` produces
-`routing.harness_model`. Alias `provider` is **not** a blind `provider/model` prefix:
-native Codex/Claude get bare ids when the provider matches; Pi/OpenCode use probe slugs.
+After harness selection, `resolve_harness_model()` in `harness_model.rs` projects
+the **selected assessment** into the launch ID and provider used by
+`routing.harness_model` and live availability.
+Alias `provider` is **not** a blind `provider/model` prefix: native Codex/Claude
+preserve the requested spelling; probe-backed harnesses use the selected slug.
 Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
+
+Live availability in `availability.rs` projects the selected routing assessment.
+It must not perform its own provider/model support check: Pi/OpenCode slugs can
+cross the alias's inferred provider, and Cursor can accept a provider constraint
+without a matching cached slug.
 
 ## Patterns
 
@@ -130,4 +163,4 @@ identity resolution.
 - [probes/.context/CONTEXT.md](probes/.context/CONTEXT.md) — probe semantics, refresh-mode table, effort slug rules
 - [../harness/AGENTS.md](../harness/AGENTS.md) — capability snapshot collection (once per command)
 - `src/routing/AGENTS.md` — uses resolved aliases for harness routing
-- `src/config/AGENTS.md` — model visibility settings
+- `src/config/AGENTS.md` — model settings; `src/curation/AGENTS.md` — display-only curation

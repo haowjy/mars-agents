@@ -14,6 +14,19 @@ pub use cursor::CursorProbeResult;
 pub use opencode::OpenCodeProbeResult;
 pub use pi::PiProbeResult;
 
+/// Provenance captured with the outcome from the same cache read or probe.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProbeObservation {
+    pub observed_at: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObservedOutcome<T> {
+    pub outcome: T,
+    pub observation: Option<ProbeObservation>,
+}
+
 /// Determine whether an OpenCode probe should be attempted.
 /// Returns false if offline or opencode is not installed.
 pub fn should_probe_opencode(installed: &HashSet<String>, is_offline: bool) -> bool {

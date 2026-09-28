@@ -1,42 +1,30 @@
-# `resolve_harness_model` — launch argv model id
+# `resolve_harness_model` — selected launch argv model ID
 
-Maps resolved canonical `model_id` + selected `harness` to `routing.harness_model` (the
-token harness CLIs receive on `--model`). Alias `provider` feeds **routing and probe
-selection**, not an unconditional `provider/model` prefix.
+`harness_model.rs` projects the selected routing assessment into the ID passed to
+harness CLIs. Availability and launch-bundle policy call this same function; neither
+reruns slug selection. Native-agent OpenCode emission also uses selected route evidence.
 
 ## Resolution order
 
-1. **Empty `model_id`** → empty `harness_model`, `passthrough`, `unknown` confidence.
-2. **Pi / OpenCode** → probe slug selection (`select_probe_slug`) when probe cache is
-   compatible. `provider_constraint` always filters slugs. When it equals
-   `provider_for_order`, sort uses variant preference (`openai-codex` over `openai`)
-   instead of exact-tier, so unrelated providers (`opencode-go` vs `xai`) stay out.
-   Without a usable probe → `constraint_qualified_passthrough` when the constraint is already
-   qualified (`openai-codex/foo`), else bare passthrough.
-3. **Native harnesses (`codex`, `claude`)** → when `provider_constraint` or `provider_for_order`
-   matches the harness (`slug::provider_matches_native_harness`, including variants like
-   `openai-codex` on Codex), return **bare** `model_id` with `provider-match` / `likely`.
-4. **Default** → bare `model_id`, `passthrough`, `unknown`.
+1. Empty requested model → empty passthrough ID.
+2. Native Claude/Codex → **requested spelling** (trimmed), never the normalized
+   `chosen_model` from catalog matching. For example, a catalog match on
+   `claude-opus-4-6` still launches `claude-opus-4.6` if that was requested.
+3. Probe-backed Pi/OpenCode/Cursor → selected `chosen_slug`, then `chosen_model`,
+   then requested ID. A selected slug is confirmed probe evidence.
+4. Pi/OpenCode constrained passthrough may qualify an unqualified requested ID
+   as `provider/model`. Cursor passthrough remains unqualified.
 
-## Anti-patterns (removed)
+`provider_constraint` filters routing slug selection; it is never a blind prefix
+before routing. A missing or failed Pi listing is support-unknown passthrough,
+not evidence that the model is absent. A successful listing with a failed later
+refresh keeps last-good support, but does not imply current auth.
 
-Do **not** prepend `{provider_constraint}/{model_id}` before harness branches. That produced
-`openai/gpt-5.4-mini` for aliases such as `gptmini` (`provider = "openai"`, `harness = "codex"`),
-which breaks ChatGPT-auth Codex (expects bare `gpt-5.4-mini`) and Pi (expects probe slugs like
-`openai-codex/gpt-5.4-mini`).
-
-## Examples
-
-| Input | Harness | Typical `harness_model` | Source |
-|-------|---------|-------------------------|--------|
-| alias `gptmini` | codex (alias preference) | `gpt-5.4-mini` | `provider-match` |
-| alias `gptmini` | pi (CLI) | `openai-codex/gpt-5.4-mini` | `cached-probe` |
-| CLI `gpt-5.4-mini` | codex (auto, native match) | `gpt-5.4-mini` | `provider-match` |
-
-Manual evidence: `tests/smoke/manual/results-launch-bundle-resolver.md` (gptmini section).
+P3 live-row association must compare model IDs with routing's normalized
+`model_ids_match`, not raw equality, to associate punctuation/case variants.
 
 ## Related
 
-- [`harness_model.rs`](../harness_model.rs) — implementation + unit tests
-- [`src/build/.context/CONTEXT.md`](../../build/.context/CONTEXT.md) — bundle consumer contract
-- [`src/routing/.context/CONTEXT.md`](../../routing/.context/CONTEXT.md) — harness selection vs argv model
+- [`harness_model.rs`](../harness_model.rs)
+- [`availability.rs`](../availability.rs)
+- [`src/routing/.context/CONTEXT.md`](../../routing/.context/CONTEXT.md)

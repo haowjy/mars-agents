@@ -42,9 +42,10 @@ must honor route rejection and describe only the selected route, not other insta
 harnesses. Unverified routes report unknown availability with no asserted runnable
 paths. Live inventory and resolution share one NativeAuthCache per command. Exact/prefix
 resolution with no selected route exits nonzero, even when the model ID resolved.
-Alias harness declarations are ordered preferences, not pins. Exact and live alias
-commands share selected-route projection; prefix commands retain the longest base
-alias's harness preference and provider constraint. Static listings do not route.
+Alias harness declarations are ordered preferences, not pins. Prefix resolution
+retains the longest base alias's harness preference and provider constraint.
+`models aliases` and `models catalog` never probe or apply curation. `models list`
+is the curated harness-model view; only `--live` routes its rows.
 
 ## Lossiness Gating
 
@@ -71,7 +72,8 @@ See [`src/models/AGENTS.md`](../models/AGENTS.md) for the full matrix.
 
 | Command | Flags on |
 |---|---|
-| `mars models list` | `ListArgs` |
+| `mars models list` | `ListArgs` (catalog + one capability session) |
+| `mars models aliases` / `catalog` | `CatalogViewArgs` (no harness probes) |
 | `mars models resolve <alias>` | `ResolveAliasArgs` |
 | `mars build launch-bundle` | `LaunchBundleArgs` |
 | `mars sync` | `SyncArgs` (`cli/sync.rs`) |

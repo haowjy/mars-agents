@@ -27,8 +27,9 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 2. Intersect candidates with target permission and caller exclusions before probes.
 3. Assess installation and support, then applicable native auth. Auth callbacks
    return `AuthState`; command-scoped `NativeAuthCache` preserves unknown results.
-4. Prefer eligible routes; defer the first unverified route until all harnesses
-   for this model have been assessed. Blocked routes never become fallback routes.
+4. Select a supported, non-blocked authored preference immediately unless it is
+   passthrough or its gated listing just failed. Otherwise prefer eligible routes;
+   defer the first unverified route. Blocked routes never become fallback routes.
 
 ### Default `harness_order`
 
@@ -42,10 +43,17 @@ entries have already been removed), not the authored configuration array.
 ### Eligibility is not support evidence
 
 `CandidateAssessment::eligibility()` distinguishes eligible, unverified and blocked.
-A native auth timeout remains unverified; a known rejection is blocked. Universal
-model-list/probe success proves support, not account authentication or quota.
+A native auth timeout remains unverified; a known rejection is blocked. A successful
+auth-gated listing (registry `ListingAuth::Gated`) proves configured credentials,
+not validity or quota; OpenCode's ungated listing proves support only. A failed
+latest gated attempt keeps last-good support but loses implied auth.
 No-model native launches still check auth. Native materialization supplies
-`AuthState::NotApplicable` and accepts support without probing runtime accounts.
+`AuthState::Unchecked` and accepts support without probing runtime accounts.
+
+Availability is projected from the selected assessment, not re-evaluated against
+the probe/catalog. Native launch IDs preserve the requested spelling;
+probe-backed IDs use `chosen_slug`, then `chosen_model`, then the requested ID.
+Both availability and launch-bundle call the same projection function.
 
 ### Routing parity with `mars models` and launch-bundle
 
@@ -100,7 +108,11 @@ let trace = evaluate_candidates_with_auth(&input, |_harness| AuthState::Authenti
 
 **Simulate Pi compatibility:**
 ```rust
-let pi_probe = PiProbeResult { compatible: true, ..PiProbeResult::default() };
+let pi_probe = PiProbeResult {
+    compatible: true,
+    model_probe_success: true,
+    ..PiProbeResult::default()
+};
 ```
 
 **Check acceptance:**

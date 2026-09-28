@@ -11,7 +11,9 @@ use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
 use crate::models::probes::opencode_cache::CachedProbeOutcome;
 use crate::models::probes::pi_cache::CachedPiProbeOutcome;
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
+use crate::models::probes::{
+    CursorProbeResult, ObservedOutcome, OpenCodeProbeResult, PiProbeResult, ProbeObservation,
+};
 
 #[derive(Debug, Clone)]
 pub struct CapabilityCollectionOptions {
@@ -38,7 +40,79 @@ pub struct CapabilitySnapshot {
     pub offline: bool,
 }
 
+/// Listing success and refresh freshness are independent: a failed latest
+/// attempt may retain last-good support without implying current auth.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListingEvidence {
+    pub succeeded: bool,
+    pub latest_attempt_ok: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListingEvidenceSet {
+    opencode: ListingEvidence,
+    pi: ListingEvidence,
+    cursor: ListingEvidence,
+}
+
+impl ListingEvidenceSet {
+    /// For static input and fixtures only. A real cache outcome must use
+    /// `from_outcomes` so failed refreshes are not treated as latest success.
+    pub fn from_results_assuming_latest_ok(
+        opencode: Option<&OpenCodeProbeResult>,
+        pi: Option<&PiProbeResult>,
+        cursor: Option<&CursorProbeResult>,
+    ) -> Self {
+        Self {
+            opencode: ListingEvidence {
+                succeeded: opencode.is_some_and(|result| result.model_probe_success),
+                latest_attempt_ok: true,
+            },
+            pi: ListingEvidence {
+                succeeded: pi.is_some_and(|result| result.model_probe_success),
+                latest_attempt_ok: true,
+            },
+            cursor: ListingEvidence {
+                succeeded: cursor
+                    .is_some_and(|result| result.model_probe_success && !result.slugs.is_empty()),
+                latest_attempt_ok: true,
+            },
+        }
+    }
+
+    pub fn from_outcomes(
+        opencode: Option<&CachedProbeOutcome>,
+        pi: Option<&CachedPiProbeOutcome>,
+        cursor: Option<&CachedCursorProbeOutcome>,
+    ) -> Self {
+        let mut evidence = Self::from_results_assuming_latest_ok(
+            opencode.and_then(CachedProbeOutcome::result),
+            pi.and_then(CachedPiProbeOutcome::result),
+            cursor.and_then(CachedCursorProbeOutcome::result),
+        );
+        evidence.opencode.latest_attempt_ok =
+            opencode.is_none_or(CachedProbeOutcome::latest_attempt_ok);
+        evidence.pi.latest_attempt_ok = pi.is_none_or(CachedPiProbeOutcome::latest_attempt_ok);
+        evidence.cursor.latest_attempt_ok =
+            cursor.is_none_or(CachedCursorProbeOutcome::latest_attempt_ok);
+        evidence
+    }
+
+    pub fn get(self, harness: HarnessId) -> ListingEvidence {
+        match harness {
+            HarnessId::OpenCode => self.opencode,
+            HarnessId::Pi => self.pi,
+            HarnessId::Cursor => self.cursor,
+            _ => ListingEvidence::default(),
+        }
+    }
+}
+
 impl CapabilitySnapshot {
+    pub fn listing_evidence_set(&self) -> ListingEvidenceSet {
+        ListingEvidenceSet::from_outcomes(Some(&self.opencode), Some(&self.pi), Some(&self.cursor))
+    }
+
     pub fn installed_harnesses(&self) -> HashSet<String> {
         self.executable
             .iter()
@@ -59,15 +133,42 @@ pub struct CapabilitySession {
     installed: HashSet<String>,
     offline: bool,
     probe_refresh: ProbeRefreshMode,
-    opencode: Option<CachedProbeOutcome>,
-    pi: Option<CachedPiProbeOutcome>,
-    cursor: Option<CachedCursorProbeOutcome>,
+    opencode: Option<ObservedOutcome<CachedProbeOutcome>>,
+    pi: Option<ObservedOutcome<CachedPiProbeOutcome>>,
+    cursor: Option<ObservedOutcome<CachedCursorProbeOutcome>>,
 }
 
 impl CapabilitySession {
     #[cfg(test)]
     pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
-        self.opencode = Some(CachedProbeOutcome::Hit(result));
+        self.opencode = Some(ObservedOutcome {
+            outcome: CachedProbeOutcome::Hit(result),
+            observation: None,
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_opencode_outcome_for_test(&mut self, outcome: CachedProbeOutcome) {
+        self.opencode = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedPiProbeOutcome) {
+        self.pi = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_cursor_outcome_for_test(&mut self, outcome: CachedCursorProbeOutcome) {
+        self.cursor = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
     }
 
     pub fn collect(options: &CapabilityCollectionOptions) -> Self {
@@ -114,21 +215,31 @@ impl CapabilitySession {
     }
 
     pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
-        self.opencode.get_or_insert_with(|| {
-            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.opencode.is_none() {
+            let observed = crate::models::probes::opencode_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.opencode = Some(observed);
+        }
+        &self
+            .opencode
+            .as_ref()
+            .expect("loaded OpenCode outcome")
+            .outcome
     }
 
     pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome> {
-        self.opencode.as_ref()
+        self.opencode.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_pi_outcome(&self) -> Option<&CachedPiProbeOutcome> {
-        self.pi.as_ref()
+        self.pi.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_cursor_outcome(&self) -> Option<&CachedCursorProbeOutcome> {
-        self.cursor.as_ref()
+        self.cursor.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_opencode_probe_result(&self) -> Option<&OpenCodeProbeResult> {
@@ -147,15 +258,51 @@ impl CapabilitySession {
     }
 
     pub fn pi_outcome(&mut self) -> &CachedPiProbeOutcome {
-        self.pi.get_or_insert_with(|| {
-            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.pi.is_none() {
+            let observed = crate::models::probes::pi_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.pi = Some(observed);
+        }
+        &self.pi.as_ref().expect("loaded Pi outcome").outcome
     }
 
     pub fn cursor_outcome(&mut self) -> &CachedCursorProbeOutcome {
-        self.cursor.get_or_insert_with(|| {
-            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.cursor.is_none() {
+            let observed = crate::models::probes::cursor_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.cursor = Some(observed);
+        }
+        &self.cursor.as_ref().expect("loaded Cursor outcome").outcome
+    }
+
+    pub fn probe_observation(&mut self, harness: HarnessId) -> Option<ProbeObservation> {
+        match harness {
+            HarnessId::Pi => {
+                self.pi_outcome();
+                self.pi
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            HarnessId::OpenCode => {
+                self.opencode_outcome();
+                self.opencode
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            HarnessId::Cursor => {
+                self.cursor_outcome();
+                self.cursor
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            _ => None,
+        }
     }
 
     pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
@@ -170,29 +317,63 @@ impl CapabilitySession {
         self.cursor_outcome().result().cloned()
     }
 
+    pub fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
+        match harness {
+            HarnessId::Pi => {
+                ListingEvidenceSet::from_outcomes(None, Some(self.pi_outcome()), None).get(harness)
+            }
+            HarnessId::Cursor => {
+                ListingEvidenceSet::from_outcomes(None, None, Some(self.cursor_outcome()))
+                    .get(harness)
+            }
+            HarnessId::OpenCode => {
+                ListingEvidenceSet::from_outcomes(Some(self.opencode_outcome()), None, None)
+                    .get(harness)
+            }
+            _ => ListingEvidence::default(),
+        }
+    }
+
+    pub fn loaded_listing_evidence_set(&self) -> ListingEvidenceSet {
+        ListingEvidenceSet::from_outcomes(
+            self.loaded_opencode_outcome(),
+            self.loaded_pi_outcome(),
+            self.loaded_cursor_outcome(),
+        )
+    }
+
     pub fn into_snapshot(self) -> CapabilitySnapshot {
         self.into_scoped_snapshot(&HarnessScope::Unrestricted)
     }
 
     pub fn into_scoped_snapshot(mut self, scope: &HarnessScope) -> CapabilitySnapshot {
         let opencode = if scope.permits("opencode") {
-            self.opencode.take().unwrap_or_else(|| {
-                cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.opencode
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedProbeOutcome::Unavailable
         };
         let pi = if scope.permits("pi") {
-            self.pi.take().unwrap_or_else(|| {
-                cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.pi
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedPiProbeOutcome::Unavailable
         };
         let cursor = if scope.permits("cursor") {
-            self.cursor.take().unwrap_or_else(|| {
-                cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.cursor
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedCursorProbeOutcome::Unavailable
         };
@@ -237,12 +418,34 @@ pub enum ExecutableState {
     Missing,
 }
 
+/// Runtime authentication evidence for one harness route.
+///
+/// `Authenticated` and `ImpliedByListing` are equal-strength evidence: credentials are
+/// configured, not proven valid or funded. They differ in freshness: native status runs
+/// per command, while listing evidence is as old as the probe cache entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthState {
-    NotApplicable,
+    /// No auth observation was made: an ungated listing (OpenCode), a gated harness
+    /// without a successful listing, or native materialization's deliberate skip.
+    Unchecked,
+    /// A native status command succeeded.
     Authenticated,
+    /// A credential-gated listing succeeded on its latest attempt.
+    ImpliedByListing,
+    /// A credential-gated listing's latest attempt failed (possibly logged out); support
+    /// still comes from the last good listing.
+    ListingFailed,
+    /// A native status command reported no usable login.
     Unauthenticated,
+    /// A native status command was inconclusive (timeout, spawn failure).
     Unknown { reason: String },
+}
+
+impl AuthState {
+    /// Whether this observation counts as runtime auth evidence for eligibility.
+    pub fn is_runtime_evidence(&self) -> bool {
+        matches!(self, Self::Authenticated | Self::ImpliedByListing)
+    }
 }
 
 pub trait ExecutableResolver {
@@ -325,7 +528,7 @@ fn native_auth_state(
     let (binary, args) = match id {
         HarnessId::Codex => ("codex", &["login", "status"][..]),
         HarnessId::Claude => ("claude", &["auth", "status"][..]),
-        _ => return AuthState::NotApplicable,
+        _ => return AuthState::Unchecked,
     };
 
     if !matches!(executable, ExecutableState::Found { .. }) {
@@ -409,6 +612,53 @@ mod tests {
     }
 
     #[test]
+    fn listing_evidence_is_identical_for_session_and_snapshot() {
+        let mut session = CapabilitySession::collect_with_resolver(
+            &CapabilityCollectionOptions {
+                offline: true,
+                probe_refresh: ProbeRefreshMode::Skip,
+            },
+            &FakeResolver::default(),
+        );
+        session.set_opencode_outcome_for_test(CachedProbeOutcome::StaleFailed(
+            OpenCodeProbeResult {
+                model_probe_success: true,
+                model_slugs: vec!["openai/gpt-5".into()],
+                error: None,
+            },
+        ));
+        session.set_pi_outcome_for_test(CachedPiProbeOutcome::Failed(PiProbeResult {
+            compatible: true,
+            model_probe_success: false,
+            error: Some("listing failed".into()),
+            ..PiProbeResult::default()
+        }));
+        session.set_cursor_outcome_for_test(CachedCursorProbeOutcome::StaleFailed(
+            CursorProbeResult {
+                model_probe_success: true,
+                slugs: vec!["gpt-5".into()],
+                error: None,
+            },
+        ));
+        let expected = [
+            (HarnessId::OpenCode, true, false),
+            (HarnessId::Pi, false, false),
+            (HarnessId::Cursor, true, false),
+        ];
+        let snapshot_set = session.clone().into_snapshot().listing_evidence_set();
+        let loaded_set = session.loaded_listing_evidence_set();
+        for (harness, succeeded, latest_attempt_ok) in expected {
+            let evidence = ListingEvidence {
+                succeeded,
+                latest_attempt_ok,
+            };
+            assert_eq!(session.listing_evidence(harness), evidence);
+            assert_eq!(snapshot_set.get(harness), evidence);
+            assert_eq!(loaded_set.get(harness), evidence);
+        }
+    }
+
+    #[test]
     fn snapshot_marks_installed_harnesses_from_resolver() {
         let mut resolver = FakeResolver::default();
         resolver.map.insert(
@@ -430,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn native_auth_for_non_native_harness_is_not_applicable() {
+    fn native_auth_for_non_native_harness_is_unchecked() {
         let resolver = FakeResolver::default();
         let state = native_auth_state(
             HarnessId::Pi,
@@ -441,7 +691,7 @@ mod tests {
             Duration::from_secs(1),
         );
 
-        assert_eq!(state, AuthState::NotApplicable);
+        assert_eq!(state, AuthState::Unchecked);
     }
 
     #[test]

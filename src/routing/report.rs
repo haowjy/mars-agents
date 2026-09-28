@@ -4,7 +4,7 @@ use crate::config::targets::{HarnessScope, LinkSource, TargetOrigin, TargetSourc
 use crate::harness::registry::{self, HarnessId};
 use crate::routing::RoutingTrace;
 
-pub const ROUTE_DECISION_REPORT_VERSION: u32 = 2;
+pub const ROUTE_DECISION_REPORT_VERSION: u32 = 3;
 
 /// Public serialization surface for routing decisions.
 /// Consumers serialize this, never `RoutingTrace` directly.
@@ -53,6 +53,7 @@ pub struct ModelAttemptReport {
     pub model_source: String,
     pub source: String,
     pub selection_kind: String,
+    pub selected_by_preference: bool,
     pub match_evidence: String,
     pub harness: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,6 +88,7 @@ pub struct RouteSummaryReport {
     pub harness: String,
     pub source: String,
     pub selection_kind: String,
+    pub selected_by_preference: bool,
     pub match_evidence: String,
 }
 
@@ -103,6 +105,7 @@ impl ModelAttemptReport {
             model_source: model_source.into(),
             source: trace.source.label().to_string(),
             selection_kind: trace.selected_selection_kind().label().to_string(),
+            selected_by_preference: trace.selected_by_preference,
             match_evidence: trace.selected_match_evidence().label().to_string(),
             harness: trace.selected_harness().to_string(),
             harness_order_position: trace.selected_harness_order_position(),
@@ -134,6 +137,7 @@ impl ModelAttemptReport {
             harness: self.harness.clone(),
             source: self.source.clone(),
             selection_kind: self.selection_kind.clone(),
+            selected_by_preference: self.selected_by_preference,
             match_evidence: self.match_evidence.clone(),
         }
     }
@@ -194,6 +198,7 @@ impl RouteDecisionReport {
             model_source: source.into(),
             source: String::new(),
             selection_kind: String::new(),
+            selected_by_preference: false,
             match_evidence: "none".into(),
             harness: String::new(),
             harness_order_position: None,
@@ -254,5 +259,41 @@ impl std::fmt::Display for RouteDecisionReport {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::host::AuthState;
+    use crate::routing::{
+        CandidateAssessment, MatchEvidence, RouteSource, trace_for_fixed_harness,
+    };
+
+    #[test]
+    fn preference_selection_is_visible_in_full_and_compact_json() {
+        let assessment = CandidateAssessment {
+            auth: Some(AuthState::Authenticated),
+            harness: "codex".into(),
+            installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: Some("gpt-5".into()),
+            match_evidence: Some(MatchEvidence::Confirmed),
+            skip_reason: None,
+        };
+        let mut trace =
+            trace_for_fixed_harness(RouteSource::Profile, "codex", assessment, Vec::new());
+        trace.selected_by_preference = true;
+        let attempt = ModelAttemptReport::from_trace("gpt-5", "gpt-5", "profile", &trace);
+        assert_eq!(
+            serde_json::to_value(&attempt).unwrap()["selected_by_preference"],
+            true
+        );
+        assert_eq!(
+            serde_json::to_value(attempt.compact_summary()).unwrap()["selected_by_preference"],
+            true
+        );
     }
 }

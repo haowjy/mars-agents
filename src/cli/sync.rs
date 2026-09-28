@@ -24,7 +24,7 @@ pub struct SyncArgs {
     #[arg(long, conflicts_with = "no_refresh_models")]
     pub refresh_models: bool,
 
-    /// Skip the automatic models-cache refresh during sync.
+    /// Use disk-only catalog/probe caches during sync; launch no refresh worker.
     #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
 

@@ -1125,14 +1125,11 @@ pub(crate) fn finalize(
             refresh.catalog_mode,
             &providers,
         ) {
-            Ok((_, crate::models::RefreshOutcome::StaleFallback { reason })) => {
-                diag.warn(
-                    "models-cache-refresh",
-                    format!("using stale models cache: {reason}"),
-                );
+            Ok((_, outcome)) => {
+                if let Some(warning) = crate::models::refresh_warning(&outcome) {
+                    diag.warn("models-cache-refresh", warning);
+                }
             }
-            Ok((_, crate::models::RefreshOutcome::Offline)) => {}
-            Ok(_) => {}
             Err(err) => {
                 diag.warn(
                     "models-cache-refresh",

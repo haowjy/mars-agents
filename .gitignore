@@ -12,5 +12,6 @@ mars.lock
 .cursor/
 .pi/
 mars.local.toml
+mars.curated.local.toml
 uv.lock
 meridian.toml

@@ -8,23 +8,26 @@ Capability probing for OpenCode, Pi, and Cursor harnesses, with disk-backed cach
 |---|---|
 | `mod.rs` | Re-exports; `should_probe_opencode()` / `should_probe_cursor()` guards |
 | `probe_refresh.rs` | Shared `ProbeRefreshMode` (background / synchronous / skip) |
-| `opencode.rs` | OpenCode probe: provider/model availability via `opencode models ls` |
-| `opencode_cache.rs` | OpenCode probe cache at `~/.mars/cache/availability/opencode-probe.json` |
+| `opencode.rs` | OpenCode probe: provider/model availability via `opencode models` |
+| `opencode_cache.rs` | OpenCode probe cache at `{cache_root}/availability/opencode-probe.json` |
 | `pi.rs` | Pi probe: binary present + `--version` / `--help` / `--list-models` |
 | `pi_cache.rs` | Pi probe cache at `{cache_root}/availability/pi.json` |
 | `cursor.rs` | Cursor probe + effort slug resolution (`resolve_cursor_effort_slug`) |
-| `cursor_cache.rs` | Cursor probe cache at `~/.mars/cache/availability/cursor-probe.json` |
+| `cursor_cache.rs` | Cursor probe cache at `{cache_root}/availability/cursor-probe.json` |
 
 ## Contracts
 
 ### Pi probe semantics
 
-`PiProbeResult.compatible == true` means probe subprocesses succeeded and **all** token groups in
-`PI_REQUIRED_HELP_TOKEN_GROUPS` appear in `pi --help` output (after stream merge below).
+`PiProbeResult.compatible == true` means the version/help surface is usable and
+**all** token groups in `PI_REQUIRED_HELP_TOKEN_GROUPS` appear in `pi --help`.
+`model_probe_success` independently records whether `pi --list-models` succeeded.
 
-Prerequisites: `pi` on PATH; `pi --version` and `pi --help` exit 0. `pi --list-models` must exit 0
-for a full probe; its output fills `model_slugs` (routing / `mars models list` Pi paths) but does
-**not** set `compatible` — empty slugs with `compatible: true` still yield no Pi runnable paths.
+Prerequisites: `pi` on PATH; `pi --version` and `pi --help` exit 0. A failed
+`--list-models` does not turn successful help-surface compatibility into incompatibility.
+An empty successful listing yields no Pi runnable paths. A failed listing with
+compatible help and no last-good cache is support-unknown passthrough, not a
+negative model match.
 
 **Stream merging:** probe subprocesses use stdout when non-empty after trim; otherwise stderr.
 Pi 0.75.x experimental builds emit `--help`, `--version`, and `--list-models` on stderr only.
@@ -58,12 +61,15 @@ multiple matches exist at the same effort tier.
 
 ### Cache
 
-Probes cache under `~/.mars/cache/availability/{pi,opencode,cursor}-probe.json`.
+Probes cache under `{cache_root}/availability/pi.json`,
+`opencode-probe.json`, and `cursor-probe.json`. On Linux the default root is
+`~/.cache/mars/cache`; `MARS_CACHE_DIR` overrides it.
 TTL: `MARS_PROBE_CACHE_TTL_SECS` env var (default 60s).
 Probe timeout: `MARS_PROBE_TIMEOUT_SECS` (default 5s).
 
-Cache is read at `collect_capability_snapshot()` time. Refresh behavior is controlled by
-`ProbeRefreshMode` on `CapabilityCollectionOptions`:
+The lazy `CapabilitySession` reads each cache on first harness access and memoizes
+the outcome for the command. Refresh behavior is controlled by `ProbeRefreshMode`
+on `CapabilityCollectionOptions`:
 
 | Mode | Stale usable | Miss / unusable |
 |---|---|---|
@@ -75,6 +81,25 @@ Cache is read at `collect_capability_snapshot()` time. Refresh behavior is contr
 
 Stale usable cache is still returned under `Skip` when the harness is installed — only refresh is
 suppressed.
+
+A failed synchronous or background attempt preserves the last good listing for
+all three probes, including Pi. Cache outcomes expose `latest_attempt_ok`;
+failed attempts keep `fetched_at`, advance `last_attempt_at` beyond it and
+record `last_error`. Pi/Cursor routing uses their last-good slugs for support,
+but `ListingFailed` rather than listing-implied auth until a later success.
+Background refresh is asynchronous: the first stale command can use the prior
+auth flag; the next command sees the failed refresh.
+Probe cache reads return the outcome and `ProbeObservation` (last successful
+`fetched_at` and `last_error`) together. `CapabilitySession` retains both for
+Possible, so a later background refresh cannot alter an already-loaded row's
+provenance. Listing success and latest-attempt policy still come from
+`CapabilitySession::listing_evidence(HarnessId)`. No separate Possible cache is
+written.
+If a refresh cannot acquire its lock, it returns usable cached evidence without
+probing or writing; with no usable cache, it may probe for this command only and
+does not persist the result. This avoids racing another writer.
+Pi cache schema 3 invalidates earlier entries rather than inferring listing
+success from an old result's error field.
 
 ### Windows/test cache isolation
 
@@ -110,7 +135,11 @@ subprocess overhead for commands that run `mars` repeatedly.
 **Unit test without real Pi binary:**
 
 ```rust
-let pi_probe = PiProbeResult { compatible: true, ..PiProbeResult::default() };
+let pi_probe = PiProbeResult {
+    compatible: true,
+    model_probe_success: true,
+    ..PiProbeResult::default()
+};
 // Inject Some(&pi_probe) into RoutingInput — no subprocess needed
 ```
 

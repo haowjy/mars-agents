@@ -31,6 +31,9 @@ pub struct PiProbeResult {
     pub binary_path: String,
     pub version: Option<String>,
     pub compatible: bool,
+    /// `--list-models` completed, independently of help-surface compatibility.
+    #[serde(default)]
+    pub model_probe_success: bool,
     pub help_surface_tokens_present: Vec<String>,
     pub help_surface_tokens_missing: Vec<String>,
     #[serde(default)]
@@ -87,7 +90,8 @@ pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {
             return PiProbeResult {
                 binary_path: binary_path_text,
                 version: first_non_empty_line(&version_output),
-                compatible: false,
+                compatible,
+                model_probe_success: false,
                 help_surface_tokens_present: present,
                 help_surface_tokens_missing: missing,
                 model_slugs: HashSet::new(),
@@ -100,6 +104,7 @@ pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {
         binary_path: binary_path_text,
         version: first_non_empty_line(&version_output),
         compatible,
+        model_probe_success: true,
         help_surface_tokens_present: present,
         help_surface_tokens_missing: missing,
         model_slugs: parse_models_output(&list_models_output),
@@ -472,5 +477,6 @@ openai-codex  gpt-5.4              272K     128K\n";
 
         let parsed: PiProbeResult = serde_json::from_str(raw).unwrap();
         assert!(parsed.model_slugs.is_empty());
+        assert!(!parsed.model_probe_success);
     }
 }

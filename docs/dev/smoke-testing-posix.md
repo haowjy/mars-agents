@@ -22,48 +22,20 @@ cargo fmt --all
 cargo test -q
 ```
 
-## Model Availability
-
-### Default view prunes unavailable
+## Model inventory
 
 ```bash
-# With only claude installed (no codex)
-mars models list
-# Should NOT show OpenAI models (unavailable)
-```
-
-### `--unavailable` shows all
-
-```bash
-mars models list --unavailable
-# Shows both available and unavailable with availability column
-```
-
-### `--catalog` shows raw cache
-
-```bash
-mars models list --catalog
-# Shows all models.dev entries regardless of aliases or availability
-```
-
-### OpenCode probing
-
-```bash
-# With opencode configured with OpenRouter credentials
-mars models list --json | jq '.probe_results.opencode'
-# Should show providers_found and models_found
-
-# With MARS_OFFLINE=1
-MARS_OFFLINE=1 mars models list --json | jq '.aliases[0].availability'
-# Should show "unknown" for OpenCode-dependent models
-```
-
-### Resolve includes availability
-
-```bash
+mars models list                         # curated Possible + Declared rows
+mars models list --all                   # include hidden rows and decision tier
+mars models list --harness codex --match 'gpt-*'
+mars models list --live --json | jq '.models[0].eligibility, .models[0].provenance'
+mars models aliases --json | jq '.aliases[0].model_id'
+mars models catalog --json | jq '.catalog[0].id'
 mars models resolve opus --json | jq '.availability, .runnable_paths'
-# Should show availability status and runnable paths
 ```
+
+`aliases` and `catalog` must not invoke harness commands. `list --live` may
+check native auth, but only for displayed fixed-harness rows.
 
 ## Local Path + `--subpath`
 

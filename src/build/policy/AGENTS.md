@@ -29,7 +29,8 @@ remains fatal. Never clear a requested model to make a harness work.
 - Final executable-model projection preserves the selected model and provider
   constraint, including unverified routes and aliases unresolved by the catalog.
   Route facts go to `routing.harness_model_source` / `routing.harness_model_confidence`.
-- Catalog refresh (`ensure_fresh`) runs before harness evaluation, not read-only
+- Catalog policy (`ensure_fresh`) runs before harness evaluation: stale usable data
+  returns immediately and schedules background refresh; cold/forced fetches block
 
 ## Target Permission
 
@@ -47,7 +48,7 @@ and backup evaluations. Support evidence alone does not establish runtime eligib
 ## Profile Model Fallback
 
 Primary first, then all concrete profile policy entries in declaration order.
-Select the first eligible model route; defer the first unverified attempt until
+Select the first eligible or supported authored-preference model route; defer the first unverified attempt until
 all candidates are exhausted. Keep its model, settings and provenance together.
 An explicit model pin prevents backup enumeration.
 `no-fallback` excludes only its entry, never the whole chain. Settings matching

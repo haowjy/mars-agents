@@ -21,6 +21,7 @@ pub mod link;
 pub mod list;
 pub mod models;
 mod models_common;
+mod models_inventory;
 mod models_prompting;
 pub mod outdated;
 pub mod output;
@@ -181,7 +182,7 @@ pub enum Command {
     /// Manage the global source cache.
     Cache(cache::CacheArgs),
 
-    /// Manage model aliases and the models cache.
+    /// Manage aliases and the last-known-good catalog (24h refresh-after by default).
     Models(models::ModelsArgs),
 
     /// Build derived artifacts from static project state.
@@ -278,16 +279,15 @@ fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
 
 fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
     matches!(
-        (cmd, err),
-        (
-            Command::Build(build::BuildArgs {
-                command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
-                    agent: None,
-                    ..
-                })
-            }),
-            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
-        )
+        err,
+        MarsError::Config(ConfigError::ProjectRootNotFound { .. })
+    ) && matches!(
+        cmd,
+        Command::Build(build::BuildArgs {
+            command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs { agent: None, .. })
+        }) | Command::Models(models::ModelsArgs {
+            command: models::ModelsCommand::RefreshCatalog(_),
+        })
     )
 }
 

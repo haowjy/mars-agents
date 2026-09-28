@@ -12,7 +12,7 @@ maintain a list of known harness binaries independently.
 
 - `HarnessId`: `Claude | Codex | Pi | OpenCode | Cursor`
 - `HarnessClass`: `Native { provider }` (claude↔anthropic, codex↔openai) |
-  `ProbeBacked` (pi, opencode, cursor)
+  `ProbeBacked { listing }` (Pi/Cursor `Gated`, OpenCode `Ungated`)
 - `parse(name)` / `is_known(name)` — case-insensitive, trim-safe
 - `provider_candidate_order(provider)` — canonical evaluation order for a given provider
 - `UNKNOWN_PROVIDER_FALLBACK_ORDER` — `[Pi, OpenCode, Cursor]` for unknown/non-native providers
@@ -33,6 +33,14 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
 - `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
 - `CapabilityCollectionOptions { offline, probe_refresh }` — `offline` from `MARS_OFFLINE` (`is_mars_offline()`); `probe_refresh` from `ModelsRefreshControl` at CLI/build call sites (see [probe refresh modes](../../models/probes/.context/CONTEXT.md))
 - `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl
+- `ListingEvidenceSet` / `listing_evidence(HarnessId)` — typed probe-listing
+  success and latest-attempt state shared by session, snapshot, and routing.
+  OpenCode is ungated for auth but its latest-attempt state is still available
+  to Possible projections.
+  `from_results_assuming_latest_ok` is restricted to static/test-style inputs;
+  cached production outcomes use `from_outcomes` so stale-failed status survives.
+  The session also holds probe observation time and last error with the loaded
+  outcome; Possible never re-reads the cache after that outcome is selected.
 
 `CapabilitySnapshot` fields:
 - `executable: BTreeMap<HarnessId, ExecutableState>` — PATH lookup result per harness

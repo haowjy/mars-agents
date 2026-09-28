@@ -33,6 +33,13 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
     fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
         self.session.cursor_probe_result()
     }
+
+    fn listing_evidence(
+        &mut self,
+        harness: crate::harness::registry::HarnessId,
+    ) -> crate::harness::host::ListingEvidence {
+        self.session.listing_evidence(harness)
+    }
 }
 
 pub struct PolicyInput<'a> {
@@ -220,8 +227,8 @@ pub fn resolve_policy(
             )
         }
     };
-    if let models::RefreshOutcome::StaleFallback { reason } = catalog_outcome {
-        warnings.push(format!("models cache: {reason}"));
+    if let Some(warning) = models::refresh_warning(&catalog_outcome) {
+        warnings.push(warning);
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
     let primary_model = model::resolve_model(
@@ -329,7 +336,7 @@ pub fn resolve_policy(
                         && assessment.eligibility() == routing::Eligibility::Eligible
                 });
                 let attempt = (attempt_index, candidate, matched_policy, resolution);
-                if eligible {
+                if eligible || attempt.3.route_trace.selected_by_preference {
                     selected = Some(attempt);
                     break;
                 }
@@ -515,15 +522,8 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let needs_opencode_probe = selected_harness.eq_ignore_ascii_case("opencode");
-    let needs_pi_probe = selected_harness.eq_ignore_ascii_case("pi");
-    let needs_cursor_probe = selected_harness.eq_ignore_ascii_case("cursor");
-    let opencode_probe_result = needs_opencode_probe
-        .then(|| capability_session.opencode_probe_result())
-        .flatten();
-    let pi_probe_result = needs_pi_probe
-        .then(|| capability_session.pi_probe_result())
-        .flatten();
+    let needs_cursor_probe = crate::harness::registry::parse(&selected_harness)
+        == Some(crate::harness::registry::HarnessId::Cursor);
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
@@ -543,10 +543,7 @@ pub fn resolve_policy(
             .to_string(),
         provider_constraint: resolved_model.provider_constraint.as_deref(),
         provider_for_order: resolved_model.provider_for_order.as_deref(),
-        settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
-        opencode_probe_result: opencode_probe_result.as_ref(),
-        pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
         route_report: report,
     });
@@ -558,10 +555,7 @@ pub fn resolve_policy(
             "effort_applied_to_harness_model".to_string(),
             "true".to_string(),
         );
-    } else if harness_resolution
-        .harness
-        .value
-        .eq_ignore_ascii_case("cursor")
+    } else if needs_cursor_probe
         && let Some(cursor_effort) = effort
             .as_deref()
             .map(str::trim)

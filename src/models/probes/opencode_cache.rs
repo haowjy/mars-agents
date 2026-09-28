@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,7 @@ pub struct ProbeCacheEntry {
 pub enum CachedProbeOutcome {
     Hit(OpenCodeProbeResult),
     Stale(OpenCodeProbeResult),
+    StaleFailed(OpenCodeProbeResult),
     Miss(OpenCodeProbeResult),
     Failed(OpenCodeProbeResult),
     Unavailable,
@@ -32,7 +33,11 @@ pub enum CachedProbeOutcome {
 impl CachedProbeOutcome {
     pub fn result(&self) -> Option<&OpenCodeProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) | Self::Failed(r) => Some(r),
+            Self::Hit(r)
+            | Self::Stale(r)
+            | Self::StaleFailed(r)
+            | Self::Miss(r)
+            | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -41,10 +46,15 @@ impl CachedProbeOutcome {
         match self {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
+            Self::StaleFailed(_) => "stale",
             Self::Miss(_) => "miss",
             Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
+    }
+
+    pub fn latest_attempt_ok(&self) -> bool {
+        matches!(self, Self::Hit(_) | Self::Stale(_) | Self::Miss(_))
     }
 }
 /// Return the cached OpenCode probe result if usable, even when stale.
@@ -186,19 +196,43 @@ pub fn probe_cached(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
 ) -> CachedProbeOutcome {
+    probe_cached_observed(installed, mars_offline, probe_refresh).outcome
+}
+
+pub fn probe_cached_observed(
+    installed: &HashSet<String>,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+) -> super::ObservedOutcome<CachedProbeOutcome> {
     if !super::should_probe_opencode(installed, mars_offline) {
-        return CachedProbeOutcome::Unavailable;
+        return super::ObservedOutcome {
+            outcome: CachedProbeOutcome::Unavailable,
+            observation: None,
+        };
     }
 
-    probe_cached_impl(
+    probe_cached_impl_observed(
         mars_offline,
         probe_refresh,
         &cache_path().ok(),
         super::opencode::probe,
-        || spawn_detached_refresh().map_err(|_| ()),
+        || {
+            let program = std::env::current_exe().map_err(|_| ())?;
+            crate::platform::process::spawn_detached(
+                program.as_os_str(),
+                &[
+                    OsString::from("models"),
+                    OsString::from("__refresh-probe"),
+                    OsString::from("--target"),
+                    OsString::from("opencode"),
+                ],
+            )
+            .map_err(|_| ())
+        },
     )
 }
 
+#[cfg(test)]
 fn probe_cached_impl<F, S>(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
@@ -210,8 +244,26 @@ where
     F: Fn() -> OpenCodeProbeResult,
     S: Fn() -> Result<(), ()>,
 {
+    probe_cached_impl_observed(mars_offline, probe_refresh, path, probe, spawn_refresh).outcome
+}
+
+fn probe_cached_impl_observed<F, S>(
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+    path: &Option<PathBuf>,
+    probe: F,
+    spawn_refresh: S,
+) -> super::ObservedOutcome<CachedProbeOutcome>
+where
+    F: Fn() -> OpenCodeProbeResult,
+    S: Fn() -> Result<(), ()>,
+{
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
-    match super::probe_refresh::resolve_probe_cache_branch(
+    let observation = cached.as_ref().map(observation_from_entry);
+    let latest_attempt_ok = cached
+        .as_ref()
+        .is_none_or(|entry| entry.last_attempt_at <= entry.fetched_at);
+    let outcome = match super::probe_refresh::resolve_probe_cache_branch(
         cached,
         mars_offline,
         probe_refresh,
@@ -219,10 +271,35 @@ where
         is_fresh,
         || trigger_background_refresh_with(spawn_refresh),
     ) {
-        ProbeCacheBranch::Hit(result) => CachedProbeOutcome::Hit(result),
-        ProbeCacheBranch::Stale(result) => CachedProbeOutcome::Stale(result),
+        ProbeCacheBranch::Hit(result) => {
+            if latest_attempt_ok {
+                CachedProbeOutcome::Hit(result)
+            } else {
+                CachedProbeOutcome::StaleFailed(result)
+            }
+        }
+        ProbeCacheBranch::Stale(result) => {
+            if latest_attempt_ok {
+                CachedProbeOutcome::Stale(result)
+            } else {
+                CachedProbeOutcome::StaleFailed(result)
+            }
+        }
         ProbeCacheBranch::Unavailable => CachedProbeOutcome::Unavailable,
-        ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
+        ProbeCacheBranch::SynchronousProbe => {
+            return synchronous_probe_with_observation(path, probe);
+        }
+    };
+    super::ObservedOutcome {
+        outcome,
+        observation,
+    }
+}
+
+fn observation_from_entry(entry: &ProbeCacheEntry) -> super::ProbeObservation {
+    super::ProbeObservation {
+        observed_at: Some(entry.fetched_at),
+        last_error: entry.last_error.clone(),
     }
 }
 
@@ -242,11 +319,56 @@ where
     drop(lock);
 }
 
-fn synchronous_probe_with<F>(path: &Option<PathBuf>, probe: F) -> CachedProbeOutcome
+fn synchronous_probe_with_observation<F>(
+    path: &Option<PathBuf>,
+    probe: F,
+) -> super::ObservedOutcome<CachedProbeOutcome>
 where
     F: Fn() -> OpenCodeProbeResult,
 {
+    use super::ObservedOutcome;
     let lock = blocking_lock();
+    if lock.is_none() {
+        // Without the lock, do not overwrite a last-good listing or race a
+        // background writer. It is still useful as support evidence.
+        if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
+            && is_usable(&entry)
+        {
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
+                CachedProbeOutcome::Stale(entry.result.unwrap())
+            } else {
+                CachedProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+            return ObservedOutcome {
+                outcome,
+                observation,
+            };
+        }
+        let probe_result = probe();
+        let last_error = if probe_result.model_probe_success {
+            None
+        } else {
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "opencode probe failed".to_string()),
+            )
+        };
+        let outcome = if probe_result.model_probe_success {
+            CachedProbeOutcome::Miss(probe_result)
+        } else {
+            CachedProbeOutcome::Failed(probe_result)
+        };
+        return ObservedOutcome {
+            outcome,
+            observation: Some(super::ProbeObservation {
+                observed_at: Some(now_unix_secs()),
+                last_error,
+            }),
+        };
+    }
 
     if lock.is_some()
         && let Some(path) = path
@@ -254,15 +376,42 @@ where
         && is_usable(&entry)
     {
         if is_fresh(&entry) {
-            return CachedProbeOutcome::Hit(entry.result.unwrap());
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
+                CachedProbeOutcome::Hit(entry.result.unwrap())
+            } else {
+                CachedProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+            return ObservedOutcome {
+                outcome,
+                observation,
+            };
         }
         let probe_result = probe();
         if probe_result.model_probe_success {
             write_probe_attempt(path, probe_result.clone());
-            return CachedProbeOutcome::Miss(probe_result);
+            return ObservedOutcome {
+                outcome: CachedProbeOutcome::Miss(probe_result),
+                observation: Some(super::ProbeObservation {
+                    observed_at: Some(now_unix_secs()),
+                    last_error: None,
+                }),
+            };
         } else {
             write_failed_attempt(path, &entry, &probe_result);
-            return CachedProbeOutcome::Stale(entry.result.unwrap());
+            let observation = Some(super::ProbeObservation {
+                observed_at: Some(entry.fetched_at),
+                last_error: Some(
+                    probe_result
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "opencode probe failed".to_string()),
+                ),
+            });
+            return ObservedOutcome {
+                outcome: CachedProbeOutcome::StaleFailed(entry.result.unwrap()),
+                observation,
+            };
         }
     }
 
@@ -272,23 +421,46 @@ where
     }
     drop(lock);
 
-    if probe_result.model_probe_success {
+    let last_error = if probe_result.model_probe_success {
+        None
+    } else {
+        Some(
+            probe_result
+                .error
+                .clone()
+                .unwrap_or_else(|| "opencode probe failed".to_string()),
+        )
+    };
+    let outcome = if probe_result.model_probe_success {
         CachedProbeOutcome::Miss(probe_result)
     } else {
         CachedProbeOutcome::Failed(probe_result)
+    };
+    ObservedOutcome {
+        outcome,
+        observation: Some(super::ProbeObservation {
+            observed_at: Some(now_unix_secs()),
+            last_error,
+        }),
     }
 }
 
 fn write_probe_attempt(path: &Path, probe_result: OpenCodeProbeResult) {
     let now = now_unix_secs();
+    let succeeded = probe_result.model_probe_success;
     let entry = ProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
-        fetched_at: now,
+        fetched_at: if succeeded { now } else { 0 },
         last_attempt_at: now,
         last_error: if probe_result.model_probe_success {
             None
         } else {
-            probe_result.error.clone()
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "opencode probe failed".to_string()),
+            )
         },
         result: Some(probe_result),
     };
@@ -307,43 +479,19 @@ fn write_failed_attempt(
     let entry = ProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
         fetched_at: existing.fetched_at,
-        last_attempt_at: now,
-        last_error: failed_probe.error.clone(),
+        last_attempt_at: now.max(existing.fetched_at.saturating_add(1)),
+        last_error: Some(
+            failed_probe
+                .error
+                .clone()
+                .unwrap_or_else(|| "opencode probe failed".to_string()),
+        ),
         result: existing.result.clone(),
     };
 
     if let Err(e) = write_cache_at(path, &entry) {
         eprintln!("debug: probe cache write failed: {e}");
     }
-}
-
-fn spawn_detached_refresh() -> std::io::Result<()> {
-    let mars_bin = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(mars_bin);
-    cmd.args(["models", "__refresh-probe", "--target", "opencode"]);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000008);
-    }
-
-    cmd.spawn()?;
-    Ok(())
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
@@ -425,6 +573,24 @@ mod tests {
     }
 
     #[test]
+    fn cold_failed_observation_keeps_error_without_last_good_cache() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        let observed = probe_cached_impl_observed(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path),
+            fail_result,
+            || Ok(()),
+        );
+        assert!(matches!(observed.outcome, CachedProbeOutcome::Failed(_)));
+        assert_eq!(
+            observed.observation.unwrap().last_error.as_deref(),
+            Some("boom")
+        );
+    }
+
+    #[test]
     fn fresh_hit_returns_cached_result() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
@@ -486,6 +652,42 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedProbeOutcome::Stale(_)));
+        assert!(outcome.latest_attempt_ok());
+    }
+
+    #[test]
+    fn failed_refresh_keeps_listing_but_drops_latest_attempt_evidence() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(ok_result())));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path.clone()),
+            fail_result,
+            || Ok(()),
+        );
+        assert!(matches!(outcome, CachedProbeOutcome::StaleFailed(_)));
+        assert!(!outcome.latest_attempt_ok());
+        assert!(
+            outcome
+                .result()
+                .unwrap()
+                .model_slugs
+                .iter()
+                .any(|slug| slug == "openai/gpt-5.4")
+        );
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        let offline = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Skip,
+            &Some(path),
+            || panic!("skip must not re-probe"),
+            || Ok(()),
+        );
+        assert!(!offline.latest_attempt_ok());
+        assert!(offline.result().is_some());
     }
 
     #[test]

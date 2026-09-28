@@ -52,7 +52,7 @@ fn report_records_failed_primary_and_selected_backup_with_local_scope() {
     assert_eq!(code, 0, "{bundle}");
     assert_eq!(bundle["version"], 4);
     let report = &bundle["routing"]["route_trace"];
-    assert_eq!(report["version"], 2);
+    assert_eq!(report["version"], 3);
     assert_eq!(report["outcome"], "selected");
     assert_eq!(
         report["scope"]["enabled_harnesses"],
@@ -82,6 +82,8 @@ fn report_records_failed_primary_and_selected_backup_with_local_scope() {
 
 #[test]
 fn report_points_back_to_deferred_primary_after_all_backups() {
+    // No Pi listing fixture is installed: both attempts are support-unknown,
+    // so the first unverified primary remains selected rather than a backup.
     let (bundle, code, calls) = launch("targets=[\".pi\"]", None, &[]);
     assert_eq!(code, 0);
     let report = &bundle["routing"]["route_trace"];
@@ -91,6 +93,10 @@ fn report_points_back_to_deferred_primary_after_all_backups() {
     assert_eq!(
         report["model_attempts"][0]["assessments"][index]["verdict"],
         "unverified"
+    );
+    assert_eq!(
+        report["model_attempts"][0]["assessments"][index]["reason"],
+        "support_unknown"
     );
     assert_eq!(bundle["routing"]["model_token"], "primary");
     assert!(calls.is_empty());
@@ -118,7 +124,7 @@ fn json_failures_preserve_attempts_and_explicit_permission_rejection() {
         assert_ne!(code, 0);
         assert_eq!(value["error"]["code"], error, "{value}");
         let report = &value["route_trace"];
-        assert_eq!(report["version"], 2);
+        assert_eq!(report["version"], 3);
         assert_eq!(report["outcome"], outcome);
         assert!(report["selected"].is_null());
         assert_eq!(report["model_attempts"].as_array().unwrap().len(), count);

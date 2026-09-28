@@ -1,8 +1,9 @@
 use crate::build::bundle::Routing;
+use crate::harness::registry::{self, HarnessId};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
-use crate::models::harness_model::{HarnessModelInput, resolve_harness_model};
+use crate::models::harness_model::resolve_harness_model;
+use crate::models::probes::CursorProbeResult;
 use crate::models::probes::cursor::{CursorEffortResolutionError, resolve_cursor_effort_slug};
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 use crate::routing::{MatchEvidence, report::RouteDecisionReport};
 
 pub(super) struct RoutingInput<'a> {
@@ -13,10 +14,7 @@ pub(super) struct RoutingInput<'a> {
     pub(super) match_evidence: String,
     pub(super) provider_constraint: Option<&'a str>,
     pub(super) provider_for_order: Option<&'a str>,
-    pub(super) settings_provider_order: Option<&'a [String]>,
     pub(super) effort: Option<String>,
-    pub(super) opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pub(super) pi_probe_result: Option<&'a PiProbeResult>,
     pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
     pub(super) route_report: RouteDecisionReport,
 }
@@ -47,29 +45,26 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         match_evidence,
         provider_constraint,
         provider_for_order,
-        settings_provider_order,
         effort,
-        opencode_probe_result,
-        pi_probe_result,
         cursor_probe_result,
         route_report,
     } = input;
 
-    let runnable = resolve_harness_model(HarnessModelInput {
-        harness: &harness,
-        model_id: &model,
-        provider_constraint,
-        provider_for_order,
-        settings_provider_order,
-        opencode_probe: opencode_probe_result,
-        pi_probe: pi_probe_result,
-    });
-
-    let candidate_slugs = route_report
+    let selected_assessment = route_report
         .selected_attempt()
         .into_iter()
         .flat_map(|attempt| &attempt.assessments)
-        .find(|assessment| assessment.harness == harness)
+        .find(|assessment| assessment.harness == harness);
+    let harness_id = registry::parse(&harness).expect("selected harness is registered");
+    let runnable = resolve_harness_model(
+        harness_id,
+        &model,
+        selected_assessment.and_then(|assessment| assessment.chosen_slug.as_deref()),
+        selected_assessment.and_then(|assessment| assessment.chosen_model.as_deref()),
+        provider_constraint,
+        provider_for_order,
+    );
+    let candidate_slugs = selected_assessment
         .map(|assessment| assessment.candidate_slugs.clone())
         .unwrap_or_default();
 
@@ -89,7 +84,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
 
-    if harness.eq_ignore_ascii_case("cursor")
+    if harness_id == HarnessId::Cursor
         && !routing.model.trim().is_empty()
         && let Some(effort) = effort.filter(|value| !value.trim().is_empty())
     {
@@ -142,8 +137,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
     use crate::routing::{RoutingTrace, SelectionKind};
 
     fn report(trace: RoutingTrace) -> RouteDecisionReport {
@@ -161,6 +154,7 @@ mod tests {
         RoutingTrace {
             source: crate::routing::RouteSource::Provider,
             selection_kind: SelectionKind::Auto,
+            selected_by_preference: false,
             match_evidence: evidence,
             harness: "opencode".to_string(),
             harness_order_position: None,
@@ -171,8 +165,10 @@ mod tests {
                 installed: true,
                 candidate_slugs: vec!["openai/gpt-5.4-mini".to_string()],
                 filtered_slugs: vec!["openai/gpt-5.4-mini".to_string()],
-                chosen_slug: Some("openai/gpt-5.4-mini".to_string()),
-                chosen_model: Some("gpt-5.4-mini".to_string()),
+                chosen_slug: (evidence != MatchEvidence::Passthrough)
+                    .then(|| "openai/gpt-5.4-mini".to_string()),
+                chosen_model: (evidence != MatchEvidence::Passthrough)
+                    .then(|| "gpt-5.4-mini".to_string()),
                 match_evidence: Some(evidence),
                 skip_reason: None,
             }],
@@ -182,12 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn opencode_uses_probe_slug_when_probe_available() {
-        let opencode_probe = OpenCodeProbeResult {
-            model_slugs: vec!["openai/gpt-5.4-mini".to_string()],
-            model_probe_success: true,
-            error: None,
-        };
+    fn opencode_uses_selected_slug_from_route_report() {
         let resolution = resolve_routing(RoutingInput {
             model: "gpt-5.4-mini".to_string(),
             model_token: "gptmini".to_string(),
@@ -196,10 +187,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: Some("openai"),
-            settings_provider_order: None,
             effort: None,
-            opencode_probe_result: Some(&opencode_probe),
-            pi_probe_result: None,
             cursor_probe_result: None,
             route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
@@ -224,10 +212,7 @@ mod tests {
             match_evidence: "passthrough".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: None,
             route_report: report(trace_with_assessment(MatchEvidence::Passthrough)),
         });
@@ -236,17 +221,11 @@ mod tests {
     }
 
     #[test]
-    fn pi_uses_probe_slug_for_bare_model() {
-        let mut model_slugs = HashSet::new();
-        model_slugs.insert("openai-codex/gpt-5.4-mini".to_string());
-        let pi_probe = PiProbeResult {
-            compatible: true,
-            model_slugs,
-            ..PiProbeResult::default()
-        };
+    fn pi_uses_selected_slug_for_bare_model() {
         let trace = RoutingTrace {
             source: crate::routing::RouteSource::Cli,
             selection_kind: SelectionKind::Fixed,
+            selected_by_preference: false,
             match_evidence: MatchEvidence::Confirmed,
             harness: "pi".to_string(),
             harness_order_position: None,
@@ -273,10 +252,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: Some("openai"),
-            settings_provider_order: None,
             effort: None,
-            opencode_probe_result: None,
-            pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
             route_report: report(trace),
         });
@@ -301,10 +277,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
                 model_probe_success: true,
@@ -332,10 +305,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("medium".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec![
                     "gpt-5.5".to_string(),
@@ -366,10 +336,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["composer-2.5".to_string(), "composer-2.5-low".to_string()],
                 model_probe_success: true,
@@ -396,10 +363,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec![
                     "composer-2.5".to_string(),
@@ -430,10 +394,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["gpt-5.5".to_string(), "gpt-5.5-low".to_string()],
                 model_probe_success: true,
@@ -460,10 +421,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: None,
             route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
         });
@@ -484,10 +442,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: Vec::new(),
                 model_probe_success: true,
@@ -512,10 +467,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: Vec::new(),
                 model_probe_success: false,
@@ -542,10 +494,7 @@ mod tests {
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["claude-opus-4-7-high".to_string()],
                 model_probe_success: true,
@@ -570,10 +519,7 @@ mod tests {
             match_evidence: "passthrough".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: Some("high".to_string()),
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
                 slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
                 model_probe_success: true,
@@ -582,6 +528,7 @@ mod tests {
             route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Cli,
                 selection_kind: SelectionKind::Fixed,
+                selected_by_preference: false,
                 match_evidence: MatchEvidence::Passthrough,
                 harness: "cursor".to_string(),
                 harness_order_position: None,
@@ -611,14 +558,12 @@ mod tests {
             match_evidence: "passthrough".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            settings_provider_order: None,
             effort: None,
-            opencode_probe_result: None,
-            pi_probe_result: None,
             cursor_probe_result: None,
             route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Provider,
                 selection_kind: SelectionKind::Auto,
+                selected_by_preference: false,
                 match_evidence: MatchEvidence::Passthrough,
                 harness: "claude".to_string(),
                 harness_order_position: None,

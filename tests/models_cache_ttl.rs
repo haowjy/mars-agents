@@ -8,13 +8,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::process::{Command as StdCommand, Output};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::*;
 
 #[test]
 #[serial]
-fn scenario_a_cold_cache_refreshes_on_models_list() {
+fn scenario_a_cold_cache_refreshes_on_models_catalog() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -24,15 +24,13 @@ fn scenario_a_cold_cache_refreshes_on_models_list() {
     let (temp, project_root) = setup_project(&server);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list"]);
+    cmd.args(["--json", "models", "catalog"]);
 
     let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-
+    let catalog_ids = model_ids_from_catalog_json(&output.stdout);
     assert!(
-        stdout["aliases"].is_array(),
-        "expected aliases array in JSON"
+        catalog_ids.contains("gpt-5"),
+        "expected fetched catalog entry"
     );
 
     let cache = read_cache_json(&project_root);
@@ -65,12 +63,12 @@ fn scenario_b_fresh_cache_skips_fetch() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list", "--all"]);
+    cmd.args(["--json", "models", "catalog"]);
     let output = cmd.assert().success().get_output().clone();
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let catalog_ids = model_ids_from_catalog_json(&output.stdout);
     assert!(
-        stdout.contains("gpt-5"),
-        "expected cached model id in list output:\n{stdout}"
+        catalog_ids.contains("gpt-5"),
+        "expected cached model id in catalog: {catalog_ids:?}"
     );
 
     let after = read_cache_raw(&project_root);
@@ -80,7 +78,7 @@ fn scenario_b_fresh_cache_skips_fetch() {
 
 #[test]
 #[serial]
-fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
+fn scenario_c_stale_cache_background_failure_retains_last_good_and_backs_off() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -92,23 +90,37 @@ fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
     let before = read_cache_raw(&project_root);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list", "--all"]);
+    cmd.args(["--json", "models", "catalog"]);
 
     let output = cmd.assert().success().get_output().clone();
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    let stdout: Value =
+        serde_json::from_slice(&output.stdout).expect("models catalog --json should return JSON");
+    assert_eq!(stdout["cache_refresh"]["status"], "stale");
+    assert_eq!(stdout["cache_refresh"]["refresh"]["status"], "spawned");
     assert!(
-        stderr.contains("models cache refresh failed") && stderr.contains("stale cache"),
-        "expected stale cache warning, stderr:\n{stderr}"
-    );
-    assert!(
-        stdout.contains("gpt-5"),
-        "expected cached model id in list output:\n{stdout}"
+        model_ids_from_catalog_json(&output.stdout).contains("gpt-5"),
+        "expected cached model id in catalog JSON: {stdout}"
     );
 
+    wait_until(Duration::from_secs(5), || {
+        project_root.join(".mars/.models-cache.last-fail").exists()
+    });
     let after = read_cache_raw(&project_root);
     assert_eq!(before, after, "stale fallback must not rewrite cache");
     assert_eq!(mock.hits(), 1, "stale cache should attempt one refresh");
+
+    let mut again = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    again.args(["--json", "models", "catalog"]);
+    let again_output = again.assert().success().get_output().clone();
+    let again_json: Value = serde_json::from_slice(&again_output.stdout).unwrap();
+    assert_eq!(again_json["cache_refresh"]["refresh"]["status"], "cooldown");
+    assert!(
+        again_json["cache_refresh"]["last_failure"]
+            .as_str()
+            .unwrap()
+            .contains("fetch failed")
+    );
+    assert_eq!(mock.hits(), 1, "cooldown must not repeat a failed request");
 }
 
 #[test]
@@ -364,10 +376,9 @@ fn scenario_i_concurrent_processes_fetch_once() {
                     .arg(root)
                     .arg("--json")
                     .arg("models")
-                    .arg("list")
-                    .arg("--unavailable")
+                    .arg("catalog")
                     .output()
-                    .expect("failed to execute concurrent mars models list")
+                    .expect("failed to execute concurrent mars models catalog")
             })
         })
         .collect();
@@ -389,7 +400,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
             "expected success, stderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let model_ids = resolved_model_ids_from_models_list_json(&output.stdout);
+        let model_ids = model_ids_from_catalog_json(&output.stdout);
         let catalog_ids_seen: BTreeSet<String> = model_ids
             .intersection(&expected_catalog_ids)
             .cloned()
@@ -417,7 +428,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
 
 #[test]
 #[serial]
-fn scenario_j_ttl_zero_always_refreshes() {
+fn scenario_j_zero_refresh_after_triggers_background_refresh() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -440,9 +451,14 @@ fn scenario_j_ttl_zero_always_refreshes() {
     );
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list"]);
+    cmd.args(["models", "catalog"]);
     cmd.assert().success();
 
+    wait_until(Duration::from_secs(5), || {
+        mock.hits() == 1
+            && read_cache_json(&project_root)["fetched_at"].as_str()
+                != Some(stale_but_recent.as_str())
+    });
     let cache = read_cache_json(&project_root);
     let updated_fetched_at = cache["fetched_at"]
         .as_str()
@@ -451,5 +467,20 @@ fn scenario_j_ttl_zero_always_refreshes() {
         updated_fetched_at, stale_but_recent,
         "ttl=0 should force refresh even with fresh cache"
     );
-    assert_eq!(mock.hits(), 1, "ttl=0 should force one network fetch");
+    assert_eq!(
+        mock.hits(),
+        1,
+        "zero refresh-after should trigger one background fetch"
+    );
+}
+
+fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + timeout;
+    while !condition() {
+        assert!(
+            Instant::now() < deadline,
+            "condition not met within {timeout:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }

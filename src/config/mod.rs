@@ -167,6 +167,17 @@ pub struct Manifest {
     pub models: IndexMap<String, crate::models::ModelAlias>,
 }
 
+/// Parse only exported sections of a package manifest. Consumer settings in
+/// the source belong to that source's project, not to its dependents.
+#[derive(Deserialize)]
+struct SourceManifestSections {
+    package: Option<PackageInfo>,
+    #[serde(default)]
+    dependencies: IndexMap<SourceName, InstallDep>,
+    #[serde(default)]
+    models: IndexMap<String, crate::models::ModelAlias>,
+}
+
 /// Shared include/exclude/rename filter configuration for a source.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FilterConfig {
@@ -182,28 +193,6 @@ pub struct FilterConfig {
     pub only_skills: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub only_agents: bool,
-}
-
-/// Display visibility filter for `mars models list`.
-/// Consumer-only — lives under [settings], not [models].
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ModelVisibility {
-    /// Show only aliases matching these glob patterns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include: Option<Vec<String>>,
-    /// Hide aliases matching these glob patterns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
-    /// Show only aliases whose resolved provider matches one of these keys.
-    /// Exact, case-insensitive match with provider-variant collapsing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub providers: Option<Vec<String>>,
-}
-
-impl ModelVisibility {
-    pub fn is_empty(&self) -> bool {
-        self.include.is_none() && self.exclude.is_none() && self.providers.is_none()
-    }
 }
 
 /// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
@@ -518,8 +507,6 @@ pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_visibility: Option<LocalModelVisibility>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models_cache_ttl_hours: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_mars_version: Option<String>,
@@ -539,17 +526,6 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct LocalModelVisibility {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub providers: Option<Vec<String>>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -575,8 +551,6 @@ pub struct Settings {
     /// are enabled by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "ModelVisibility::is_empty")]
-    pub model_visibility: ModelVisibility,
     #[serde(default = "default_models_cache_ttl_hours")]
     pub models_cache_ttl_hours: u32,
     /// Minimum mars binary version required to use this project.
@@ -682,7 +656,6 @@ impl Default for Settings {
         Self {
             managed_root: None,
             targets: None,
-            model_visibility: ModelVisibility::default(),
             models_cache_ttl_hours: default_models_cache_ttl_hours(),
             min_mars_version: None,
             default_harness: None,
@@ -819,6 +792,72 @@ pub struct EffectiveDependency {
 const CONFIG_FILE: &str = "mars.toml";
 const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
 
+fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
+    content: &str,
+    path: &Path,
+) -> Result<T, MarsError> {
+    let value: toml::Value = toml::from_str(content).map_err(ConfigError::Parse)?;
+    if let Some(legacy) = value
+        .get("settings")
+        .and_then(|settings| settings.get("model_visibility"))
+    {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "{}: [settings.model_visibility] was removed. Move these display rules to mars.curated.toml (or mars.curated.local.toml for local overrides); review harness×model semantics before applying. Mars will not write the new file:\n{}",
+                path.display(), visibility_migration(legacy)
+            ),
+        }.into());
+    }
+    // Deserialize the original text, not the intermediate `toml::Value`:
+    // round-tripping through Value reorders declaration-keyed tables and can
+    // change the first dependency alias winner.
+    toml::from_str(content).map_err(|error| ConfigError::Parse(error).into())
+}
+
+fn visibility_migration(legacy: &toml::Value) -> String {
+    let mut suggestions = Vec::new();
+    for (key, section) in [("include", "show"), ("exclude", "hide")] {
+        if let Some(patterns) = legacy.get(key).and_then(toml::Value::as_array) {
+            for pattern in patterns.iter().filter_map(toml::Value::as_str) {
+                let (harness, provider, model) =
+                    match pattern.split('/').collect::<Vec<_>>().as_slice() {
+                        [provider, model]
+                            if !provider.is_empty() && *provider != "*" && !model.is_empty() =>
+                        {
+                            ("*", Some(*provider), *model)
+                        }
+                        [_, _, _, ..] => ("opencode", None, pattern),
+                        _ => ("*", None, pattern),
+                    };
+                let provider = provider
+                    .map(|value| format!(" provider={}", toml::Value::String(value.into())))
+                    .unwrap_or_default();
+                suggestions.push(format!(
+                    "  {key} = {} → [[{section}]] harness={}{} model={}",
+                    toml::Value::String(pattern.into()),
+                    toml::Value::String(harness.into()),
+                    provider,
+                    toml::Value::String(model.into())
+                ));
+            }
+        }
+    }
+    if let Some(providers) = legacy.get("providers").and_then(toml::Value::as_array) {
+        for provider in providers.iter().filter_map(toml::Value::as_str) {
+            suggestions.push(format!(
+                "  providers = {} → [[show]] harness=\"*\" provider={} model=\"*\"",
+                toml::Value::String(provider.into()),
+                toml::Value::String(provider.into())
+            ));
+        }
+    }
+    if suggestions.is_empty() {
+        "  Translate include to [[show]], exclude to [[hide]], and providers to [[show]].".into()
+    } else {
+        suggestions.join("\n")
+    }
+}
+
 /// Load mars.toml from the given root directory.
 pub fn load(root: &Path) -> Result<Config, MarsError> {
     let path = root.join(CONFIG_FILE);
@@ -829,7 +868,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
             ConfigError::Io(e)
         }
     })?;
-    let mut config: Config = toml::from_str(&content).map_err(ConfigError::Parse)?;
+    let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
@@ -846,7 +885,10 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
     let diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
-            let parsed: Config =
+            // A package manifest may also contain consumer-only settings. They
+            // are not this project's settings and cannot require the consumer
+            // to migrate an upstream package before syncing it.
+            let parsed: SourceManifestSections =
                 toml::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
                     message: format!("failed to parse {}: {e}", path.display()),
                 })?;
@@ -893,7 +935,7 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     match std::fs::read_to_string(&path) {
         Ok(content) => {
-            let local: LocalConfig = toml::from_str(&content).map_err(ConfigError::Parse)?;
+            let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -1299,15 +1341,6 @@ fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), M
             message: format!(
                 "refusing to save config: settings.managed_root changed during roundtrip ({:?} -> {:?})",
                 original.settings.managed_root, reparsed.settings.managed_root
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.model_visibility != original.settings.model_visibility {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.model_visibility changed during roundtrip ({:?} -> {:?})",
-                original.settings.model_visibility, reparsed.settings.model_visibility
             ),
         }
         .into());
@@ -2060,68 +2093,6 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
     }
 
     #[test]
-    fn merged_settings_overlays_model_visibility_keys_independently() {
-        let settings = Settings {
-            model_visibility: ModelVisibility {
-                include: Some(vec!["openai/*".to_string()]),
-                exclude: Some(vec!["*-preview".to_string()]),
-                providers: Some(vec!["openai".to_string()]),
-            },
-            ..Settings::default()
-        };
-        let local = LocalConfig {
-            settings: LocalSettings {
-                model_visibility: Some(LocalModelVisibility {
-                    include: Some(vec!["anthropic/*".to_string()]),
-                    exclude: None,
-                    providers: None,
-                }),
-                ..LocalSettings::default()
-            },
-            ..LocalConfig::default()
-        };
-
-        let merged = merged_settings(&settings, &local);
-        assert_eq!(
-            merged.model_visibility.include,
-            Some(vec!["anthropic/*".to_string()])
-        );
-        assert_eq!(
-            merged.model_visibility.exclude,
-            Some(vec!["*-preview".to_string()])
-        );
-    }
-
-    #[test]
-    fn merged_settings_local_providers_replace_project_providers() {
-        let settings = Settings {
-            model_visibility: ModelVisibility {
-                include: None,
-                exclude: None,
-                providers: Some(vec!["xai".to_string(), "openai".to_string()]),
-            },
-            ..Settings::default()
-        };
-        let local = LocalConfig {
-            settings: LocalSettings {
-                model_visibility: Some(LocalModelVisibility {
-                    include: None,
-                    exclude: None,
-                    providers: Some(vec!["xai".to_string()]),
-                }),
-                ..LocalSettings::default()
-            },
-            ..LocalConfig::default()
-        };
-
-        let merged = merged_settings(&settings, &local);
-        assert_eq!(
-            merged.model_visibility.providers,
-            Some(vec!["xai".to_string()])
-        );
-    }
-
-    #[test]
     fn merged_settings_replaces_scalar_table_and_array_fields() {
         let base_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
@@ -2137,11 +2108,6 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
-            model_visibility: ModelVisibility {
-                include: Some(vec!["anthropic/*".to_string()]),
-                exclude: None,
-                providers: None,
-            },
             models_cache_ttl_hours: 24,
             min_mars_version: Some("0.1.0".to_string()),
             model_policies: vec![base_rule],
@@ -2150,11 +2116,6 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         let local = LocalConfig {
             settings: LocalSettings {
                 targets: Some(vec![".cursor".to_string()]),
-                model_visibility: Some(LocalModelVisibility {
-                    include: None,
-                    exclude: Some(vec!["*-preview*".to_string()]),
-                    providers: None,
-                }),
                 models_cache_ttl_hours: Some(48),
                 min_mars_version: Some("0.2.0".to_string()),
                 model_policies: Some(vec![local_rule.clone()]),
@@ -2167,14 +2128,6 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         assert_eq!(merged.targets, Some(vec![".cursor".to_string()]));
         assert_eq!(merged.models_cache_ttl_hours, 48);
         assert_eq!(merged.min_mars_version.as_deref(), Some("0.2.0"));
-        assert_eq!(
-            merged.model_visibility.exclude,
-            Some(vec!["*-preview*".to_string()])
-        );
-        assert_eq!(
-            merged.model_visibility.include,
-            Some(vec!["anthropic/*".to_string()])
-        );
         assert_eq!(merged.model_policies, vec![local_rule]);
     }
 
@@ -2277,7 +2230,7 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
     }
 
     #[test]
-    fn load_local_rejects_unknown_local_model_visibility_fields() {
+    fn load_local_rejects_removed_model_visibility_with_migration() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.local.toml"),
@@ -2286,8 +2239,50 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         .unwrap();
 
         let err = load_local(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("unknown field"), "unexpected error: {err}");
-        assert!(err.contains("future_nested_key"), "unexpected error: {err}");
+        assert!(err.contains("mars.local.toml"), "unexpected error: {err}");
+        assert!(
+            err.contains("mars.curated.local.toml"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("[[show]]"), "unexpected error: {err}");
+        assert!(err.contains("[[hide]]"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn load_rejects_removed_project_model_visibility_with_migration() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings.model_visibility]\ninclude = ['anthropic/*']\n",
+        )
+        .unwrap();
+        let error = load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains("mars.toml"), "{error}");
+        assert!(error.contains("mars.curated.toml"), "{error}");
+        assert!(error.contains("provider=\"anthropic\""), "{error}");
+        assert!(error.contains("[[show]]"), "{error}");
+        assert!(!error.contains("openrouter/anthropic/*"), "{error}");
+    }
+
+    #[test]
+    fn removed_visibility_migration_uses_actual_values_and_direction() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings.model_visibility]\ninclude=['gpt-6*','anthropic/*','openai/gpt-5*']\nexclude=['openrouter/anthropic/*','xai/grok-*','anthropic/claude-*']\nproviders=['openai-codex']\n",
+        ).unwrap();
+        let error = load(dir.path()).unwrap_err().to_string();
+        for expected in [
+            "include = \"gpt-6*\" → [[show]] harness=\"*\" model=\"gpt-6*\"",
+            "include = \"anthropic/*\" → [[show]] harness=\"*\" provider=\"anthropic\" model=\"*\"",
+            "include = \"openai/gpt-5*\" → [[show]] harness=\"*\" provider=\"openai\" model=\"gpt-5*\"",
+            "exclude = \"openrouter/anthropic/*\" → [[hide]] harness=\"opencode\" model=\"openrouter/anthropic/*\"",
+            "exclude = \"xai/grok-*\" → [[hide]] harness=\"*\" provider=\"xai\" model=\"grok-*\"",
+            "exclude = \"anthropic/claude-*\" → [[hide]] harness=\"*\" provider=\"anthropic\" model=\"claude-*\"",
+            "providers = \"openai-codex\" → [[show]] harness=\"*\" provider=\"openai-codex\" model=\"*\"",
+        ] {
+            assert!(error.contains(expected), "missing {expected}: {error}");
+        }
     }
 
     #[test]
@@ -2299,9 +2294,6 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
 harness_order = ["codex", "pi"]
 future_key = "allowed"
 
-[settings.model_visibility]
-include = ["openai/*"]
-future_nested_key = true
 "#,
         )
         .unwrap();
@@ -2311,10 +2303,6 @@ future_nested_key = true
         assert_eq!(
             effective.settings.harness_order,
             Some(vec!["codex".to_string(), "pi".to_string()])
-        );
-        assert_eq!(
-            effective.settings.model_visibility.include,
-            Some(vec!["openai/*".to_string()])
         );
     }
 
@@ -3165,99 +3153,6 @@ harness_order = ["pi", "opencode", "codex", "claude"]
             roundtripped.settings.agent_emission,
             original.settings.agent_emission
         );
-    }
-
-    #[test]
-    fn model_visibility_is_empty_reports_state() {
-        assert!(ModelVisibility::default().is_empty());
-        assert!(
-            !ModelVisibility {
-                include: Some(vec!["opus*".into()]),
-                exclude: None,
-                providers: None,
-            }
-            .is_empty()
-        );
-        assert!(
-            !ModelVisibility {
-                include: None,
-                exclude: Some(vec!["test*".into()]),
-                providers: None,
-            }
-            .is_empty()
-        );
-        assert!(
-            !ModelVisibility {
-                include: None,
-                exclude: None,
-                providers: Some(vec!["xai".into()]),
-            }
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn load_accepts_model_visibility_with_include_and_exclude() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[settings.model_visibility]
-include = ["opus*"]
-exclude = ["test*"]
-"#,
-        )
-        .unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.settings.model_visibility.include,
-            Some(vec!["opus*".into()])
-        );
-        assert_eq!(
-            config.settings.model_visibility.exclude,
-            Some(vec!["test*".into()])
-        );
-    }
-
-    #[test]
-    fn load_accepts_model_visibility_include_only() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[settings.model_visibility]
-include = ["opus*", "gpt-*"]
-"#,
-        )
-        .unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.settings.model_visibility.include,
-            Some(vec!["opus*".into(), "gpt-*".into()])
-        );
-        assert!(config.settings.model_visibility.exclude.is_none());
-    }
-
-    #[test]
-    fn load_accepts_model_visibility_exclude_only() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[settings.model_visibility]
-exclude = ["test-*", "deprecated-*"]
-"#,
-        )
-        .unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.settings.model_visibility.exclude,
-            Some(vec!["test-*".into(), "deprecated-*".into()])
-        );
-        assert!(config.settings.model_visibility.include.is_none());
     }
 
     // === local-dependencies tests ===

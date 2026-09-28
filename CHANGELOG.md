@@ -4,6 +4,82 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking
+- `mars models list` is now the curated harness×model display, not the alias
+  inventory; `--all` bypasses curation, not a raw catalog switch. The former
+  `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
+  `--unavailable` flags and project/local `[settings.model_visibility]` are
+  removed. Move authored display rules to `mars.curated.toml` or
+  `mars.curated.local.toml`. Dependency package consumer settings are ignored
+  when reading manifests and do not block sync.
+- Meridian P4 migrates `models list --json` to `models aliases --json` and
+  `models list --all --json` to `models catalog --json`. Publish Mars first;
+  existing Meridian releases remain on their exact older Mars pin. Then update
+  Meridian's exact pin and lock to the published package, verify the installed
+  binary, and release Meridian. `PATH` overrides of bundled Mars require a
+  coordinated upgrade.
+
+### Added
+- Split `mars models` into curated harness-model `list`, uncurated `aliases`,
+  and raw `catalog` commands. `list --all` includes hidden rows; `--live` adds
+  fixed-harness eligibility. JSON includes full Possible provenance and curation.
+- Add a non-persisted Possible harness-model projection from the models.dev
+  catalog and retained Pi/Cursor/OpenCode listings, including listing provenance.
+- Add strict, display-only user/project/local curated TOML rule loading and
+  deterministic tier evaluation for the `mars models list` command.
+
+### Changed
+- Treat the models.dev cache as indefinite last-known-good data. The 24-hour
+  setting is refresh-after: stale usable catalog reads return immediately and
+  refresh in a detached, deduplicated worker. Cold and forced refreshes still
+  block; offline modes use disk only. Failures retain data and apply backoff;
+  catalog JSON exposes stale/background status.
+- Coalesce concurrent stale catalog readers at worker launch, not just at the
+  network fetch. Recover crashed refresh claims after a bounded lease, reap
+  POSIX workers in long-lived callers, and refresh project-less ad-hoc launch caches.
+- On Windows, detach stale-catalog workers without inheriting captured output
+  handles, so catalog commands return before background network work finishes.
+- Bound catalog HTTP work end-to-end below the refresh-claim lease, including
+  DNS and redirects. Recheck snapshot revision, cache freshness, and failure cooldown
+  under the claim lock so paused readers neither launch after a peer completes
+  nor bypass a peer's cooldown.
+- Store catalog data, fetch time, and revision in one atomic snapshot; legacy
+  generation sidecars are ignored. Centralize detached catalog and probe worker
+  launches behind one no-inherited-handles platform API. Keep cache lifecycle
+  methods together and test fixtures separate from the production source.
+- Surface one top-level diagnostic per retained harness listing whose latest
+  refresh failed, even when curation hides every row; distinguish this from a
+  cold unavailable listing. Unknown prompting refs now point to alias inventory.
+- Canonical `opencode` harness/probe JSON names, cold listing-failure diagnostics,
+  exact per-provider-variant live verdicts, and stable nullable live fields in
+  list JSON. Static aliases JSON no longer asserts an unavailable harness source.
+- Remove `settings.model_visibility` and its old `models list` flags. Project
+  and local legacy tables now fail with file-named curation migration examples.
+- Preserve failed cold probe errors in command-local observation snapshots.
+- Project runnable provider and launch ID together from the selected route;
+  use typed harness IDs for Cursor build policy.
+- Canonicalize provider-qualified Claude/Codex curation literals to native
+  model IDs, preventing phantom declared rows. Precompute literal match context
+  for catalog-sized lists; retain probe provenance atomically with outcomes.
+- Treat an empty successful Cursor model listing as an empty Possible inventory
+  without implying authentication. Normalize native provider labels, exclude
+  curated files from flat skill installs, and avoid duplicate scope diagnostics
+  or default warnings for uninstalled declarations.
+- Honor supported authored harness preferences even when native auth is inconclusive
+  or an ungated listing leaves auth unchecked; stop model fallback at that route.
+- Treat successful Pi/Cursor credential-gated listings as configured-auth evidence,
+  while OpenCode remains unchecked. Failed later listings retain last-good model
+  support but lose implied auth until refresh succeeds.
+- Derive live model availability and launch IDs from the selected routing assessment
+  instead of independently rechecking support. Native launch IDs preserve the
+  requested punctuation/case, while probe-backed IDs use the selected slug.
+- Treat a cold failed Pi model listing as support-unknown passthrough, not a
+  negative model match. Such an unverified route may launch when no better
+  candidate exists; `models resolve` now says available listings cannot confirm
+  it rather than claiming a model mismatch. Share typed listing evidence across
+  routing consumers.
+- Include `selected_by_preference` in route decision JSON (report version 3).
+
 ## [0.14.4] - 2026-09-23
 
 ## [0.14.3] - 2026-09-23

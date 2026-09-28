@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ use super::pi::PiProbeResult;
 use super::probe_refresh::ProbeCacheBranch;
 use crate::error::MarsError;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const DEFAULT_TTL_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,13 +26,20 @@ pub enum CachedPiProbeOutcome {
     Hit(PiProbeResult),
     Stale(PiProbeResult),
     Miss(PiProbeResult),
+    /// Last good listing survived a newer failed attempt.
+    StaleFailed(PiProbeResult),
+    Failed(PiProbeResult),
     Unavailable,
 }
 
 impl CachedPiProbeOutcome {
     pub fn result(&self) -> Option<&PiProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) => Some(r),
+            Self::Hit(r)
+            | Self::Stale(r)
+            | Self::Miss(r)
+            | Self::StaleFailed(r)
+            | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -42,8 +49,14 @@ impl CachedPiProbeOutcome {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
             Self::Miss(_) => "miss",
+            Self::StaleFailed(_) => "stale",
+            Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
+    }
+
+    pub fn latest_attempt_ok(&self) -> bool {
+        matches!(self, Self::Hit(_) | Self::Stale(_) | Self::Miss(_))
     }
 }
 
@@ -174,19 +187,43 @@ pub fn probe_cached(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
 ) -> CachedPiProbeOutcome {
+    probe_cached_observed(installed, mars_offline, probe_refresh).outcome
+}
+
+pub fn probe_cached_observed(
+    installed: &HashSet<String>,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+) -> super::ObservedOutcome<CachedPiProbeOutcome> {
     if !should_probe_pi(installed, mars_offline) {
-        return CachedPiProbeOutcome::Unavailable;
+        return super::ObservedOutcome {
+            outcome: CachedPiProbeOutcome::Unavailable,
+            observation: None,
+        };
     }
 
-    probe_cached_impl(
+    probe_cached_impl_observed(
         mars_offline,
         probe_refresh,
         &cache_path().ok(),
         super::pi::probe,
-        || spawn_detached_refresh().map_err(|_| ()),
+        || {
+            let program = std::env::current_exe().map_err(|_| ())?;
+            crate::platform::process::spawn_detached(
+                program.as_os_str(),
+                &[
+                    OsString::from("models"),
+                    OsString::from("__refresh-probe"),
+                    OsString::from("--target"),
+                    OsString::from("pi"),
+                ],
+            )
+            .map_err(|_| ())
+        },
     )
 }
 
+#[cfg(test)]
 fn probe_cached_impl<F, S>(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
@@ -198,8 +235,26 @@ where
     F: Fn() -> PiProbeResult,
     S: Fn() -> Result<(), ()>,
 {
+    probe_cached_impl_observed(mars_offline, probe_refresh, path, probe, spawn_refresh).outcome
+}
+
+fn probe_cached_impl_observed<F, S>(
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+    path: &Option<PathBuf>,
+    probe: F,
+    spawn_refresh: S,
+) -> super::ObservedOutcome<CachedPiProbeOutcome>
+where
+    F: Fn() -> PiProbeResult,
+    S: Fn() -> Result<(), ()>,
+{
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
-    match super::probe_refresh::resolve_probe_cache_branch(
+    let observation = cached.as_ref().map(observation_from_entry);
+    let latest_attempt_ok = cached
+        .as_ref()
+        .is_none_or(|entry| entry.last_attempt_at <= entry.fetched_at);
+    let outcome = match super::probe_refresh::resolve_probe_cache_branch(
         cached,
         mars_offline,
         probe_refresh,
@@ -212,10 +267,35 @@ where
         is_fresh,
         || trigger_background_refresh_with(spawn_refresh),
     ) {
-        ProbeCacheBranch::Hit(result) => CachedPiProbeOutcome::Hit(result),
-        ProbeCacheBranch::Stale(result) => CachedPiProbeOutcome::Stale(result),
+        ProbeCacheBranch::Hit(result) => {
+            if latest_attempt_ok {
+                CachedPiProbeOutcome::Hit(result)
+            } else {
+                CachedPiProbeOutcome::StaleFailed(result)
+            }
+        }
+        ProbeCacheBranch::Stale(result) => {
+            if latest_attempt_ok {
+                CachedPiProbeOutcome::Stale(result)
+            } else {
+                CachedPiProbeOutcome::StaleFailed(result)
+            }
+        }
         ProbeCacheBranch::Unavailable => CachedPiProbeOutcome::Unavailable,
-        ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
+        ProbeCacheBranch::SynchronousProbe => {
+            return synchronous_probe_with_observation(path, probe);
+        }
+    };
+    super::ObservedOutcome {
+        outcome,
+        observation,
+    }
+}
+
+fn observation_from_entry(entry: &PiProbeCacheEntry) -> super::ProbeObservation {
+    super::ProbeObservation {
+        observed_at: Some(entry.fetched_at),
+        last_error: entry.last_error.clone(),
     }
 }
 
@@ -235,11 +315,56 @@ where
     drop(lock);
 }
 
-fn synchronous_probe_with<F>(path: &Option<PathBuf>, probe: F) -> CachedPiProbeOutcome
+fn synchronous_probe_with_observation<F>(
+    path: &Option<PathBuf>,
+    probe: F,
+) -> super::ObservedOutcome<CachedPiProbeOutcome>
 where
     F: Fn() -> PiProbeResult,
 {
+    use super::ObservedOutcome;
     let lock = blocking_lock();
+    if lock.is_none() {
+        // Without the lock, do not overwrite a last-good listing or race a
+        // background writer. It is still useful as support evidence.
+        if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
+            && is_usable_result(entry.result.as_ref())
+        {
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
+                CachedPiProbeOutcome::Stale(entry.result.unwrap())
+            } else {
+                CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+            return ObservedOutcome {
+                outcome,
+                observation,
+            };
+        }
+        let probe_result = probe();
+        let last_error = if probe_result.model_probe_success && probe_result.error.is_none() {
+            None
+        } else {
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "pi probe failed".to_string()),
+            )
+        };
+        let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
+            CachedPiProbeOutcome::Miss(probe_result)
+        } else {
+            CachedPiProbeOutcome::Failed(probe_result)
+        };
+        return ObservedOutcome {
+            outcome,
+            observation: Some(super::ProbeObservation {
+                observed_at: Some(now_unix_secs()),
+                last_error,
+            }),
+        };
+    }
 
     if lock.is_some()
         && let Some(path) = path
@@ -247,31 +372,113 @@ where
         && is_usable_result(entry.result.as_ref())
     {
         if is_fresh(&entry) {
-            return CachedPiProbeOutcome::Hit(entry.result.unwrap());
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
+                CachedPiProbeOutcome::Hit(entry.result.unwrap())
+            } else {
+                CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+            return ObservedOutcome {
+                outcome,
+                observation,
+            };
         }
 
         let probe_result = probe();
-        write_probe_attempt(path, probe_result.clone());
-        return CachedPiProbeOutcome::Miss(probe_result);
+        let retained = persist_probe_attempt(path, Some(&entry), &probe_result);
+        let observation = if retained.is_some() {
+            Some(super::ProbeObservation {
+                observed_at: Some(entry.fetched_at),
+                last_error: Some(
+                    probe_result
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "pi probe failed".to_string()),
+                ),
+            })
+        } else {
+            Some(super::ProbeObservation {
+                observed_at: Some(now_unix_secs()),
+                last_error: None,
+            })
+        };
+        let outcome = match retained {
+            Some(last_good) => CachedPiProbeOutcome::StaleFailed(last_good),
+            None => CachedPiProbeOutcome::Miss(probe_result),
+        };
+        return ObservedOutcome {
+            outcome,
+            observation,
+        };
     }
 
     let probe_result = probe();
     if let Some(path) = path {
-        write_probe_attempt(path, probe_result.clone());
+        persist_probe_attempt(path, None, &probe_result);
     }
     drop(lock);
 
-    CachedPiProbeOutcome::Miss(probe_result)
+    let last_error = if probe_result.model_probe_success && probe_result.error.is_none() {
+        None
+    } else {
+        Some(
+            probe_result
+                .error
+                .clone()
+                .unwrap_or_else(|| "pi probe failed".to_string()),
+        )
+    };
+    let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
+        CachedPiProbeOutcome::Miss(probe_result)
+    } else {
+        CachedPiProbeOutcome::Failed(probe_result)
+    };
+    ObservedOutcome {
+        outcome,
+        observation: Some(super::ProbeObservation {
+            observed_at: Some(now_unix_secs()),
+            last_error,
+        }),
+    }
+}
+
+fn write_failed_attempt(path: &Path, existing: &PiProbeCacheEntry, failed: &PiProbeResult) {
+    let entry = PiProbeCacheEntry {
+        schema_version: SCHEMA_VERSION,
+        harness: "pi".to_string(),
+        fetched_at: existing.fetched_at,
+        last_attempt_at: now_unix_secs().max(existing.fetched_at.saturating_add(1)),
+        last_error: Some(
+            failed
+                .error
+                .clone()
+                .unwrap_or_else(|| "pi probe failed".to_string()),
+        ),
+        result: existing.result.clone(),
+    };
+    if let Err(e) = write_cache_at(path, &entry) {
+        eprintln!("debug: pi probe cache write failed: {e}");
+    }
 }
 
 fn write_probe_attempt(path: &Path, probe_result: PiProbeResult) {
     let now = now_unix_secs();
+    let succeeded = probe_result.model_probe_success && probe_result.error.is_none();
     let entry = PiProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
         harness: "pi".to_string(),
-        fetched_at: now,
+        fetched_at: if succeeded { now } else { 0 },
         last_attempt_at: now,
-        last_error: probe_result.error.clone(),
+        last_error: if succeeded {
+            None
+        } else {
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "pi probe failed".to_string()),
+            )
+        },
         result: Some(probe_result),
     };
 
@@ -280,33 +487,21 @@ fn write_probe_attempt(path: &Path, probe_result: PiProbeResult) {
     }
 }
 
-fn spawn_detached_refresh() -> std::io::Result<()> {
-    let mars_bin = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(mars_bin);
-    cmd.args(["models", "__refresh-probe", "--target", "pi"]);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-
-    #[cfg(unix)]
+/// The same write decision is used by foreground and detached refreshes.
+/// A failed attempt cannot replace a usable last-good model listing.
+fn persist_probe_attempt(
+    path: &Path,
+    existing: Option<&PiProbeCacheEntry>,
+    result: &PiProbeResult,
+) -> Option<PiProbeResult> {
+    if !is_usable_result(Some(result))
+        && let Some(last_good) = existing.filter(|entry| is_usable_result(entry.result.as_ref()))
     {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        write_failed_attempt(path, last_good, result);
+        return last_good.result.clone();
     }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000008);
-    }
-
-    cmd.spawn()?;
-    Ok(())
+    write_probe_attempt(path, result.clone());
+    None
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
@@ -323,14 +518,15 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
 
     let probe_result = super::pi::probe();
     if let Ok(path) = cache_path() {
-        write_probe_attempt(&path, probe_result);
+        let existing = read_cache_tolerant();
+        persist_probe_attempt(&path, existing.as_ref(), &probe_result);
     }
 
     Ok(0)
 }
 
 fn is_usable_result(result: Option<&PiProbeResult>) -> bool {
-    result.is_some_and(|probe| probe.error.is_none())
+    result.is_some_and(|probe| probe.model_probe_success && probe.error.is_none())
 }
 
 #[cfg(test)]
@@ -343,6 +539,7 @@ mod tests {
             binary_path: "/tmp/pi".to_string(),
             version: Some("pi 0.4.2".to_string()),
             compatible: true,
+            model_probe_success: true,
             help_surface_tokens_present: vec!["--mode".to_string()],
             help_surface_tokens_missing: Vec::new(),
             model_slugs: HashSet::from(["openai/gpt-5.4".to_string()]),
@@ -379,14 +576,37 @@ mod tests {
     }
 
     #[test]
-    fn legacy_v1_cache_without_model_slugs_is_reprobed() {
+    fn cold_failed_observation_keeps_error_without_last_good_cache() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        let observed = probe_cached_impl_observed(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path),
+            || PiProbeResult {
+                compatible: true,
+                model_probe_success: false,
+                error: Some("boom".to_string()),
+                ..PiProbeResult::default()
+            },
+            || Ok(()),
+        );
+        assert!(matches!(observed.outcome, CachedPiProbeOutcome::Failed(_)));
+        assert_eq!(
+            observed.observation.unwrap().last_error.as_deref(),
+            Some("boom")
+        );
+    }
+
+    #[test]
+    fn legacy_cache_without_independent_listing_bit_is_reprobed() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "harness": "pi",
                 "fetched_at": now_unix_secs(),
                 "last_attempt_at": now_unix_secs(),
@@ -451,6 +671,70 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedPiProbeOutcome::Stale(_)));
+    }
+
+    #[test]
+    fn failed_pi_probe_keeps_last_good_listing() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(compatible_result())));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path.clone()),
+            incompatible_result,
+            || Ok(()),
+        );
+        assert!(matches!(outcome, CachedPiProbeOutcome::StaleFailed(_)));
+        assert!(!outcome.latest_attempt_ok());
+        assert!(
+            outcome
+                .result()
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert_eq!(on_disk.fetched_at, 1);
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        assert!(
+            on_disk
+                .result
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
+        let offline = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Skip,
+            &Some(path),
+            || panic!("skip must not re-probe"),
+            || Ok(()),
+        );
+        assert!(!offline.latest_attempt_ok());
+        assert!(
+            offline
+                .result()
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
+    }
+
+    #[test]
+    fn detached_refresh_write_decision_preserves_last_good_listing() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        let previous = entry(1, Some(compatible_result()));
+        write_entry(&path, &previous);
+
+        let retained = persist_probe_attempt(&path, Some(&previous), &incompatible_result());
+        assert_eq!(retained, previous.result);
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert_eq!(on_disk.fetched_at, 1);
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        assert_eq!(on_disk.result, retained);
+        assert!(on_disk.last_error.is_some());
     }
 
     #[test]

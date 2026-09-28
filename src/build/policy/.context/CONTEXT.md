@@ -22,8 +22,9 @@ preference wins; otherwise use the selected candidate's source.
 
 The outer loop evaluates the primary, then the shared profile backup iterator.
 Each attempt independently resolves model identity, provider constraints and
-settings. An eligible route wins immediately; retain the first whole unverified
-attempt only when no attempt has an eligible route. Do not reconstruct that attempt
+settings. An eligible route or a route selected by supported authored preference
+wins immediately; retain the first whole unverified attempt only when neither
+kind wins. Do not reconstruct that attempt
 from the last iteration's state. Native auth observations are shared across attempts.
 
 The loop also owns the aggregate `RouteDecisionReport`: append each trace before

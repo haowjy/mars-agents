@@ -53,7 +53,9 @@ clear the requested model. Route facts go to `routing.harness_model_source` and
 independently — see [`policy/AGENTS.md`](policy/AGENTS.md) for the full pipeline,
 field independence, preference ordering and pin handling.
 
-`resolve_policy` always runs `models::ensure_fresh` on `.mars/` (stale fallback may warn).
+`resolve_policy` always uses the catalog refresh policy on `.mars/`: fresh and stale
+usable caches return immediately (stale schedules a detached refresh), while cold
+cache and explicit `--refresh-models` fetch synchronously. Last-good failures warn.
 CLI passes `ModelsRefreshControl` from `--refresh-models` / `--no-refresh-models` on
 `build launch-bundle` — flag matrix and probe modes: [`src/models/AGENTS.md`](../models/AGENTS.md),
 `models::resolve_models_refresh_control`.

@@ -12,10 +12,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   removed. Move authored display rules to `mars.curated.toml` or
   `mars.curated.local.toml`. Dependency package consumer settings are ignored
   when reading manifests and do not block sync.
-- Meridian P4 must migrate `models list --json` to `models aliases --json`
-  and `models list --all --json` to `models catalog --json` before it consumes
-  this Mars command contract. Coordinate the two releases or pin Mars version
-  bounds until P4 is deployed; neither unilateral release order is safe.
+- Meridian P4 migrates `models list --json` to `models aliases --json` and
+  `models list --all --json` to `models catalog --json`. Publish Mars first;
+  existing Meridian releases remain on their exact older Mars pin. Then update
+  Meridian's exact pin and lock to the published package, verify the installed
+  binary, and release Meridian. `PATH` overrides of bundled Mars require a
+  coordinated upgrade.
 
 ### Added
 - Split `mars models` into curated harness-model `list`, uncurated `aliases`,

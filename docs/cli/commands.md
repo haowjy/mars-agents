@@ -400,10 +400,13 @@ catalog sync should use this command. The old list-all `harness`,
 `harness_candidates`, `matched_aliases`, `runnable_paths`, and `availability`
 fields do not exist here; P4 must derive or drop them.
 
-**Breaking release contract:** Meridian P4 must change `models list --json`
-to `models aliases --json` and `models list --all --json` to
-`models catalog --json`. Release these together or pin Mars version bounds
-until P4 lands; neither unilateral release order preserves the machine API.
+**Breaking release contract:** Meridian P4 changes `models list --json` to
+`models aliases --json` and `models list --all --json` to
+`models catalog --json`. Publish Mars first; existing Meridian releases remain
+on their exact older `mars-agents` pin. After the new Mars package is available,
+update Meridian's exact pin and lock, verify the installed binary, then release
+Meridian. An installation that overrides Meridian's bundled Mars through `PATH`
+is not protected by the dependency pin and must coordinate both upgrades.
 
 `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
 `--unavailable` were removed from `models list`. Put display rules in

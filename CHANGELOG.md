@@ -37,6 +37,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Coalesce concurrent stale catalog readers at worker launch, not just at the
   network fetch. Recover crashed refresh claims after a bounded lease, reap
   workers in long-lived callers, and refresh project-less ad-hoc launch caches.
+- Bound catalog HTTP work end-to-end below the refresh-claim lease, including
+  DNS and redirects. Recheck generation, cache freshness, and failure cooldown
+  under the claim lock so paused readers neither launch after a peer completes
+  nor bypass a peer's cooldown.
 - Surface one top-level diagnostic per retained harness listing whose latest
   refresh failed, even when curation hides every row; distinguish this from a
   cold unavailable listing. Unknown prompting refs now point to alias inventory.

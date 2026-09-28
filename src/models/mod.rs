@@ -388,9 +388,11 @@ const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
 const REFRESH_GENERATION_FILE: &str = ".models-cache.generation";
 const REFRESH_CLAIM_FILE: &str = ".models-cache.refresh-claim";
 const REFRESH_CLAIM_LOCK_FILE: &str = ".models-cache.refresh-claim.lock";
-// ureq budgets 15 seconds each for connect, response, and body. Allow more
-// than twice that total for startup, parsing, and the atomic cache write.
+// The global HTTP deadline includes DNS, redirects, and body reads. Leave a
+// full minute for worker startup, parsing, and the atomic cache write.
+const CATALOG_HTTP_DEADLINE_SECS: u64 = 60;
 const REFRESH_CLAIM_LEASE_SECS: u64 = 120;
+const _: () = assert!(CATALOG_HTTP_DEADLINE_SECS < REFRESH_CLAIM_LEASE_SECS);
 pub(crate) const FETCH_FAIL_COOLDOWN_SECS: u64 = 300;
 const FETCH_FAIL_COOLDOWN_REASON: &str = "recent fetch attempt failed; backing off (cooldown)";
 
@@ -417,6 +419,7 @@ pub enum BackgroundRefresh {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RefreshOutcome {
     AlreadyFresh,
+    PeerRefreshed,
     Refreshed {
         models_count: usize,
     },
@@ -666,15 +669,68 @@ fn read_refresh_claim(mars_dir: &Path) -> Result<Option<RefreshClaim>, MarsError
     Ok(serde_json::from_slice(&bytes).ok())
 }
 
-fn claim_refresh(mars_dir: &Path) -> Result<Option<String>, MarsError> {
+enum RefreshClaimDecision {
+    Claimed {
+        token: String,
+        cache: ModelsCache,
+        last_failure: Option<String>,
+    },
+    Suppressed {
+        cache: ModelsCache,
+        outcome: RefreshOutcome,
+    },
+}
+
+fn claim_refresh(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    observed_generation: u64,
+) -> Result<RefreshClaimDecision, MarsError> {
     let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    // The worker holds its claim until cache, generation, and failure marker
+    // updates are complete. Rechecking here closes the read-to-claim race.
+    let current_generation = refresh_generation(mars_dir);
+    let cache = read_cache_tolerant(mars_dir);
+    let failure = read_fetch_fail_marker(mars_dir);
+    let last_failure = failure.as_ref().map(|failure| failure.reason.clone());
     let now = now_unix_secs_value();
     if read_refresh_claim(mars_dir)?
         .is_some_and(|claim| claim.at <= now && now - claim.at < REFRESH_CLAIM_LEASE_SECS)
     {
-        return Ok(None);
+        let outcome = if is_fresh(&cache, ttl_hours) {
+            RefreshOutcome::AlreadyFresh
+        } else {
+            RefreshOutcome::Stale {
+                refresh: BackgroundRefresh::AlreadyInProgress,
+                last_failure,
+            }
+        };
+        return Ok(RefreshClaimDecision::Suppressed { cache, outcome });
     }
-
+    if failure
+        .as_ref()
+        .is_some_and(|failure| now.saturating_sub(failure.at) < FETCH_FAIL_COOLDOWN_SECS)
+    {
+        return Ok(RefreshClaimDecision::Suppressed {
+            cache,
+            outcome: RefreshOutcome::Stale {
+                refresh: BackgroundRefresh::Cooldown,
+                last_failure,
+            },
+        });
+    }
+    if current_generation != observed_generation && is_usable(&cache) {
+        return Ok(RefreshClaimDecision::Suppressed {
+            cache,
+            outcome: RefreshOutcome::PeerRefreshed,
+        });
+    }
+    if is_fresh(&cache, ttl_hours) {
+        return Ok(RefreshClaimDecision::Suppressed {
+            cache,
+            outcome: RefreshOutcome::AlreadyFresh,
+        });
+    }
     // tempfile supplies a cross-process unique token without an extra
     // dependency. Only the durable claim record remains after this scope.
     let token_file = tempfile::Builder::new()
@@ -694,7 +750,11 @@ fn claim_refresh(mars_dir: &Path) -> Result<Option<String>, MarsError> {
         &mars_dir.join(REFRESH_CLAIM_FILE),
         &serde_json::to_vec(&claim).expect("refresh claim is serializable"),
     )?;
-    Ok(Some(token))
+    Ok(RefreshClaimDecision::Claimed {
+        token,
+        cache,
+        last_failure,
+    })
 }
 
 fn refresh_claim_is_owned(mars_dir: &Path, token: &str) -> Result<bool, MarsError> {
@@ -748,14 +808,12 @@ pub fn ensure_fresh_with_catalog_providers(
             if is_fresh(&prior, ttl_hours) {
                 return Ok((prior, RefreshOutcome::AlreadyFresh));
             }
-            let failure = read_fetch_fail_marker(mars_dir);
-            let last_failure = failure.as_ref().map(|failure| failure.reason.clone());
-            let refresh = if failure.as_ref().is_some_and(|failure| {
-                now_unix_secs_value().saturating_sub(failure.at) < FETCH_FAIL_COOLDOWN_SECS
-            }) {
-                BackgroundRefresh::Cooldown
-            } else {
-                schedule_background_refresh(mars_dir, |token| {
+            return Ok(schedule_background_refresh(
+                mars_dir,
+                ttl_hours,
+                observed_generation,
+                prior,
+                |token| {
                     spawn_background_refresh(
                         mars_dir,
                         ttl_hours,
@@ -763,13 +821,6 @@ pub fn ensure_fresh_with_catalog_providers(
                         observed_generation,
                         token,
                     )
-                })
-            };
-            return Ok((
-                prior,
-                RefreshOutcome::Stale {
-                    refresh,
-                    last_failure,
                 },
             ));
         }
@@ -781,23 +832,46 @@ pub fn ensure_fresh_with_catalog_providers(
 
 fn schedule_background_refresh(
     mars_dir: &Path,
+    ttl_hours: u32,
+    observed_generation: u64,
+    prior: ModelsCache,
     spawn: impl FnOnce(&str) -> std::io::Result<()>,
-) -> BackgroundRefresh {
-    match claim_refresh(mars_dir) {
-        Ok(None) => BackgroundRefresh::AlreadyInProgress,
-        Ok(Some(token)) => match spawn(&token) {
-            Ok(()) => BackgroundRefresh::Spawned,
-            Err(error) => {
-                let mut reason = error.to_string();
-                if let Err(release_error) = release_refresh_claim(mars_dir, &token) {
-                    reason.push_str(&format!("; failed to clear refresh claim: {release_error}"));
+) -> (ModelsCache, RefreshOutcome) {
+    match claim_refresh(mars_dir, ttl_hours, observed_generation) {
+        Ok(RefreshClaimDecision::Suppressed { cache, outcome }) => (cache, outcome),
+        Ok(RefreshClaimDecision::Claimed {
+            token,
+            cache,
+            last_failure,
+        }) => {
+            let refresh = match spawn(&token) {
+                Ok(()) => BackgroundRefresh::Spawned,
+                Err(error) => {
+                    let mut reason = error.to_string();
+                    if let Err(release_error) = release_refresh_claim(mars_dir, &token) {
+                        reason
+                            .push_str(&format!("; failed to clear refresh claim: {release_error}"));
+                    }
+                    BackgroundRefresh::SpawnFailed { reason }
                 }
-                BackgroundRefresh::SpawnFailed { reason }
-            }
-        },
-        Err(error) => BackgroundRefresh::SpawnFailed {
-            reason: error.to_string(),
-        },
+            };
+            (
+                cache,
+                RefreshOutcome::Stale {
+                    refresh,
+                    last_failure,
+                },
+            )
+        }
+        Err(error) => (
+            prior,
+            RefreshOutcome::Stale {
+                refresh: BackgroundRefresh::SpawnFailed {
+                    reason: error.to_string(),
+                },
+                last_failure: read_fetch_fail_marker(mars_dir).map(|failure| failure.reason),
+            },
+        ),
     }
 }
 
@@ -1094,6 +1168,7 @@ pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
 pub fn fetch_models_with_providers(providers: &[String]) -> Result<Vec<CachedModel>, MarsError> {
     let url = models_api_url();
     let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(CATALOG_HTTP_DEADLINE_SECS)))
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(15)))
         .timeout_recv_body(Some(Duration::from_secs(15)))
@@ -3743,6 +3818,12 @@ harness = "claude"
     #[test]
     fn refresh_claim_recovers_expired_owner_and_preserves_new_owner() {
         let mars = tempdir().unwrap();
+        write_cache_state(
+            mars.path(),
+            vec![sample_cached_model("old-model")],
+            &stale_timestamp(),
+        );
+        let observed_generation = refresh_generation(mars.path());
         let old = RefreshClaim {
             token: "crashed-worker".to_string(),
             at: now_unix_secs_value() - REFRESH_CLAIM_LEASE_SECS,
@@ -3753,9 +3834,23 @@ harness = "claude"
         )
         .unwrap();
 
-        let new_token = claim_refresh(mars.path()).unwrap().expect("expired lease");
+        let RefreshClaimDecision::Claimed {
+            token: new_token, ..
+        } = claim_refresh(mars.path(), 0, observed_generation).unwrap()
+        else {
+            panic!("expired lease should be recovered")
+        };
         assert_ne!(new_token, old.token);
-        assert!(claim_refresh(mars.path()).unwrap().is_none());
+        assert!(matches!(
+            claim_refresh(mars.path(), 0, observed_generation).unwrap(),
+            RefreshClaimDecision::Suppressed {
+                outcome: RefreshOutcome::Stale {
+                    refresh: BackgroundRefresh::AlreadyInProgress,
+                    ..
+                },
+                ..
+            }
+        ));
         release_refresh_claim(mars.path(), &old.token).unwrap();
         assert!(refresh_claim_is_owned(mars.path(), &new_token).unwrap());
         release_refresh_claim(mars.path(), &new_token).unwrap();
@@ -3765,15 +3860,128 @@ harness = "claude"
     #[test]
     fn failed_worker_spawn_releases_refresh_claim() {
         let mars = tempdir().unwrap();
-        let outcome = schedule_background_refresh(mars.path(), |_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "worker executable missing",
-            ))
-        });
-        assert!(matches!(outcome, BackgroundRefresh::SpawnFailed { .. }));
+        write_cache_state(
+            mars.path(),
+            vec![sample_cached_model("old-model")],
+            &stale_timestamp(),
+        );
+        let observed_generation = refresh_generation(mars.path());
+        let (cache, outcome) = schedule_background_refresh(
+            mars.path(),
+            0,
+            observed_generation,
+            read_cache_tolerant(mars.path()),
+            |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "worker executable missing",
+                ))
+            },
+        );
+        assert!(is_usable(&cache));
+        assert!(matches!(
+            outcome,
+            RefreshOutcome::Stale {
+                refresh: BackgroundRefresh::SpawnFailed { .. },
+                ..
+            }
+        ));
         assert!(!mars.path().join(REFRESH_CLAIM_FILE).exists());
-        assert!(claim_refresh(mars.path()).unwrap().is_some());
+        assert!(matches!(
+            claim_refresh(mars.path(), 0, observed_generation).unwrap(),
+            RefreshClaimDecision::Claimed { .. }
+        ));
+    }
+
+    #[test]
+    fn paused_stale_reader_does_not_spawn_after_peer_success_with_zero_ttl() {
+        let mars = tempdir().unwrap();
+        write_cache_state(
+            mars.path(),
+            vec![sample_cached_model("old-model")],
+            &stale_timestamp(),
+        );
+        let observed_generation = refresh_generation(mars.path());
+        let observed_cache = read_cache_tolerant(mars.path());
+
+        let (updated, peer_outcome) = ensure_fresh_with_fetcher_if_generation(
+            mars.path(),
+            0,
+            RefreshMode::Synchronous,
+            Some(observed_generation),
+            || Ok(vec![sample_cached_model("new-model")]),
+        )
+        .unwrap();
+        assert!(matches!(peer_outcome, RefreshOutcome::Refreshed { .. }));
+
+        let mut launches = 0;
+        let (cache, outcome) = schedule_background_refresh(
+            mars.path(),
+            0,
+            observed_generation,
+            observed_cache.clone(),
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        assert_ne!(observed_cache.models[0].id, updated.models[0].id);
+        assert_eq!(launches, 0, "a completed peer must suppress worker launch");
+        assert_eq!(cache.models[0].id, updated.models[0].id);
+        assert_eq!(outcome, RefreshOutcome::PeerRefreshed);
+    }
+
+    #[test]
+    fn paused_stale_reader_does_not_spawn_after_peer_failure_with_zero_ttl() {
+        let mars = tempdir().unwrap();
+        write_cache_state(
+            mars.path(),
+            vec![sample_cached_model("old-model")],
+            &stale_timestamp(),
+        );
+        let observed_generation = refresh_generation(mars.path());
+        let observed_cache = read_cache_tolerant(mars.path());
+
+        let (_, peer_outcome) = ensure_fresh_with_fetcher_if_generation(
+            mars.path(),
+            0,
+            RefreshMode::Synchronous,
+            Some(observed_generation),
+            || {
+                Err(MarsError::Http {
+                    url: "test".to_string(),
+                    status: 0,
+                    message: "peer network failure".to_string(),
+                })
+            },
+        )
+        .unwrap();
+        assert!(matches!(peer_outcome, RefreshOutcome::StaleFallback { .. }));
+
+        let mut launches = 0;
+        let (cache, outcome) = schedule_background_refresh(
+            mars.path(),
+            0,
+            observed_generation,
+            observed_cache.clone(),
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(observed_cache.models[0].id, "old-model");
+        assert_eq!(
+            launches, 0,
+            "a failed peer must start cooldown before another launch"
+        );
+        assert_eq!(cache.models[0].id, "old-model");
+        assert!(matches!(
+            outcome,
+            RefreshOutcome::Stale {
+                refresh: BackgroundRefresh::Cooldown,
+                last_failure: Some(reason),
+            } if reason.contains("peer network failure")
+        ));
     }
 
     #[test]

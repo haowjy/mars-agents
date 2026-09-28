@@ -82,8 +82,8 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - Refresh-after: 24h default, configurable via `settings.models_cache_ttl_hours`; `0` makes every normal command eligible to trigger a background refresh
 - A failed/empty refresh retains the last-good catalog and stores the failure reason for later diagnostics
 - Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
-- `RefreshOutcome::Stale` reports `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`; it never claims the asynchronous fetch succeeded
-- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. The worker removes only its own token; an expired 120-second lease recovers crashes (the HTTP phase timeouts total 45 seconds). Cooldown is checked before claiming.
+- `RefreshOutcome::Stale` reports `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`; it never claims the asynchronous fetch succeeded. `peer_refreshed` means another worker completed between the reader's initial cache read and claim check.
+- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. Before writing a claim, readers recheck generation, cache freshness, live claim, and failure cooldown under this lock and return that cache snapshot. The worker removes only its own token; an expired 120-second lease recovers crashes. The models.dev HTTP call has a 60-second global deadline (DNS through body, across redirects), leaving a minute for worker startup, parsing, and cache writes.
 - Successful writes advance `.models-cache.generation` under the cache lock; workers recheck their observed generation so even `refresh-after = 0` coalesces concurrent fetches
 - `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
 

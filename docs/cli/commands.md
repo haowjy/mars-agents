@@ -358,7 +358,13 @@ five minutes. `--refresh-models` forces a synchronous fetch;
 `models __refresh-catalog` worker is not a user-facing command. Stale JSON
 `cache_refresh.refresh.status` distinguishes `spawned`, `already_in_progress`,
 `cooldown`, and `spawn_failed`; none reports that the asynchronous fetch succeeded.
-The refresh claim expires after 120 seconds if a worker crashes. Ad-hoc
+If a peer completes between the initial read and the launch claim,
+`cache_refresh.status = "peer_refreshed"` returns its new cache snapshot without
+launching another worker, including with refresh-after set to zero. A failed
+peer instead yields `cooldown` with its recorded failure. The refresh claim
+expires after 120 seconds if a worker crashes; the models.dev HTTP request has
+a 60-second end-to-end deadline covering DNS, redirects, and response body,
+leaving room for startup and cache writes. Ad-hoc
 `build launch-bundle` can refresh its cache without a `mars.toml` project.
 
 ### `mars models list`
@@ -393,7 +399,9 @@ error. A retained listing with a failed latest refresh remains visible in row
 provenance and also emits one top-level diagnostic per harness, even if every
 row is hidden by curation.
 `cache_refresh.status = "stale"` identifies last-good catalog data;
-`cache_refresh.refresh.status` is `spawned`, `cooldown`, or `spawn_failed`.
+`cache_refresh.refresh.status` is `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`.
+`peer_refreshed` reports that another worker completed during this read; it
+does not start a replacement worker.
 `spawned` means only that a worker started, not that its fetch succeeded.
 `last_failure` records the prior failed fetch when present.
 

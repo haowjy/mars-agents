@@ -11,6 +11,8 @@ pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
     "mars.toml",
     "mars.lock",
     "mars.local.toml",
+    "mars.curated.toml",
+    "mars.curated.local.toml",
     ".gitignore",
 ];
 
@@ -341,6 +343,8 @@ mod tests {
         fs::create_dir_all(src.join("resources")).unwrap();
         fs::write(src.join("SKILL.md"), "skill").unwrap();
         fs::write(src.join("mars.toml"), "ignored").unwrap();
+        fs::write(src.join("mars.curated.toml"), "ignored").unwrap();
+        fs::write(src.join("mars.curated.local.toml"), "ignored").unwrap();
         fs::write(src.join(".gitignore"), "ignored").unwrap();
         fs::write(src.join(".git").join("config"), "ignored").unwrap();
         fs::write(src.join("resources").join("guide.md"), "kept").unwrap();
@@ -351,6 +355,8 @@ mod tests {
         assert!(dest.join("resources").join("guide.md").exists());
         assert!(!dest.join(".git").exists());
         assert!(!dest.join("mars.toml").exists());
+        assert!(!dest.join("mars.curated.toml").exists());
+        assert!(!dest.join("mars.curated.local.toml").exists());
         assert!(!dest.join(".gitignore").exists());
     }
 

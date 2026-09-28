@@ -31,7 +31,7 @@ fn rules(user: &str, project: &str, local: &str) -> (TempDir, CuratedRules) {
 }
 
 fn decision(rules: &CuratedRules, row: &PossibleRow, all: &[PossibleRow]) -> Decision {
-    rules.decide(&RowKey::from(row), all)
+    rules.matcher(all).decide(&RowKey::from(row))
 }
 
 #[test]
@@ -303,14 +303,13 @@ fn declarations_require_literal_concrete_show_and_do_not_create_phantoms() {
         "[[show]]\nharness='pi'\nmodel='gpt-5.6-sol'\n[[show]]\nharness='*'\nmodel='ghost'\n[[show]]\nharness='pi'\nmodel='ghost*'\n[[show]]\nharness='cursor'\nmodel='composer-2.5'\n",
         "",
     );
-    let installed = HashSet::from([HarnessId::Pi]);
-    let view = rules.project(&possible, &HarnessScope::Unrestricted, &installed);
+    let view = rules.project(&possible, &HarnessScope::Unrestricted);
     assert_eq!(view.rows.len(), 2);
     assert_eq!(view.rows[0].origin, RowOrigin::Both);
     assert_eq!(view.rows[1].origin, RowOrigin::Declared);
     assert_eq!(view.rows[1].key.harness, HarnessId::Cursor);
     assert_eq!(view.rows[1].key.provider, None);
-    assert!(view.diagnostics[0].contains("no installed harness"));
+    assert!(view.diagnostics.is_empty());
 }
 
 #[test]
@@ -321,39 +320,105 @@ fn disabled_declaration_dropped_uninstalled_declaration_kept_and_hidden_show_rem
         "",
     );
     let scope = HarnessScope::Only([HarnessId::Pi].into_iter().collect());
-    let view = rules.project(&[], &scope, &HashSet::new());
+    let view = rules.project(&[], &scope);
     assert!(view.rows.is_empty());
     assert!(
         view.diagnostics
             .iter()
             .any(|diag| diag.contains("outside the enabled harness scope"))
     );
-    assert!(
-        view.diagnostics
-            .iter()
-            .any(|diag| diag.contains("no installed harness"))
-    );
+    assert_eq!(view.diagnostics.len(), 1);
 }
 
 #[test]
 fn conflicting_provider_declarations_are_diagnosed_not_materialized() {
     let (_, rules) = rules(
         "",
-        "[[show]]\nharness='pi'\nmodel='openai/gpt-5'\nprovider='anthropic'\n[[show]]\nharness='claude'\nmodel='claude-opus-5'\nprovider='openai'\n[[show]]\nharness='cursor'\nmodel='composer-2.5'\nprovider='cursor'\n",
+        "[[show]]\nharness='pi'\nmodel='openai/gpt-5'\nprovider='anthropic'\n[[show]]\nharness='claude'\nmodel='claude-opus-5'\nprovider='openai'\n[[show]]\nharness='claude'\nmodel='openai/claude-opus-5'\n[[show]]\nharness='cursor'\nmodel='composer-2.5'\nprovider='cursor'\n",
         "",
     );
-    let view = rules.project(
-        &[],
-        &HarnessScope::Unrestricted,
-        &HashSet::from([HarnessId::Pi, HarnessId::Claude, HarnessId::Cursor]),
-    );
+    let view = rules.project(&[], &HarnessScope::Unrestricted);
     assert!(view.rows.is_empty());
-    assert_eq!(view.diagnostics.len(), 3);
+    assert_eq!(view.diagnostics.len(), 4);
     assert!(
         view.diagnostics
             .iter()
             .all(|line| line.contains("mars.curated.toml"))
     );
+}
+
+#[test]
+fn duplicate_out_of_scope_declarations_emit_one_diagnostic() {
+    let (_, rules) = rules(
+        "[[show]]\nharness='pi'\nmodel='openai/gpt-5'\n",
+        "",
+        "[[show]]\nharness='pi'\nmodel='OPENAI/GPT-5'\n",
+    );
+    let view = rules.project(
+        &[],
+        &HarnessScope::Only([HarnessId::Claude].into_iter().collect()),
+    );
+    assert!(view.rows.is_empty());
+    assert_eq!(view.diagnostics.len(), 1);
+    assert!(view.diagnostics[0].contains("outside the enabled harness scope"));
+}
+
+#[test]
+fn prepared_matcher_decides_after_possible_inventory_is_dropped() {
+    let (_, rules) = rules("", "[[show]]\nharness='pi'\nmodel='gpt-5'\n", "");
+    let key = RowKey::from(&row(HarnessId::Pi, "openai/gpt-5", Some("openai"), "gpt-5"));
+    let matcher = {
+        let possible = vec![row(HarnessId::Pi, "openai/gpt-5", Some("openai"), "gpt-5")];
+        rules.matcher(&possible)
+    };
+    assert_eq!(
+        matcher.decide(&key),
+        Decision::Shown {
+            tier: Some(TierId::Project)
+        }
+    );
+}
+
+#[test]
+fn qualified_native_literals_resolve_to_possible_rows_without_phantoms() {
+    let possible = vec![
+        row(
+            HarnessId::Claude,
+            "claude-opus-4-6",
+            Some("Anthropic"),
+            "claude-opus-4-6",
+        ),
+        row(
+            HarnessId::Codex,
+            "gpt-6-sol",
+            Some("OpenAI-Codex"),
+            "gpt-6-sol",
+        ),
+    ];
+    let (_, rules) = rules(
+        "",
+        "[[show]]\nharness='claude'\nmodel='ANTHROPIC-CLAUDE/Claude-Opus-4.6'\n[[show]]\nharness='codex'\nmodel='openai/gpt-6.sol'\n",
+        "",
+    );
+    let view = rules.project(&possible, &HarnessScope::Unrestricted);
+    assert_eq!(view.rows.len(), 2);
+    assert!(view.rows.iter().all(|row| row.origin == RowOrigin::Both));
+    assert_eq!(view.shown_rows().count(), 2);
+    assert!(view.diagnostics.is_empty());
+}
+
+#[test]
+fn qualified_native_declaration_keeps_bare_launch_id() {
+    let (_, rules) = rules(
+        "",
+        "[[show]]\nharness='claude'\nmodel='Anthropic/Claude-Opus-5.1'\n",
+        "",
+    );
+    let view = rules.project(&[], &HarnessScope::Unrestricted);
+    assert_eq!(view.rows.len(), 1);
+    assert_eq!(view.rows[0].origin, RowOrigin::Declared);
+    assert_eq!(view.rows[0].key.harness_model_id, "Claude-Opus-5.1");
+    assert_eq!(view.rows[0].key.provider.as_deref(), Some("anthropic"));
 }
 
 #[test]
@@ -366,17 +431,13 @@ fn absent_and_empty_files_show_every_possible_row() {
     )
     .unwrap();
     let model = row(HarnessId::Codex, "gpt-5", Some("openai"), "gpt-5");
-    let view = none.project(
-        std::slice::from_ref(&model),
-        &HarnessScope::Unrestricted,
-        &HashSet::from([HarnessId::Codex]),
-    );
+    let view = none.project(std::slice::from_ref(&model), &HarnessScope::Unrestricted);
     assert_eq!(view.shown_rows().count(), 1);
     assert_eq!(view.rows[0].origin, RowOrigin::Possible);
     let (_, empty) = rules("# user\n", "# project\n", "# local\n");
     assert_eq!(
         empty
-            .project(&[model], &HarnessScope::Unrestricted, &HashSet::new())
+            .project(&[model], &HarnessScope::Unrestricted)
             .shown_rows()
             .count(),
         1

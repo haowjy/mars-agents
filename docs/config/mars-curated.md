@@ -39,8 +39,12 @@ Provider-qualified literals first match the exact harness launch ID; bare
 literals can match every provider copy of that model. A literal `[[show]]` for a
 concrete harness can declare a row absent from the discovered Possible catalog;
 `*` harnesses and glob patterns cannot declare rows. Out-of-scope declarations
-are dropped with a diagnostic. Uninstalled declarations remain visible to the
-future live view with an installation diagnostic.
+are dropped with a deduplicated diagnostic. Uninstalled declarations remain
+visible; the future `--live` view reports their `not_installed` availability.
+
+For native Claude/Codex rules, a matching provider-qualified literal such as
+`anthropic/claude-opus-4-6` names the same row as its bare model ID. Its
+launch ID remains bare; an incompatible provider qualifier is diagnosed.
 
 If no rule matches, the highest explicit `default` wins. Otherwise, project or
 local files with any `[[show]]` imply `hide`; a user-only `[[show]]` remains

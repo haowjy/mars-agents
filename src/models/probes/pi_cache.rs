@@ -104,17 +104,6 @@ fn read_cache_tolerant() -> Option<PiProbeCacheEntry> {
     read_cache_tolerant_at(&cache_path().ok()?)
 }
 
-pub(crate) fn read_cache_observation() -> Option<super::ProbeObservation> {
-    let entry = read_cache_tolerant()?;
-    if !is_usable_result(entry.result.as_ref()) {
-        return None;
-    }
-    Some(super::ProbeObservation {
-        observed_at: Some(entry.fetched_at),
-        last_error: entry.last_error,
-    })
-}
-
 fn read_cache_tolerant_at(path: &Path) -> Option<PiProbeCacheEntry> {
     let content = std::fs::read_to_string(path).ok()?;
     let entry: PiProbeCacheEntry = serde_json::from_str(&content).ok()?;
@@ -198,11 +187,22 @@ pub fn probe_cached(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
 ) -> CachedPiProbeOutcome {
+    probe_cached_observed(installed, mars_offline, probe_refresh).outcome
+}
+
+pub fn probe_cached_observed(
+    installed: &HashSet<String>,
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+) -> super::ObservedOutcome<CachedPiProbeOutcome> {
     if !should_probe_pi(installed, mars_offline) {
-        return CachedPiProbeOutcome::Unavailable;
+        return super::ObservedOutcome {
+            outcome: CachedPiProbeOutcome::Unavailable,
+            observation: None,
+        };
     }
 
-    probe_cached_impl(
+    probe_cached_impl_observed(
         mars_offline,
         probe_refresh,
         &cache_path().ok(),
@@ -211,6 +211,7 @@ pub fn probe_cached(
     )
 }
 
+#[cfg(test)]
 fn probe_cached_impl<F, S>(
     mars_offline: bool,
     probe_refresh: super::ProbeRefreshMode,
@@ -222,11 +223,26 @@ where
     F: Fn() -> PiProbeResult,
     S: Fn() -> Result<(), ()>,
 {
+    probe_cached_impl_observed(mars_offline, probe_refresh, path, probe, spawn_refresh).outcome
+}
+
+fn probe_cached_impl_observed<F, S>(
+    mars_offline: bool,
+    probe_refresh: super::ProbeRefreshMode,
+    path: &Option<PathBuf>,
+    probe: F,
+    spawn_refresh: S,
+) -> super::ObservedOutcome<CachedPiProbeOutcome>
+where
+    F: Fn() -> PiProbeResult,
+    S: Fn() -> Result<(), ()>,
+{
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
+    let observation = cached.as_ref().map(observation_from_entry);
     let latest_attempt_ok = cached
         .as_ref()
         .is_none_or(|entry| entry.last_attempt_at <= entry.fetched_at);
-    match super::probe_refresh::resolve_probe_cache_branch(
+    let outcome = match super::probe_refresh::resolve_probe_cache_branch(
         cached,
         mars_offline,
         probe_refresh,
@@ -254,7 +270,25 @@ where
             }
         }
         ProbeCacheBranch::Unavailable => CachedPiProbeOutcome::Unavailable,
-        ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
+        ProbeCacheBranch::SynchronousProbe => {
+            return synchronous_probe_with_observation(path, probe);
+        }
+    };
+    let observation = if matches!(outcome, CachedPiProbeOutcome::Unavailable) {
+        None
+    } else {
+        observation
+    };
+    super::ObservedOutcome {
+        outcome,
+        observation,
+    }
+}
+
+fn observation_from_entry(entry: &PiProbeCacheEntry) -> super::ProbeObservation {
+    super::ProbeObservation {
+        observed_at: Some(entry.fetched_at),
+        last_error: entry.last_error.clone(),
     }
 }
 
@@ -274,10 +308,14 @@ where
     drop(lock);
 }
 
-fn synchronous_probe_with<F>(path: &Option<PathBuf>, probe: F) -> CachedPiProbeOutcome
+fn synchronous_probe_with_observation<F>(
+    path: &Option<PathBuf>,
+    probe: F,
+) -> super::ObservedOutcome<CachedPiProbeOutcome>
 where
     F: Fn() -> PiProbeResult,
 {
+    use super::ObservedOutcome;
     let lock = blocking_lock();
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
@@ -285,17 +323,29 @@ where
         if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
             && is_usable_result(entry.result.as_ref())
         {
-            return if entry.last_attempt_at <= entry.fetched_at {
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
                 CachedPiProbeOutcome::Stale(entry.result.unwrap())
             } else {
                 CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
             };
+            return ObservedOutcome {
+                outcome,
+                observation,
+            };
         }
         let probe_result = probe();
-        return if probe_result.model_probe_success && probe_result.error.is_none() {
+        let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
             CachedPiProbeOutcome::Miss(probe_result)
         } else {
             CachedPiProbeOutcome::Failed(probe_result)
+        };
+        return ObservedOutcome {
+            outcome,
+            observation: Some(super::ProbeObservation {
+                observed_at: Some(now_unix_secs()),
+                last_error: None,
+            }),
         };
     }
 
@@ -305,18 +355,43 @@ where
         && is_usable_result(entry.result.as_ref())
     {
         if is_fresh(&entry) {
-            return if entry.last_attempt_at <= entry.fetched_at {
+            let observation = Some(observation_from_entry(&entry));
+            let outcome = if entry.last_attempt_at <= entry.fetched_at {
                 CachedPiProbeOutcome::Hit(entry.result.unwrap())
             } else {
                 CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+            return ObservedOutcome {
+                outcome,
+                observation,
             };
         }
 
         let probe_result = probe();
         let retained = persist_probe_attempt(path, Some(&entry), &probe_result);
-        return match retained {
+        let observation = if retained.is_some() {
+            Some(super::ProbeObservation {
+                observed_at: Some(entry.fetched_at),
+                last_error: Some(
+                    probe_result
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "pi probe failed".to_string()),
+                ),
+            })
+        } else {
+            Some(super::ProbeObservation {
+                observed_at: Some(now_unix_secs()),
+                last_error: None,
+            })
+        };
+        let outcome = match retained {
             Some(last_good) => CachedPiProbeOutcome::StaleFailed(last_good),
             None => CachedPiProbeOutcome::Miss(probe_result),
+        };
+        return ObservedOutcome {
+            outcome,
+            observation,
         };
     }
 
@@ -326,10 +401,17 @@ where
     }
     drop(lock);
 
-    if probe_result.model_probe_success && probe_result.error.is_none() {
+    let outcome = if probe_result.model_probe_success && probe_result.error.is_none() {
         CachedPiProbeOutcome::Miss(probe_result)
     } else {
         CachedPiProbeOutcome::Failed(probe_result)
+    };
+    ObservedOutcome {
+        outcome,
+        observation: Some(super::ProbeObservation {
+            observed_at: Some(now_unix_secs()),
+            last_error: None,
+        }),
     }
 }
 

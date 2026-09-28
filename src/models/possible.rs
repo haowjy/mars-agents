@@ -8,7 +8,7 @@ use crate::config::targets::HarnessScope;
 use crate::harness::host::{CapabilitySession, ListingEvidence};
 use crate::harness::registry::{self, HarnessId, ListingAuth};
 use crate::models::harness_model::resolve_harness_model;
-use crate::models::probes::{self, ProbeObservation};
+use crate::models::probes::ProbeObservation;
 use crate::routing::slug;
 
 use super::ModelsCache;
@@ -131,7 +131,7 @@ impl<'a> SessionPossibleSource<'a> {
                     PossibleRow {
                         harness,
                         harness_model_id: launch.harness_model_id,
-                        provider: Some(model.provider.clone()),
+                        provider: Some(slug::normalize_provider(&model.provider)),
                         model_id: slug::parse(&model.id)
                             .map_or(model.id.as_str(), |parts| parts.model_id)
                             .to_string(),
@@ -141,15 +141,7 @@ impl<'a> SessionPossibleSource<'a> {
                     }
                 })
                 .collect::<Vec<_>>();
-            rows.sort_by(|a, b| {
-                a.harness_model_id
-                    .cmp(&b.harness_model_id)
-                    .then_with(|| {
-                        (a.provider.as_deref() != Some(provider))
-                            .cmp(&(b.provider.as_deref() != Some(provider)))
-                    })
-                    .then_with(|| a.provider.cmp(&b.provider))
-            });
+            rows.sort_by(|a, b| a.harness_model_id.cmp(&b.harness_model_id));
             rows.dedup_by(|a, b| a.harness_model_id == b.harness_model_id);
             return if rows.is_empty() {
                 HarnessPossible::Unlisted(UnlistedReason::NoCatalog)
@@ -160,44 +152,41 @@ impl<'a> SessionPossibleSource<'a> {
 
         // Each outcome is memoized by CapabilitySession. The typed seam owns the
         // listing-success and latest-attempt policy for every probe-backed harness.
-        let (slugs, compatible) = match harness {
+        let (slugs, compatible, enumeration_succeeded) = match harness {
             HarnessId::Pi => {
                 let result = self.session.pi_outcome().result();
                 (
                     result.map(|probe| probe.model_slugs.iter().cloned().collect::<Vec<_>>()),
                     result.map(|probe| probe.compatible),
+                    result.is_some_and(|probe| probe.model_probe_success),
                 )
             }
-            HarnessId::OpenCode => (
-                self.session
-                    .opencode_outcome()
-                    .result()
-                    .map(|probe| probe.model_slugs.clone()),
-                Some(true),
-            ),
-            HarnessId::Cursor => (
-                self.session
-                    .cursor_outcome()
-                    .result()
-                    .map(|probe| probe.slugs.clone()),
-                Some(true),
-            ),
+            HarnessId::OpenCode => {
+                let result = self.session.opencode_outcome().result();
+                (
+                    result.map(|probe| probe.model_slugs.clone()),
+                    Some(true),
+                    result.is_some_and(|probe| probe.model_probe_success),
+                )
+            }
+            HarnessId::Cursor => {
+                let result = self.session.cursor_outcome().result();
+                (
+                    result.map(|probe| probe.slugs.clone()),
+                    Some(true),
+                    result.is_some_and(|probe| probe.model_probe_success),
+                )
+            }
             _ => unreachable!("native harness handled above"),
         };
         if compatible == Some(false) {
             return HarnessPossible::Unlisted(UnlistedReason::Incompatible);
         }
         let listing = self.session.listing_evidence(harness);
-        if !listing.succeeded {
+        if !enumeration_succeeded {
             return HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable);
         }
-        let observation = match harness {
-            HarnessId::Pi => probes::pi_cache::read_cache_observation(),
-            HarnessId::OpenCode => probes::opencode_cache::read_cache_observation(),
-            HarnessId::Cursor => probes::cursor_cache::read_cache_observation(),
-            _ => None,
-        }
-        .unwrap_or_default();
+        let observation = self.session.probe_observation(harness).unwrap_or_default();
         project_enumerated(harness, slugs.unwrap_or_default(), listing, observation)
     }
 }
@@ -343,12 +332,32 @@ mod tests {
         );
         assert!(
             rows.iter()
-                .any(|row| row.provider.as_deref() == Some("openai-codex"))
+                .any(|row| row.provider.as_deref() == Some("openai"))
         );
         assert_eq!(
             source.rows_for(HarnessId::Pi),
             &HarnessPossible::Unlisted(UnlistedReason::OutOfScope)
         );
+    }
+
+    #[test]
+    fn native_provider_display_case_and_variants_normalize_before_dedup() {
+        let catalog: ModelsCache = serde_json::from_value(serde_json::json!({
+            "models": [
+                {"id": "claude-opus-4-6", "provider": "Anthropic"},
+                {"id": "claude-opus-4-6", "provider": "ANTHROPIC-CLAUDE"},
+                {"id": "gpt-6-sol", "provider": "OpenAI-Codex"},
+                {"id": "gpt-6-sol", "provider": "OpenAI"}
+            ]
+        }))
+        .unwrap();
+        let mut session = session(vec!["claude", "codex"]);
+        let mut source =
+            SessionPossibleSource::new(&catalog, &mut session, &HarnessScope::Unrestricted);
+        let rows = source.all_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].provider.as_deref(), Some("anthropic"));
+        assert_eq!(rows[1].provider.as_deref(), Some("openai"));
     }
 
     #[test]
@@ -379,6 +388,24 @@ mod tests {
         assert_eq!(
             source.rows_for(HarnessId::Pi),
             &HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable)
+        );
+    }
+
+    #[test]
+    fn successful_empty_cursor_listing_is_listed_without_auth_implication() {
+        let mut session = session(vec!["cursor"]);
+        session.set_cursor_outcome_for_test(CachedCursorProbeOutcome::Hit(CursorProbeResult {
+            model_probe_success: true,
+            slugs: Vec::new(),
+            error: None,
+        }));
+        assert!(!session.listing_evidence(HarnessId::Cursor).succeeded);
+        let catalog = catalog();
+        let mut source =
+            SessionPossibleSource::new(&catalog, &mut session, &HarnessScope::Unrestricted);
+        assert_eq!(
+            source.rows_for(HarnessId::Cursor),
+            &HarnessPossible::Listed(Vec::new())
         );
     }
 
@@ -565,6 +592,14 @@ mod tests {
             },
             &Installed(vec!["pi", "opencode", "cursor"]),
         );
+        // The session owns one atomic observation. A later cache mutation must
+        // not rewrite the provenance of results already loaded into it.
+        session.pi_outcome();
+        session.opencode_outcome();
+        session.cursor_outcome();
+        std::fs::remove_file(cache.join("pi.json")).unwrap();
+        std::fs::remove_file(cache.join("opencode-probe.json")).unwrap();
+        std::fs::remove_file(cache.join("cursor-probe.json")).unwrap();
         let catalog = catalog();
         let mut source =
             SessionPossibleSource::new(&catalog, &mut session, &HarnessScope::Unrestricted);

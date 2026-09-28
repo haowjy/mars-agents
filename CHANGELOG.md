@@ -12,6 +12,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   until its separate command migration.
 
 ### Changed
+- Canonicalize provider-qualified Claude/Codex curation literals to native
+  model IDs, preventing phantom declared rows. Precompute literal match context
+  for catalog-sized lists; retain probe provenance atomically with outcomes.
+- Treat an empty successful Cursor model listing as an empty Possible inventory
+  without implying authentication. Normalize native provider labels, exclude
+  curated files from flat skill installs, and avoid duplicate scope diagnostics
+  or default warnings for uninstalled declarations.
 - Honor supported authored harness preferences even when native auth is inconclusive
   or an ungated listing leaves auth unchecked; stop model fallback at that route.
 - Treat successful Pi/Cursor credential-gated listings as configured-auth evidence,

@@ -11,7 +11,9 @@ use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
 use crate::models::probes::opencode_cache::CachedProbeOutcome;
 use crate::models::probes::pi_cache::CachedPiProbeOutcome;
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
+use crate::models::probes::{
+    CursorProbeResult, ObservedOutcome, OpenCodeProbeResult, PiProbeResult, ProbeObservation,
+};
 
 #[derive(Debug, Clone)]
 pub struct CapabilityCollectionOptions {
@@ -131,30 +133,42 @@ pub struct CapabilitySession {
     installed: HashSet<String>,
     offline: bool,
     probe_refresh: ProbeRefreshMode,
-    opencode: Option<CachedProbeOutcome>,
-    pi: Option<CachedPiProbeOutcome>,
-    cursor: Option<CachedCursorProbeOutcome>,
+    opencode: Option<ObservedOutcome<CachedProbeOutcome>>,
+    pi: Option<ObservedOutcome<CachedPiProbeOutcome>>,
+    cursor: Option<ObservedOutcome<CachedCursorProbeOutcome>>,
 }
 
 impl CapabilitySession {
     #[cfg(test)]
     pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
-        self.opencode = Some(CachedProbeOutcome::Hit(result));
+        self.opencode = Some(ObservedOutcome {
+            outcome: CachedProbeOutcome::Hit(result),
+            observation: None,
+        });
     }
 
     #[cfg(test)]
     pub(crate) fn set_opencode_outcome_for_test(&mut self, outcome: CachedProbeOutcome) {
-        self.opencode = Some(outcome);
+        self.opencode = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
     }
 
     #[cfg(test)]
     pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedPiProbeOutcome) {
-        self.pi = Some(outcome);
+        self.pi = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
     }
 
     #[cfg(test)]
     pub(crate) fn set_cursor_outcome_for_test(&mut self, outcome: CachedCursorProbeOutcome) {
-        self.cursor = Some(outcome);
+        self.cursor = Some(ObservedOutcome {
+            outcome,
+            observation: None,
+        });
     }
 
     pub fn collect(options: &CapabilityCollectionOptions) -> Self {
@@ -201,21 +215,31 @@ impl CapabilitySession {
     }
 
     pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
-        self.opencode.get_or_insert_with(|| {
-            cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.opencode.is_none() {
+            let observed = crate::models::probes::opencode_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.opencode = Some(observed);
+        }
+        &self
+            .opencode
+            .as_ref()
+            .expect("loaded OpenCode outcome")
+            .outcome
     }
 
     pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome> {
-        self.opencode.as_ref()
+        self.opencode.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_pi_outcome(&self) -> Option<&CachedPiProbeOutcome> {
-        self.pi.as_ref()
+        self.pi.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_cursor_outcome(&self) -> Option<&CachedCursorProbeOutcome> {
-        self.cursor.as_ref()
+        self.cursor.as_ref().map(|observed| &observed.outcome)
     }
 
     pub fn loaded_opencode_probe_result(&self) -> Option<&OpenCodeProbeResult> {
@@ -234,15 +258,51 @@ impl CapabilitySession {
     }
 
     pub fn pi_outcome(&mut self) -> &CachedPiProbeOutcome {
-        self.pi.get_or_insert_with(|| {
-            cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.pi.is_none() {
+            let observed = crate::models::probes::pi_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.pi = Some(observed);
+        }
+        &self.pi.as_ref().expect("loaded Pi outcome").outcome
     }
 
     pub fn cursor_outcome(&mut self) -> &CachedCursorProbeOutcome {
-        self.cursor.get_or_insert_with(|| {
-            cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-        })
+        if self.cursor.is_none() {
+            let observed = crate::models::probes::cursor_cache::probe_cached_observed(
+                &self.installed,
+                self.offline,
+                self.probe_refresh,
+            );
+            self.cursor = Some(observed);
+        }
+        &self.cursor.as_ref().expect("loaded Cursor outcome").outcome
+    }
+
+    pub fn probe_observation(&mut self, harness: HarnessId) -> Option<ProbeObservation> {
+        match harness {
+            HarnessId::Pi => {
+                self.pi_outcome();
+                self.pi
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            HarnessId::OpenCode => {
+                self.opencode_outcome();
+                self.opencode
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            HarnessId::Cursor => {
+                self.cursor_outcome();
+                self.cursor
+                    .as_ref()
+                    .and_then(|observed| observed.observation.clone())
+            }
+            _ => None,
+        }
     }
 
     pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
@@ -288,23 +348,32 @@ impl CapabilitySession {
 
     pub fn into_scoped_snapshot(mut self, scope: &HarnessScope) -> CapabilitySnapshot {
         let opencode = if scope.permits("opencode") {
-            self.opencode.take().unwrap_or_else(|| {
-                cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.opencode
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedProbeOutcome::Unavailable
         };
         let pi = if scope.permits("pi") {
-            self.pi.take().unwrap_or_else(|| {
-                cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.pi
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedPiProbeOutcome::Unavailable
         };
         let cursor = if scope.permits("cursor") {
-            self.cursor.take().unwrap_or_else(|| {
-                cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
-            })
+            self.cursor
+                .take()
+                .map(|observed| observed.outcome)
+                .unwrap_or_else(|| {
+                    cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+                })
         } else {
             CachedCursorProbeOutcome::Unavailable
         };
@@ -551,22 +620,26 @@ mod tests {
             },
             &FakeResolver::default(),
         );
-        session.opencode = Some(CachedProbeOutcome::StaleFailed(OpenCodeProbeResult {
-            model_probe_success: true,
-            model_slugs: vec!["openai/gpt-5".into()],
-            error: None,
-        }));
-        session.pi = Some(CachedPiProbeOutcome::Failed(PiProbeResult {
+        session.set_opencode_outcome_for_test(CachedProbeOutcome::StaleFailed(
+            OpenCodeProbeResult {
+                model_probe_success: true,
+                model_slugs: vec!["openai/gpt-5".into()],
+                error: None,
+            },
+        ));
+        session.set_pi_outcome_for_test(CachedPiProbeOutcome::Failed(PiProbeResult {
             compatible: true,
             model_probe_success: false,
             error: Some("listing failed".into()),
             ..PiProbeResult::default()
         }));
-        session.cursor = Some(CachedCursorProbeOutcome::StaleFailed(CursorProbeResult {
-            model_probe_success: true,
-            slugs: vec!["gpt-5".into()],
-            error: None,
-        }));
+        session.set_cursor_outcome_for_test(CachedCursorProbeOutcome::StaleFailed(
+            CursorProbeResult {
+                model_probe_success: true,
+                slugs: vec!["gpt-5".into()],
+                error: None,
+            },
+        ));
         let expected = [
             (HarnessId::OpenCode, true, false),
             (HarnessId::Pi, false, false),

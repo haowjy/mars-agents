@@ -39,6 +39,8 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
   to Possible projections.
   `from_results_assuming_latest_ok` is restricted to static/test-style inputs;
   cached production outcomes use `from_outcomes` so stale-failed status survives.
+  The session also holds probe observation time and last error with the loaded
+  outcome; Possible never re-reads the cache after that outcome is selected.
 
 `CapabilitySnapshot` fields:
 - `executable: BTreeMap<HarnessId, ExecutableState>` — PATH lookup result per harness

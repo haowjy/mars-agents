@@ -26,13 +26,20 @@ pub enum CachedPiProbeOutcome {
     Hit(PiProbeResult),
     Stale(PiProbeResult),
     Miss(PiProbeResult),
+    /// Last good listing survived a newer failed attempt.
+    StaleFailed(PiProbeResult),
+    Failed(PiProbeResult),
     Unavailable,
 }
 
 impl CachedPiProbeOutcome {
     pub fn result(&self) -> Option<&PiProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) => Some(r),
+            Self::Hit(r)
+            | Self::Stale(r)
+            | Self::Miss(r)
+            | Self::StaleFailed(r)
+            | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -42,8 +49,14 @@ impl CachedPiProbeOutcome {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
             Self::Miss(_) => "miss",
+            Self::StaleFailed(_) => "stale",
+            Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
+    }
+
+    pub fn latest_attempt_ok(&self) -> bool {
+        matches!(self, Self::Hit(_) | Self::Stale(_) | Self::Miss(_))
     }
 }
 
@@ -93,12 +106,17 @@ fn read_cache_tolerant() -> Option<PiProbeCacheEntry> {
 
 fn read_cache_tolerant_at(path: &Path) -> Option<PiProbeCacheEntry> {
     let content = std::fs::read_to_string(path).ok()?;
-    let entry: PiProbeCacheEntry = serde_json::from_str(&content).ok()?;
+    let mut entry: PiProbeCacheEntry = serde_json::from_str(&content).ok()?;
     if entry.schema_version != SCHEMA_VERSION {
         return None;
     }
     if !entry.harness.eq_ignore_ascii_case("pi") {
         return None;
+    }
+    // v2 entries predate the independent listing bit; a result without error had
+    // completed --list-models, even if its help surface was incompatible.
+    if let Some(result) = &mut entry.result {
+        result.model_probe_success |= result.error.is_none();
     }
     Some(entry)
 }
@@ -199,6 +217,9 @@ where
     S: Fn() -> Result<(), ()>,
 {
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
+    let latest_attempt_ok = cached
+        .as_ref()
+        .is_none_or(|entry| entry.last_attempt_at <= entry.fetched_at);
     match super::probe_refresh::resolve_probe_cache_branch(
         cached,
         mars_offline,
@@ -212,8 +233,20 @@ where
         is_fresh,
         || trigger_background_refresh_with(spawn_refresh),
     ) {
-        ProbeCacheBranch::Hit(result) => CachedPiProbeOutcome::Hit(result),
-        ProbeCacheBranch::Stale(result) => CachedPiProbeOutcome::Stale(result),
+        ProbeCacheBranch::Hit(result) => {
+            if latest_attempt_ok {
+                CachedPiProbeOutcome::Hit(result)
+            } else {
+                CachedPiProbeOutcome::StaleFailed(result)
+            }
+        }
+        ProbeCacheBranch::Stale(result) => {
+            if latest_attempt_ok {
+                CachedPiProbeOutcome::Stale(result)
+            } else {
+                CachedPiProbeOutcome::StaleFailed(result)
+            }
+        }
         ProbeCacheBranch::Unavailable => CachedPiProbeOutcome::Unavailable,
         ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
     }
@@ -240,6 +273,25 @@ where
     F: Fn() -> PiProbeResult,
 {
     let lock = blocking_lock();
+    if lock.is_none() {
+        // Without the lock, do not overwrite a last-good listing or race a
+        // background writer. It is still useful as support evidence.
+        if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
+            && is_usable_result(entry.result.as_ref())
+        {
+            return if entry.last_attempt_at <= entry.fetched_at {
+                CachedPiProbeOutcome::Stale(entry.result.unwrap())
+            } else {
+                CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+        }
+        let probe_result = probe();
+        return if probe_result.model_probe_success && probe_result.error.is_none() {
+            CachedPiProbeOutcome::Miss(probe_result)
+        } else {
+            CachedPiProbeOutcome::Failed(probe_result)
+        };
+    }
 
     if lock.is_some()
         && let Some(path) = path
@@ -247,12 +299,20 @@ where
         && is_usable_result(entry.result.as_ref())
     {
         if is_fresh(&entry) {
-            return CachedPiProbeOutcome::Hit(entry.result.unwrap());
+            return if entry.last_attempt_at <= entry.fetched_at {
+                CachedPiProbeOutcome::Hit(entry.result.unwrap())
+            } else {
+                CachedPiProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
         }
 
         let probe_result = probe();
-        write_probe_attempt(path, probe_result.clone());
-        return CachedPiProbeOutcome::Miss(probe_result);
+        if probe_result.model_probe_success && probe_result.error.is_none() {
+            write_probe_attempt(path, probe_result.clone());
+            return CachedPiProbeOutcome::Miss(probe_result);
+        }
+        write_failed_attempt(path, &entry, &probe_result);
+        return CachedPiProbeOutcome::StaleFailed(entry.result.unwrap());
     }
 
     let probe_result = probe();
@@ -261,17 +321,50 @@ where
     }
     drop(lock);
 
-    CachedPiProbeOutcome::Miss(probe_result)
+    if probe_result.model_probe_success && probe_result.error.is_none() {
+        CachedPiProbeOutcome::Miss(probe_result)
+    } else {
+        CachedPiProbeOutcome::Failed(probe_result)
+    }
+}
+
+fn write_failed_attempt(path: &Path, existing: &PiProbeCacheEntry, failed: &PiProbeResult) {
+    let entry = PiProbeCacheEntry {
+        schema_version: SCHEMA_VERSION,
+        harness: "pi".to_string(),
+        fetched_at: existing.fetched_at,
+        last_attempt_at: now_unix_secs().max(existing.fetched_at.saturating_add(1)),
+        last_error: Some(
+            failed
+                .error
+                .clone()
+                .unwrap_or_else(|| "pi probe failed".to_string()),
+        ),
+        result: existing.result.clone(),
+    };
+    if let Err(e) = write_cache_at(path, &entry) {
+        eprintln!("debug: pi probe cache write failed: {e}");
+    }
 }
 
 fn write_probe_attempt(path: &Path, probe_result: PiProbeResult) {
     let now = now_unix_secs();
+    let succeeded = probe_result.model_probe_success && probe_result.error.is_none();
     let entry = PiProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
         harness: "pi".to_string(),
-        fetched_at: now,
+        fetched_at: if succeeded { now } else { 0 },
         last_attempt_at: now,
-        last_error: probe_result.error.clone(),
+        last_error: if succeeded {
+            None
+        } else {
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "pi probe failed".to_string()),
+            )
+        },
         result: Some(probe_result),
     };
 
@@ -323,14 +416,22 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
 
     let probe_result = super::pi::probe();
     if let Ok(path) = cache_path() {
-        write_probe_attempt(&path, probe_result);
+        if probe_result.model_probe_success && probe_result.error.is_none() {
+            write_probe_attempt(&path, probe_result);
+        } else if let Some(existing) =
+            read_cache_tolerant().filter(|entry| is_usable_result(entry.result.as_ref()))
+        {
+            write_failed_attempt(&path, &existing, &probe_result);
+        } else {
+            write_probe_attempt(&path, probe_result);
+        }
     }
 
     Ok(0)
 }
 
 fn is_usable_result(result: Option<&PiProbeResult>) -> bool {
-    result.is_some_and(|probe| probe.error.is_none())
+    result.is_some_and(|probe| probe.model_probe_success && probe.error.is_none())
 }
 
 #[cfg(test)]
@@ -343,6 +444,7 @@ mod tests {
             binary_path: "/tmp/pi".to_string(),
             version: Some("pi 0.4.2".to_string()),
             compatible: true,
+            model_probe_success: true,
             help_surface_tokens_present: vec!["--mode".to_string()],
             help_surface_tokens_missing: Vec::new(),
             model_slugs: HashSet::from(["openai/gpt-5.4".to_string()]),
@@ -451,6 +553,54 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedPiProbeOutcome::Stale(_)));
+    }
+
+    #[test]
+    fn failed_pi_probe_keeps_last_good_listing() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(compatible_result())));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path.clone()),
+            incompatible_result,
+            || Ok(()),
+        );
+        assert!(matches!(outcome, CachedPiProbeOutcome::StaleFailed(_)));
+        assert!(!outcome.latest_attempt_ok());
+        assert!(
+            outcome
+                .result()
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert_eq!(on_disk.fetched_at, 1);
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        assert!(
+            on_disk
+                .result
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
+        let offline = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Skip,
+            &Some(path),
+            || panic!("skip must not re-probe"),
+            || Ok(()),
+        );
+        assert!(!offline.latest_attempt_ok());
+        assert!(
+            offline
+                .result()
+                .unwrap()
+                .model_slugs
+                .contains("openai/gpt-5.4")
+        );
     }
 
     #[test]

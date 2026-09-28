@@ -202,7 +202,7 @@ fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
         .unwrap();
     assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
     assert_eq!(assessment["verdict"], "unverified");
-    assert_eq!(assessment["reason"], "auth_unknown");
+    assert_eq!(assessment["reason"], "auth_unchecked");
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
     assert_eq!(opencode["skip_reason"], Value::Null);
     assert_eq!(opencode["chosen_slug"], "openai/gpt-5");
     assert_eq!(opencode["verdict"], "unverified");
-    assert_eq!(opencode["reason"], "auth_unknown");
+    assert_eq!(opencode["reason"], "auth_unchecked");
     let codex = assessments
         .iter()
         .find(|assessment| assessment["harness"] == "codex")
@@ -327,7 +327,7 @@ fn resolve_alias_prefix_uses_loaded_live_probe_for_unverified_availability() {
         .unwrap();
     assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
     assert_eq!(assessment["verdict"], "unverified");
-    assert_eq!(assessment["reason"], "auth_unknown");
+    assert_eq!(assessment["reason"], "auth_unchecked");
 }
 
 #[test]
@@ -377,7 +377,7 @@ harness_order = ["opencode"]
         .unwrap();
     assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
     assert_eq!(assessment["verdict"], "unverified");
-    assert_eq!(assessment["reason"], "auth_unknown");
+    assert_eq!(assessment["reason"], "auth_unchecked");
 
     let probe_runs = fs::read_to_string(&marker).expect("probe marker should exist");
     assert_eq!(

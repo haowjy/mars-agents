@@ -100,6 +100,9 @@ Bundle version 4 carries report version 2 at `routing.route_trace`. Policy resol
 accumulates every attempted model and its harness assessments, preserving scope and
 winning target-file provenance. `selected` indexes the accepted assessment, including
 an earlier deferred attempt. The report is diagnostic; execution uses routing fields.
+An authored supported preference can stop selection even when its auth is
+`auth_unchecked` or native `auth_unknown`; the model-attempt loop does not
+defer that route to an eligible backup. A failed gated listing is never promoted.
 
 JSON failures expose `error: {code, message}` and a top-level `route_trace` once
 selection began. Configuration errors before selection have no report. Configuration

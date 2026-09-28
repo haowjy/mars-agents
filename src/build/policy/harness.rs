@@ -366,6 +366,10 @@ mod tests {
         fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
             self.cursor.clone()
         }
+
+        fn latest_attempt_ok(&mut self, _harness: crate::harness::registry::HarnessId) -> bool {
+            true
+        }
     }
 
     /// Test wrapper: calls `resolve_harness` with auth defaulting to all-OK.

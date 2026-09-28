@@ -112,6 +112,10 @@ impl crate::routing::ProbeResolver for NativeSessionProbeResolver<'_> {
     fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
         self.session.cursor_probe_result()
     }
+
+    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
+        self.session.listing_latest_attempt_ok(harness)
+    }
 }
 
 /// Command-scoped native model router. Native surfaces must emit one concrete
@@ -311,7 +315,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 session: &mut self.session,
             };
             let trace = crate::routing::evaluate_candidates(&input, &mut probe_resolver, |_| {
-                crate::harness::host::AuthState::NotApplicable
+                crate::harness::host::AuthState::Unchecked
             });
             if trace.selected_harness() != target_name {
                 continue;

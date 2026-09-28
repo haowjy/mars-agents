@@ -114,6 +114,11 @@ After harness selection, `resolve_harness_model()` in `harness_model.rs` produce
 native Codex/Claude get bare ids when the provider matches; Pi/OpenCode use probe slugs.
 Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
 
+Live availability in `availability.rs` projects the selected routing assessment.
+It must not perform its own provider/model support check: Pi/OpenCode slugs can
+cross the alias's inferred provider, and Cursor can accept a provider constraint
+without a matching cached slug.
+
 ## Patterns
 
 **Test without real API:**

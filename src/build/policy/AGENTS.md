@@ -47,7 +47,7 @@ and backup evaluations. Support evidence alone does not establish runtime eligib
 ## Profile Model Fallback
 
 Primary first, then all concrete profile policy entries in declaration order.
-Select the first eligible model route; defer the first unverified attempt until
+Select the first eligible or supported authored-preference model route; defer the first unverified attempt until
 all candidates are exhausted. Keep its model, settings and provenance together.
 An explicit model pin prevents backup enumeration.
 `no-fallback` excludes only its entry, never the whole chain. Settings matching

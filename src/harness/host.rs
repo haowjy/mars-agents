@@ -170,6 +170,15 @@ impl CapabilitySession {
         self.cursor_outcome().result().cloned()
     }
 
+    pub fn listing_latest_attempt_ok(&mut self, harness: HarnessId) -> bool {
+        match harness {
+            HarnessId::Pi => self.pi_outcome().latest_attempt_ok(),
+            HarnessId::Cursor => self.cursor_outcome().latest_attempt_ok(),
+            HarnessId::OpenCode => self.opencode_outcome().latest_attempt_ok(),
+            _ => true,
+        }
+    }
+
     pub fn into_snapshot(self) -> CapabilitySnapshot {
         self.into_scoped_snapshot(&HarnessScope::Unrestricted)
     }
@@ -237,12 +246,34 @@ pub enum ExecutableState {
     Missing,
 }
 
+/// Runtime authentication evidence for one harness route.
+///
+/// `Authenticated` and `ImpliedByListing` are equal-strength evidence: credentials are
+/// configured, not proven valid or funded. They differ in freshness: native status runs
+/// per command, while listing evidence is as old as the probe cache entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthState {
-    NotApplicable,
+    /// No auth observation was made: an ungated listing (OpenCode), a gated harness
+    /// without a successful listing, or native materialization's deliberate skip.
+    Unchecked,
+    /// A native status command succeeded.
     Authenticated,
+    /// A credential-gated listing succeeded on its latest attempt.
+    ImpliedByListing,
+    /// A credential-gated listing's latest attempt failed (possibly logged out); support
+    /// still comes from the last good listing.
+    ListingFailed,
+    /// A native status command reported no usable login.
     Unauthenticated,
+    /// A native status command was inconclusive (timeout, spawn failure).
     Unknown { reason: String },
+}
+
+impl AuthState {
+    /// Whether this observation counts as runtime auth evidence for eligibility.
+    pub fn is_runtime_evidence(&self) -> bool {
+        matches!(self, Self::Authenticated | Self::ImpliedByListing)
+    }
 }
 
 pub trait ExecutableResolver {
@@ -325,7 +356,7 @@ fn native_auth_state(
     let (binary, args) = match id {
         HarnessId::Codex => ("codex", &["login", "status"][..]),
         HarnessId::Claude => ("claude", &["auth", "status"][..]),
-        _ => return AuthState::NotApplicable,
+        _ => return AuthState::Unchecked,
     };
 
     if !matches!(executable, ExecutableState::Found { .. }) {
@@ -430,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn native_auth_for_non_native_harness_is_not_applicable() {
+    fn native_auth_for_non_native_harness_is_unchecked() {
         let resolver = FakeResolver::default();
         let state = native_auth_state(
             HarnessId::Pi,
@@ -441,7 +472,7 @@ mod tests {
             Duration::from_secs(1),
         );
 
-        assert_eq!(state, AuthState::NotApplicable);
+        assert_eq!(state, AuthState::Unchecked);
     }
 
     #[test]

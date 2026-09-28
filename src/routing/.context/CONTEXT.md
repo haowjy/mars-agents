@@ -49,9 +49,11 @@ canonical ordered list.
 
 The evaluator ranks `CandidateAssessment::eligibility()`, independently of support
 match strength. Native authentication yields eligible only after support succeeds;
-unknown native auth and missing universal auth proof remain unverified. Keep the
-first unverified route with its original support evidence and provenance, then
-assess remaining harnesses for an eligible route. A blocked route cannot be deferred.
+unknown native auth and OpenCode's ungated listing remain unverified. A successful
+Pi/Cursor gated listing implies configured auth; a failed latest attempt retains
+support but yields `auth_listing_failed`. Select supported authored preferences
+unless support is passthrough or the gated listing failed. Otherwise keep the first
+unverified route and assess remaining harnesses for an eligible one.
 This is within-model ranking; the outer build policy owns cross-model traversal.
 
 ### Native catalog slug matching
@@ -137,12 +139,12 @@ no installed executable means no selected route.
 ```text
 scope + exclusions → ordered/deduplicated harnesses
     → support assessment → applicable typed auth observation
-    → eligible: select / unverified: defer / blocked: skip
+    → supported preference: select / eligible: select / unverified: defer / blocked: skip
     → RoutingTrace → acceptance policy → RouteDecisionReport
 ```
 
 Auth callbacks are command-scoped: `NativeAuthCache` is shared across aliases and
-model attempts. Native compilation injects NotApplicable, preserving support-only
+model attempts. Native compilation injects Unchecked, preserving support-only
 materialization without account probes. Report verdict/reason labels never include
 raw AuthState::Unknown details or auth command output.
 
@@ -158,10 +160,10 @@ were forced into `Explicit` confidence, losing the actual evidence level.
 Now `SelectionKind::Fixed` answers the selection question and the assessment's
 `MatchEvidence` preserves the actual evidence — callers get both dimensions.
 
-**slug.rs extracted as stable root:** slug matching was duplicated between
-`routing/mod.rs` and `models/availability.rs`. Extracting it eliminates drift
-and gives both modules a single source of truth for provider/model parsing.
-Borrowed `SlugParts` avoids allocation in hot scanning loops.
+**slug.rs:** Borrowed `SlugParts` avoids allocation in hot scanning loops.
+Availability no longer repeats support matching: it projects one runnable path
+from the selected assessment. Native catalog slugs are not launch IDs; probe-backed
+chosen slugs are.
 
 **report.rs decouples JSON from internals:** `RouteDecisionReport` uses string
 labels so new evaluator variants don't break serialized output. Consumers

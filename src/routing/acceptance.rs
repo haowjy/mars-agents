@@ -118,6 +118,7 @@ mod tests {
         RoutingTrace {
             source: RouteSource::Provider,
             selection_kind: SelectionKind::Auto,
+            selected_by_preference: false,
             match_evidence,
             harness: harness.to_string(),
             harness_order_position: None,

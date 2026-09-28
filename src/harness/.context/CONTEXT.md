@@ -12,7 +12,7 @@ maintain a list of known harness binaries independently.
 
 - `HarnessId`: `Claude | Codex | Pi | OpenCode | Cursor`
 - `HarnessClass`: `Native { provider }` (claude↔anthropic, codex↔openai) |
-  `ProbeBacked` (pi, opencode, cursor)
+  `ProbeBacked { listing }` (Pi/Cursor `Gated`, OpenCode `Ungated`)
 - `parse(name)` / `is_known(name)` — case-insensitive, trim-safe
 - `provider_candidate_order(provider)` — canonical evaluation order for a given provider
 - `UNKNOWN_PROVIDER_FALLBACK_ORDER` — `[Pi, OpenCode, Cursor]` for unknown/non-native providers

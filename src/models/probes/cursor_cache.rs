@@ -24,6 +24,7 @@ pub struct ProbeCacheEntry {
 pub enum CachedCursorProbeOutcome {
     Hit(CursorProbeResult),
     Stale(CursorProbeResult),
+    StaleFailed(CursorProbeResult),
     Miss(CursorProbeResult),
     Failed(CursorProbeResult),
     Unavailable,
@@ -32,7 +33,11 @@ pub enum CachedCursorProbeOutcome {
 impl CachedCursorProbeOutcome {
     pub fn result(&self) -> Option<&CursorProbeResult> {
         match self {
-            Self::Hit(r) | Self::Stale(r) | Self::Miss(r) | Self::Failed(r) => Some(r),
+            Self::Hit(r)
+            | Self::Stale(r)
+            | Self::StaleFailed(r)
+            | Self::Miss(r)
+            | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
         }
     }
@@ -41,10 +46,15 @@ impl CachedCursorProbeOutcome {
         match self {
             Self::Hit(_) => "hit",
             Self::Stale(_) => "stale",
+            Self::StaleFailed(_) => "stale",
             Self::Miss(_) => "miss",
             Self::Failed(_) => "failed",
             Self::Unavailable => "skipped",
         }
+    }
+
+    pub fn latest_attempt_ok(&self) -> bool {
+        matches!(self, Self::Hit(_) | Self::Stale(_) | Self::Miss(_))
     }
 }
 /// Return the cached cursor probe result if usable, even when stale.
@@ -211,6 +221,9 @@ where
     S: Fn() -> Result<(), ()>,
 {
     let cached = path.as_deref().and_then(read_cache_tolerant_at);
+    let latest_attempt_ok = cached
+        .as_ref()
+        .is_none_or(|entry| entry.last_attempt_at <= entry.fetched_at);
     match super::probe_refresh::resolve_probe_cache_branch(
         cached,
         mars_offline,
@@ -219,8 +232,20 @@ where
         is_fresh,
         || trigger_background_refresh_with(spawn_refresh),
     ) {
-        ProbeCacheBranch::Hit(result) => CachedCursorProbeOutcome::Hit(result),
-        ProbeCacheBranch::Stale(result) => CachedCursorProbeOutcome::Stale(result),
+        ProbeCacheBranch::Hit(result) => {
+            if latest_attempt_ok {
+                CachedCursorProbeOutcome::Hit(result)
+            } else {
+                CachedCursorProbeOutcome::StaleFailed(result)
+            }
+        }
+        ProbeCacheBranch::Stale(result) => {
+            if latest_attempt_ok {
+                CachedCursorProbeOutcome::Stale(result)
+            } else {
+                CachedCursorProbeOutcome::StaleFailed(result)
+            }
+        }
         ProbeCacheBranch::Unavailable => CachedCursorProbeOutcome::Unavailable,
         ProbeCacheBranch::SynchronousProbe => synchronous_probe_with(path, probe),
     }
@@ -247,6 +272,25 @@ where
     F: Fn() -> CursorProbeResult,
 {
     let lock = blocking_lock();
+    if lock.is_none() {
+        // Without the lock, do not overwrite a last-good listing or race a
+        // background writer. It is still useful as support evidence.
+        if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
+            && is_usable(&entry)
+        {
+            return if entry.last_attempt_at <= entry.fetched_at {
+                CachedCursorProbeOutcome::Stale(entry.result.unwrap())
+            } else {
+                CachedCursorProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
+        }
+        let probe_result = probe();
+        return if probe_result.model_probe_success {
+            CachedCursorProbeOutcome::Miss(probe_result)
+        } else {
+            CachedCursorProbeOutcome::Failed(probe_result)
+        };
+    }
 
     if lock.is_some()
         && let Some(path) = path
@@ -254,7 +298,11 @@ where
         && is_usable(&entry)
     {
         if is_fresh(&entry) {
-            return CachedCursorProbeOutcome::Hit(entry.result.unwrap());
+            return if entry.last_attempt_at <= entry.fetched_at {
+                CachedCursorProbeOutcome::Hit(entry.result.unwrap())
+            } else {
+                CachedCursorProbeOutcome::StaleFailed(entry.result.unwrap())
+            };
         }
         let probe_result = probe();
         if probe_result.model_probe_success {
@@ -262,7 +310,7 @@ where
             return CachedCursorProbeOutcome::Miss(probe_result);
         } else {
             write_failed_attempt(path, &entry, &probe_result);
-            return CachedCursorProbeOutcome::Stale(entry.result.unwrap());
+            return CachedCursorProbeOutcome::StaleFailed(entry.result.unwrap());
         }
     }
 
@@ -281,14 +329,20 @@ where
 
 fn write_probe_attempt(path: &Path, probe_result: CursorProbeResult) {
     let now = now_unix_secs();
+    let succeeded = probe_result.model_probe_success;
     let entry = ProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
-        fetched_at: now,
+        fetched_at: if succeeded { now } else { 0 },
         last_attempt_at: now,
         last_error: if probe_result.model_probe_success {
             None
         } else {
-            probe_result.error.clone()
+            Some(
+                probe_result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "cursor probe failed".to_string()),
+            )
         },
         result: Some(probe_result),
     };
@@ -303,8 +357,13 @@ fn write_failed_attempt(path: &Path, existing: &ProbeCacheEntry, failed_probe: &
     let entry = ProbeCacheEntry {
         schema_version: SCHEMA_VERSION,
         fetched_at: existing.fetched_at,
-        last_attempt_at: now,
-        last_error: failed_probe.error.clone(),
+        last_attempt_at: now.max(existing.fetched_at.saturating_add(1)),
+        last_error: Some(
+            failed_probe
+                .error
+                .clone()
+                .unwrap_or_else(|| "cursor probe failed".to_string()),
+        ),
         result: existing.result.clone(),
     };
 
@@ -451,6 +510,42 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedCursorProbeOutcome::Stale(_)));
+        assert!(outcome.latest_attempt_ok());
+    }
+
+    #[test]
+    fn failed_refresh_keeps_listing_but_drops_latest_attempt_evidence() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        write_entry(&path, &entry(1, Some(ok_result())));
+        let outcome = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Synchronous,
+            &Some(path.clone()),
+            fail_result,
+            || Ok(()),
+        );
+        assert!(matches!(outcome, CachedCursorProbeOutcome::StaleFailed(_)));
+        assert!(!outcome.latest_attempt_ok());
+        assert!(
+            outcome
+                .result()
+                .unwrap()
+                .slugs
+                .iter()
+                .any(|slug| slug == "gpt-5.5-high")
+        );
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        let offline = probe_cached_impl(
+            false,
+            crate::models::probes::ProbeRefreshMode::Skip,
+            &Some(path),
+            || panic!("skip must not re-probe"),
+            || Ok(()),
+        );
+        assert!(!offline.latest_attempt_ok());
+        assert!(offline.result().is_some());
     }
 
     #[test]

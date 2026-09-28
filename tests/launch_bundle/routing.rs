@@ -447,7 +447,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
     assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
 }
@@ -1503,7 +1503,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1534,7 +1534,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1573,7 +1573,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1608,7 +1608,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1640,7 +1640,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1690,7 +1690,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
 }
 
@@ -1786,7 +1786,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi")
     );
     let selected = selected_attempt(&bundle)["assessments"]
         .as_array()
@@ -1794,7 +1794,7 @@ Review code changes."#;
         .iter()
         .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
         .unwrap();
-    assert_eq!(selected["verdict"], "unverified", "{selected}");
+    assert_eq!(selected["verdict"], "eligible", "{selected}");
 }
 
 #[test]
@@ -1835,7 +1835,7 @@ Review code changes."#;
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -1881,7 +1881,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -2201,12 +2201,12 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode")
+        Some("claude,codex,pi,cursor")
     );
 }
 
 #[test]
-fn build_launch_bundle_selects_opencode_when_opencode_cache_is_stale() {
+fn build_launch_bundle_selects_cursor_over_stale_opencode_without_preference() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
     let agent_content = r#"---
@@ -2243,14 +2243,14 @@ harness_order = ["opencode", "cursor"]"#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode,cursor,claude,codex,pi")
+        Some("opencode,cursor")
     );
     let selected = selected_attempt(&bundle)["assessments"]
         .as_array()
@@ -2258,7 +2258,7 @@ harness_order = ["opencode", "cursor"]"#;
         .iter()
         .find(|assessment| assessment["harness"] == bundle["routing"]["harness"])
         .unwrap();
-    assert_eq!(selected["verdict"], "unverified", "{selected}");
+    assert_eq!(selected["verdict"], "eligible", "{selected}");
 }
 
 #[test]
@@ -2503,7 +2503,7 @@ harness_order = ["opencode", "pi"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode,pi,claude,codex,cursor")
+        Some("opencode,pi")
     );
 }
 
@@ -3279,14 +3279,14 @@ override = { harness = "opencode", effort = "low" }"#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
     assert_eq!(
         bundle["execution_policy"]["effort"].as_str(),
         Some("medium")
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("config-order")
+        Some("overlay-model-policy")
     );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
@@ -3299,7 +3299,7 @@ override = { harness = "opencode", effort = "low" }"#;
     assert_eq!(selected_attempt(&bundle)["assessments"][0]["harness"], "pi");
     assert_eq!(
         selected_attempt(&bundle)["assessments"][0]["verdict"],
-        "unverified"
+        "eligible"
     );
 }
 
@@ -3396,6 +3396,82 @@ model = "gptmini""#,
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("alias")
+    );
+}
+
+#[test]
+fn overlay_pi_preference_stops_before_native_auth() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
+    let agent_content = "---\nname: reviewer\nmodel: gpt-5\n---\nReview code changes.";
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    fs::write(
+        project_root.join("mars.local.toml"),
+        "[agents.reviewer]\nharness = \"pi\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(bundle["routing"]["harness"], "pi");
+    assert_eq!(bundle["provenance"]["harness_source"], "overlay");
+    assert_eq!(selected_attempt(&bundle)["candidates_tried"], json!(["pi"]));
+    assert_eq!(
+        selected_attempt(&bundle)["assessments"][0]["verdict"],
+        "eligible"
+    );
+}
+
+#[test]
+fn preferred_opencode_primary_beats_eligible_backup_model() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses_with_custom_opencode_models(
+        &temp,
+        &["opencode", "codex"],
+        &["openai/gpt-5.4-mini"],
+    );
+    let agent_content = r#"---
+name: reviewer
+model: gptmini
+harness: opencode
+model-policies:
+  - match:
+      alias: gptmini
+  - match:
+      alias: gpt55
+---
+Review code changes."#;
+    let extra_toml = r#"[models.gptmini]
+model = "gpt-5.4-mini"
+provider = "openai"
+
+[models.gpt55]
+model = "gpt-5"
+provider = "openai""#;
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(bundle["routing"]["model_token"], "gptmini");
+    assert_eq!(bundle["routing"]["harness"], "opencode");
+    assert_eq!(bundle["provenance"]["harness_source"], "profile");
+    assert_eq!(
+        selected_attempt(&bundle)["assessments"][0]["reason"],
+        "auth_unchecked"
+    );
+    assert_eq!(
+        bundle["routing"]["route_trace"]["model_attempts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
 }
 

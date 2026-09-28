@@ -20,6 +20,18 @@ impl HarnessId {
     pub fn default_target(self) -> &'static str {
         descriptor(self).default_target
     }
+
+    pub fn class(self) -> HarnessClass {
+        descriptor(self).class
+    }
+
+    /// Provider a native harness serves directly; `None` for probe-backed harnesses.
+    pub fn native_provider(self) -> Option<&'static str> {
+        match self.class() {
+            HarnessClass::Native { provider } => Some(provider),
+            HarnessClass::ProbeBacked { .. } => None,
+        }
+    }
 }
 
 impl fmt::Display for HarnessId {
@@ -28,10 +40,26 @@ impl fmt::Display for HarnessId {
     }
 }
 
+/// How a harness proves runtime support and authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HarnessClass {
+    /// Serves one provider directly; support comes from the catalog and auth from a
+    /// native status command.
     Native { provider: &'static str },
-    ProbeBacked,
+    /// Support comes from the harness's own model listing.
+    ProbeBacked { listing: ListingAuth },
+}
+
+/// Whether a probe-backed harness lists models only when credentials are configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingAuth {
+    /// The listing requires configured credentials (Pi lists only providers with auth
+    /// configured; Cursor refuses to list when logged out). A successful listing is auth
+    /// evidence: credentials are configured, not proven valid.
+    Gated,
+    /// The listing enumerates the provider catalog without checking credentials
+    /// (OpenCode). It proves support only.
+    Ungated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,21 +109,27 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         name: "pi",
         binary: "pi",
         default_target: ".pi",
-        class: HarnessClass::ProbeBacked,
+        class: HarnessClass::ProbeBacked {
+            listing: ListingAuth::Gated,
+        },
     },
     HarnessDescriptor {
         id: HarnessId::OpenCode,
         name: "opencode",
         binary: "opencode",
         default_target: ".opencode",
-        class: HarnessClass::ProbeBacked,
+        class: HarnessClass::ProbeBacked {
+            listing: ListingAuth::Ungated,
+        },
     },
     HarnessDescriptor {
         id: HarnessId::Cursor,
         name: "cursor",
         binary: "cursor",
         default_target: ".cursor",
-        class: HarnessClass::ProbeBacked,
+        class: HarnessClass::ProbeBacked {
+            listing: ListingAuth::Gated,
+        },
     },
 ];
 
@@ -142,11 +176,10 @@ pub fn normalize_name(name: &str) -> Option<String> {
 
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     let normalized = provider.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "anthropic" => Some(HarnessId::Claude),
-        "openai" => Some(HarnessId::Codex),
-        _ => None,
-    }
+    DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.id.native_provider() == Some(normalized.as_str()))
+        .map(|descriptor| descriptor.id)
 }
 
 pub fn provider_candidate_order(provider: &str) -> Vec<HarnessId> {
@@ -178,6 +211,24 @@ mod tests {
         assert_eq!(parse("OpenCode"), Some(HarnessId::OpenCode));
         assert_eq!(normalize_name(" OpenCode "), Some("opencode".to_string()));
         assert_eq!(parse("gemini"), None);
+    }
+
+    #[test]
+    fn listing_auth_is_gated_only_for_credential_filtered_listings() {
+        use HarnessId::*;
+        for (harness, expected) in [
+            (Claude, None),
+            (Codex, None),
+            (Pi, Some(ListingAuth::Gated)),
+            (Cursor, Some(ListingAuth::Gated)),
+            (OpenCode, Some(ListingAuth::Ungated)),
+        ] {
+            let listing = match harness.class() {
+                HarnessClass::Native { .. } => None,
+                HarnessClass::ProbeBacked { listing } => Some(listing),
+            };
+            assert_eq!(listing, expected, "{harness}");
+        }
     }
 
     #[test]

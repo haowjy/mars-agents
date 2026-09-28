@@ -67,17 +67,12 @@ pub fn providers_exact_match(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
-/// Whether a provider string maps to a native harness.
-/// Native mappings:
-/// - `claude` ↔ `anthropic` (including variants like `anthropic-claude`)
-/// - `codex` ↔ `openai` (including variants like `openai-codex`)
+/// Whether a provider string maps to a native harness's registry provider,
+/// including variants such as `openai-codex` or `anthropic-claude`.
 pub fn provider_matches_native_harness(provider: &str, harness: &str) -> bool {
-    let harness = harness.trim().to_ascii_lowercase();
-    match harness.as_str() {
-        "claude" => providers_match(provider, "anthropic"),
-        "codex" => providers_match(provider, "openai"),
-        _ => false,
-    }
+    crate::harness::registry::parse(harness)
+        .and_then(|id| id.native_provider())
+        .is_some_and(|native| providers_match(provider, native))
 }
 
 /// Match tier for provider matching.

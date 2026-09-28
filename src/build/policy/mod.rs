@@ -33,6 +33,10 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
     fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
         self.session.cursor_probe_result()
     }
+
+    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
+        self.session.listing_latest_attempt_ok(harness)
+    }
 }
 
 pub struct PolicyInput<'a> {
@@ -329,7 +333,7 @@ pub fn resolve_policy(
                         && assessment.eligibility() == routing::Eligibility::Eligible
                 });
                 let attempt = (attempt_index, candidate, matched_policy, resolution);
-                if eligible {
+                if eligible || attempt.3.route_trace.selected_by_preference {
                     selected = Some(attempt);
                     break;
                 }

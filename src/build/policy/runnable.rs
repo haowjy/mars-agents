@@ -161,6 +161,7 @@ mod tests {
         RoutingTrace {
             source: crate::routing::RouteSource::Provider,
             selection_kind: SelectionKind::Auto,
+            selected_by_preference: false,
             match_evidence: evidence,
             harness: "opencode".to_string(),
             harness_order_position: None,
@@ -247,6 +248,7 @@ mod tests {
         let trace = RoutingTrace {
             source: crate::routing::RouteSource::Cli,
             selection_kind: SelectionKind::Fixed,
+            selected_by_preference: false,
             match_evidence: MatchEvidence::Confirmed,
             harness: "pi".to_string(),
             harness_order_position: None,
@@ -582,6 +584,7 @@ mod tests {
             route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Cli,
                 selection_kind: SelectionKind::Fixed,
+                selected_by_preference: false,
                 match_evidence: MatchEvidence::Passthrough,
                 harness: "cursor".to_string(),
                 harness_order_position: None,
@@ -619,6 +622,7 @@ mod tests {
             route_report: report(RoutingTrace {
                 source: crate::routing::RouteSource::Provider,
                 selection_kind: SelectionKind::Auto,
+                selected_by_preference: false,
                 match_evidence: MatchEvidence::Passthrough,
                 harness: "claude".to_string(),
                 harness_order_position: None,

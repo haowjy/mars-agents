@@ -71,6 +71,7 @@ pub(super) fn run_catalog(
                 "fetched_at": cache.fetched_at,
                 "cache_available": cache.fetched_at.is_some(),
                 "cache_warning": warning(&outcome),
+                "cache_refresh": outcome,
             }))
             .unwrap()
         );
@@ -130,6 +131,7 @@ pub(super) fn run_aliases(
                 "aliases": rows,
                 "cache_available": cache.fetched_at.is_some(),
                 "cache_warning": warning(&outcome),
+                "cache_refresh": outcome,
             }))
             .unwrap()
         );
@@ -326,6 +328,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
                 "diagnostics": diagnostics,
                 "routing_diagnostics": routing_diagnostics,
                 "cache_warning": warning(&outcome),
+                "cache_refresh": outcome,
             }))
             .unwrap()
         );
@@ -465,12 +468,7 @@ fn curated_text(row: &serde_json::Value) -> String {
 }
 
 fn warning(outcome: &models::RefreshOutcome) -> Option<String> {
-    match outcome {
-        models::RefreshOutcome::StaleFallback { reason } => Some(format!(
-            "models cache refresh failed: {reason}; using stale cache"
-        )),
-        _ => None,
-    }
+    models::refresh_warning(outcome)
 }
 fn print_warning(outcome: &models::RefreshOutcome) {
     if let Some(value) = warning(outcome) {

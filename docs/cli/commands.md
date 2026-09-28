@@ -346,7 +346,16 @@ mars models aliases [--refresh-models|--no-refresh-models]
 mars models catalog [--refresh-models|--no-refresh-models]
 ```
 
-`mars models refresh` fetches models.dev metadata into `.mars/models-cache.json`.
+`mars models refresh` fetches models.dev metadata synchronously into
+`.mars/models-cache.json`. The catalog is indefinite last-known-good data:
+the default 24-hour interval controls when to *refresh*, not when reads expire.
+Fresh cache returns without network work. Stale usable cache returns immediately
+and starts a detached background refresh; cold/empty/corrupt cache fetches
+synchronously. Failed or empty refreshes retain last-good data and back off for
+five minutes. `--refresh-models` forces a synchronous fetch;
+`--no-refresh-models` and `MARS_OFFLINE` use disk only, with no worker or probe.
+`MARS_OFFLINE` also overrides `--refresh-models`. The internal
+`models __refresh-catalog` worker is not a user-facing command.
 
 ### `mars models list`
 
@@ -372,12 +381,17 @@ can be associated with that exact row, and reason is a string or `null`.
 `provider` and `provenance` may be `null`; enumerated provenance
 includes `probe`, `observed_at`, `auth_gated`, `latest_attempt_ok`, and
 `last_error`. Harness and probe IDs use registry names, including `opencode`.
-Top-level `diagnostics`, `routing_diagnostics`, and `cache_warning` report
+Top-level `diagnostics`, `routing_diagnostics`, `cache_warning`, and
+`cache_refresh` report
 problems without dropping rows. An installed in-scope harness without a
 retained listing appears in `diagnostics`; a failed attempt includes its last
 error. A retained listing with a failed latest refresh remains visible in row
 provenance and also emits one top-level diagnostic per harness, even if every
 row is hidden by curation.
+`cache_refresh.status = "stale"` identifies last-good catalog data;
+`cache_refresh.refresh.status` is `spawned`, `cooldown`, or `spawn_failed`.
+`spawned` means only that a worker started, not that its fetch succeeded.
+`last_failure` records the prior failed fetch when present.
 
 ### `mars models aliases`
 

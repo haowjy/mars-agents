@@ -175,7 +175,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
-            models_refresh: crate::models::ModelsRefreshControl::auto(),
+            models_refresh: crate::models::ModelsRefreshControl::background(),
         };
         let cache = ModelsCache {
             models: Vec::new(),
@@ -205,7 +205,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
-            models_refresh: crate::models::ModelsRefreshControl::auto(),
+            models_refresh: crate::models::ModelsRefreshControl::background(),
         };
         let cache = ModelsCache {
             models: Vec::new(),

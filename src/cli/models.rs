@@ -29,7 +29,7 @@ use super::models_common::{
 };
 pub use super::models_prompting::PromptingArgs;
 
-/// Manage model aliases and the models cache.
+/// Manage aliases and the last-known-good models.dev catalog (24h refresh-after by default).
 #[derive(Debug, Parser)]
 pub struct ModelsArgs {
     #[command(subcommand)]
@@ -38,7 +38,7 @@ pub struct ModelsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ModelsCommand {
-    /// Fetch models from API and update the local cache.
+    /// Force a synchronous models.dev fetch and update the local cache.
     Refresh,
     /// List curated harness models.
     List(ListArgs),
@@ -54,6 +54,9 @@ pub enum ModelsCommand {
     Alias(AddAliasArgs),
     #[command(name = "__refresh-probe", hide = true)]
     RefreshProbe(RefreshProbeArgs),
+    /// Internal detached models.dev refresh worker.
+    #[command(name = "__refresh-catalog", hide = true)]
+    RefreshCatalog(RefreshCatalogArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -73,7 +76,7 @@ pub struct ListArgs {
     /// Refresh models.dev catalog and harness probes synchronously before running (blocks until complete).
     #[arg(long, conflicts_with = "no_refresh_models")]
     pub refresh_models: bool,
-    /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
+    /// Use disk-only catalog/probe caches; do not start background refresh.
     #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
 }
@@ -83,7 +86,7 @@ pub struct CatalogViewArgs {
     /// Force a models.dev catalog refresh (does not probe harnesses).
     #[arg(long, conflicts_with = "no_refresh_models")]
     pub refresh_models: bool,
-    /// Use the catalog cache without refreshing it.
+    /// Use the catalog cache without starting refresh work.
     #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
 }
@@ -95,7 +98,7 @@ pub struct ResolveAliasArgs {
     /// Refresh models.dev catalog and harness probes synchronously before running (blocks until complete).
     #[arg(long, conflicts_with = "no_refresh_models")]
     refresh_models: bool,
-    /// Skip automatic models-cache refresh; use whatever's on disk (equivalent to MARS_OFFLINE=1).
+    /// Use disk-only catalog/probe caches; do not start background refresh.
     #[arg(long, conflicts_with = "refresh_models")]
     no_refresh_models: bool,
 }
@@ -104,6 +107,18 @@ pub struct ResolveAliasArgs {
 pub struct RefreshProbeArgs {
     #[arg(long)]
     target: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct RefreshCatalogArgs {
+    #[arg(long)]
+    mars_dir: std::path::PathBuf,
+    #[arg(long)]
+    refresh_after_hours: u32,
+    #[arg(long)]
+    providers_json: String,
+    #[arg(long)]
+    expected_generation: u64,
 }
 
 #[derive(Debug, Parser)]
@@ -130,6 +145,26 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
         ModelsCommand::Prompting(a) => super::models_prompting::run(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
         ModelsCommand::RefreshProbe(a) => run_refresh_probe(a),
+        ModelsCommand::RefreshCatalog(a) => {
+            if a.mars_dir != ctx.project_root.join(".mars") {
+                return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: "internal catalog worker path does not match project root".to_string(),
+                }));
+            }
+            let providers: Vec<String> =
+                serde_json::from_str(&a.providers_json).map_err(|error| {
+                    MarsError::Config(crate::error::ConfigError::Invalid {
+                        message: format!("invalid internal catalog worker providers: {error}"),
+                    })
+                })?;
+            models::run_background_refresh(
+                &a.mars_dir,
+                a.refresh_after_hours,
+                &providers,
+                a.expected_generation,
+            )?;
+            Ok(0)
+        }
     }
 }
 
@@ -1331,15 +1366,8 @@ fn route_rejection_json(
     }
 }
 
-fn stale_warning(reason: &str) -> String {
-    format!("models cache refresh failed: {reason}; using stale cache")
-}
-
 fn cache_warning(outcome: &models::RefreshOutcome) -> Option<String> {
-    match outcome {
-        models::RefreshOutcome::StaleFallback { reason } => Some(stale_warning(reason)),
-        _ => None,
-    }
+    models::refresh_warning(outcome)
 }
 
 fn emit_routing_settings_warnings(routing_diagnostics: &[String]) {

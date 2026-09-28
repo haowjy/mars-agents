@@ -9,6 +9,7 @@
 //! Merge precedence: consumer > deps (declaration order).
 
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use indexmap::IndexMap;
@@ -384,22 +385,71 @@ pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
 
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
+const REFRESH_GENERATION_FILE: &str = ".models-cache.generation";
 pub(crate) const FETCH_FAIL_COOLDOWN_SECS: u64 = 300;
 const FETCH_FAIL_COOLDOWN_REASON: &str = "recent fetch attempt failed; backing off (cooldown)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshMode {
-    Auto,
+    /// Return stale usable data immediately and refresh in a detached worker.
+    Background,
+    /// Refresh stale data in this process (used by the internal worker).
+    Synchronous,
     Force,
     Offline,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum BackgroundRefresh {
+    Spawned,
+    Cooldown,
+    SpawnFailed { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum RefreshOutcome {
     AlreadyFresh,
-    Refreshed { models_count: usize },
-    StaleFallback { reason: String },
+    Refreshed {
+        models_count: usize,
+    },
+    Stale {
+        refresh: BackgroundRefresh,
+        last_failure: Option<String>,
+    },
+    StaleFallback {
+        reason: String,
+    },
     Offline,
+}
+
+pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
+    match outcome {
+        RefreshOutcome::Stale {
+            refresh,
+            last_failure,
+        } => {
+            let status = match refresh {
+                BackgroundRefresh::Spawned => "background refresh started".to_string(),
+                BackgroundRefresh::Cooldown => {
+                    "background refresh suppressed by cooldown".to_string()
+                }
+                BackgroundRefresh::SpawnFailed { reason } => {
+                    format!("background refresh failed to spawn: {reason}")
+                }
+            };
+            let previous = last_failure
+                .as_ref()
+                .map(|reason| format!("; previous refresh failed: {reason}"))
+                .unwrap_or_default();
+            Some(format!("using stale models cache; {status}{previous}"))
+        }
+        RefreshOutcome::StaleFallback { reason } => Some(format!(
+            "models cache refresh failed: {reason}; using stale cache"
+        )),
+        _ => None,
+    }
 }
 
 pub fn now_unix_secs_value() -> u64 {
@@ -430,9 +480,9 @@ pub struct ModelsRefreshControl {
 }
 
 impl ModelsRefreshControl {
-    pub fn auto() -> Self {
+    pub fn background() -> Self {
         Self {
-            catalog_mode: RefreshMode::Auto,
+            catalog_mode: RefreshMode::Background,
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         }
     }
@@ -462,7 +512,7 @@ pub fn resolve_models_refresh_control(
             probe_refresh: ProbeRefreshMode::Synchronous,
         }
     } else {
-        ModelsRefreshControl::auto()
+        ModelsRefreshControl::background()
     })
 }
 
@@ -539,15 +589,26 @@ fn is_usable(cache: &ModelsCache) -> bool {
     !cache.models.is_empty()
 }
 
-fn read_fetch_fail_marker(mars_dir: &Path) -> Option<u64> {
-    let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
-    let raw = std::fs::read_to_string(marker).ok()?;
-    raw.trim().parse::<u64>().ok()
+#[derive(Serialize, Deserialize)]
+struct FetchFailure {
+    at: u64,
+    reason: String,
 }
 
-fn write_fetch_fail_marker(mars_dir: &Path, timestamp: u64) {
+fn read_fetch_fail_marker(mars_dir: &Path) -> Option<FetchFailure> {
     let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
-    if let Err(err) = crate::fs::atomic_write(&marker, timestamp.to_string().as_bytes()) {
+    let raw = std::fs::read_to_string(marker).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_fetch_fail_marker(mars_dir: &Path, reason: &str) {
+    let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
+    let failure = FetchFailure {
+        at: now_unix_secs_value(),
+        reason: reason.to_string(),
+    };
+    let content = serde_json::to_vec(&failure).expect("fetch failure is serializable");
+    if let Err(err) = crate::fs::atomic_write(&marker, &content) {
         tracing::debug!("failed to write models fetch failure marker: {err}");
     }
 }
@@ -559,6 +620,23 @@ fn clear_fetch_fail_marker(mars_dir: &Path) {
     {
         tracing::debug!("failed to clear models fetch failure marker: {err}");
     }
+}
+
+// Coalesce workers even when refresh-after is zero and a replacement happens
+// within the same fetched_at second.
+fn refresh_generation(mars_dir: &Path) -> u64 {
+    std::fs::read_to_string(mars_dir.join(REFRESH_GENERATION_FILE))
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn advance_refresh_generation(mars_dir: &Path) -> Result<(), MarsError> {
+    let next = refresh_generation(mars_dir).saturating_add(1);
+    crate::fs::atomic_write(
+        &mars_dir.join(REFRESH_GENERATION_FILE),
+        next.to_string().as_bytes(),
+    )
 }
 
 pub fn ensure_fresh(
@@ -576,9 +654,104 @@ pub fn ensure_fresh_with_catalog_providers(
     providers: &[String],
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
     let providers = providers.to_vec();
+    if mode == RefreshMode::Background && !is_mars_offline() {
+        std::fs::create_dir_all(mars_dir)?;
+        // Read the generation first: never pair old cache data with a newer
+        // generation written by a concurrent refresh.
+        let observed_generation = refresh_generation(mars_dir);
+        let prior = read_cache_tolerant(mars_dir);
+        if is_usable(&prior) {
+            if is_fresh(&prior, ttl_hours) {
+                return Ok((prior, RefreshOutcome::AlreadyFresh));
+            }
+            let failure = read_fetch_fail_marker(mars_dir);
+            let last_failure = failure.as_ref().map(|failure| failure.reason.clone());
+            let refresh = if failure.as_ref().is_some_and(|failure| {
+                now_unix_secs_value().saturating_sub(failure.at) < FETCH_FAIL_COOLDOWN_SECS
+            }) {
+                BackgroundRefresh::Cooldown
+            } else {
+                match spawn_background_refresh(mars_dir, ttl_hours, &providers, observed_generation)
+                {
+                    Ok(()) => BackgroundRefresh::Spawned,
+                    Err(error) => BackgroundRefresh::SpawnFailed {
+                        reason: error.to_string(),
+                    },
+                }
+            };
+            return Ok((
+                prior,
+                RefreshOutcome::Stale {
+                    refresh,
+                    last_failure,
+                },
+            ));
+        }
+    }
     ensure_fresh_with_fetcher(mars_dir, ttl_hours, mode, move || {
         fetch_models_with_providers(&providers)
     })
+}
+
+fn spawn_background_refresh(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    providers: &[String],
+    expected_generation: u64,
+) -> std::io::Result<()> {
+    let mut cmd = Command::new(std::env::current_exe()?);
+    let providers_json = serde_json::to_string(providers).expect("provider names are serializable");
+    cmd.arg("--root")
+        .arg(mars_dir.parent().unwrap_or(mars_dir))
+        .args(["models", "__refresh-catalog", "--mars-dir"])
+        .arg(mars_dir)
+        .args([
+            "--refresh-after-hours",
+            &ttl_hours.to_string(),
+            "--providers-json",
+            &providers_json,
+            "--expected-generation",
+            &expected_generation.to_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000008);
+    }
+    cmd.spawn()?;
+    Ok(())
+}
+
+/// Entry point for the hidden worker command. Never selects Background, so it cannot recurse.
+pub fn run_background_refresh(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    providers: &[String],
+    expected_generation: u64,
+) -> Result<(), MarsError> {
+    let providers = providers.to_vec();
+    ensure_fresh_with_fetcher_if_generation(
+        mars_dir,
+        ttl_hours,
+        RefreshMode::Synchronous,
+        Some(expected_generation),
+        move || fetch_models_with_providers(&providers),
+    )?;
+    Ok(())
 }
 
 fn ensure_fresh_with_fetcher<F>(
@@ -590,17 +763,35 @@ fn ensure_fresh_with_fetcher<F>(
 where
     F: FnOnce() -> Result<Vec<CachedModel>, MarsError>,
 {
+    ensure_fresh_with_fetcher_if_generation(mars_dir, ttl_hours, mode, None, fetcher)
+}
+
+fn ensure_fresh_with_fetcher_if_generation<F>(
+    mars_dir: &Path,
+    ttl_hours: u32,
+    mode: RefreshMode,
+    expected_generation: Option<u64>,
+    fetcher: F,
+) -> Result<(ModelsCache, RefreshOutcome), MarsError>
+where
+    F: FnOnce() -> Result<Vec<CachedModel>, MarsError>,
+{
     std::fs::create_dir_all(mars_dir)?;
 
     // D1: apply MARS_OFFLINE coercion exactly once here.
-    let effective_mode = match mode {
-        RefreshMode::Auto if is_mars_offline() => RefreshMode::Offline,
-        m => m,
+    let effective_mode = if is_mars_offline() {
+        RefreshMode::Offline
+    } else {
+        mode
     };
 
     let prior = read_cache_tolerant(mars_dir);
 
-    if effective_mode == RefreshMode::Auto && is_fresh(&prior, ttl_hours) {
+    if matches!(
+        effective_mode,
+        RefreshMode::Background | RefreshMode::Synchronous
+    ) && is_fresh(&prior, ttl_hours)
+    {
         return Ok((prior, RefreshOutcome::AlreadyFresh));
     }
 
@@ -617,14 +808,21 @@ where
     let _guard = crate::fs::FileLock::acquire(&lock_path)?;
 
     let under_lock = read_cache_tolerant(mars_dir);
-    if effective_mode == RefreshMode::Auto && is_fresh(&under_lock, ttl_hours) {
+    if expected_generation.is_some_and(|expected| refresh_generation(mars_dir) != expected) {
+        return Ok((under_lock, RefreshOutcome::AlreadyFresh));
+    }
+    if matches!(
+        effective_mode,
+        RefreshMode::Background | RefreshMode::Synchronous
+    ) && is_fresh(&under_lock, ttl_hours)
+    {
         return Ok((under_lock, RefreshOutcome::AlreadyFresh));
     }
 
     if mode != RefreshMode::Force && is_usable(&under_lock) {
         let now = now_unix_secs_value();
         if let Some(last_fail) = read_fetch_fail_marker(mars_dir)
-            && now.saturating_sub(last_fail) < FETCH_FAIL_COOLDOWN_SECS
+            && now.saturating_sub(last_fail.at) < FETCH_FAIL_COOLDOWN_SECS
         {
             return Ok((
                 under_lock,
@@ -643,6 +841,7 @@ where
                 fetched_at: Some(now_unix_secs()),
             };
             write_cache(mars_dir, &cache)?;
+            advance_refresh_generation(mars_dir)?;
             clear_fetch_fail_marker(mars_dir);
             Ok((cache, RefreshOutcome::Refreshed { models_count }))
         }
@@ -651,14 +850,12 @@ where
             under_lock,
             "API returned empty catalog".to_string(),
             "API returned an empty catalog and no prior cache exists".to_string(),
-            true,
         ),
         Err(err) => fallback_to_stale_or_error(
             mars_dir,
             under_lock,
             format!("fetch failed: {err}"),
             format!("automatic refresh failed: {err}"),
-            true,
         ),
     }
 }
@@ -668,12 +865,9 @@ fn fallback_to_stale_or_error(
     under_lock: ModelsCache,
     stale_reason: String,
     unavailable_reason: String,
-    mark_fetch_failure: bool,
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
     if is_usable(&under_lock) {
-        if mark_fetch_failure {
-            write_fetch_fail_marker(mars_dir, now_unix_secs_value());
-        }
+        write_fetch_fail_marker(mars_dir, &stale_reason);
         Ok((
             under_lock,
             RefreshOutcome::StaleFallback {
@@ -692,8 +886,9 @@ fn offline_unavailable_reason(requested_mode: RefreshMode) -> String {
         RefreshMode::Offline => {
             "--no-refresh-models was passed and no cached catalog is available".to_string()
         }
-        RefreshMode::Auto => "MARS_OFFLINE is set and no cached catalog is available".to_string(),
-        RefreshMode::Force => "MARS_OFFLINE is set and no cached catalog is available".to_string(),
+        RefreshMode::Background | RefreshMode::Synchronous | RefreshMode::Force => {
+            "MARS_OFFLINE is set and no cached catalog is available".to_string()
+        }
     }
 }
 
@@ -724,13 +919,11 @@ pub fn read_cache(mars_dir: &Path) -> Result<ModelsCache, MarsError> {
 pub fn write_cache(mars_dir: &Path, cache: &ModelsCache) -> Result<(), MarsError> {
     std::fs::create_dir_all(mars_dir)?;
     let path = mars_dir.join(CACHE_FILE);
-    let tmp_path = mars_dir.join(".models-cache.json.tmp");
     let content =
         serde_json::to_string_pretty(cache).map_err(|e| crate::error::ConfigError::Invalid {
             message: format!("failed to serialize models cache: {e}"),
         })?;
-    std::fs::write(&tmp_path, content)?;
-    std::fs::rename(&tmp_path, &path)?;
+    crate::fs::atomic_write(&path, content.as_bytes())?;
     Ok(())
 }
 
@@ -3072,7 +3265,7 @@ harness = "claude"
         let mars = tempdir().unwrap();
         let _offline = EnvVarGuard::set("MARS_OFFLINE", "1");
 
-        let result = ensure_fresh(mars.path(), 24, RefreshMode::Auto);
+        let result = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous);
         assert_model_cache_unavailable(result, "MARS_OFFLINE is set");
     }
 
@@ -3087,7 +3280,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let result = ensure_fresh(mars.path(), 24, RefreshMode::Auto);
+        let result = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous);
         assert_model_cache_unavailable(result, "automatic refresh failed");
         assert_eq!(mock.hits(), 1);
     }
@@ -3124,7 +3317,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert_eq!(outcome, RefreshOutcome::AlreadyFresh);
         assert_eq!(mock.hits(), 0);
     }
@@ -3146,7 +3339,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert!(matches!(
             outcome,
             RefreshOutcome::Refreshed { models_count } if models_count == 2
@@ -3174,7 +3367,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert_eq!(cache.models[0].id, "stale-model");
         assert!(matches!(
             outcome,
@@ -3200,7 +3393,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert_eq!(cache.models[0].id, "stale-model");
         assert!(matches!(
             outcome,
@@ -3222,7 +3415,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert!(!cache.models.is_empty());
         assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
         assert_eq!(mock.hits(), 1);
@@ -3250,7 +3443,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
         assert!(!cache.models.is_empty());
         assert_eq!(mock.hits(), 1);
@@ -3301,7 +3494,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 0, RefreshMode::Auto).unwrap();
+        let (_cache, outcome) = ensure_fresh(mars.path(), 0, RefreshMode::Synchronous).unwrap();
         assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
         assert_eq!(mock.hits(), 1);
     }
@@ -3323,7 +3516,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
         assert_eq!(mock.hits(), 1);
     }
@@ -3346,7 +3539,7 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
         assert_eq!(mock.hits(), 1);
     }
@@ -3369,14 +3562,14 @@ harness = "claude"
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
         let _offline = EnvVarGuard::set("MARS_OFFLINE", "1");
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Auto).unwrap();
+        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Synchronous).unwrap();
         assert_eq!(outcome, RefreshOutcome::Offline);
         assert_eq!(mock.hits(), 0);
     }
     #[test]
     fn resolve_models_refresh_control_defaults_to_auto_background() {
         let control = resolve_models_refresh_control(false, false).unwrap();
-        assert_eq!(control.catalog_mode, RefreshMode::Auto);
+        assert_eq!(control.catalog_mode, RefreshMode::Background);
         assert_eq!(
             control.probe_refresh,
             crate::models::probes::ProbeRefreshMode::Background
@@ -3409,7 +3602,7 @@ harness = "claude"
     }
     #[test]
     #[serial]
-    fn ensure_fresh_18_force_ignores_offline_env() {
+    fn ensure_fresh_18_offline_env_blocks_forced_fetch() {
         let mars = tempdir().unwrap();
         let _offline = EnvVarGuard::set("MARS_OFFLINE", "1");
 
@@ -3420,9 +3613,9 @@ harness = "claude"
         });
         let _api = EnvVarGuard::set("MARS_MODELS_API_URL", &server.url("/api.json"));
 
-        let (_cache, outcome) = ensure_fresh(mars.path(), 24, RefreshMode::Force).unwrap();
-        assert!(matches!(outcome, RefreshOutcome::Refreshed { .. }));
-        assert_eq!(mock.hits(), 1);
+        let result = ensure_fresh(mars.path(), 24, RefreshMode::Force);
+        assert_model_cache_unavailable(result, "MARS_OFFLINE");
+        assert_eq!(mock.hits(), 0);
     }
 
     #[test]
@@ -3444,7 +3637,7 @@ harness = "claude"
 
         let fetch_hits_a = Arc::clone(&fetch_hits);
         let t1 = thread::spawn(move || {
-            ensure_fresh_with_fetcher(&path_a, 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(&path_a, 24, RefreshMode::Synchronous, move || {
                 fetch_hits_a.fetch_add(1, Ordering::SeqCst);
                 fetch_started_tx.send(()).unwrap();
                 release_fetch_rx.recv().unwrap();
@@ -3458,7 +3651,7 @@ harness = "claude"
 
         let fetch_hits_b = Arc::clone(&fetch_hits);
         let t2 = thread::spawn(move || {
-            ensure_fresh_with_fetcher(&path_b, 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(&path_b, 24, RefreshMode::Synchronous, move || {
                 fetch_hits_b.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![sample_cached_model("unexpected-second-refresh")])
             })
@@ -3500,7 +3693,7 @@ harness = "claude"
 
         let fetch_hits_a = Arc::clone(&fetch_hits);
         let (_cache_a, outcome_a) =
-            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Synchronous, move || {
                 fetch_hits_a.fetch_add(1, Ordering::SeqCst);
                 Err(MarsError::Http {
                     url: "https://example.test/api.json".to_string(),
@@ -3512,7 +3705,7 @@ harness = "claude"
 
         let fetch_hits_b = Arc::clone(&fetch_hits);
         let (_cache_b, outcome_b) =
-            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Synchronous, move || {
                 fetch_hits_b.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![sample_cached_model("unexpected-second-refresh")])
             })
@@ -3545,7 +3738,7 @@ harness = "claude"
 
         let fetch_hits_a = Arc::clone(&fetch_hits);
         let (_cache_a, outcome_a) =
-            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Synchronous, move || {
                 fetch_hits_a.fetch_add(1, Ordering::SeqCst);
                 Ok(Vec::new())
             })
@@ -3553,7 +3746,7 @@ harness = "claude"
 
         let fetch_hits_b = Arc::clone(&fetch_hits);
         let (_cache_b, outcome_b) =
-            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Auto, move || {
+            ensure_fresh_with_fetcher(mars.path(), 24, RefreshMode::Synchronous, move || {
                 fetch_hits_b.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![sample_cached_model("unexpected-second-refresh")])
             })
@@ -3570,6 +3763,49 @@ harness = "claude"
             }
         );
         assert_eq!(fetch_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn zero_refresh_after_coalesces_workers_from_same_generation() {
+        let mars = tempdir().unwrap();
+        write_cache_state(
+            mars.path(),
+            vec![sample_cached_model("old-model")],
+            &fresh_timestamp(),
+        );
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let first = {
+            let attempts = Arc::clone(&attempts);
+            ensure_fresh_with_fetcher_if_generation(
+                mars.path(),
+                0,
+                RefreshMode::Synchronous,
+                Some(0),
+                move || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![sample_cached_model("new-model")])
+                },
+            )
+            .unwrap()
+        };
+        let second = {
+            let attempts = Arc::clone(&attempts);
+            ensure_fresh_with_fetcher_if_generation(
+                mars.path(),
+                0,
+                RefreshMode::Synchronous,
+                Some(0),
+                move || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![sample_cached_model("unexpected-second-fetch")])
+                },
+            )
+            .unwrap()
+        };
+        assert!(matches!(first.1, RefreshOutcome::Refreshed { .. }));
+        assert_eq!(second.1, RefreshOutcome::AlreadyFresh);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(refresh_generation(mars.path()), 1);
     }
 
     #[test]

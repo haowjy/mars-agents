@@ -6,11 +6,283 @@ use serde_json::Value;
 use serial_test::serial;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::process::{Command as StdCommand, Output};
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::*;
+
+#[test]
+#[serial]
+fn stale_catalog_returns_before_blocked_refresh_completes() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    let before = read_cache_raw(&project_root);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/api.json", listener.local_addr().unwrap());
+    let (seen_tx, seen_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server_thread = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        assert!(stream.read(&mut request).unwrap() > 0);
+        seen_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let body = sample_catalog_json().to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let mut cmd = StdCommand::new(cargo_bin("mars"));
+    configure_std_cmd(&mut cmd, temp.path(), &url);
+    cmd.arg("--root")
+        .arg(&project_root)
+        .args(["--json", "models", "catalog"]);
+    let (output_tx, output_rx) = mpsc::channel();
+    let command_thread = thread::spawn(move || output_tx.send(cmd.output().unwrap()).unwrap());
+    seen_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("refresh request never arrived");
+    let output_before_release = output_rx.recv_timeout(Duration::from_secs(2));
+    let returned_early = output_before_release.is_ok();
+    release_tx.send(()).unwrap();
+    let output = output_before_release.or_else(|_| output_rx.recv_timeout(Duration::from_secs(5)));
+    command_thread.join().unwrap();
+    server_thread.join().unwrap();
+    assert!(
+        returned_early,
+        "stale command or a descendant held output pipes until network response"
+    );
+    let output = output.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["cache_refresh"]["status"], "stale");
+    assert_eq!(document["cache_refresh"]["refresh"]["status"], "spawned");
+    assert!(model_ids_from_catalog_json(&output.stdout).contains("gpt-5"));
+    wait_until(Duration::from_secs(5), || {
+        read_cache_raw(&project_root) != before
+    });
+    assert!(
+        read_cache_json(&project_root)["fetched_at"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > stale_fetched_at().parse::<u64>().unwrap()
+    );
+}
+
+#[test]
+#[serial]
+fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200)
+            .delay(Duration::from_millis(350))
+            .json_body(sample_catalog_json());
+    });
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    let api_url = server.url(API_PATH);
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let root = project_root.clone();
+            let env_root = temp.path().to_path_buf();
+            let url = api_url.clone();
+            thread::spawn(move || {
+                let mut cmd = StdCommand::new(cargo_bin("mars"));
+                configure_std_cmd(&mut cmd, &env_root, &url);
+                cmd.arg("--root")
+                    .arg(root)
+                    .args(["--json", "models", "catalog"])
+                    .output()
+                    .unwrap()
+            })
+        })
+        .collect();
+    for handle in handles {
+        let output = handle.join().unwrap();
+        assert!(output.status.success());
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(document["cache_refresh"]["status"], "stale");
+    }
+    wait_until(Duration::from_secs(5), || {
+        read_cache_json(&project_root)["fetched_at"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > stale_fetched_at().parse::<u64>().unwrap()
+    });
+    assert_eq!(mock.hits(), 1);
+}
+
+#[test]
+#[serial]
+fn forced_refresh_waits_for_blocked_network_response() {
+    let server = MockServer::start();
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/api.json", listener.local_addr().unwrap());
+    let (seen_tx, seen_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server_thread = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        assert!(stream.read(&mut request).unwrap() > 0);
+        seen_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let body = sample_catalog_json().to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let mut cmd = StdCommand::new(cargo_bin("mars"));
+    configure_std_cmd(&mut cmd, temp.path(), &url);
+    let mut child = cmd
+        .arg("--root")
+        .arg(&project_root)
+        .args(["--json", "models", "catalog", "--refresh-models"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    seen_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("forced request never arrived");
+    let blocked = child.try_wait().unwrap().is_none();
+    release_tx.send(()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    server_thread.join().unwrap();
+    assert!(blocked, "forced refresh returned before its response");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["cache_refresh"]["status"], "refreshed");
+}
+
+#[test]
+#[serial]
+fn empty_background_refresh_keeps_cache_and_enters_cooldown() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(serde_json::json!({}));
+    });
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    let before = read_cache_raw(&project_root);
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["--json", "models", "catalog"]);
+    cmd.assert().success();
+    wait_until(Duration::from_secs(5), || {
+        project_root.join(".mars/.models-cache.last-fail").exists()
+    });
+    assert_eq!(read_cache_raw(&project_root), before);
+    let mut again = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    again.args(["--json", "models", "catalog"]);
+    let output = again.assert().success().get_output().clone();
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["cache_refresh"]["refresh"]["status"], "cooldown");
+    assert!(
+        document["cache_refresh"]["last_failure"]
+            .as_str()
+            .unwrap()
+            .contains("empty catalog")
+    );
+    assert_eq!(mock.hits(), 1);
+}
+
+#[test]
+#[serial]
+fn stale_disk_only_modes_launch_no_catalog_worker() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let (temp, project_root) = setup_project(&server);
+    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    for args in [
+        vec!["models", "catalog", "--no-refresh-models"],
+        vec!["models", "catalog"],
+    ] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        if args.len() == 2 {
+            cmd.env("MARS_OFFLINE", "1");
+        }
+        cmd.arg("--json").args(args);
+        let output = cmd.assert().success().get_output().clone();
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(document["cache_refresh"]["status"], "offline");
+    }
+    assert_eq!(mock.hits(), 0);
+}
+
+#[test]
+#[serial]
+fn hidden_worker_uses_portable_arguments_without_shell() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let (temp, original_root) = setup_project(&server);
+    let project_root = temp.path().join("project with spaces");
+    fs::rename(&original_root, &project_root).unwrap();
+    let mars_dir = project_root.join(".mars");
+    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    let mut cmd = StdCommand::new(cargo_bin("mars"));
+    configure_std_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
+    let output = cmd
+        .env("PATH", "")
+        .arg("--root")
+        .arg(&project_root)
+        .args(["models", "__refresh-catalog", "--mars-dir"])
+        .arg(&mars_dir)
+        .args([
+            "--refresh-after-hours",
+            "24",
+            "--providers-json",
+            r#"["anthropic","openai"]"#,
+            "--expected-generation",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(mock.hits(), 1);
+    assert!(
+        read_cache_json(&project_root)["models"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 2
+    );
+}
 
 #[test]
 #[serial]
@@ -78,7 +350,7 @@ fn scenario_b_fresh_cache_skips_fetch() {
 
 #[test]
 #[serial]
-fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
+fn scenario_c_stale_cache_background_failure_retains_last_good_and_backs_off() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -95,21 +367,32 @@ fn scenario_c_stale_cache_falls_back_on_fetch_failure() {
     let output = cmd.assert().success().get_output().clone();
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("models catalog --json should return JSON");
-    assert!(
-        stdout["cache_warning"]
-            .as_str()
-            .is_some_and(|warning| warning.contains("models cache refresh failed")
-                && warning.contains("stale cache")),
-        "expected stale cache warning in catalog JSON: {stdout}"
-    );
+    assert_eq!(stdout["cache_refresh"]["status"], "stale");
+    assert_eq!(stdout["cache_refresh"]["refresh"]["status"], "spawned");
     assert!(
         model_ids_from_catalog_json(&output.stdout).contains("gpt-5"),
         "expected cached model id in catalog JSON: {stdout}"
     );
 
+    wait_until(Duration::from_secs(5), || {
+        project_root.join(".mars/.models-cache.last-fail").exists()
+    });
     let after = read_cache_raw(&project_root);
     assert_eq!(before, after, "stale fallback must not rewrite cache");
     assert_eq!(mock.hits(), 1, "stale cache should attempt one refresh");
+
+    let mut again = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    again.args(["--json", "models", "catalog"]);
+    let again_output = again.assert().success().get_output().clone();
+    let again_json: Value = serde_json::from_slice(&again_output.stdout).unwrap();
+    assert_eq!(again_json["cache_refresh"]["refresh"]["status"], "cooldown");
+    assert!(
+        again_json["cache_refresh"]["last_failure"]
+            .as_str()
+            .unwrap()
+            .contains("fetch failed")
+    );
+    assert_eq!(mock.hits(), 1, "cooldown must not repeat a failed request");
 }
 
 #[test]
@@ -417,7 +700,7 @@ fn scenario_i_concurrent_processes_fetch_once() {
 
 #[test]
 #[serial]
-fn scenario_j_ttl_zero_always_refreshes() {
+fn scenario_j_zero_refresh_after_triggers_background_refresh() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
         when.method(GET).path(API_PATH);
@@ -443,6 +726,11 @@ fn scenario_j_ttl_zero_always_refreshes() {
     cmd.args(["models", "catalog"]);
     cmd.assert().success();
 
+    wait_until(Duration::from_secs(5), || {
+        mock.hits() == 1
+            && read_cache_json(&project_root)["fetched_at"].as_str()
+                != Some(stale_but_recent.as_str())
+    });
     let cache = read_cache_json(&project_root);
     let updated_fetched_at = cache["fetched_at"]
         .as_str()
@@ -451,5 +739,20 @@ fn scenario_j_ttl_zero_always_refreshes() {
         updated_fetched_at, stale_but_recent,
         "ttl=0 should force refresh even with fresh cache"
     );
-    assert_eq!(mock.hits(), 1, "ttl=0 should force one network fetch");
+    assert_eq!(
+        mock.hits(),
+        1,
+        "zero refresh-after should trigger one background fetch"
+    );
+}
+
+fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + timeout;
+    while !condition() {
+        assert!(
+            Instant::now() < deadline,
+            "condition not met within {timeout:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }

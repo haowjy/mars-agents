@@ -227,8 +227,8 @@ pub fn resolve_policy(
             )
         }
     };
-    if let models::RefreshOutcome::StaleFallback { reason } = catalog_outcome {
-        warnings.push(format!("models cache: {reason}"));
+    if let Some(warning) = models::refresh_warning(&catalog_outcome) {
+        warnings.push(warning);
     }
     let catalog_slugs = models::catalog_model_slugs(&cache);
     let primary_model = model::resolve_model(

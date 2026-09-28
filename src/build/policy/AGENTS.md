@@ -29,7 +29,8 @@ remains fatal. Never clear a requested model to make a harness work.
 - Final executable-model projection preserves the selected model and provider
   constraint, including unverified routes and aliases unresolved by the catalog.
   Route facts go to `routing.harness_model_source` / `routing.harness_model_confidence`.
-- Catalog refresh (`ensure_fresh`) runs before harness evaluation, not read-only
+- Catalog policy (`ensure_fresh`) runs before harness evaluation: stale usable data
+  returns immediately and schedules background refresh; cold/forced fetches block
 
 ## Target Permission
 

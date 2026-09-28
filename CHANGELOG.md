@@ -29,6 +29,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   deterministic tier evaluation for the `mars models list` command.
 
 ### Changed
+- Treat the models.dev cache as indefinite last-known-good data. The 24-hour
+  setting is refresh-after: stale usable catalog reads return immediately and
+  refresh in a detached, deduplicated worker. Cold and forced refreshes still
+  block; offline modes use disk only. Failures retain data and apply backoff;
+  catalog JSON exposes stale/background status.
 - Surface one top-level diagnostic per retained harness listing whose latest
   refresh failed, even when curation hides every row; distinguish this from a
   cold unavailable listing. Unknown prompting refs now point to alias inventory.

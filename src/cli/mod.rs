@@ -182,7 +182,7 @@ pub enum Command {
     /// Manage the global source cache.
     Cache(cache::CacheArgs),
 
-    /// Manage model aliases and the models cache.
+    /// Manage aliases and the last-known-good catalog (24h refresh-after by default).
     Models(models::ModelsArgs),
 
     /// Build derived artifacts from static project state.

@@ -128,7 +128,7 @@ pub struct LaunchBundleArgs {
     #[arg(long, conflicts_with = "no_refresh_models")]
     pub refresh_models: bool,
 
-    /// Skip automatic models-cache refresh; use disk cache only (no probe background refresh).
+    /// Use disk-only catalog/probe caches; launch no background refresh worker.
     #[arg(long, conflicts_with = "refresh_models")]
     pub no_refresh_models: bool,
 }

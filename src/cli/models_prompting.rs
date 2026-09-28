@@ -24,7 +24,7 @@ pub struct PromptingArgs {
     /// Refresh models.dev catalog and harness probes synchronously before resolving an agent.
     #[arg(long, conflicts_with = "no_refresh_models")]
     refresh_models: bool,
-    /// Skip automatic models-cache refresh; use whatever is on disk.
+    /// Use disk-only catalog/probe caches; do not start background refresh.
     #[arg(long, conflicts_with = "refresh_models")]
     no_refresh_models: bool,
 }

@@ -63,23 +63,27 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 
 | Input | `catalog_mode` (`RefreshMode`) | `probe_refresh` (`ProbeRefreshMode`) |
 |---|---|---|
-| default | `Auto` | `Background` |
+| default | `Background` | `Background` |
 | `--refresh-models` | `Force` | `Synchronous` |
 | `--no-refresh-models` | `Offline` | `Skip` |
 
 `RefreshMode` drives `ensure_fresh()` against `.mars/models-cache.json`:
 
-- **Auto** — fetch when TTL stale; stale cache on fetch failure (cooldown/backoff)
-- **Force** — always attempt fetch (used by `mars models refresh` and `--refresh-models`)
+- **Background** — fresh data returns immediately; stale usable data returns immediately and starts detached `models __refresh-catalog`; cold or unusable cache fetches synchronously
+- **Synchronous** — internal worker mode; rechecks freshness under the cache lock before fetching and never starts another worker
+- **Force** — synchronous fetch regardless of cache age (used by `mars models refresh` and `--refresh-models`)
 - **Offline** — disk only; error if no usable cache
 
-`ensure_fresh` coerces **Auto → Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing.
+`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, and provider allowlist as arguments; it uses null stdio, no shell, and the cache lock/freshness recheck. It cannot recurse.
 
 ### Cache Behavior
 
-- TTL: 24h default, configurable via `settings.models_cache_ttl_hours`
-- Stale fallback: uses existing cache if fetch fails (with diagnostic)
+- No hard read expiry: a nonempty valid catalog is last-known-good data, even after the refresh-after interval
+- Refresh-after: 24h default, configurable via `settings.models_cache_ttl_hours`; `0` makes every normal command eligible to trigger a background refresh
+- A failed/empty refresh retains the last-good catalog and stores the failure reason for later diagnostics
 - Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
+- `RefreshOutcome::Stale` reports whether a worker spawned, cooldown suppressed it, or spawning failed; it never claims the asynchronous fetch succeeded
+- Successful writes advance `.models-cache.generation` under the cache lock; workers recheck their observed generation so even `refresh-after = 0` coalesces concurrent fetches
 - `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
 
 ### `MARS_OFFLINE` vs probe `Skip`

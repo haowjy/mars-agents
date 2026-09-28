@@ -119,6 +119,8 @@ pub struct RefreshCatalogArgs {
     providers_json: String,
     #[arg(long)]
     expected_generation: u64,
+    #[arg(long)]
+    claim_token: String,
 }
 
 #[derive(Debug, Parser)]
@@ -162,6 +164,7 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
                 a.refresh_after_hours,
                 &providers,
                 a.expected_generation,
+                &a.claim_token,
             )?;
             Ok(0)
         }

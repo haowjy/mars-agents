@@ -52,13 +52,36 @@ fn stale_catalog_returns_before_blocked_refresh_completes() {
         .expect("refresh request never arrived");
     let output_before_release = output_rx.recv_timeout(Duration::from_secs(2));
     let returned_early = output_before_release.is_ok();
+    let mut second_cmd = StdCommand::new(cargo_bin("mars"));
+    configure_std_cmd(&mut second_cmd, temp.path(), &url);
+    second_cmd
+        .arg("--root")
+        .arg(&project_root)
+        .args(["--json", "models", "catalog"]);
+    let (second_tx, second_rx) = mpsc::channel();
+    let second_thread =
+        thread::spawn(move || second_tx.send(second_cmd.output().unwrap()).unwrap());
+    let second_before_release = second_rx.recv_timeout(Duration::from_secs(2));
+    let second_returned_early = second_before_release.is_ok();
     release_tx.send(()).unwrap();
     let output = output_before_release.or_else(|_| output_rx.recv_timeout(Duration::from_secs(5)));
+    let second_output =
+        second_before_release.or_else(|_| second_rx.recv_timeout(Duration::from_secs(5)));
     command_thread.join().unwrap();
+    second_thread.join().unwrap();
     server_thread.join().unwrap();
     assert!(
         returned_early,
         "stale command or a descendant held output pipes until network response"
+    );
+    assert!(
+        second_returned_early,
+        "claim check waited behind the network/cache lock"
+    );
+    let second_document: Value = serde_json::from_slice(&second_output.unwrap().stdout).unwrap();
+    assert_eq!(
+        second_document["cache_refresh"]["refresh"]["status"],
+        "already_in_progress"
     );
     let output = output.unwrap();
     assert!(
@@ -87,15 +110,26 @@ fn stale_catalog_returns_before_blocked_refresh_completes() {
 #[serial]
 fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
     let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200)
-            .delay(Duration::from_millis(350))
-            .json_body(sample_catalog_json());
-    });
     let (temp, project_root) = setup_project(&server);
     write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
-    let api_url = server.url(API_PATH);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let api_url = format!("http://{}/api.json", listener.local_addr().unwrap());
+    let (seen_tx, seen_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server_thread = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        assert!(stream.read(&mut request).unwrap() > 0);
+        seen_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let body = sample_catalog_json().to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
     let handles: Vec<_> = (0..4)
         .map(|_| {
             let root = project_root.clone();
@@ -112,12 +146,26 @@ fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
             })
         })
         .collect();
+    seen_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("background refresh did not start");
+    let mut spawned = 0;
+    let mut in_progress = 0;
     for handle in handles {
         let output = handle.join().unwrap();
         assert!(output.status.success());
         let document: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(document["cache_refresh"]["status"], "stale");
+        match document["cache_refresh"]["refresh"]["status"].as_str() {
+            Some("spawned") => spawned += 1,
+            Some("already_in_progress") => in_progress += 1,
+            other => panic!("unexpected concurrent refresh outcome: {other:?}"),
+        }
     }
+    assert_eq!(spawned, 1, "only one stale reader may launch a worker");
+    assert_eq!(in_progress, 3);
+    release_tx.send(()).unwrap();
+    server_thread.join().unwrap();
     wait_until(Duration::from_secs(5), || {
         read_cache_json(&project_root)["fetched_at"]
             .as_str()
@@ -126,7 +174,7 @@ fn stale_concurrent_commands_coalesce_to_one_background_fetch() {
             .unwrap()
             > stale_fetched_at().parse::<u64>().unwrap()
     });
-    assert_eq!(mock.hits(), 1);
+    // A second request would fail: this listener accepts only one connection.
 }
 
 #[test]
@@ -197,6 +245,11 @@ fn empty_background_refresh_keeps_cache_and_enters_cooldown() {
     wait_until(Duration::from_secs(5), || {
         project_root.join(".mars/.models-cache.last-fail").exists()
     });
+    wait_until(Duration::from_secs(5), || {
+        !project_root
+            .join(".mars/.models-cache.refresh-claim")
+            .exists()
+    });
     assert_eq!(read_cache_raw(&project_root), before);
     let mut again = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     again.args(["--json", "models", "catalog"]);
@@ -251,6 +304,11 @@ fn hidden_worker_uses_portable_arguments_without_shell() {
     fs::rename(&original_root, &project_root).unwrap();
     let mars_dir = project_root.join(".mars");
     write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
+    fs::write(
+        mars_dir.join(".models-cache.refresh-claim"),
+        serde_json::json!({"token": "worker-fixture", "at": now_unix_secs()}).to_string(),
+    )
+    .unwrap();
     let mut cmd = StdCommand::new(cargo_bin("mars"));
     configure_std_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
     let output = cmd
@@ -266,6 +324,8 @@ fn hidden_worker_uses_portable_arguments_without_shell() {
             r#"["anthropic","openai"]"#,
             "--expected-generation",
             "0",
+            "--claim-token",
+            "worker-fixture",
         ])
         .output()
         .unwrap();
@@ -275,6 +335,7 @@ fn hidden_worker_uses_portable_arguments_without_shell() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(mock.hits(), 1);
+    assert!(!mars_dir.join(".models-cache.refresh-claim").exists());
     assert!(
         read_cache_json(&project_root)["models"]
             .as_array()

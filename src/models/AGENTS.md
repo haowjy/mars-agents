@@ -74,7 +74,7 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - **Force** — synchronous fetch regardless of cache age (used by `mars models refresh` and `--refresh-models`)
 - **Offline** — disk only; error if no usable cache
 
-`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, and provider allowlist as arguments; it uses null stdio, no shell, and the cache lock/freshness recheck. It cannot recurse.
+`ensure_fresh` coerces every mode to **Offline** when `MARS_OFFLINE` is set (catalog never hits the network). `RefreshMode::Offline` from `--no-refresh-models` uses a distinct error message when cache is missing. The hidden worker receives its project root, cache path, refresh interval, provider allowlist, generation, and claim token as arguments; it uses null stdio, no shell, and the cache lock/freshness recheck. It cannot recurse. Only this internal command can bypass project discovery for an ad-hoc root; the cache path must still match that root. A reaper thread waits for the child in long-lived callers without blocking the stale read.
 
 ### Cache Behavior
 
@@ -82,7 +82,8 @@ CLI flags resolve once via `resolve_models_refresh_control(refresh_models, no_re
 - Refresh-after: 24h default, configurable via `settings.models_cache_ttl_hours`; `0` makes every normal command eligible to trigger a background refresh
 - A failed/empty refresh retains the last-good catalog and stores the failure reason for later diagnostics
 - Cooldown: 5min backoff after failed fetch attempt (`FETCH_FAIL_COOLDOWN_SECS`)
-- `RefreshOutcome::Stale` reports whether a worker spawned, cooldown suppressed it, or spawning failed; it never claims the asynchronous fetch succeeded
+- `RefreshOutcome::Stale` reports `spawned`, `already_in_progress`, `cooldown`, or `spawn_failed`; it never claims the asynchronous fetch succeeded
+- A separate atomic claim and short-lived claim lock coalesce worker launches without waiting on the network/cache-write lock. The worker removes only its own token; an expired 120-second lease recovers crashes (the HTTP phase timeouts total 45 seconds). Cooldown is checked before claiming.
 - Successful writes advance `.models-cache.generation` under the cache lock; workers recheck their observed generation so even `refresh-after = 0` coalesces concurrent fetches
 - `MARS_OFFLINE=1` — catalog offline coercion (see above); also sets harness `CapabilityCollectionOptions.offline`
 

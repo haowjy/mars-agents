@@ -199,6 +199,63 @@ fn build_launch_bundle_ad_hoc_without_mars_toml() {
 }
 
 #[test]
+fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
+    use crate::test_common::{sample_cached_models, stale_fetched_at, write_cache};
+    use std::fs;
+    use std::time::{Duration, Instant};
+
+    let temp = TempDir::new().unwrap();
+    let server = MockServer::start();
+    let refresh = server.mock(|when, then| {
+        when.method(GET).path(API_PATH);
+        then.status(200).json_body(sample_catalog_json());
+    });
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
+    let project = temp.child("plain-project");
+    project.create_dir_all().unwrap();
+    write_cache(project.path(), sample_cached_models(), &stale_fetched_at());
+    let before = fs::read(project.child(".mars/models-cache.json")).unwrap();
+
+    let mut cmd = mars();
+    configure_assert_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
+    cmd.current_dir(project.path())
+        .env("PATH", replace_path_with(&bin_dir))
+        .args([
+            "build",
+            "launch-bundle",
+            "--model",
+            "gpt-5.4-mini",
+            "--harness",
+            "pi",
+        ]);
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        bundle["warnings"]
+            .to_string()
+            .contains("background refresh started")
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read(project.child(".mars/models-cache.json")).unwrap() == before {
+        assert!(
+            Instant::now() < deadline,
+            "project-less worker did not update cache"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(refresh.hits(), 1);
+    assert!(!project.child("mars.toml").exists());
+
+    let mut catalog = mars();
+    configure_assert_cmd(&mut catalog, temp.path(), &server.url(API_PATH));
+    catalog
+        .current_dir(project.path())
+        .args(["models", "catalog"]);
+    catalog.assert().failure();
+}
+
+#[test]
 fn build_launch_bundle_ad_hoc_supports_skills_missing_metadata_and_execution_overrides() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);

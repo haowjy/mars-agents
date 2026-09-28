@@ -386,6 +386,11 @@ pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
 const CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
 const REFRESH_GENERATION_FILE: &str = ".models-cache.generation";
+const REFRESH_CLAIM_FILE: &str = ".models-cache.refresh-claim";
+const REFRESH_CLAIM_LOCK_FILE: &str = ".models-cache.refresh-claim.lock";
+// ureq budgets 15 seconds each for connect, response, and body. Allow more
+// than twice that total for startup, parsing, and the atomic cache write.
+const REFRESH_CLAIM_LEASE_SECS: u64 = 120;
 pub(crate) const FETCH_FAIL_COOLDOWN_SECS: u64 = 300;
 const FETCH_FAIL_COOLDOWN_REASON: &str = "recent fetch attempt failed; backing off (cooldown)";
 
@@ -403,6 +408,7 @@ pub enum RefreshMode {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum BackgroundRefresh {
     Spawned,
+    AlreadyInProgress,
     Cooldown,
     SpawnFailed { reason: String },
 }
@@ -432,6 +438,9 @@ pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
         } => {
             let status = match refresh {
                 BackgroundRefresh::Spawned => "background refresh started".to_string(),
+                BackgroundRefresh::AlreadyInProgress => {
+                    "background refresh already in progress".to_string()
+                }
                 BackgroundRefresh::Cooldown => {
                     "background refresh suppressed by cooldown".to_string()
                 }
@@ -639,6 +648,81 @@ fn advance_refresh_generation(mars_dir: &Path) -> Result<(), MarsError> {
     )
 }
 
+#[derive(Serialize, Deserialize)]
+struct RefreshClaim {
+    token: String,
+    at: u64,
+}
+
+fn read_refresh_claim(mars_dir: &Path) -> Result<Option<RefreshClaim>, MarsError> {
+    let path = mars_dir.join(REFRESH_CLAIM_FILE);
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    // An invalid record cannot identify a live owner. Atomic replacement
+    // prevents partial new records, but also permits recovery from corruption.
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
+fn claim_refresh(mars_dir: &Path) -> Result<Option<String>, MarsError> {
+    let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    let now = now_unix_secs_value();
+    if read_refresh_claim(mars_dir)?
+        .is_some_and(|claim| claim.at <= now && now - claim.at < REFRESH_CLAIM_LEASE_SECS)
+    {
+        return Ok(None);
+    }
+
+    // tempfile supplies a cross-process unique token without an extra
+    // dependency. Only the durable claim record remains after this scope.
+    let token_file = tempfile::Builder::new()
+        .prefix(".models-claim-token-")
+        .tempfile_in(mars_dir)?;
+    let token = token_file
+        .path()
+        .file_name()
+        .expect("tempfile has a filename")
+        .to_string_lossy()
+        .into_owned();
+    let claim = RefreshClaim {
+        token: token.clone(),
+        at: now,
+    };
+    crate::fs::atomic_write(
+        &mars_dir.join(REFRESH_CLAIM_FILE),
+        &serde_json::to_vec(&claim).expect("refresh claim is serializable"),
+    )?;
+    Ok(Some(token))
+}
+
+fn refresh_claim_is_owned(mars_dir: &Path, token: &str) -> Result<bool, MarsError> {
+    let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    Ok(read_refresh_claim(mars_dir)?.is_some_and(|claim| claim.token == token))
+}
+
+fn release_refresh_claim(mars_dir: &Path, token: &str) -> Result<(), MarsError> {
+    let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    if read_refresh_claim(mars_dir)?.is_some_and(|claim| claim.token == token) {
+        std::fs::remove_file(mars_dir.join(REFRESH_CLAIM_FILE))?;
+    }
+    Ok(())
+}
+
+struct RefreshClaimGuard<'a> {
+    mars_dir: &'a Path,
+    token: &'a str,
+}
+
+impl Drop for RefreshClaimGuard<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = release_refresh_claim(self.mars_dir, self.token) {
+            tracing::debug!("failed to clear catalog refresh claim: {error}");
+        }
+    }
+}
+
 pub fn ensure_fresh(
     mars_dir: &Path,
     ttl_hours: u32,
@@ -671,13 +755,15 @@ pub fn ensure_fresh_with_catalog_providers(
             }) {
                 BackgroundRefresh::Cooldown
             } else {
-                match spawn_background_refresh(mars_dir, ttl_hours, &providers, observed_generation)
-                {
-                    Ok(()) => BackgroundRefresh::Spawned,
-                    Err(error) => BackgroundRefresh::SpawnFailed {
-                        reason: error.to_string(),
-                    },
-                }
+                schedule_background_refresh(mars_dir, |token| {
+                    spawn_background_refresh(
+                        mars_dir,
+                        ttl_hours,
+                        &providers,
+                        observed_generation,
+                        token,
+                    )
+                })
             };
             return Ok((
                 prior,
@@ -693,11 +779,34 @@ pub fn ensure_fresh_with_catalog_providers(
     })
 }
 
+fn schedule_background_refresh(
+    mars_dir: &Path,
+    spawn: impl FnOnce(&str) -> std::io::Result<()>,
+) -> BackgroundRefresh {
+    match claim_refresh(mars_dir) {
+        Ok(None) => BackgroundRefresh::AlreadyInProgress,
+        Ok(Some(token)) => match spawn(&token) {
+            Ok(()) => BackgroundRefresh::Spawned,
+            Err(error) => {
+                let mut reason = error.to_string();
+                if let Err(release_error) = release_refresh_claim(mars_dir, &token) {
+                    reason.push_str(&format!("; failed to clear refresh claim: {release_error}"));
+                }
+                BackgroundRefresh::SpawnFailed { reason }
+            }
+        },
+        Err(error) => BackgroundRefresh::SpawnFailed {
+            reason: error.to_string(),
+        },
+    }
+}
+
 fn spawn_background_refresh(
     mars_dir: &Path,
     ttl_hours: u32,
     providers: &[String],
     expected_generation: u64,
+    claim_token: &str,
 ) -> std::io::Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
     let providers_json = serde_json::to_string(providers).expect("provider names are serializable");
@@ -712,6 +821,8 @@ fn spawn_background_refresh(
             &providers_json,
             "--expected-generation",
             &expected_generation.to_string(),
+            "--claim-token",
+            claim_token,
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -722,8 +833,11 @@ fn spawn_background_refresh(
         use std::os::unix::process::CommandExt;
         unsafe {
             cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
+                if libc::setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
             });
         }
     }
@@ -732,7 +846,24 @@ fn spawn_background_refresh(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x00000008);
     }
-    cmd.spawn()?;
+    // Start the reaper before launching the child. A long-lived library caller
+    // must not accumulate zombies; waiting happens on this thread, not on the
+    // stale read's critical path. This also works with detached Windows children.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::process::Child>(1);
+    std::thread::Builder::new()
+        .name("mars-catalog-reaper".to_string())
+        .spawn(move || {
+            if let Ok(mut child) = rx.recv() {
+                let _ = child.wait();
+            }
+        })?;
+    let child = cmd.spawn()?;
+    if let Err(error) = tx.send(child) {
+        let mut child = error.0;
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(std::io::Error::other("catalog worker reaper exited early"));
+    }
     Ok(())
 }
 
@@ -742,7 +873,15 @@ pub fn run_background_refresh(
     ttl_hours: u32,
     providers: &[String],
     expected_generation: u64,
+    claim_token: &str,
 ) -> Result<(), MarsError> {
+    let _claim = RefreshClaimGuard {
+        mars_dir,
+        token: claim_token,
+    };
+    if !refresh_claim_is_owned(mars_dir, claim_token)? {
+        return Ok(());
+    }
     let providers = providers.to_vec();
     ensure_fresh_with_fetcher_if_generation(
         mars_dir,
@@ -3600,6 +3739,43 @@ harness = "claude"
     fn resolve_models_refresh_control_rejects_both_flags() {
         assert!(resolve_models_refresh_control(true, true).is_err());
     }
+
+    #[test]
+    fn refresh_claim_recovers_expired_owner_and_preserves_new_owner() {
+        let mars = tempdir().unwrap();
+        let old = RefreshClaim {
+            token: "crashed-worker".to_string(),
+            at: now_unix_secs_value() - REFRESH_CLAIM_LEASE_SECS,
+        };
+        crate::fs::atomic_write(
+            &mars.path().join(REFRESH_CLAIM_FILE),
+            &serde_json::to_vec(&old).unwrap(),
+        )
+        .unwrap();
+
+        let new_token = claim_refresh(mars.path()).unwrap().expect("expired lease");
+        assert_ne!(new_token, old.token);
+        assert!(claim_refresh(mars.path()).unwrap().is_none());
+        release_refresh_claim(mars.path(), &old.token).unwrap();
+        assert!(refresh_claim_is_owned(mars.path(), &new_token).unwrap());
+        release_refresh_claim(mars.path(), &new_token).unwrap();
+        assert!(!mars.path().join(REFRESH_CLAIM_FILE).exists());
+    }
+
+    #[test]
+    fn failed_worker_spawn_releases_refresh_claim() {
+        let mars = tempdir().unwrap();
+        let outcome = schedule_background_refresh(mars.path(), |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "worker executable missing",
+            ))
+        });
+        assert!(matches!(outcome, BackgroundRefresh::SpawnFailed { .. }));
+        assert!(!mars.path().join(REFRESH_CLAIM_FILE).exists());
+        assert!(claim_refresh(mars.path()).unwrap().is_some());
+    }
+
     #[test]
     #[serial]
     fn ensure_fresh_18_offline_env_blocks_forced_fetch() {

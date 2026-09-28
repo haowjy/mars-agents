@@ -350,12 +350,16 @@ mars models catalog [--refresh-models|--no-refresh-models]
 `.mars/models-cache.json`. The catalog is indefinite last-known-good data:
 the default 24-hour interval controls when to *refresh*, not when reads expire.
 Fresh cache returns without network work. Stale usable cache returns immediately
-and starts a detached background refresh; cold/empty/corrupt cache fetches
+and claims one detached background refresh across concurrent readers; cold/empty/corrupt cache fetches
 synchronously. Failed or empty refreshes retain last-good data and back off for
 five minutes. `--refresh-models` forces a synchronous fetch;
 `--no-refresh-models` and `MARS_OFFLINE` use disk only, with no worker or probe.
 `MARS_OFFLINE` also overrides `--refresh-models`. The internal
-`models __refresh-catalog` worker is not a user-facing command.
+`models __refresh-catalog` worker is not a user-facing command. Stale JSON
+`cache_refresh.refresh.status` distinguishes `spawned`, `already_in_progress`,
+`cooldown`, and `spawn_failed`; none reports that the asynchronous fetch succeeded.
+The refresh claim expires after 120 seconds if a worker crashes. Ad-hoc
+`build launch-bundle` can refresh its cache without a `mars.toml` project.
 
 ### `mars models list`
 

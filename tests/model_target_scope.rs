@@ -52,9 +52,16 @@ fn live_inventory_marks_logged_out_native_row_blocked() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let bin = test_common::install_logging_harnesses(root);
+    #[cfg(windows)]
+    let claude = bin.join("claude.bat");
+    #[cfg(not(windows))]
     let claude = bin.join("claude");
     let script = std::fs::read_to_string(&claude).unwrap();
-    std::fs::write(&claude, script.replace("exit 0", "exit 1")).unwrap();
+    #[cfg(windows)]
+    let logged_out_script = script.replace("exit /b 0", "exit /b 1");
+    #[cfg(not(windows))]
+    let logged_out_script = script.replace("exit 0", "exit 1");
+    std::fs::write(&claude, logged_out_script).unwrap();
     std::fs::create_dir(root.join(".mars")).unwrap();
     std::fs::write(
         root.join("mars.toml"),

@@ -34,8 +34,11 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
         self.session.cursor_probe_result()
     }
 
-    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
-        self.session.listing_latest_attempt_ok(harness)
+    fn listing_evidence(
+        &mut self,
+        harness: crate::harness::registry::HarnessId,
+    ) -> crate::harness::host::ListingEvidence {
+        self.session.listing_evidence(harness)
     }
 }
 
@@ -519,15 +522,7 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let needs_opencode_probe = selected_harness.eq_ignore_ascii_case("opencode");
-    let needs_pi_probe = selected_harness.eq_ignore_ascii_case("pi");
     let needs_cursor_probe = selected_harness.eq_ignore_ascii_case("cursor");
-    let opencode_probe_result = needs_opencode_probe
-        .then(|| capability_session.opencode_probe_result())
-        .flatten();
-    let pi_probe_result = needs_pi_probe
-        .then(|| capability_session.pi_probe_result())
-        .flatten();
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
@@ -547,10 +542,7 @@ pub fn resolve_policy(
             .to_string(),
         provider_constraint: resolved_model.provider_constraint.as_deref(),
         provider_for_order: resolved_model.provider_for_order.as_deref(),
-        settings_provider_order: effective_config.settings.provider_order.as_deref(),
         effort: execution_resolution.effort.value.clone(),
-        opencode_probe_result: opencode_probe_result.as_ref(),
-        pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
         route_report: report,
     });

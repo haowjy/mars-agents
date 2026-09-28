@@ -8,7 +8,7 @@ use super::pi::PiProbeResult;
 use super::probe_refresh::ProbeCacheBranch;
 use crate::error::MarsError;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const DEFAULT_TTL_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,17 +106,12 @@ fn read_cache_tolerant() -> Option<PiProbeCacheEntry> {
 
 fn read_cache_tolerant_at(path: &Path) -> Option<PiProbeCacheEntry> {
     let content = std::fs::read_to_string(path).ok()?;
-    let mut entry: PiProbeCacheEntry = serde_json::from_str(&content).ok()?;
+    let entry: PiProbeCacheEntry = serde_json::from_str(&content).ok()?;
     if entry.schema_version != SCHEMA_VERSION {
         return None;
     }
     if !entry.harness.eq_ignore_ascii_case("pi") {
         return None;
-    }
-    // v2 entries predate the independent listing bit; a result without error had
-    // completed --list-models, even if its help surface was incompatible.
-    if let Some(result) = &mut entry.result {
-        result.model_probe_success |= result.error.is_none();
     }
     Some(entry)
 }
@@ -307,17 +302,16 @@ where
         }
 
         let probe_result = probe();
-        if probe_result.model_probe_success && probe_result.error.is_none() {
-            write_probe_attempt(path, probe_result.clone());
-            return CachedPiProbeOutcome::Miss(probe_result);
-        }
-        write_failed_attempt(path, &entry, &probe_result);
-        return CachedPiProbeOutcome::StaleFailed(entry.result.unwrap());
+        let retained = persist_probe_attempt(path, Some(&entry), &probe_result);
+        return match retained {
+            Some(last_good) => CachedPiProbeOutcome::StaleFailed(last_good),
+            None => CachedPiProbeOutcome::Miss(probe_result),
+        };
     }
 
     let probe_result = probe();
     if let Some(path) = path {
-        write_probe_attempt(path, probe_result.clone());
+        persist_probe_attempt(path, None, &probe_result);
     }
     drop(lock);
 
@@ -373,6 +367,23 @@ fn write_probe_attempt(path: &Path, probe_result: PiProbeResult) {
     }
 }
 
+/// The same write decision is used by foreground and detached refreshes.
+/// A failed attempt cannot replace a usable last-good model listing.
+fn persist_probe_attempt(
+    path: &Path,
+    existing: Option<&PiProbeCacheEntry>,
+    result: &PiProbeResult,
+) -> Option<PiProbeResult> {
+    if !is_usable_result(Some(result))
+        && let Some(last_good) = existing.filter(|entry| is_usable_result(entry.result.as_ref()))
+    {
+        write_failed_attempt(path, last_good, result);
+        return last_good.result.clone();
+    }
+    write_probe_attempt(path, result.clone());
+    None
+}
+
 fn spawn_detached_refresh() -> std::io::Result<()> {
     let mars_bin = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(mars_bin);
@@ -416,15 +427,8 @@ pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
 
     let probe_result = super::pi::probe();
     if let Ok(path) = cache_path() {
-        if probe_result.model_probe_success && probe_result.error.is_none() {
-            write_probe_attempt(&path, probe_result);
-        } else if let Some(existing) =
-            read_cache_tolerant().filter(|entry| is_usable_result(entry.result.as_ref()))
-        {
-            write_failed_attempt(&path, &existing, &probe_result);
-        } else {
-            write_probe_attempt(&path, probe_result);
-        }
+        let existing = read_cache_tolerant();
+        persist_probe_attempt(&path, existing.as_ref(), &probe_result);
     }
 
     Ok(0)
@@ -481,14 +485,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_v1_cache_without_model_slugs_is_reprobed() {
+    fn legacy_cache_without_independent_listing_bit_is_reprobed() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "harness": "pi",
                 "fetched_at": now_unix_secs(),
                 "last_attempt_at": now_unix_secs(),
@@ -601,6 +605,22 @@ mod tests {
                 .model_slugs
                 .contains("openai/gpt-5.4")
         );
+    }
+
+    #[test]
+    fn detached_refresh_write_decision_preserves_last_good_listing() {
+        let temp = TempDir::new().unwrap();
+        let path = cache_file(&temp);
+        let previous = entry(1, Some(compatible_result()));
+        write_entry(&path, &previous);
+
+        let retained = persist_probe_attempt(&path, Some(&previous), &incompatible_result());
+        assert_eq!(retained, previous.result);
+        let on_disk = read_cache_tolerant_at(&path).unwrap();
+        assert_eq!(on_disk.fetched_at, 1);
+        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
+        assert_eq!(on_disk.result, retained);
+        assert!(on_disk.last_error.is_some());
     }
 
     #[test]

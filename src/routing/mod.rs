@@ -1,5 +1,5 @@
 use crate::config::targets::HarnessScope;
-use crate::harness::host::AuthState;
+use crate::harness::host::{AuthState, ListingEvidence, ListingEvidenceSet};
 use crate::harness::registry::{HarnessClass, HarnessId, ListingAuth};
 use std::collections::HashSet;
 
@@ -250,7 +250,7 @@ pub trait ProbeResolver {
     fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult>;
     fn pi_probe_result(&mut self) -> Option<PiProbeResult>;
     fn cursor_probe_result(&mut self) -> Option<CursorProbeResult>;
-    fn latest_attempt_ok(&mut self, harness: HarnessId) -> bool;
+    fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence;
 }
 
 #[derive(Debug, Default)]
@@ -283,8 +283,13 @@ impl ProbeResolver for StaticProbeResolver {
         self.cursor_probe_result.clone()
     }
 
-    fn latest_attempt_ok(&mut self, _harness: HarnessId) -> bool {
-        true
+    fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
+        ListingEvidenceSet::from_results(
+            self.opencode_probe_result.as_ref(),
+            self.pi_probe_result.as_ref(),
+            self.cursor_probe_result.as_ref(),
+        )
+        .get(harness)
     }
 }
 
@@ -541,29 +546,20 @@ where
     F: Fn(&str) -> crate::harness::host::AuthState,
     P: ProbeResolver + ?Sized,
 {
-    let mut assessment = candidate_support_evidence(input, harness, provider_order, probe_resolver);
+    let harness_id = crate::harness::registry::parse(harness);
+    let mut assessment =
+        candidate_support_evidence(input, harness, harness_id, provider_order, probe_resolver);
     if assessment.match_evidence.is_some() && assessment.skip_reason.is_none() {
-        let auth = match crate::harness::registry::parse(harness).map(HarnessId::class) {
+        let auth = match harness_id.map(HarnessId::class) {
             Some(HarnessClass::Native { .. }) => auth_check(harness),
             Some(HarnessClass::ProbeBacked {
                 listing: ListingAuth::Gated,
             }) => {
-                let listed = match harness {
-                    "pi" => probe_resolver
-                        .pi_probe_result()
-                        .is_some_and(|result| result.model_probe_success),
-                    "cursor" => probe_resolver.cursor_probe_result().is_some_and(|result| {
-                        result.model_probe_success && !result.slugs.is_empty()
-                    }),
-                    _ => false,
-                };
-                if listed
-                    && !probe_resolver.latest_attempt_ok(
-                        crate::harness::registry::parse(harness).expect("registry harness"),
-                    )
-                {
+                let listing =
+                    probe_resolver.listing_evidence(harness_id.expect("registry harness"));
+                if listing.succeeded && !listing.latest_attempt_ok {
                     AuthState::ListingFailed
-                } else if listed {
+                } else if listing.succeeded {
                     AuthState::ImpliedByListing
                 } else {
                     AuthState::Unchecked
@@ -582,6 +578,7 @@ where
 fn candidate_support_evidence<P>(
     input: &RoutingInput<'_>,
     harness: &str,
+    harness_id: Option<HarnessId>,
     provider_order: Option<&[String]>,
     probe_resolver: &mut P,
 ) -> CandidateAssessment
@@ -617,7 +614,7 @@ where
         };
     }
 
-    if is_native_harness(harness)
+    if harness_id.is_some_and(|id| id.native_provider().is_some())
         && provider_constraint_excludes_native_harness(input.provider_constraint, harness)
     {
         return CandidateAssessment {
@@ -642,16 +639,18 @@ where
             filtered_slugs: Vec::new(),
             chosen_slug: None,
             chosen_model: None,
-            match_evidence: Some(if is_native_harness(harness) {
-                MatchEvidence::Confirmed
-            } else {
-                MatchEvidence::Passthrough
-            }),
+            match_evidence: Some(
+                if harness_id.is_some_and(|id| id.native_provider().is_some()) {
+                    MatchEvidence::Confirmed
+                } else {
+                    MatchEvidence::Passthrough
+                },
+            ),
             skip_reason: None,
         };
     }
 
-    if is_native_harness(harness) {
+    if harness_id.is_some_and(|id| id.native_provider().is_some()) {
         let native_slugs = catalog_slugs_for_native_harness(harness, input.catalog_model_slugs);
         if !native_slugs.is_empty() {
             let selection = select_probe_slug(
@@ -691,7 +690,7 @@ where
         };
     }
 
-    if harness == "opencode" {
+    if harness_id == Some(HarnessId::OpenCode) {
         let Some(opencode_probe) = probe_resolver.opencode_probe_result() else {
             return CandidateAssessment {
                 auth: None,
@@ -768,9 +767,12 @@ where
         };
     }
 
-    if harness == "pi" {
+    if harness_id == Some(HarnessId::Pi) {
         if let Some(pi_probe) = probe_resolver.pi_probe_result() {
             if pi_probe.compatible {
+                if !pi_probe.model_probe_success {
+                    return passthrough_assessment(harness);
+                }
                 let selection = select_probe_slug(
                     input.model_id,
                     input.provider_constraint,
@@ -846,7 +848,7 @@ where
         };
     }
 
-    if harness == "cursor" {
+    if harness_id == Some(HarnessId::Cursor) {
         let Some(cursor_probe) = probe_resolver.cursor_probe_result() else {
             return passthrough_assessment(harness);
         };
@@ -963,10 +965,6 @@ fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
     provider
         .map(|provider| slug::provider_matches_native_harness(provider, harness))
         .unwrap_or(false)
-}
-
-fn is_native_harness(harness: &str) -> bool {
-    native_provider_for_harness(harness).is_some()
 }
 
 fn provider_constraint_excludes_native_harness(
@@ -1646,6 +1644,36 @@ mod tests {
     }
 
     #[test]
+    fn cold_compatible_pi_listing_failure_is_support_unknown() {
+        let installed = installed(&["pi"]);
+        let failed = PiProbeResult {
+            compatible: true,
+            model_probe_success: false,
+            error: Some("pi --list-models failed".into()),
+            ..PiProbeResult::default()
+        };
+        let input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, Some(&failed), None),
+        );
+        let trace = evaluate_candidates_with_auth(&input, never_authed);
+        let pi = trace
+            .assessments
+            .iter()
+            .find(|item| item.harness == "pi")
+            .unwrap();
+        assert_eq!(trace.harness, "pi");
+        assert_eq!(pi.match_evidence, Some(MatchEvidence::Passthrough));
+        assert_eq!(pi.eligibility(), Eligibility::Unverified);
+        assert_eq!(pi.eligibility_reason(), Some("support_unknown"));
+    }
+
+    #[test]
     fn provider_constraint_accepts_variant_provider_name() {
         let installed = installed(&["pi", "opencode"]);
         let pi_probe = PiProbeResult {
@@ -2150,8 +2178,8 @@ mod tests {
         assert!(assessment.chosen_slug.is_none());
     }
 
-    struct FailedCursorListing(StaticProbeResolver);
-    impl ProbeResolver for FailedCursorListing {
+    struct SessionListingResolver(crate::harness::host::CapabilitySession);
+    impl ProbeResolver for SessionListingResolver {
         fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
             self.0.opencode_probe_result()
         }
@@ -2161,8 +2189,8 @@ mod tests {
         fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
             self.0.cursor_probe_result()
         }
-        fn latest_attempt_ok(&mut self, harness: HarnessId) -> bool {
-            harness != HarnessId::Cursor
+        fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
+            self.0.listing_evidence(harness)
         }
     }
 
@@ -2185,7 +2213,18 @@ mod tests {
             (None, None, Some(&cursor)),
         );
         input.preferred_harness = Some(("cursor", RouteSource::Profile));
-        let mut probes = FailedCursorListing(StaticProbeResolver::from_input(&input));
+        let mut session = crate::harness::host::CapabilitySession::collect(
+            &crate::harness::host::CapabilityCollectionOptions {
+                offline: true,
+                probe_refresh: crate::models::probes::ProbeRefreshMode::Skip,
+            },
+        );
+        session.set_cursor_outcome_for_test(
+            crate::models::probes::cursor_cache::CachedCursorProbeOutcome::StaleFailed(
+                cursor.clone(),
+            ),
+        );
+        let mut probes = SessionListingResolver(session);
         let trace = evaluate_candidates(&input, &mut probes, always_authed);
         assert_eq!(trace.assessments[0].auth, Some(AuthState::ListingFailed));
         assert_eq!(trace.assessments[0].eligibility(), Eligibility::Unverified);
@@ -2224,6 +2263,58 @@ mod tests {
             Some("auth_unchecked")
         );
         assert!(trace.selected_by_preference);
+    }
+
+    #[test]
+    fn preferred_passthrough_is_not_promoted_over_eligible_route() {
+        let installed = installed(&["pi", "codex"]);
+        let mut input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, None, None),
+        );
+        input.preferred_harness = Some(("pi", RouteSource::Alias));
+        let trace = evaluate_candidates_with_auth(&input, always_authed);
+        assert_eq!(trace.harness, "codex");
+        assert!(!trace.selected_by_preference);
+        assert_eq!(
+            trace.assessments[0].eligibility_reason(),
+            Some("support_unknown")
+        );
+    }
+
+    #[test]
+    fn cli_sourced_preference_is_not_promoted() {
+        let installed = installed(&["codex", "pi"]);
+        let pi = PiProbeResult {
+            compatible: true,
+            model_probe_success: true,
+            model_slugs: HashSet::from(["openai/gpt-5".into()]),
+            ..PiProbeResult::default()
+        };
+        let mut input = routing_input(
+            "gpt-5",
+            Some("openai"),
+            None,
+            None,
+            &installed,
+            None,
+            (None, Some(&pi), None),
+        );
+        input.preferred_harness = Some(("codex", RouteSource::Cli));
+        let trace = evaluate_candidates_with_auth(&input, |_| AuthState::Unknown {
+            reason: "timeout".into(),
+        });
+        assert_eq!(trace.harness, "pi");
+        assert!(!trace.selected_by_preference);
+        assert_eq!(
+            trace.assessments[0].eligibility_reason(),
+            Some("auth_unknown")
+        );
     }
 
     #[test]

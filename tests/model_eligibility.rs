@@ -6,6 +6,74 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 #[test]
+fn native_availability_and_launch_bundle_keep_requested_spelling() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let bin = test_common::install_logging_harnesses(root);
+    std::fs::create_dir(root.join(".mars")).unwrap();
+    std::fs::write(
+        root.join(".mars/models-cache.json"),
+        r#"{"fetched_at":null,"models":[{"id":"claude-opus-4-6","provider":"anthropic"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("mars.toml"),
+        "[settings]\ntargets=[\".claude\"]\n",
+    )
+    .unwrap();
+
+    for requested in ["claude-opus-4.6", "Claude-Opus-4-6"] {
+        let resolve = test_common::mars_cmd(root, root, "http://127.0.0.1:1")
+            .args([
+                "models",
+                "resolve",
+                requested,
+                "--no-refresh-models",
+                "--json",
+            ])
+            .env("PATH", &bin)
+            .output()
+            .unwrap();
+        assert!(
+            resolve.status.success(),
+            "{}",
+            String::from_utf8_lossy(&resolve.stderr)
+        );
+        let resolved: Value = serde_json::from_slice(&resolve.stdout).unwrap();
+        assert_eq!(
+            resolved["route_trace"]["model_attempts"][0]["assessments"][0]["chosen_model"],
+            "claude-opus-4-6",
+            "{resolved}"
+        );
+        assert_eq!(
+            resolved["runnable_paths"][0]["harness_model_id"], requested,
+            "{resolved}"
+        );
+
+        let bundle = test_common::mars_cmd(root, root, "http://127.0.0.1:1")
+            .args([
+                "build",
+                "launch-bundle",
+                "--model",
+                requested,
+                "--literal-model",
+                "--no-refresh-models",
+                "--json",
+            ])
+            .env("PATH", &bin)
+            .output()
+            .unwrap();
+        assert!(
+            bundle.status.success(),
+            "{}",
+            String::from_utf8_lossy(&bundle.stderr)
+        );
+        let bundle: Value = serde_json::from_slice(&bundle.stdout).unwrap();
+        assert_eq!(bundle["routing"]["harness_model"], requested, "{bundle}");
+    }
+}
+
+#[test]
 fn no_model_launch_rejects_logged_out_native_harness() {
     let temp = tempdir().unwrap();
     let root = temp.path();

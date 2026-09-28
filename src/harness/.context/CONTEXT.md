@@ -33,6 +33,10 @@ Re-collecting mid-command risks probe inconsistency and unnecessary subprocess s
 - `collect_capability_snapshot_with_resolver(options, resolver)` — testable variant with injected PATH
 - `CapabilityCollectionOptions { offline, probe_refresh }` — `offline` from `MARS_OFFLINE` (`is_mars_offline()`); `probe_refresh` from `ModelsRefreshControl` at CLI/build call sites (see [probe refresh modes](../../models/probes/.context/CONTEXT.md))
 - `ExecutableResolver` trait — cross-platform PATH lookup; `PathExecutableResolver` is the production impl
+- `ListingEvidenceSet` / `listing_evidence(HarnessId)` — typed probe-listing
+  success and latest-attempt state shared by session, snapshot, and routing.
+  OpenCode is ungated for auth but its latest-attempt state is still available
+  to Possible projections.
 
 `CapabilitySnapshot` fields:
 - `executable: BTreeMap<HarnessId, ExecutableState>` — PATH lookup result per harness

@@ -367,8 +367,11 @@ mod tests {
             self.cursor.clone()
         }
 
-        fn latest_attempt_ok(&mut self, _harness: crate::harness::registry::HarnessId) -> bool {
-            true
+        fn listing_evidence(
+            &mut self,
+            _harness: crate::harness::registry::HarnessId,
+        ) -> crate::harness::host::ListingEvidence {
+            crate::harness::host::ListingEvidence::default()
         }
     }
 

@@ -1,328 +1,124 @@
-use crate::routing::probe_match::select_probe_slug;
+use crate::harness::registry::HarnessId;
 use crate::routing::slug;
 
 use super::availability::{ResolvedRunnablePath, RunnableConfidence, RunnablePathSource};
-use super::probes::{OpenCodeProbeResult, PiProbeResult};
 
-pub struct HarnessModelInput<'a> {
-    pub harness: &'a str,
-    pub model_id: &'a str,
-    pub provider_constraint: Option<&'a str>,
-    pub provider_for_order: Option<&'a str>,
-    pub settings_provider_order: Option<&'a [String]>,
-    pub opencode_probe: Option<&'a OpenCodeProbeResult>,
-    pub pi_probe: Option<&'a PiProbeResult>,
-}
-
-pub fn resolve_harness_model(input: HarnessModelInput<'_>) -> ResolvedRunnablePath {
-    let model_id = input.model_id.trim();
-    if model_id.is_empty() {
-        return ResolvedRunnablePath {
-            harness_model_id: String::new(),
-            source: RunnablePathSource::Passthrough,
-            confidence: RunnableConfidence::Unknown,
-        };
-    }
-
-    let harness = input.harness;
-    if harness.eq_ignore_ascii_case("pi") {
-        return resolve_pi_harness_model(input);
-    }
-    if harness.eq_ignore_ascii_case("opencode") {
-        return resolve_opencode_harness_model(input);
-    }
-
-    if native_provider_matches_harness(input, harness) {
-        return ResolvedRunnablePath {
-            harness_model_id: model_id.to_string(),
-            source: RunnablePathSource::ProviderMatch,
-            confidence: RunnableConfidence::Likely,
-        };
-    }
-
-    ResolvedRunnablePath {
-        harness_model_id: model_id.to_string(),
-        source: RunnablePathSource::Passthrough,
-        confidence: RunnableConfidence::Unknown,
-    }
-}
-
-fn native_provider_matches_harness(input: HarnessModelInput<'_>, harness: &str) -> bool {
-    let provider_matches = |provider: &str| {
-        !provider.trim().is_empty() && slug::provider_matches_native_harness(provider, harness)
-    };
-    input.provider_constraint.is_some_and(provider_matches)
-        || input.provider_for_order.is_some_and(provider_matches)
-}
-
-fn resolve_pi_harness_model(input: HarnessModelInput<'_>) -> ResolvedRunnablePath {
-    let model_id = input.model_id.trim();
-    let Some(pi_probe) = input.pi_probe else {
-        return constraint_qualified_passthrough(model_id, input.provider_constraint);
-    };
-    if !pi_probe.compatible {
-        return constraint_qualified_passthrough(model_id, input.provider_constraint);
-    }
-
-    probe_slug_or_passthrough(
-        model_id,
-        input.provider_constraint,
-        input.provider_for_order,
-        input.settings_provider_order,
-        pi_probe.model_slugs.iter().map(String::as_str),
-    )
-}
-
-fn resolve_opencode_harness_model(input: HarnessModelInput<'_>) -> ResolvedRunnablePath {
-    let model_id = input.model_id.trim();
-    let Some(opencode_probe) = input.opencode_probe else {
-        return constraint_qualified_passthrough(model_id, input.provider_constraint);
-    };
-    if !opencode_probe.model_probe_success {
-        return constraint_qualified_passthrough(model_id, input.provider_constraint);
-    }
-
-    probe_slug_or_passthrough(
-        model_id,
-        input.provider_constraint,
-        input.provider_for_order,
-        input.settings_provider_order,
-        opencode_probe.model_slugs.iter().map(String::as_str),
-    )
-}
-
-fn probe_slug_or_passthrough<'a>(
-    model_id: &str,
+/// Project the launch ID from selected routing evidence. Catalog model names
+/// may be normalized; only the requested spelling is safe for native launches.
+pub fn resolve_harness_model(
+    harness: HarnessId,
+    requested: &str,
+    chosen_slug: Option<&str>,
+    chosen_model: Option<&str>,
     provider_constraint: Option<&str>,
     provider_for_order: Option<&str>,
-    settings_provider_order: Option<&[String]>,
-    slugs: impl IntoIterator<Item = &'a str>,
 ) -> ResolvedRunnablePath {
-    let selection = select_probe_slug(
-        model_id,
-        provider_constraint,
-        provider_for_order,
-        settings_provider_order,
-        slugs,
-    );
-    if let Some(slug) = selection.chosen_slug {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return passthrough(requested);
+    }
+
+    if harness.native_provider().is_some() {
+        let provider_matches = |provider: &str| {
+            !provider.trim().is_empty()
+                && slug::provider_matches_native_harness(provider, harness.as_str())
+        };
+        let matched = chosen_model.is_some()
+            || provider_constraint.is_some_and(provider_matches)
+            || provider_for_order.is_some_and(provider_matches);
         return ResolvedRunnablePath {
-            harness_model_id: slug,
+            harness_model_id: requested.to_string(),
+            source: if matched {
+                RunnablePathSource::ProviderMatch
+            } else {
+                RunnablePathSource::Passthrough
+            },
+            confidence: if matched {
+                RunnableConfidence::Likely
+            } else {
+                RunnableConfidence::Unknown
+            },
+        };
+    }
+
+    if let Some(selected) = chosen_slug.or(chosen_model) {
+        return ResolvedRunnablePath {
+            harness_model_id: selected.to_string(),
             source: RunnablePathSource::CachedProbe,
             confidence: RunnableConfidence::Confirmed,
         };
     }
 
-    constraint_qualified_passthrough(model_id, provider_constraint)
-}
-
-fn constraint_qualified_passthrough(
-    model_id: &str,
-    provider_constraint: Option<&str>,
-) -> ResolvedRunnablePath {
-    if model_id.contains('/') {
-        return passthrough_bare(model_id);
-    }
-    if let Some(constraint) = provider_constraint.filter(|provider| !provider.trim().is_empty()) {
+    // Pi and OpenCode accept provider/model in constrained passthrough. Cursor
+    // takes an unqualified model/effort slug even when its provider is known.
+    if matches!(harness, HarnessId::Pi | HarnessId::OpenCode)
+        && !requested.contains('/')
+        && let Some(constraint) = provider_constraint.filter(|value| !value.trim().is_empty())
+    {
         return ResolvedRunnablePath {
-            harness_model_id: format!("{}/{}", constraint.trim(), model_id),
+            harness_model_id: format!("{}/{}", constraint.trim(), requested),
             source: RunnablePathSource::Passthrough,
             confidence: RunnableConfidence::Confirmed,
         };
     }
-    passthrough_bare(model_id)
+    passthrough(requested)
 }
 
-fn passthrough_bare(model_id: &str) -> ResolvedRunnablePath {
+fn passthrough(model_id: &str) -> ResolvedRunnablePath {
     ResolvedRunnablePath {
         harness_model_id: model_id.to_string(),
         source: RunnablePathSource::Passthrough,
         confidence: RunnableConfidence::Unknown,
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
-    use crate::models::probes::PiProbeResult;
 
     #[test]
-    fn qualified_provider_constraint_passthrough_without_probe() {
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "pi",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: Some("openai-codex"),
-            provider_for_order: Some("openai-codex"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: None,
-        });
-
-        assert_eq!(resolved.harness_model_id, "openai-codex/gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::Passthrough);
-        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
+    fn native_keeps_requested_punctuation_and_case_not_catalog_spelling() {
+        for requested in ["claude-opus-4.6", "Claude-Opus-4-6"] {
+            let resolved = resolve_harness_model(
+                HarnessId::Claude,
+                requested,
+                Some("anthropic/claude-opus-4-6"),
+                Some("claude-opus-4-6"),
+                None,
+                Some("anthropic"),
+            );
+            assert_eq!(resolved.harness_model_id, requested);
+            assert_eq!(resolved.source, RunnablePathSource::ProviderMatch);
+        }
     }
 
     #[test]
-    fn pi_bare_model_uses_probe_slug() {
-        let mut model_slugs = HashSet::new();
-        model_slugs.insert("openai-codex/gpt-5.4-mini".to_string());
-        model_slugs.insert("openai/gpt-5.4-mini".to_string());
-        let pi_probe = PiProbeResult {
-            compatible: true,
-            model_slugs,
-            ..PiProbeResult::default()
-        };
-
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "pi",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: None,
-            provider_for_order: Some("openai"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: Some(&pi_probe),
-        });
-
-        assert_eq!(resolved.harness_model_id, "openai-codex/gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
-        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
+    fn probe_backed_prefers_selected_slug_then_model_then_requested() {
+        for (slug, model, expected) in [
+            (Some("openai/gpt-5"), Some("gpt-5"), "openai/gpt-5"),
+            (None, Some("gpt-5"), "gpt-5"),
+            (None, None, "GPT-5"),
+        ] {
+            let resolved = resolve_harness_model(HarnessId::Pi, "GPT-5", slug, model, None, None);
+            assert_eq!(resolved.harness_model_id, expected);
+        }
     }
 
     #[test]
-    fn pi_constraint_prefers_matching_provider_slug() {
-        let mut model_slugs = HashSet::new();
-        model_slugs.insert("openai-codex/gpt-5.4-mini".to_string());
-        model_slugs.insert("openai/gpt-5.4-mini".to_string());
-        let pi_probe = PiProbeResult {
-            compatible: true,
-            model_slugs,
-            ..PiProbeResult::default()
-        };
-
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "pi",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: Some("openai-codex"),
-            provider_for_order: Some("openai-codex"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: Some(&pi_probe),
-        });
-
-        assert_eq!(resolved.harness_model_id, "openai-codex/gpt-5.4-mini");
-    }
-
-    #[test]
-    fn opencode_uses_probe_slug_without_provider_constraint() {
-        let opencode_probe = OpenCodeProbeResult {
-            model_slugs: vec![
-                "openai/gpt-5.4-mini".to_string(),
-                "openai/gpt-5.5".to_string(),
-            ],
-            model_probe_success: true,
-            error: None,
-        };
-
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "opencode",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: None,
-            provider_for_order: Some("openai"),
-            settings_provider_order: None,
-            opencode_probe: Some(&opencode_probe),
-            pi_probe: None,
-        });
-
-        assert_eq!(resolved.harness_model_id, "openai/gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
-    }
-
-    #[test]
-    fn codex_native_provider_match_returns_bare_model() {
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "codex",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: None,
-            provider_for_order: Some("openai"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: None,
-        });
-
-        assert_eq!(resolved.harness_model_id, "gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::ProviderMatch);
-        assert_eq!(resolved.confidence, RunnableConfidence::Likely);
-    }
-
-    #[test]
-    fn codex_provider_constraint_native_match_returns_bare_model() {
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "codex",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: Some("openai"),
-            provider_for_order: Some("openai"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: None,
-        });
-
-        assert_eq!(resolved.harness_model_id, "gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::ProviderMatch);
-        assert_eq!(resolved.confidence, RunnableConfidence::Likely);
-    }
-
-    #[test]
-    fn opencode_xai_constraint_does_not_select_zen_slug() {
-        let opencode_probe = OpenCodeProbeResult {
-            model_slugs: vec![
-                "opencode-go/grok-4.6".to_string(),
-                "xai/grok-4.6".to_string(),
-            ],
-            model_probe_success: true,
-            error: None,
-        };
-
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "opencode",
-            model_id: "grok-4.6",
-            provider_constraint: Some("xai"),
-            provider_for_order: Some("xai"),
-            settings_provider_order: None,
-            opencode_probe: Some(&opencode_probe),
-            pi_probe: None,
-        });
-
-        assert_eq!(resolved.harness_model_id, "xai/grok-4.6");
-        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
-        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
-    }
-
-    #[test]
-    fn pi_provider_constraint_uses_probe_slug_not_blind_prefix() {
-        let mut model_slugs = HashSet::new();
-        model_slugs.insert("openai-codex/gpt-5.4-mini".to_string());
-        model_slugs.insert("openai/gpt-5.4-mini".to_string());
-        let pi_probe = PiProbeResult {
-            compatible: true,
-            model_slugs,
-            ..PiProbeResult::default()
-        };
-
-        let resolved = resolve_harness_model(HarnessModelInput {
-            harness: "pi",
-            model_id: "gpt-5.4-mini",
-            provider_constraint: Some("openai"),
-            provider_for_order: Some("openai"),
-            settings_provider_order: None,
-            opencode_probe: None,
-            pi_probe: Some(&pi_probe),
-        });
-
-        assert_eq!(resolved.harness_model_id, "openai-codex/gpt-5.4-mini");
-        assert_ne!(resolved.harness_model_id, "openai/gpt-5.4-mini");
-        assert_eq!(resolved.source, RunnablePathSource::CachedProbe);
-        assert_eq!(resolved.confidence, RunnableConfidence::Confirmed);
+    fn constrained_passthrough_qualifies_only_pi_and_opencode() {
+        for harness in [HarnessId::Pi, HarnessId::OpenCode] {
+            let resolved =
+                resolve_harness_model(harness, "gpt-5", None, None, Some("openai"), None);
+            assert_eq!(resolved.harness_model_id, "openai/gpt-5");
+        }
+        let cursor = resolve_harness_model(
+            HarnessId::Cursor,
+            "composer-2.5",
+            None,
+            None,
+            Some("cursor"),
+            None,
+        );
+        assert_eq!(cursor.harness_model_id, "composer-2.5");
     }
 }

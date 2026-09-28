@@ -584,7 +584,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "agent": "agent-name-or-null",
   "agent_body": "raw-agent-markdown-body",
   "routing": {
@@ -595,7 +595,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "harness_model": "...",
     "harness_model_source": "provider-match|cached-probe|passthrough|synthesized",
     "harness_model_confidence": "confirmed|likely|unknown",
-    "route_trace": { "version": 1, "..." }
+    "route_trace": { "version": 3, "model_attempts": [{ "selected_by_preference": false }], "..." }
   },
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
@@ -618,8 +618,8 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 
 **`harness_model` resolution:** Alias `provider` does not always become `provider/model` in
-`routing.harness_model`. Native Codex/Claude use bare canonical ids when the provider matches;
-Pi/OpenCode select probe slugs. Example: `-m gptmini` on a project with that alias → Codex +
+`routing.harness_model`. Native Codex/Claude preserve the requested spelling;
+Pi/OpenCode use the selected probe slug. Example: `-m gptmini` on a project with that alias → Codex +
 `harness_model: "gpt-5.4-mini"` (`provider-match`), not `openai/gpt-5.4-mini`. See
 [`src/models/.context/CONTEXT.md`](../../src/models/.context/CONTEXT.md).
 

@@ -109,9 +109,10 @@ model. Provider inference may use the model family, never the preferred harness.
 
 ## Launch `harness_model` (argv model id)
 
-After harness selection, `resolve_harness_model()` in `harness_model.rs` produces
-`routing.harness_model`. Alias `provider` is **not** a blind `provider/model` prefix:
-native Codex/Claude get bare ids when the provider matches; Pi/OpenCode use probe slugs.
+After harness selection, `resolve_harness_model()` in `harness_model.rs` projects
+the **selected assessment** into `routing.harness_model` and live availability.
+Alias `provider` is **not** a blind `provider/model` prefix: native Codex/Claude
+preserve the requested spelling; probe-backed harnesses use the selected slug.
 Details and examples: [.context/CONTEXT.md](.context/CONTEXT.md).
 
 Live availability in `availability.rs` projects the selected routing assessment.

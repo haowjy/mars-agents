@@ -11,7 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   while OpenCode remains unchecked. Failed later listings retain last-good model
   support but lose implied auth until refresh succeeds.
 - Derive live model availability and launch IDs from the selected routing assessment
-  instead of independently rechecking support.
+  instead of independently rechecking support. Native launch IDs preserve the
+  requested punctuation/case, while probe-backed IDs use the selected slug.
+- Treat a cold failed Pi model listing as support-unknown passthrough, not a
+  negative model match. Share typed listing evidence across routing consumers.
+- Include `selected_by_preference` in route decision JSON (report version 3).
 
 ## [0.14.4] - 2026-09-23
 

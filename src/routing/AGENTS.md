@@ -51,8 +51,9 @@ No-model native launches still check auth. Native materialization supplies
 `AuthState::Unchecked` and accepts support without probing runtime accounts.
 
 Availability is projected from the selected assessment, not re-evaluated against
-the probe/catalog. Native launch IDs use `chosen_model` (or the requested ID);
-probe-backed IDs use `chosen_slug` first.
+the probe/catalog. Native launch IDs preserve the requested spelling;
+probe-backed IDs use `chosen_slug`, then `chosen_model`, then the requested ID.
+Both availability and launch-bundle call the same projection function.
 
 ### Routing parity with `mars models` and launch-bundle
 

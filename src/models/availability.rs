@@ -1,6 +1,7 @@
 use serde::Serialize;
 
-use crate::harness::registry::{self, HarnessClass};
+use crate::harness::registry::{self, HarnessId};
+use crate::models::harness_model::resolve_harness_model;
 use crate::routing::{Eligibility, RoutingTrace, slug};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -110,29 +111,31 @@ pub fn from_routing_trace(
             runnable_paths: Vec::new(),
         },
         Eligibility::Eligible => {
-            let class = registry::parse(&trace.harness).map(|id| id.class());
-            let native = matches!(class, Some(HarnessClass::Native { .. }));
-            // Native catalog slugs are evidence, not launch IDs. Probe-backed chosen
-            // slugs are launch IDs; Cursor's provider-constraint fallback has none.
-            let harness_model_id = if native {
-                assessment.chosen_model.as_deref().unwrap_or(model_id)
-            } else {
-                assessment
-                    .chosen_slug
-                    .as_deref()
-                    .or(assessment.chosen_model.as_deref())
-                    .unwrap_or(model_id)
+            let Some(harness) = registry::parse(&trace.harness) else {
+                return ModelAvailability {
+                    status: AvailabilityStatus::Unavailable,
+                    source: AvailabilitySource::RouteRejected,
+                    runnable_paths: Vec::new(),
+                };
             };
+            let runnable = resolve_harness_model(
+                harness,
+                model_id,
+                assessment.chosen_slug.as_deref(),
+                assessment.chosen_model.as_deref(),
+                None,
+                Some(provider),
+            );
             let mars_provider = assessment
                 .chosen_slug
                 .as_deref()
                 .and_then(slug::parse)
                 .map(|parts| parts.provider)
                 .unwrap_or(provider);
-            let source = match trace.harness.as_str() {
-                "pi" => AvailabilitySource::PiProbe,
-                "opencode" => AvailabilitySource::OpenCodeProbe,
-                "cursor" => AvailabilitySource::CursorProbe,
+            let source = match harness {
+                HarnessId::Pi => AvailabilitySource::PiProbe,
+                HarnessId::OpenCode => AvailabilitySource::OpenCodeProbe,
+                HarnessId::Cursor => AvailabilitySource::CursorProbe,
                 _ => AvailabilitySource::HarnessInstalled,
             };
             ModelAvailability {
@@ -141,7 +144,7 @@ pub fn from_routing_trace(
                 runnable_paths: vec![RunnablePath {
                     harness: trace.harness.clone(),
                     mars_provider: mars_provider.to_string(),
-                    harness_model_id: harness_model_id.to_string(),
+                    harness_model_id: runnable.harness_model_id,
                 }],
             }
         }
@@ -216,5 +219,21 @@ mod tests {
             availability.runnable_paths[0].harness_model_id,
             "gpt-5.6-sol"
         );
+    }
+
+    #[test]
+    fn native_catalog_punctuation_and_case_do_not_change_launch_id() {
+        for requested in ["claude-opus-4.6", "Claude-Opus-4-6"] {
+            let availability = from_routing_trace(
+                requested,
+                "anthropic",
+                &trace(
+                    "claude",
+                    Some("anthropic/claude-opus-4-6"),
+                    Some("claude-opus-4-6"),
+                ),
+            );
+            assert_eq!(availability.runnable_paths[0].harness_model_id, requested);
+        }
     }
 }

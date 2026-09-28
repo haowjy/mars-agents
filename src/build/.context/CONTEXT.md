@@ -96,7 +96,7 @@ allowing a renamed alias to change the model.
 
 ### Selection report and errors
 
-Bundle version 4 carries report version 2 at `routing.route_trace`. Policy resolution
+Bundle version 4 carries report version 3 at `routing.route_trace`. Policy resolution
 accumulates every attempted model and its harness assessments, preserving scope and
 winning target-file provenance. `selected` indexes the accepted assessment, including
 an earlier deferred attempt. The report is diagnostic; execution uses routing fields.
@@ -119,12 +119,14 @@ verbatim. `routing.candidate_slugs` on the trace/report is diagnostic; do not us
 
 ### Alias `provider` → `harness_model`
 
-Resolved in `models::resolve_harness_model` ([`src/models/.context/CONTEXT.md`](../../models/.context/CONTEXT.md)):
+Resolved from the selected assessment by `models::resolve_harness_model`
+([`src/models/.context/CONTEXT.md`](../../models/.context/CONTEXT.md)):
 
-- **Codex / Claude:** when alias or routing `provider` matches the native harness, emit the
-  **bare** canonical model id (`gpt-5.4-mini`, not `openai/gpt-5.4-mini`).
-- **Pi / OpenCode:** pick a probe-listed slug (`openai-codex/gpt-5.4-mini`, etc.); use
-  `provider_constraint` only to order/filter slugs, not to prefix before the probe runs.
+- **Codex / Claude:** emit the **requested spelling**, never a normalized catalog
+  `chosen_model` (`claude-opus-4.6` remains `claude-opus-4.6`).
+- **Pi / OpenCode:** use the slug already selected by routing
+  (`openai-codex/gpt-5.4-mini`, etc.); `provider_constraint` filters the
+  assessment and only qualifies a fallback when no selected slug exists.
 
 `harness_model_source` / `harness_model_confidence` record how the id was chosen (`provider-match`,
 `cached-probe`, `passthrough`) — still not user-facing warnings.

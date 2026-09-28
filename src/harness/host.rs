@@ -38,7 +38,77 @@ pub struct CapabilitySnapshot {
     pub offline: bool,
 }
 
+/// Listing success and refresh freshness are independent: a failed latest
+/// attempt may retain last-good support without implying current auth.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListingEvidence {
+    pub succeeded: bool,
+    pub latest_attempt_ok: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListingEvidenceSet {
+    opencode: ListingEvidence,
+    pi: ListingEvidence,
+    cursor: ListingEvidence,
+}
+
+impl ListingEvidenceSet {
+    pub fn from_results(
+        opencode: Option<&OpenCodeProbeResult>,
+        pi: Option<&PiProbeResult>,
+        cursor: Option<&CursorProbeResult>,
+    ) -> Self {
+        Self {
+            opencode: ListingEvidence {
+                succeeded: opencode.is_some_and(|result| result.model_probe_success),
+                latest_attempt_ok: true,
+            },
+            pi: ListingEvidence {
+                succeeded: pi.is_some_and(|result| result.model_probe_success),
+                latest_attempt_ok: true,
+            },
+            cursor: ListingEvidence {
+                succeeded: cursor
+                    .is_some_and(|result| result.model_probe_success && !result.slugs.is_empty()),
+                latest_attempt_ok: true,
+            },
+        }
+    }
+
+    pub fn from_outcomes(
+        opencode: Option<&CachedProbeOutcome>,
+        pi: Option<&CachedPiProbeOutcome>,
+        cursor: Option<&CachedCursorProbeOutcome>,
+    ) -> Self {
+        let mut evidence = Self::from_results(
+            opencode.and_then(CachedProbeOutcome::result),
+            pi.and_then(CachedPiProbeOutcome::result),
+            cursor.and_then(CachedCursorProbeOutcome::result),
+        );
+        evidence.opencode.latest_attempt_ok =
+            opencode.is_none_or(CachedProbeOutcome::latest_attempt_ok);
+        evidence.pi.latest_attempt_ok = pi.is_none_or(CachedPiProbeOutcome::latest_attempt_ok);
+        evidence.cursor.latest_attempt_ok =
+            cursor.is_none_or(CachedCursorProbeOutcome::latest_attempt_ok);
+        evidence
+    }
+
+    pub fn get(self, harness: HarnessId) -> ListingEvidence {
+        match harness {
+            HarnessId::OpenCode => self.opencode,
+            HarnessId::Pi => self.pi,
+            HarnessId::Cursor => self.cursor,
+            _ => ListingEvidence::default(),
+        }
+    }
+}
+
 impl CapabilitySnapshot {
+    pub fn listing_evidence_set(&self) -> ListingEvidenceSet {
+        ListingEvidenceSet::from_outcomes(Some(&self.opencode), Some(&self.pi), Some(&self.cursor))
+    }
+
     pub fn installed_harnesses(&self) -> HashSet<String> {
         self.executable
             .iter()
@@ -68,6 +138,11 @@ impl CapabilitySession {
     #[cfg(test)]
     pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
         self.opencode = Some(CachedProbeOutcome::Hit(result));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_cursor_outcome_for_test(&mut self, outcome: CachedCursorProbeOutcome) {
+        self.cursor = Some(outcome);
     }
 
     pub fn collect(options: &CapabilityCollectionOptions) -> Self {
@@ -170,13 +245,29 @@ impl CapabilitySession {
         self.cursor_outcome().result().cloned()
     }
 
-    pub fn listing_latest_attempt_ok(&mut self, harness: HarnessId) -> bool {
+    pub fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
         match harness {
-            HarnessId::Pi => self.pi_outcome().latest_attempt_ok(),
-            HarnessId::Cursor => self.cursor_outcome().latest_attempt_ok(),
-            HarnessId::OpenCode => self.opencode_outcome().latest_attempt_ok(),
-            _ => true,
+            HarnessId::Pi => {
+                ListingEvidenceSet::from_outcomes(None, Some(self.pi_outcome()), None).get(harness)
+            }
+            HarnessId::Cursor => {
+                ListingEvidenceSet::from_outcomes(None, None, Some(self.cursor_outcome()))
+                    .get(harness)
+            }
+            HarnessId::OpenCode => {
+                ListingEvidenceSet::from_outcomes(Some(self.opencode_outcome()), None, None)
+                    .get(harness)
+            }
+            _ => ListingEvidence::default(),
         }
+    }
+
+    pub fn loaded_listing_evidence_set(&self) -> ListingEvidenceSet {
+        ListingEvidenceSet::from_outcomes(
+            self.loaded_opencode_outcome(),
+            self.loaded_pi_outcome(),
+            self.loaded_cursor_outcome(),
+        )
     }
 
     pub fn into_snapshot(self) -> CapabilitySnapshot {
@@ -436,6 +527,49 @@ mod tests {
                 .get(binary)
                 .cloned()
                 .unwrap_or(ExecutableState::Missing)
+        }
+    }
+
+    #[test]
+    fn listing_evidence_is_identical_for_session_and_snapshot() {
+        let mut session = CapabilitySession::collect_with_resolver(
+            &CapabilityCollectionOptions {
+                offline: true,
+                probe_refresh: ProbeRefreshMode::Skip,
+            },
+            &FakeResolver::default(),
+        );
+        session.opencode = Some(CachedProbeOutcome::StaleFailed(OpenCodeProbeResult {
+            model_probe_success: true,
+            model_slugs: vec!["openai/gpt-5".into()],
+            error: None,
+        }));
+        session.pi = Some(CachedPiProbeOutcome::Failed(PiProbeResult {
+            compatible: true,
+            model_probe_success: false,
+            error: Some("listing failed".into()),
+            ..PiProbeResult::default()
+        }));
+        session.cursor = Some(CachedCursorProbeOutcome::StaleFailed(CursorProbeResult {
+            model_probe_success: true,
+            slugs: vec!["gpt-5".into()],
+            error: None,
+        }));
+        let expected = [
+            (HarnessId::OpenCode, true, false),
+            (HarnessId::Pi, false, false),
+            (HarnessId::Cursor, true, false),
+        ];
+        let snapshot_set = session.clone().into_snapshot().listing_evidence_set();
+        let loaded_set = session.loaded_listing_evidence_set();
+        for (harness, succeeded, latest_attempt_ok) in expected {
+            let evidence = ListingEvidence {
+                succeeded,
+                latest_attempt_ok,
+            };
+            assert_eq!(session.listing_evidence(harness), evidence);
+            assert_eq!(snapshot_set.get(harness), evidence);
+            assert_eq!(loaded_set.get(harness), evidence);
         }
     }
 

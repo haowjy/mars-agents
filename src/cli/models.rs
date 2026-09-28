@@ -10,7 +10,8 @@ use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{
-    CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, NativeAuthCache,
+    CapabilityCollectionOptions, CapabilitySession, CapabilitySnapshot, ListingEvidence,
+    ListingEvidenceSet, NativeAuthCache,
 };
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
 use crate::models::probes::CursorProbeResult;
@@ -282,8 +283,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             opencode_probe_result: opencode_probe_result.as_ref(),
             pi_probe_result: pi_probe_result.as_ref(),
             cursor_probe_result: cursor_probe_result.as_ref(),
-            pi_latest_attempt_ok: capability_snapshot.pi.latest_attempt_ok(),
-            cursor_latest_attempt_ok: capability_snapshot.cursor.latest_attempt_ok(),
+            listing_evidence: capability_snapshot.listing_evidence_set(),
             catalog_model_slugs: Some(catalog_slugs.as_slice()),
             routing_settings: &routing_settings,
         };
@@ -326,8 +326,7 @@ fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
         opencode_probe_result: opencode_probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
-        pi_latest_attempt_ok: capability_snapshot.pi.latest_attempt_ok(),
-        cursor_latest_attempt_ok: capability_snapshot.cursor.latest_attempt_ok(),
+        listing_evidence: capability_snapshot.listing_evidence_set(),
         catalog_model_slugs: Some(catalog_slugs.as_slice()),
         routing_settings: &routing_settings,
     };
@@ -445,8 +444,7 @@ struct AvailabilityContext<'a> {
     opencode_probe_result: Option<&'a OpenCodeProbeResult>,
     pi_probe_result: Option<&'a PiProbeResult>,
     cursor_probe_result: Option<&'a CursorProbeResult>,
-    pi_latest_attempt_ok: bool,
-    cursor_latest_attempt_ok: bool,
+    listing_evidence: ListingEvidenceSet,
     catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
 }
@@ -479,30 +477,21 @@ struct SessionProbeResolver<'a> {
     session: &'a mut CapabilitySession,
 }
 
-struct SnapshotProbeResolver<'a> {
-    opencode: Option<&'a OpenCodeProbeResult>,
-    pi: Option<&'a PiProbeResult>,
-    cursor: Option<&'a CursorProbeResult>,
-    pi_latest_attempt_ok: bool,
-    cursor_latest_attempt_ok: bool,
-}
-
-impl crate::routing::ProbeResolver for SnapshotProbeResolver<'_> {
+impl crate::routing::ProbeResolver for AvailabilityContext<'_> {
     fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
-        self.opencode.cloned()
+        self.opencode_probe_result.cloned()
     }
     fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
-        self.pi.cloned()
+        self.pi_probe_result.cloned()
     }
     fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
-        self.cursor.cloned()
+        self.cursor_probe_result.cloned()
     }
-    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
-        match harness {
-            crate::harness::registry::HarnessId::Pi => self.pi_latest_attempt_ok,
-            crate::harness::registry::HarnessId::Cursor => self.cursor_latest_attempt_ok,
-            _ => true,
-        }
+    fn listing_evidence(
+        &mut self,
+        harness: crate::harness::registry::HarnessId,
+    ) -> ListingEvidence {
+        self.listing_evidence.get(harness)
     }
 }
 
@@ -519,8 +508,11 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
         self.session.cursor_probe_result()
     }
 
-    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
-        self.session.listing_latest_attempt_ok(harness)
+    fn listing_evidence(
+        &mut self,
+        harness: crate::harness::registry::HarnessId,
+    ) -> ListingEvidence {
+        self.session.listing_evidence(harness)
     }
 }
 
@@ -840,8 +832,7 @@ fn run_list_catalog(input: ListCatalogInput<'_>) -> Result<i32, MarsError> {
         opencode_probe_result: probe_result.as_ref(),
         pi_probe_result: pi_probe_result.as_ref(),
         cursor_probe_result: cursor_probe_result.as_ref(),
-        pi_latest_attempt_ok: capability_snapshot.pi.latest_attempt_ok(),
-        cursor_latest_attempt_ok: capability_snapshot.cursor.latest_attempt_ok(),
+        listing_evidence: capability_snapshot.listing_evidence_set(),
         catalog_model_slugs: Some(catalog_slugs.as_slice()),
         routing_settings,
     };
@@ -1350,13 +1341,7 @@ where
         routing_settings: availability_ctx.routing_settings,
     };
     let routing_evidence = routing_settings_evidence(&route_input);
-    let mut probes = SnapshotProbeResolver {
-        opencode: availability_ctx.opencode_probe_result,
-        pi: availability_ctx.pi_probe_result,
-        cursor: availability_ctx.cursor_probe_result,
-        pi_latest_attempt_ok: availability_ctx.pi_latest_attempt_ok,
-        cursor_latest_attempt_ok: availability_ctx.cursor_latest_attempt_ok,
-    };
+    let mut probes = availability_ctx;
     crate::routing::evaluate_candidates(&routing_evidence.routing_input(), &mut probes, auth_check)
 }
 
@@ -1369,13 +1354,7 @@ fn route_trace_for_resolved_model(
     routing_input.preferred_harness = input
         .preferred_harness
         .map(|harness| (harness, crate::routing::RouteSource::Alias));
-    let mut probes = SnapshotProbeResolver {
-        opencode: input.opencode_probe_result,
-        pi: input.pi_probe_result,
-        cursor: input.cursor_probe_result,
-        pi_latest_attempt_ok: context.pi_latest_attempt_ok,
-        cursor_latest_attempt_ok: context.cursor_latest_attempt_ok,
-    };
+    let mut probes = context;
     crate::routing::evaluate_candidates(&routing_input, &mut probes, |harness| {
         input.auth.state(harness)
     })
@@ -1784,12 +1763,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 opencode_probe_result: capability_session.loaded_opencode_probe_result(),
                 pi_probe_result: capability_session.loaded_pi_probe_result(),
                 cursor_probe_result: capability_session.loaded_cursor_probe_result(),
-                pi_latest_attempt_ok: capability_session
-                    .loaded_pi_outcome()
-                    .is_none_or(|outcome| outcome.latest_attempt_ok()),
-                cursor_latest_attempt_ok: capability_session
-                    .loaded_cursor_outcome()
-                    .is_none_or(|outcome| outcome.latest_attempt_ok()),
+                listing_evidence: capability_session.loaded_listing_evidence_set(),
                 catalog_model_slugs: None,
                 routing_settings: &routing_settings,
             },
@@ -1981,12 +1955,7 @@ fn run_resolve_exact_alias(
                     opencode_probe_result: capability_session.loaded_opencode_probe_result(),
                     pi_probe_result: capability_session.loaded_pi_probe_result(),
                     cursor_probe_result: capability_session.loaded_cursor_probe_result(),
-                    pi_latest_attempt_ok: capability_session
-                        .loaded_pi_outcome()
-                        .is_none_or(|outcome| outcome.latest_attempt_ok()),
-                    cursor_latest_attempt_ok: capability_session
-                        .loaded_cursor_outcome()
-                        .is_none_or(|outcome| outcome.latest_attempt_ok()),
+                    listing_evidence: capability_session.loaded_listing_evidence_set(),
                     catalog_model_slugs: None,
                     routing_settings: runtime.routing_settings,
                 },
@@ -2066,7 +2035,10 @@ fn run_resolve_exact_alias(
         }
     } else {
         if runtime.probe_refresh == ProbeRefreshMode::Background
-            && matches!(probe_outcome, CachedProbeOutcome::Stale(_))
+            && matches!(
+                probe_outcome,
+                CachedProbeOutcome::Stale(_) | CachedProbeOutcome::StaleFailed(_)
+            )
         {
             eprintln!("note: using cached opencode probe (stale, background refresh triggered)");
         }
@@ -2241,7 +2213,10 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         if probe_refresh == ProbeRefreshMode::Background
-            && matches!(cache_outcome, CachedProbeOutcome::Stale(_))
+            && matches!(
+                cache_outcome,
+                CachedProbeOutcome::Stale(_) | CachedProbeOutcome::StaleFailed(_)
+            )
         {
             eprintln!("note: using cached opencode probe (stale, background refresh triggered)");
         }
@@ -2935,8 +2910,11 @@ description = "Old alias"
                 opencode_probe_result,
                 pi_probe_result,
                 cursor_probe_result,
-                pi_latest_attempt_ok: true,
-                cursor_latest_attempt_ok: true,
+                listing_evidence: ListingEvidenceSet::from_results(
+                    opencode_probe_result,
+                    pi_probe_result,
+                    cursor_probe_result,
+                ),
                 catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 routing_settings,
             },
@@ -2985,8 +2963,11 @@ description = "Old alias"
             opencode_probe_result,
             pi_probe_result,
             cursor_probe_result,
-            pi_latest_attempt_ok: true,
-            cursor_latest_attempt_ok: true,
+            listing_evidence: ListingEvidenceSet::from_results(
+                opencode_probe_result,
+                pi_probe_result,
+                cursor_probe_result,
+            ),
             catalog_model_slugs: Some(catalog_slugs.as_slice()),
             routing_settings,
         };
@@ -3306,8 +3287,15 @@ description = "Old alias"
             opencode_probe_result: None,
             pi_probe_result: None,
             cursor_probe_result: Some(&cursor),
-            pi_latest_attempt_ok: true,
-            cursor_latest_attempt_ok: false,
+            listing_evidence: ListingEvidenceSet::from_outcomes(
+                None,
+                None,
+                Some(
+                    &crate::models::probes::cursor_cache::CachedCursorProbeOutcome::StaleFailed(
+                        cursor.clone(),
+                    ),
+                ),
+            ),
             catalog_model_slugs: None,
             routing_settings: &settings,
         };

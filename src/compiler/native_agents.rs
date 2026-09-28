@@ -113,8 +113,11 @@ impl crate::routing::ProbeResolver for NativeSessionProbeResolver<'_> {
         self.session.cursor_probe_result()
     }
 
-    fn latest_attempt_ok(&mut self, harness: crate::harness::registry::HarnessId) -> bool {
-        self.session.listing_latest_attempt_ok(harness)
+    fn listing_evidence(
+        &mut self,
+        harness: crate::harness::registry::HarnessId,
+    ) -> crate::harness::host::ListingEvidence {
+        self.session.listing_evidence(harness)
     }
 }
 
@@ -330,7 +333,13 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 continue;
             }
 
-            return self.native_model_id(profile, target_harness, &resolved, &route_model_id);
+            return self.native_model_id(
+                profile,
+                target_harness,
+                &resolved,
+                &route_model_id,
+                &trace,
+            );
         }
         None
     }
@@ -356,32 +365,27 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         target_harness: &crate::compiler::agents::HarnessKind,
         resolved: &NativeResolvedModel<'_>,
         routed_model_id: &str,
+        trace: &crate::routing::RoutingTrace,
     ) -> Option<String> {
         if *target_harness == crate::compiler::agents::HarnessKind::OpenCode {
-            let provider_order = self.routing_settings.provider_order_names();
-            let opencode_probe = self.session.opencode_probe_result();
             let harness_name = target_harness.to_harness_id();
-            let resolved = crate::models::harness_model::resolve_harness_model(
-                crate::models::harness_model::HarnessModelInput {
-                    harness: harness_name.as_str(),
-                    model_id: &resolved.model_id,
-                    provider_constraint: resolved.provider_constraint.as_deref(),
-                    provider_for_order: if resolved.explicit_provider {
-                        None
-                    } else {
-                        resolved.provider_for_order.as_deref()
-                    },
-                    settings_provider_order: provider_order.as_deref(),
-                    opencode_probe: opencode_probe.as_ref(),
-                    pi_probe: None,
-                },
+            let selected = trace
+                .assessments
+                .iter()
+                .find(|assessment| assessment.harness == harness_name.as_str());
+            let launch = crate::models::harness_model::resolve_harness_model(
+                harness_name,
+                &resolved.model_id,
+                selected.and_then(|assessment| assessment.chosen_slug.as_deref()),
+                selected.and_then(|assessment| assessment.chosen_model.as_deref()),
+                resolved.provider_constraint.as_deref(),
+                resolved.provider_for_order.as_deref(),
             );
             // Routing acceptance can succeed without a usable OpenCode probe.
             // Never emit a bare model id in that case: OpenCode requires a
             // provider/model slug, so skip this native projection instead.
-            return (!resolved.harness_model_id.is_empty()
-                && resolved.harness_model_id.contains('/'))
-            .then_some(resolved.harness_model_id);
+            return (!launch.harness_model_id.is_empty() && launch.harness_model_id.contains('/'))
+                .then_some(launch.harness_model_id);
         }
         if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
             return Some(resolved.model_id.clone());

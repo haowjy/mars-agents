@@ -25,7 +25,9 @@ Capability probing for OpenCode, Pi, and Cursor harnesses, with disk-backed cach
 
 Prerequisites: `pi` on PATH; `pi --version` and `pi --help` exit 0. A failed
 `--list-models` does not turn successful help-surface compatibility into incompatibility.
-Empty slugs still yield no Pi runnable paths.
+An empty successful listing yields no Pi runnable paths. A failed listing with
+compatible help and no last-good cache is support-unknown passthrough, not a
+negative model match.
 
 **Stream merging:** probe subprocesses use stdout when non-empty after trim; otherwise stderr.
 Pi 0.75.x experimental builds emit `--help`, `--version`, and `--list-models` on stderr only.
@@ -87,6 +89,11 @@ record `last_error`. Pi/Cursor routing uses their last-good slugs for support,
 but `ListingFailed` rather than listing-implied auth until a later success.
 Background refresh is asynchronous: the first stale command can use the prior
 auth flag; the next command sees the failed refresh.
+If a refresh cannot acquire its lock, it returns usable cached evidence without
+probing or writing; with no usable cache, it may probe for this command only and
+does not persist the result. This avoids racing another writer.
+Pi cache schema 3 invalidates earlier entries rather than inferring listing
+success from an old result's error field.
 
 ### Windows/test cache isolation
 

@@ -115,12 +115,13 @@ merely because a matching slug and an installed binary exist.
 **Consumers serialize `RouteDecisionReport`, never `RoutingTrace` directly.**
 `RouteDecisionReport` uses string labels for all enum fields — decouples JSON shape from internal enum changes.
 
-Report version 2 aggregates `ModelAttemptReport` records, target scope/provenance,
+Report version 3 aggregates `ModelAttemptReport` records, target scope/provenance,
 caller exclusions, and a selected assessment pointer. Build policy owns cross-model
 history; standalone resolution contributes one attempt. `new`/`push`/`select`
 project existing decisions, never evaluate candidates. An exhausted report has no
 selected pointer; a deferred winner can point to an earlier attempt.
-`RouteSummaryReport` is a compact view of the selected attempt only.
+`selected_by_preference` is present in both full attempts and the compact
+`RouteSummaryReport` (selected attempt only).
 
 ### Link filtering rule
 

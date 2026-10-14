@@ -89,7 +89,9 @@ Fallback agent body."#;
         dunce::canonicalize(
             fallback_root
                 .path()
-                .join(".mars/agents/fallback-reviewer.md")
+                .join(".mars")
+                .join("agents")
+                .join("fallback-reviewer.md")
         )
         .unwrap()
     );
@@ -98,7 +100,14 @@ Fallback agent body."#;
     assert_eq!(loaded[0]["name"], "shared");
     assert_eq!(
         json_path(&loaded[0]["source_path"]),
-        dunce::canonicalize(project_root.join(".mars/skills/shared/SKILL.md")).unwrap()
+        dunce::canonicalize(
+            project_root
+                .join(".mars")
+                .join("skills")
+                .join("shared")
+                .join("SKILL.md")
+        )
+        .unwrap()
     );
     assert_eq!(loaded[1]["name"], "fallback-only");
     assert_eq!(
@@ -106,7 +115,10 @@ Fallback agent body."#;
         dunce::canonicalize(
             fallback_root
                 .path()
-                .join(".mars/skills/fallback-only/SKILL.md")
+                .join(".mars")
+                .join("skills")
+                .join("fallback-only")
+                .join("SKILL.md")
         )
         .unwrap()
     );
@@ -118,7 +130,10 @@ Fallback agent body."#;
         dunce::canonicalize(
             fallback_root
                 .path()
-                .join(".mars/skills/fallback-available/SKILL.md")
+                .join(".mars")
+                .join("skills")
+                .join("fallback-available")
+                .join("SKILL.md")
         )
         .unwrap()
     );

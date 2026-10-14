@@ -185,17 +185,21 @@ mod tests {
     use super::*;
 
     fn write_agent(root: &Path, name: &str) -> PathBuf {
-        let path = root.join(".mars/agents").join(format!("{name}.md"));
+        let path = root.join(".mars").join("agents").join(format!("{name}.md"));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "# Agent").unwrap();
-        path
+        dunce::canonicalize(path).unwrap()
     }
 
     fn write_skill(root: &Path, name: &str) -> PathBuf {
-        let path = root.join(".mars/skills").join(name).join("SKILL.md");
+        let path = root
+            .join(".mars")
+            .join("skills")
+            .join(name)
+            .join("SKILL.md");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "# Skill").unwrap();
-        path
+        dunce::canonicalize(path).unwrap()
     }
 
     fn make_fallback(root: &Path) {
@@ -250,7 +254,7 @@ mod tests {
             assert_eq!(roots.layers().count(), 1);
             assert_eq!(
                 roots.agent_file_path("reviewer"),
-                primary.join(".mars/agents/reviewer.md")
+                primary.join(".mars").join("agents").join("reviewer.md")
             );
         }
     }

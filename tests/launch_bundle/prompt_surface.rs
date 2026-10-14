@@ -86,32 +86,41 @@ Fallback agent body."#;
     assert_eq!(bundle["routing"]["harness"], "codex");
     assert_eq!(
         json_path(&bundle["agent_source_path"]),
-        fallback_root
-            .path()
-            .join(".mars/agents/fallback-reviewer.md")
+        dunce::canonicalize(
+            fallback_root
+                .path()
+                .join(".mars/agents/fallback-reviewer.md")
+        )
+        .unwrap()
     );
     let loaded = bundle["skills"]["loaded"].as_array().unwrap();
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded[0]["name"], "shared");
     assert_eq!(
         json_path(&loaded[0]["source_path"]),
-        project_root.join(".mars/skills/shared/SKILL.md")
+        dunce::canonicalize(project_root.join(".mars/skills/shared/SKILL.md")).unwrap()
     );
     assert_eq!(loaded[1]["name"], "fallback-only");
     assert_eq!(
         json_path(&loaded[1]["source_path"]),
-        fallback_root
-            .path()
-            .join(".mars/skills/fallback-only/SKILL.md")
+        dunce::canonicalize(
+            fallback_root
+                .path()
+                .join(".mars/skills/fallback-only/SKILL.md")
+        )
+        .unwrap()
     );
     let available = bundle["skills"]["available"].as_array().unwrap();
     assert_eq!(available.len(), 1);
     assert_eq!(available[0]["name"], "fallback-available");
     assert_eq!(
         json_path(&available[0]["source_path"]),
-        fallback_root
-            .path()
-            .join(".mars/skills/fallback-available/SKILL.md")
+        dunce::canonicalize(
+            fallback_root
+                .path()
+                .join(".mars/skills/fallback-available/SKILL.md")
+        )
+        .unwrap()
     );
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()

@@ -1,9 +1,16 @@
 //! Layered lookup for installed agent and skill content.
 //!
 //! The primary root remains the sole authority for project configuration. A
-//! fallback root contributes only files from its canonical `.mars` store.
+//! fallback root contributes only files from its canonical `.mars` store. A
+//! nonexistent or manifest-less fallback is intentionally ignored because
+//! callers may pass the user content root before it has been initialized.
+//! Harness-specific skill variants resolve beside the selected skill, including
+//! when that skill came from the fallback root.
 
 use std::path::{Path, PathBuf};
+
+use crate::error::MarsError;
+use crate::lock::{ItemKind, LockedItem};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContentScope {
@@ -45,6 +52,11 @@ pub(crate) struct ContentRoots {
     roots: Vec<ContentRoot>,
 }
 
+pub(crate) struct VisibleLockedItems {
+    pub(crate) items: Vec<(ContentScope, LockedItem, PathBuf)>,
+    pub(crate) warnings: Vec<String>,
+}
+
 impl ContentRoots {
     pub(crate) fn new(primary_root: &Path, fallback_root: Option<&Path>) -> Self {
         let primary_root = absolute_path(primary_root);
@@ -53,11 +65,9 @@ impl ContentRoots {
             scope: ContentScope::Root,
         }];
 
-        if let Some(fallback_root) = fallback_root
-            && fallback_root.join("mars.toml").is_file()
-        {
+        if let Some(fallback_root) = fallback_root {
             let fallback_root = absolute_path(fallback_root);
-            if fallback_root != primary_root {
+            if fallback_root != primary_root && fallback_root.join("mars.toml").is_file() {
                 roots.push(ContentRoot {
                     project_root: fallback_root,
                     scope: ContentScope::Fallback,
@@ -84,6 +94,48 @@ impl ContentRoots {
         self.find_file(Path::new("skills").join(skill).join("SKILL.md"))
     }
 
+    /// Return installed items of `kind` that remain visible after layering.
+    ///
+    /// The primary lock is authoritative and load failures remain fatal. A
+    /// fallback lock is optional state, so an unreadable or corrupt one yields
+    /// a warning and causes that entire layer to be skipped.
+    pub(crate) fn visible_locked_items(
+        &self,
+        kind: ItemKind,
+    ) -> Result<VisibleLockedItems, MarsError> {
+        let mut items = Vec::new();
+        let mut warnings = Vec::new();
+
+        for root in self.layers() {
+            let lock = match crate::lock::load(root.project_root()) {
+                Ok(lock) => lock,
+                Err(err) if root.scope() == ContentScope::Fallback => {
+                    warnings.push(format!(
+                        "skipping fallback content from {}: {err}",
+                        root.project_root().display()
+                    ));
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
+            let mars_dir = root.mars_dir();
+
+            for (dest_path, item) in lock.canonical_flat_items() {
+                if item.kind != kind {
+                    continue;
+                }
+
+                let disk_path = dest_path.resolve(&mars_dir);
+                if !self.is_visible(kind, &disk_path) {
+                    continue;
+                }
+                items.push((root.scope(), item, disk_path));
+            }
+        }
+
+        Ok(VisibleLockedItems { items, warnings })
+    }
+
     fn find_file(&self, relative_to_mars: PathBuf) -> PathBuf {
         let primary = self.roots[0].mars_dir().join(&relative_to_mars);
         if primary.is_file() {
@@ -95,6 +147,20 @@ impl ContentRoots {
             .map(|root| root.mars_dir().join(&relative_to_mars))
             .filter(|path| path.is_file())
             .unwrap_or(primary)
+    }
+
+    fn is_visible(&self, kind: ItemKind, disk_path: &Path) -> bool {
+        match kind {
+            ItemKind::Agent => disk_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|name| self.agent_file_path(name) == disk_path),
+            ItemKind::Skill => disk_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| self.skill_file_path(name) == disk_path.join("SKILL.md")),
+            _ => false,
+        }
     }
 }
 

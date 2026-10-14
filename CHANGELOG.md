@@ -12,6 +12,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   source paths; layered list entries also identify their `root` or `fallback`
   scope.
 
+### Changed
+- `agents show` and `skills show` also match content by its installed file or
+  directory stem, not only by the name declared in frontmatter.
+
 ## [0.15.0] - 2026-09-28
 
 ### Breaking

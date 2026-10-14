@@ -66,72 +66,59 @@ pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut entries: Vec<AgentEntry> = Vec::new();
     let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let visible = roots.visible_locked_items(ItemKind::Agent)?;
+    output::print_warnings(&visible.warnings);
 
-    for root in roots.layers() {
-        let lock = crate::lock::load(root.project_root())?;
-        let mars_dir = root.mars_dir();
-
-        for (dest_path, item) in lock.canonical_flat_items() {
-            if item.kind != ItemKind::Agent {
-                continue;
-            }
-
-            let disk_path = dest_path.resolve(&mars_dir);
-            let lookup_name = path_stem(&disk_path);
-            if roots.agent_file_path(&lookup_name) != disk_path {
-                continue;
-            }
-
-            // Filtering never reveals a shadowed fallback item.
-            if let Some(ref filter_source) = args.source
-                && item.source != *filter_source
-            {
-                continue;
-            }
-
-            let content = match std::fs::read_to_string(&disk_path) {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", disk_path.display());
-                    continue;
-                }
-            };
-
-            let fm = match frontmatter::parse(&content) {
-                Ok(fm) => fm,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", disk_path.display());
-                    continue;
-                }
-            };
-
-            let mut diags = Vec::new();
-            let profile = parse_agent_profile(&fm, &mut diags);
-
-            let mode_str = match &profile.mode {
-                Some(m) => m.as_str().to_string(),
-                None => String::new(),
-            };
-            if let Some(ref filter_mode) = args.mode
-                && mode_str != *filter_mode
-            {
-                continue;
-            }
-
-            let name = profile
-                .name
-                .clone()
-                .unwrap_or_else(|| path_stem(&disk_path));
-            let description = profile.description.clone().unwrap_or_default();
-
-            entries.push(AgentEntry {
-                name,
-                description,
-                mode: mode_str,
-                scope: root.scope().as_str().to_string(),
-                source_path: disk_path,
-            });
+    for (scope, item, disk_path) in visible.items {
+        // Filtering never reveals a shadowed fallback item.
+        if let Some(ref filter_source) = args.source
+            && item.source != *filter_source
+        {
+            continue;
         }
+
+        let content = match std::fs::read_to_string(&disk_path) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
+        };
+
+        let fm = match frontmatter::parse(&content) {
+            Ok(fm) => fm,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                continue;
+            }
+        };
+
+        let mut diags = Vec::new();
+        let profile = parse_agent_profile(&fm, &mut diags);
+
+        let mode_str = match &profile.mode {
+            Some(m) => m.as_str().to_string(),
+            None => String::new(),
+        };
+        if let Some(ref filter_mode) = args.mode
+            && mode_str != *filter_mode
+        {
+            continue;
+        }
+
+        let name = profile
+            .name
+            .clone()
+            .unwrap_or_else(|| path_stem(&disk_path));
+        let description = profile.description.clone().unwrap_or_default();
+
+        entries.push(AgentEntry {
+            name,
+            description,
+            mode: mode_str,
+            scope: scope.as_str().to_string(),
+            source_path: disk_path,
+        });
     }
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -184,108 +171,98 @@ fn run_show(
     fallback_root: Option<&std::path::Path>,
 ) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let visible = roots.visible_locked_items(ItemKind::Agent)?;
+    output::print_warnings(&visible.warnings);
 
-    for root in roots.layers() {
-        let lock = crate::lock::load(root.project_root())?;
-        let mars_dir = root.mars_dir();
-        for (dest_path, item) in lock.canonical_flat_items() {
-            if item.kind != ItemKind::Agent {
+    for (scope, _item, disk_path) in visible.items {
+        let stem = path_stem(&disk_path);
+
+        let content = match std::fs::read_to_string(&disk_path) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
                 continue;
             }
+        };
 
-            let disk_path = dest_path.resolve(&mars_dir);
-            let stem = path_stem(&disk_path);
-            if roots.agent_file_path(&stem) != disk_path {
+        let mut diags = Vec::new();
+        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", disk_path.display());
                 continue;
             }
+        };
 
-            let content = match std::fs::read_to_string(&disk_path) {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", disk_path.display());
-                    continue;
-                }
-            };
-
-            let mut diags = Vec::new();
-            let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
-                Ok(p) => p,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", disk_path.display());
-                    continue;
-                }
-            };
-
-            let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
-            if !stem.eq_ignore_ascii_case(name) && !agent_name.eq_ignore_ascii_case(name) {
-                continue;
-            }
-
-            let mode_str = profile.mode.as_ref().map(|m| m.as_str()).unwrap_or("");
-            let harness_str = profile
-                .harness
-                .as_ref()
-                .map(|h| h.to_harness_id().as_str())
-                .unwrap_or("");
-            let model_str = profile.model.as_deref().unwrap_or("");
-            let approval_str = profile
-                .approval
-                .as_ref()
-                .map(|a| a.as_str())
-                .unwrap_or_default();
-            let sandbox_str = profile
-                .sandbox
-                .as_ref()
-                .map(|s| s.as_str())
-                .unwrap_or_default();
-            let effort_str = profile
-                .effort
-                .as_ref()
-                .map(|e| e.as_str())
-                .unwrap_or_default();
-            let description_str = profile.description.as_deref().unwrap_or("");
-            let scope = root.scope().as_str();
-
-            if json {
-                output::print_json(&serde_json::json!({
-                    "name": agent_name,
-                    "description": description_str,
-                    "mode": mode_str,
-                    "harness": harness_str,
-                    "model": model_str,
-                    "skills": profile.skills.all(),
-                    "skills_structured": profile.skills,
-                    "subagents": profile.subagents,
-                    "approval": approval_str,
-                    "sandbox": sandbox_str,
-                    "effort": effort_str,
-                    "tools": profile.tools,
-                    "disallowed-tools": profile.disallowed_tools,
-                    "tools-denied": profile.tools_denied,
-                    "scope": scope,
-                    "source_path": disk_path,
-                }));
-            } else {
-                println!("name:        {agent_name}");
-                println!("description: {description_str}");
-                println!("mode:        {mode_str}");
-                println!("harness:     {harness_str}");
-                println!("model:       {model_str}");
-                println!("approval:    {approval_str}");
-                println!("sandbox:     {sandbox_str}");
-                println!("effort:      {effort_str}");
-                println!("scope:       {scope}");
-                println!("source_path: {}", disk_path.display());
-                print_str_list("skills.load", &profile.skills.load);
-                print_str_list("skills.available", &profile.skills.available);
-                print_str_list("subagents", &profile.subagents);
-                print_str_list("tools", &profile.tools);
-                print_str_list("disallowed-tools", &profile.disallowed_tools);
-                print_str_list("tools-denied", &profile.tools_denied);
-            }
-
-            return Ok(0);
+        let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
+        if !stem.eq_ignore_ascii_case(name) && !agent_name.eq_ignore_ascii_case(name) {
+            continue;
         }
+
+        let mode_str = profile.mode.as_ref().map(|m| m.as_str()).unwrap_or("");
+        let harness_str = profile
+            .harness
+            .as_ref()
+            .map(|h| h.to_harness_id().as_str())
+            .unwrap_or("");
+        let model_str = profile.model.as_deref().unwrap_or("");
+        let approval_str = profile
+            .approval
+            .as_ref()
+            .map(|a| a.as_str())
+            .unwrap_or_default();
+        let sandbox_str = profile
+            .sandbox
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        let effort_str = profile
+            .effort
+            .as_ref()
+            .map(|e| e.as_str())
+            .unwrap_or_default();
+        let description_str = profile.description.as_deref().unwrap_or("");
+        let scope = scope.as_str();
+
+        if json {
+            output::print_json(&serde_json::json!({
+                "name": agent_name,
+                "description": description_str,
+                "mode": mode_str,
+                "harness": harness_str,
+                "model": model_str,
+                "skills": profile.skills.all(),
+                "skills_structured": profile.skills,
+                "subagents": profile.subagents,
+                "approval": approval_str,
+                "sandbox": sandbox_str,
+                "effort": effort_str,
+                "tools": profile.tools,
+                "disallowed-tools": profile.disallowed_tools,
+                "tools-denied": profile.tools_denied,
+                "scope": scope,
+                "source_path": disk_path,
+            }));
+        } else {
+            println!("name:        {agent_name}");
+            println!("description: {description_str}");
+            println!("mode:        {mode_str}");
+            println!("harness:     {harness_str}");
+            println!("model:       {model_str}");
+            println!("approval:    {approval_str}");
+            println!("sandbox:     {sandbox_str}");
+            println!("effort:      {effort_str}");
+            println!("scope:       {scope}");
+            println!("source_path: {}", disk_path.display());
+            print_str_list("skills.load", &profile.skills.load);
+            print_str_list("skills.available", &profile.skills.available);
+            print_str_list("subagents", &profile.subagents);
+            print_str_list("tools", &profile.tools);
+            print_str_list("disallowed-tools", &profile.disallowed_tools);
+            print_str_list("tools-denied", &profile.tools_denied);
+        }
+
+        return Ok(0);
     }
 
     eprintln!("error: agent `{name}` not found");

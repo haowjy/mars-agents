@@ -440,6 +440,39 @@ Implement changes.
     }
 
     #[test]
+    fn inventory_uses_primary_agent_when_fallback_has_the_same_file_name() {
+        let temp = TempDir::new().unwrap();
+        let primary_root = temp.path().join("primary");
+        let fallback_root = temp.path().join("fallback");
+        fs::create_dir_all(&fallback_root).unwrap();
+        fs::write(fallback_root.join("mars.toml"), "").unwrap();
+        write_agent(
+            &primary_root.join(".mars"),
+            "worker",
+            &sample_agent_content("worker", "subagent", "Primary worker"),
+        );
+        write_agent(
+            &fallback_root.join(".mars"),
+            "worker",
+            &sample_agent_content("worker", "subagent", "Fallback worker"),
+        );
+        write_agent(
+            &fallback_root.join(".mars"),
+            "extra",
+            &sample_agent_content("extra", "subagent", "Fallback extra"),
+        );
+        let roots = ContentRoots::new(&primary_root, Some(&fallback_root));
+
+        let mut warnings = Vec::new();
+        let inventory = build_inventory_prompt(&roots, &[], "codex", &[], &mut warnings).unwrap();
+
+        assert!(inventory.contains("Primary worker"));
+        assert!(!inventory.contains("Fallback worker"));
+        assert!(inventory.contains("Fallback extra"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
     fn inventory_with_manifest_renders_split_sections_for_claude() {
         let temp = TempDir::new().unwrap();
         let project_root = temp.path();

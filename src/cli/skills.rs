@@ -73,71 +73,60 @@ pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut entries: Vec<SkillEntry> = Vec::new();
     let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let visible = roots.visible_locked_items(ItemKind::Skill)?;
+    output::print_warnings(&visible.warnings);
 
-    for root in roots.layers() {
-        let lock = crate::lock::load(root.project_root())?;
-        let mars_dir = root.mars_dir();
-        for (dest_path, item) in lock.canonical_flat_items() {
-            if item.kind != ItemKind::Skill {
-                continue;
-            }
+    for (scope, item, disk_path) in visible.items {
+        let skill_md = disk_path.join("SKILL.md");
 
-            let disk_path = dest_path.resolve(&mars_dir);
-            let skill_md = disk_path.join("SKILL.md");
-            let lookup_name = dir_name(&disk_path);
-            if roots.skill_file_path(&lookup_name) != skill_md {
-                continue;
-            }
-
-            // Filtering never reveals a shadowed fallback item.
-            if let Some(ref filter_source) = args.source
-                && item.source != *filter_source
-            {
-                continue;
-            }
-
-            let content = match std::fs::read_to_string(&skill_md) {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", skill_md.display());
-                    continue;
-                }
-            };
-
-            let fm = match frontmatter::parse(&content) {
-                Ok(fm) => fm,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", skill_md.display());
-                    continue;
-                }
-            };
-
-            let mut diags = Vec::new();
-            let profile = parse_skill_profile(&fm, &mut diags);
-
-            if args.model_invocable && !profile.model_invocable {
-                continue;
-            }
-
-            let type_str = profile.skill_type.clone().unwrap_or_default();
-            if let Some(ref filter_type) = args.skill_type
-                && type_str != *filter_type
-            {
-                continue;
-            }
-
-            let name = profile.name.clone().unwrap_or_else(|| dir_name(&disk_path));
-            let description = profile.description.clone().unwrap_or_default();
-
-            entries.push(SkillEntry {
-                name,
-                description,
-                skill_type: type_str,
-                model_invocable: profile.model_invocable,
-                scope: root.scope().as_str().to_string(),
-                source_path: skill_md,
-            });
+        // Filtering never reveals a shadowed fallback item.
+        if let Some(ref filter_source) = args.source
+            && item.source != *filter_source
+        {
+            continue;
         }
+
+        let content = match std::fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
+                continue;
+            }
+        };
+
+        let fm = match frontmatter::parse(&content) {
+            Ok(fm) => fm,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
+                continue;
+            }
+        };
+
+        let mut diags = Vec::new();
+        let profile = parse_skill_profile(&fm, &mut diags);
+
+        if args.model_invocable && !profile.model_invocable {
+            continue;
+        }
+
+        let type_str = profile.skill_type.clone().unwrap_or_default();
+        if let Some(ref filter_type) = args.skill_type
+            && type_str != *filter_type
+        {
+            continue;
+        }
+
+        let name = profile.name.clone().unwrap_or_else(|| dir_name(&disk_path));
+        let description = profile.description.clone().unwrap_or_default();
+
+        entries.push(SkillEntry {
+            name,
+            description,
+            skill_type: type_str,
+            model_invocable: profile.model_invocable,
+            scope: scope.as_str().to_string(),
+            source_path: skill_md,
+        });
     }
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -190,76 +179,66 @@ fn run_show(
     fallback_root: Option<&std::path::Path>,
 ) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let visible = roots.visible_locked_items(ItemKind::Skill)?;
+    output::print_warnings(&visible.warnings);
 
-    for root in roots.layers() {
-        let lock = crate::lock::load(root.project_root())?;
-        let mars_dir = root.mars_dir();
-        for (dest_path, item) in lock.canonical_flat_items() {
-            if item.kind != ItemKind::Skill {
+    for (scope, _item, disk_path) in visible.items {
+        let skill_md = disk_path.join("SKILL.md");
+        let fallback = dir_name(&disk_path);
+
+        let content = match std::fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
                 continue;
             }
+        };
 
-            let disk_path = dest_path.resolve(&mars_dir);
-            let skill_md = disk_path.join("SKILL.md");
-            let fallback = dir_name(&disk_path);
-            if roots.skill_file_path(&fallback) != skill_md {
+        let mut diags = Vec::new();
+        let (profile, _fm) = match parse_skill_content(&content, &mut diags) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!("warning: skipping {}: {err}", skill_md.display());
                 continue;
             }
+        };
 
-            let content = match std::fs::read_to_string(&skill_md) {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", skill_md.display());
-                    continue;
-                }
-            };
-
-            let mut diags = Vec::new();
-            let (profile, _fm) = match parse_skill_content(&content, &mut diags) {
-                Ok(p) => p,
-                Err(err) => {
-                    eprintln!("warning: skipping {}: {err}", skill_md.display());
-                    continue;
-                }
-            };
-
-            let skill_name = profile.name.as_deref().unwrap_or(fallback.as_str());
-            if !fallback.eq_ignore_ascii_case(name) && !skill_name.eq_ignore_ascii_case(name) {
-                continue;
-            }
-
-            let description_str = profile.description.as_deref().unwrap_or("");
-            let type_str = profile.skill_type.as_deref().unwrap_or("");
-            let scope = root.scope().as_str();
-
-            if json {
-                output::print_json(&serde_json::json!({
-                    "name": skill_name,
-                    "description": description_str,
-                    "type": type_str,
-                    "model-invocable": profile.model_invocable,
-                    "user-invocable": profile.user_invocable,
-                    "tools": profile.tools,
-                    "disallowed-tools": profile.disallowed_tools,
-                    "tools-denied": profile.tools_denied,
-                    "scope": scope,
-                    "source_path": skill_md,
-                }));
-            } else {
-                println!("name:          {skill_name}");
-                println!("description:   {description_str}");
-                println!("type:          {type_str}");
-                println!("model-invocable: {}", profile.model_invocable);
-                println!("user-invocable:  {}", profile.user_invocable);
-                println!("scope:         {scope}");
-                println!("source_path:   {}", skill_md.display());
-                print_str_list("tools", &profile.tools);
-                print_str_list("disallowed-tools", &profile.disallowed_tools);
-                print_str_list("tools-denied", &profile.tools_denied);
-            }
-
-            return Ok(0);
+        let skill_name = profile.name.as_deref().unwrap_or(fallback.as_str());
+        if !fallback.eq_ignore_ascii_case(name) && !skill_name.eq_ignore_ascii_case(name) {
+            continue;
         }
+
+        let description_str = profile.description.as_deref().unwrap_or("");
+        let type_str = profile.skill_type.as_deref().unwrap_or("");
+        let scope = scope.as_str();
+
+        if json {
+            output::print_json(&serde_json::json!({
+                "name": skill_name,
+                "description": description_str,
+                "type": type_str,
+                "model-invocable": profile.model_invocable,
+                "user-invocable": profile.user_invocable,
+                "tools": profile.tools,
+                "disallowed-tools": profile.disallowed_tools,
+                "tools-denied": profile.tools_denied,
+                "scope": scope,
+                "source_path": skill_md,
+            }));
+        } else {
+            println!("name:          {skill_name}");
+            println!("description:   {description_str}");
+            println!("type:          {type_str}");
+            println!("model-invocable: {}", profile.model_invocable);
+            println!("user-invocable:  {}", profile.user_invocable);
+            println!("scope:         {scope}");
+            println!("source_path:   {}", skill_md.display());
+            print_str_list("tools", &profile.tools);
+            print_str_list("disallowed-tools", &profile.disallowed_tools);
+            print_str_list("tools-denied", &profile.tools_denied);
+        }
+
+        return Ok(0);
     }
 
     eprintln!("error: skill `{name}` not found");

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-14
+
 ### Added
 - `--fallback-root` layers missing agents and skills from a secondary Mars
   project for launch bundles and the `agents` / `skills` inspection commands,

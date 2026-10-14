@@ -1,6 +1,9 @@
 //! `mars agents` — list and inspect agents from the .mars/ canonical store.
 
+use std::path::PathBuf;
+
 use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
+use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
@@ -12,11 +15,17 @@ struct AgentEntry {
     name: String,
     description: String,
     mode: String,
+    scope: String,
+    source_path: PathBuf,
 }
 
 /// Arguments for `mars agents`.
 #[derive(Debug, clap::Args)]
 pub struct AgentsArgs {
+    /// Secondary Mars project used only for missing agents.
+    #[arg(long, global = true)]
+    pub fallback_root: Option<PathBuf>,
+
     /// Filter by mode (primary or subagent).
     ///
     /// Global so it is accepted both as `mars agents --mode ...` and on the
@@ -47,30 +56,27 @@ pub enum AgentsCommand {
 pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(AgentsCommand::List) => run_list(args, ctx, json),
-        Some(AgentsCommand::Show { name }) => run_show(name, ctx, json),
+        Some(AgentsCommand::Show { name }) => {
+            run_show(name, ctx, json, args.fallback_root.as_deref())
+        }
         None => run_list(args, ctx, json),
     }
 }
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
-
     let mut entries: Vec<AgentEntry> = Vec::new();
+    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let visible = roots.visible_locked_items(ItemKind::Agent)?;
+    output::print_warnings(&visible.warnings);
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Agent {
-            continue;
-        }
-
-        // source filter
+    for (scope, item, disk_path) in visible.items {
+        // Filtering never reveals a shadowed fallback item.
         if let Some(ref filter_source) = args.source
             && item.source != *filter_source
         {
             continue;
         }
 
-        let disk_path = dest_path.resolve(&mars_dir);
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(c) => c,
             Err(err) => {
@@ -90,7 +96,6 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let mut diags = Vec::new();
         let profile = parse_agent_profile(&fm, &mut diags);
 
-        // mode filter
         let mode_str = match &profile.mode {
             Some(m) => m.as_str().to_string(),
             None => String::new(),
@@ -111,6 +116,8 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             name,
             description,
             mode: mode_str,
+            scope: scope.as_str().to_string(),
+            source_path: disk_path,
         });
     }
 
@@ -135,11 +142,20 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .max()
                 .unwrap_or(4)
                 .max(4);
-            println!("{:<name_w$}  {:<mode_w$}  DESCRIPTION", "NAME", "MODE");
+            let scope_w = entries
+                .iter()
+                .map(|e| e.scope.len())
+                .max()
+                .unwrap_or(5)
+                .max(5);
+            println!(
+                "{:<name_w$}  {:<mode_w$}  {:<scope_w$}  DESCRIPTION",
+                "NAME", "MODE", "SCOPE"
+            );
             for e in &entries {
                 println!(
-                    "{:<name_w$}  {:<mode_w$}  {}",
-                    e.name, e.mode, e.description
+                    "{:<name_w$}  {:<mode_w$}  {:<scope_w$}  {}",
+                    e.name, e.mode, e.scope, e.description
                 );
             }
         }
@@ -148,16 +164,19 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     Ok(0)
 }
 
-fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
+fn run_show(
+    name: &str,
+    ctx: &super::MarsContext,
+    json: bool,
+    fallback_root: Option<&std::path::Path>,
+) -> Result<i32, MarsError> {
+    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let visible = roots.visible_locked_items(ItemKind::Agent)?;
+    output::print_warnings(&visible.warnings);
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Agent {
-            continue;
-        }
+    for (scope, _item, disk_path) in visible.items {
+        let stem = path_stem(&disk_path);
 
-        let disk_path = dest_path.resolve(&mars_dir);
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(c) => c,
             Err(err) => {
@@ -175,9 +194,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             }
         };
 
-        let stem = path_stem(&disk_path);
         let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
-        if !agent_name.eq_ignore_ascii_case(name) {
+        if !stem.eq_ignore_ascii_case(name) && !agent_name.eq_ignore_ascii_case(name) {
             continue;
         }
 
@@ -204,6 +222,7 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             .map(|e| e.as_str())
             .unwrap_or_default();
         let description_str = profile.description.as_deref().unwrap_or("");
+        let scope = scope.as_str();
 
         if json {
             output::print_json(&serde_json::json!({
@@ -221,6 +240,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
                 "tools": profile.tools,
                 "disallowed-tools": profile.disallowed_tools,
                 "tools-denied": profile.tools_denied,
+                "scope": scope,
+                "source_path": disk_path,
             }));
         } else {
             println!("name:        {agent_name}");
@@ -231,6 +252,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             println!("approval:    {approval_str}");
             println!("sandbox:     {sandbox_str}");
             println!("effort:      {effort_str}");
+            println!("scope:       {scope}");
+            println!("source_path: {}", disk_path.display());
             print_str_list("skills.load", &profile.skills.load);
             print_str_list("skills.available", &profile.skills.available);
             print_str_list("subagents", &profile.subagents);

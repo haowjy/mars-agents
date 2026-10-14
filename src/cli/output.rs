@@ -13,6 +13,12 @@ use crate::sync::SyncReport;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::managed_cmd;
 
+pub fn print_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 /// Check if colored output should be used.
 ///
 /// Respects `NO_COLOR` env var (https://no-color.org/).

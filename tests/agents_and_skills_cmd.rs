@@ -12,6 +12,7 @@
 mod common;
 
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 
 use common::*;
 
@@ -32,6 +33,22 @@ type: principle
 model-invocable: false
 ---
 # Planning
+";
+
+const FALLBACK_AGENT_CONTENT: &str = "---
+name: worker
+description: Fallback worker
+mode: subagent
+---
+# Worker
+";
+
+const FALLBACK_SKILL_CONTENT: &str = "---
+name: review
+description: Fallback review helper
+type: guardrail
+---
+# Review
 ";
 
 // ── mars agents --json ────────────────────────────────────────────────────────
@@ -148,6 +165,285 @@ fn agents_show_not_found_exits_nonzero() {
         !status.success(),
         "agents show of missing agent must exit non-zero"
     );
+}
+
+#[test]
+fn fallback_root_layers_agent_and_skill_lists_with_scope() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "project-src",
+        &[("orchestrator", AGENT_CONTENT)],
+        &[("planning", SKILL_CONTENT)],
+    );
+    let fallback = setup_synced_project(
+        &dir,
+        "fallback",
+        "fallback-src",
+        &[("worker", FALLBACK_AGENT_CONTENT)],
+        &[("review", FALLBACK_SKILL_CONTENT)],
+    );
+
+    let agents_output = mars()
+        .args([
+            "--json",
+            "agents",
+            "list",
+            "--root",
+            project.to_str().unwrap(),
+            "--fallback-root",
+            fallback.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(agents_output.status.success());
+    let agents: serde_json::Value = serde_json::from_slice(&agents_output.stdout).unwrap();
+    let agents = agents["agents"].as_array().unwrap();
+    assert_eq!(
+        agents
+            .iter()
+            .find(|entry| entry["name"] == "orchestrator")
+            .unwrap()["scope"],
+        "root"
+    );
+    let worker = agents
+        .iter()
+        .find(|entry| entry["name"] == "worker")
+        .unwrap();
+    assert_eq!(worker["scope"], "fallback");
+    let canonical_fallback = dunce::canonicalize(&fallback).unwrap();
+    assert!(
+        std::path::Path::new(worker["source_path"].as_str().unwrap())
+            .starts_with(&canonical_fallback)
+    );
+
+    let skills_output = mars()
+        .args([
+            "--json",
+            "skills",
+            "list",
+            "--root",
+            project.to_str().unwrap(),
+            "--fallback-root",
+            fallback.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(skills_output.status.success());
+    let skills: serde_json::Value = serde_json::from_slice(&skills_output.stdout).unwrap();
+    let skills = skills["skills"].as_array().unwrap();
+    assert_eq!(
+        skills
+            .iter()
+            .find(|entry| entry["name"] == "planning")
+            .unwrap()["scope"],
+        "root"
+    );
+    let review = skills
+        .iter()
+        .find(|entry| entry["name"] == "review")
+        .unwrap();
+    assert_eq!(review["scope"], "fallback");
+    assert!(
+        std::path::Path::new(review["source_path"].as_str().unwrap())
+            .starts_with(&canonical_fallback)
+    );
+}
+
+#[test]
+fn fallback_collisions_stay_shadowed_before_filters_and_show_uses_project_copy() {
+    let dir = TempDir::new().unwrap();
+    let project_agent = "---\nname: worker\ndescription: Project worker\nmode: primary\n---\n";
+    let fallback_agent = "---\nname: worker\ndescription: Fallback worker\nmode: subagent\n---\n";
+    let project_skill = "---\nname: shared\ndescription: Project skill\ntype: principle\n---\n";
+    let fallback_skill = "---\nname: shared\ndescription: Fallback skill\ntype: guardrail\n---\n";
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "project-src",
+        &[("worker", project_agent)],
+        &[("shared", project_skill)],
+    );
+    let fallback = setup_synced_project(
+        &dir,
+        "fallback",
+        "fallback-src",
+        &[("worker", fallback_agent)],
+        &[("shared", fallback_skill)],
+    );
+
+    for filter in [["--mode", "subagent"], ["--source", "fallback-src"]] {
+        let output = offline_mars(dir.path())
+            .args([
+                "--json",
+                "agents",
+                "list",
+                filter[0],
+                filter[1],
+                "--root",
+                project.to_str().unwrap(),
+                "--fallback-root",
+                fallback.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["agents"], serde_json::json!([]));
+    }
+
+    for filter in [["--type", "guardrail"], ["--source", "fallback-src"]] {
+        let output = offline_mars(dir.path())
+            .args([
+                "--json",
+                "skills",
+                "list",
+                filter[0],
+                filter[1],
+                "--root",
+                project.to_str().unwrap(),
+                "--fallback-root",
+                fallback.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["skills"], serde_json::json!([]));
+    }
+
+    let agent_output = offline_mars(dir.path())
+        .args([
+            "--json",
+            "agents",
+            "show",
+            "worker",
+            "--root",
+            project.to_str().unwrap(),
+            "--fallback-root",
+            fallback.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(agent_output.status.success());
+    let agent: serde_json::Value = serde_json::from_slice(&agent_output.stdout).unwrap();
+    assert_eq!(agent["description"], "Project worker");
+    assert_eq!(agent["scope"], "root");
+
+    let skill_output = offline_mars(dir.path())
+        .args([
+            "--json",
+            "skills",
+            "show",
+            "shared",
+            "--root",
+            project.to_str().unwrap(),
+            "--fallback-root",
+            fallback.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(skill_output.status.success());
+    let skill: serde_json::Value = serde_json::from_slice(&skill_output.stdout).unwrap();
+    assert_eq!(skill["description"], "Project skill");
+    assert_eq!(skill["scope"], "root");
+}
+
+#[test]
+fn fresh_and_nonexistent_fallback_roots_are_silent_noops_for_cli_lists() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "project-src",
+        &[("orchestrator", AGENT_CONTENT)],
+        &[("planning", SKILL_CONTENT)],
+    );
+    let fresh = dir.child("fresh-fallback");
+    fresh.create_dir_all().unwrap();
+    fresh.child("mars.toml").write_str("").unwrap();
+    let nonexistent = dir.child("nonexistent-fallback");
+
+    for fallback in [fresh.path(), nonexistent.path()] {
+        for (command, envelope, expected_name) in [
+            ("agents", "agents", "orchestrator"),
+            ("skills", "skills", "planning"),
+        ] {
+            let output = offline_mars(dir.path())
+                .args([
+                    "--json",
+                    command,
+                    "list",
+                    "--root",
+                    project.to_str().unwrap(),
+                    "--fallback-root",
+                    fallback.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(
+                output.stderr.is_empty(),
+                "unexpected stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(
+                json[envelope]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["name"] == expected_name)
+            );
+        }
+    }
+}
+
+#[test]
+fn corrupt_fallback_lock_warns_and_skips_fallback_content() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "project-src",
+        &[("orchestrator", AGENT_CONTENT)],
+        &[("planning", SKILL_CONTENT)],
+    );
+    let fallback = setup_synced_project(
+        &dir,
+        "fallback",
+        "fallback-src",
+        &[("worker", FALLBACK_AGENT_CONTENT)],
+        &[("review", FALLBACK_SKILL_CONTENT)],
+    );
+    std::fs::write(fallback.join("mars.lock"), "not valid toml = [").unwrap();
+
+    for (command, envelope, kept_name, skipped_name) in [
+        ("agents", "agents", "orchestrator", "worker"),
+        ("skills", "skills", "planning", "review"),
+    ] {
+        let output = offline_mars(dir.path())
+            .args([
+                "--json",
+                command,
+                "list",
+                "--root",
+                project.to_str().unwrap(),
+                "--fallback-root",
+                fallback.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("warning:"), "{stderr}");
+        assert!(stderr.contains("mars.lock"), "{stderr}");
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let entries = json[envelope].as_array().unwrap();
+        assert!(entries.iter().any(|entry| entry["name"] == kept_name));
+        assert!(!entries.iter().any(|entry| entry["name"] == skipped_name));
+    }
 }
 
 // ── mars skills --json ────────────────────────────────────────────────────────

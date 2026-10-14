@@ -1,6 +1,7 @@
 //! `mars build` — build artifacts from static project state.
 
 use clap::{ArgAction, ValueEnum};
+use std::path::PathBuf;
 
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
@@ -92,6 +93,10 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub agent: Option<String>,
 
+    /// Secondary Mars project used only for missing agents and skills.
+    #[arg(long)]
+    pub fallback_root: Option<PathBuf>,
+
     /// Override model token or canonical model id.
     #[arg(long)]
     pub model: Option<String>,
@@ -146,6 +151,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         ctx,
         LaunchBundleRequest {
             agent: args.agent.clone(),
+            fallback_root: args.fallback_root.clone(),
             model: args.model.clone(),
             literal_model: args.literal_model,
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),

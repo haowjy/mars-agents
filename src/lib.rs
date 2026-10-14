@@ -4,6 +4,7 @@ pub mod build;
 pub mod cli;
 pub(crate) mod compiler;
 pub mod config;
+pub(crate) mod content;
 pub mod curation;
 pub mod diagnostic;
 pub(crate) mod dialect;

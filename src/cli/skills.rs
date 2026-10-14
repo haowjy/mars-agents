@@ -1,6 +1,9 @@
 //! `mars skills` — list and inspect skills from the .mars/ canonical store.
 
+use std::path::PathBuf;
+
 use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
+use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
@@ -15,11 +18,17 @@ struct SkillEntry {
     skill_type: String,
     #[serde(rename = "model-invocable")]
     model_invocable: bool,
+    scope: String,
+    source_path: PathBuf,
 }
 
 /// Arguments for `mars skills`.
 #[derive(Debug, clap::Args)]
 pub struct SkillsArgs {
+    /// Secondary Mars project used only for missing skills.
+    #[arg(long, global = true)]
+    pub fallback_root: Option<PathBuf>,
+
     /// Filter by skill type (e.g. guardrail, reference, principle).
     ///
     /// Global so it is accepted both as `mars skills --type ...` and on the
@@ -54,31 +63,29 @@ pub enum SkillsCommand {
 pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(SkillsCommand::List) => run_list(args, ctx, json),
-        Some(SkillsCommand::Show { name }) => run_show(name, ctx, json),
+        Some(SkillsCommand::Show { name }) => {
+            run_show(name, ctx, json, args.fallback_root.as_deref())
+        }
         None => run_list(args, ctx, json),
     }
 }
 
 fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
-
     let mut entries: Vec<SkillEntry> = Vec::new();
+    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let visible = roots.visible_locked_items(ItemKind::Skill)?;
+    output::print_warnings(&visible.warnings);
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Skill {
-            continue;
-        }
+    for (scope, item, disk_path) in visible.items {
+        let skill_md = disk_path.join("SKILL.md");
 
-        // source filter
+        // Filtering never reveals a shadowed fallback item.
         if let Some(ref filter_source) = args.source
             && item.source != *filter_source
         {
             continue;
         }
 
-        let disk_path = dest_path.resolve(&mars_dir);
-        let skill_md = disk_path.join("SKILL.md");
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
             Err(err) => {
@@ -98,12 +105,10 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let mut diags = Vec::new();
         let profile = parse_skill_profile(&fm, &mut diags);
 
-        // model_invocable filter
         if args.model_invocable && !profile.model_invocable {
             continue;
         }
 
-        // type filter
         let type_str = profile.skill_type.clone().unwrap_or_default();
         if let Some(ref filter_type) = args.skill_type
             && type_str != *filter_type
@@ -119,6 +124,8 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             description,
             skill_type: type_str,
             model_invocable: profile.model_invocable,
+            scope: scope.as_str().to_string(),
+            source_path: skill_md,
         });
     }
 
@@ -142,15 +149,21 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .max()
                 .unwrap_or(4)
                 .max(4);
+            let scope_w = entries
+                .iter()
+                .map(|e| e.scope.len())
+                .max()
+                .unwrap_or(5)
+                .max(5);
             println!(
-                "{:<name_w$}  {:<type_w$}  {:<5}  DESCRIPTION",
-                "NAME", "TYPE", "M-INV"
+                "{:<name_w$}  {:<type_w$}  {:<5}  {:<scope_w$}  DESCRIPTION",
+                "NAME", "TYPE", "M-INV", "SCOPE"
             );
             for e in &entries {
                 let inv = if e.model_invocable { "yes" } else { "no" };
                 println!(
-                    "{:<name_w$}  {:<type_w$}  {:<5}  {}",
-                    e.name, e.skill_type, inv, e.description
+                    "{:<name_w$}  {:<type_w$}  {:<5}  {:<scope_w$}  {}",
+                    e.name, e.skill_type, inv, e.scope, e.description
                 );
             }
         }
@@ -159,17 +172,20 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     Ok(0)
 }
 
-fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
+fn run_show(
+    name: &str,
+    ctx: &super::MarsContext,
+    json: bool,
+    fallback_root: Option<&std::path::Path>,
+) -> Result<i32, MarsError> {
+    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let visible = roots.visible_locked_items(ItemKind::Skill)?;
+    output::print_warnings(&visible.warnings);
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Skill {
-            continue;
-        }
-
-        let disk_path = dest_path.resolve(&mars_dir);
+    for (scope, _item, disk_path) in visible.items {
         let skill_md = disk_path.join("SKILL.md");
+        let fallback = dir_name(&disk_path);
+
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
             Err(err) => {
@@ -187,14 +203,14 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             }
         };
 
-        let fallback = dir_name(&disk_path);
         let skill_name = profile.name.as_deref().unwrap_or(fallback.as_str());
-        if !skill_name.eq_ignore_ascii_case(name) {
+        if !fallback.eq_ignore_ascii_case(name) && !skill_name.eq_ignore_ascii_case(name) {
             continue;
         }
 
         let description_str = profile.description.as_deref().unwrap_or("");
         let type_str = profile.skill_type.as_deref().unwrap_or("");
+        let scope = scope.as_str();
 
         if json {
             output::print_json(&serde_json::json!({
@@ -206,6 +222,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
                 "tools": profile.tools,
                 "disallowed-tools": profile.disallowed_tools,
                 "tools-denied": profile.tools_denied,
+                "scope": scope,
+                "source_path": skill_md,
             }));
         } else {
             println!("name:          {skill_name}");
@@ -213,6 +231,8 @@ fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, Mar
             println!("type:          {type_str}");
             println!("model-invocable: {}", profile.model_invocable);
             println!("user-invocable:  {}", profile.user_invocable);
+            println!("scope:         {scope}");
+            println!("source_path:   {}", skill_md.display());
             print_str_list("tools", &profile.tools);
             print_str_list("disallowed-tools", &profile.disallowed_tools);
             print_str_list("tools-denied", &profile.tools_denied);

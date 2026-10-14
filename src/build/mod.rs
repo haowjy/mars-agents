@@ -6,6 +6,7 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
+use crate::content::ContentRoots;
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
@@ -21,6 +22,7 @@ pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
+    pub fallback_root: Option<PathBuf>,
     pub model: Option<String>,
     pub literal_model: bool,
     pub harness: Option<String>,
@@ -43,9 +45,11 @@ pub fn build_launch_bundle(
     let mut warnings: Vec<String> = Vec::new();
     let profile: AgentProfile;
     let agent_body: Option<String>;
+    let agent_source_path: Option<PathBuf>;
+    let content_roots = ContentRoots::new(&ctx.project_root, request.fallback_root.as_deref());
 
     if let Some(agent) = request.agent.as_deref() {
-        let agent_path = agent_file_path(&ctx.project_root, agent);
+        let agent_path = content_roots.agent_file_path(agent);
         let agent_content =
             std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
                 operation: "read launch bundle agent".to_string(),
@@ -80,10 +84,12 @@ pub fn build_launch_bundle(
                 .map(|diag| format!("agent `{agent}`: {}", diag.message())),
         );
         agent_body = Some(frontmatter.body().to_string());
+        agent_source_path = Some(agent_path);
         profile = parsed_profile;
     } else {
         profile = empty_agent_profile();
         agent_body = None;
+        agent_source_path = None;
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
@@ -126,12 +132,11 @@ pub fn build_launch_bundle(
         _ => err,
     };
 
-    let mars_dir = ctx.project_root.join(".mars");
     let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)
         .map_err(with_selection_report)?;
 
     let prompt = compile_prompt_surface(
-        &mars_dir,
+        &content_roots,
         agent_body.as_deref().unwrap_or(""),
         &effective_skills,
         &request.extra_skills,
@@ -151,6 +156,7 @@ pub fn build_launch_bundle(
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
         agent: request.agent,
+        agent_source_path,
         agent_body,
         routing: policy.routing,
         execution_policy: policy.execution_policy,
@@ -208,13 +214,6 @@ fn load_effective_project_config_or_default(
         }
         Err(err) => Err(err),
     }
-}
-
-fn agent_file_path(project_root: &std::path::Path, agent: &str) -> PathBuf {
-    project_root
-        .join(".mars")
-        .join("agents")
-        .join(format!("{agent}.md"))
 }
 
 fn resolve_bundle_tools(

@@ -1,6 +1,9 @@
 //! `mars agents` — list and inspect agents from the .mars/ canonical store.
 
+use std::path::PathBuf;
+
 use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
+use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
@@ -12,11 +15,17 @@ struct AgentEntry {
     name: String,
     description: String,
     mode: String,
+    scope: String,
+    source_path: PathBuf,
 }
 
 /// Arguments for `mars agents`.
 #[derive(Debug, clap::Args)]
 pub struct AgentsArgs {
+    /// Secondary Mars project used only for missing agents.
+    #[arg(long, global = true)]
+    pub fallback_root: Option<PathBuf>,
+
     /// Filter by mode (primary or subagent).
     ///
     /// Global so it is accepted both as `mars agents --mode ...` and on the
@@ -47,71 +56,82 @@ pub enum AgentsCommand {
 pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(AgentsCommand::List) => run_list(args, ctx, json),
-        Some(AgentsCommand::Show { name }) => run_show(name, ctx, json),
+        Some(AgentsCommand::Show { name }) => {
+            run_show(name, ctx, json, args.fallback_root.as_deref())
+        }
         None => run_list(args, ctx, json),
     }
 }
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
-
     let mut entries: Vec<AgentEntry> = Vec::new();
+    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Agent {
-            continue;
-        }
+    for root in roots.layers() {
+        let lock = crate::lock::load(root.project_root())?;
+        let mars_dir = root.mars_dir();
 
-        // source filter
-        if let Some(ref filter_source) = args.source
-            && item.source != *filter_source
-        {
-            continue;
-        }
-
-        let disk_path = dest_path.resolve(&mars_dir);
-        let content = match std::fs::read_to_string(&disk_path) {
-            Ok(c) => c,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+        for (dest_path, item) in lock.canonical_flat_items() {
+            if item.kind != ItemKind::Agent {
                 continue;
             }
-        };
 
-        let fm = match frontmatter::parse(&content) {
-            Ok(fm) => fm,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+            let disk_path = dest_path.resolve(&mars_dir);
+            let lookup_name = path_stem(&disk_path);
+            if roots.agent_file_path(&lookup_name) != disk_path {
                 continue;
             }
-        };
 
-        let mut diags = Vec::new();
-        let profile = parse_agent_profile(&fm, &mut diags);
+            // Filtering never reveals a shadowed fallback item.
+            if let Some(ref filter_source) = args.source
+                && item.source != *filter_source
+            {
+                continue;
+            }
 
-        // mode filter
-        let mode_str = match &profile.mode {
-            Some(m) => m.as_str().to_string(),
-            None => String::new(),
-        };
-        if let Some(ref filter_mode) = args.mode
-            && mode_str != *filter_mode
-        {
-            continue;
+            let content = match std::fs::read_to_string(&disk_path) {
+                Ok(c) => c,
+                Err(err) => {
+                    eprintln!("warning: skipping {}: {err}", disk_path.display());
+                    continue;
+                }
+            };
+
+            let fm = match frontmatter::parse(&content) {
+                Ok(fm) => fm,
+                Err(err) => {
+                    eprintln!("warning: skipping {}: {err}", disk_path.display());
+                    continue;
+                }
+            };
+
+            let mut diags = Vec::new();
+            let profile = parse_agent_profile(&fm, &mut diags);
+
+            let mode_str = match &profile.mode {
+                Some(m) => m.as_str().to_string(),
+                None => String::new(),
+            };
+            if let Some(ref filter_mode) = args.mode
+                && mode_str != *filter_mode
+            {
+                continue;
+            }
+
+            let name = profile
+                .name
+                .clone()
+                .unwrap_or_else(|| path_stem(&disk_path));
+            let description = profile.description.clone().unwrap_or_default();
+
+            entries.push(AgentEntry {
+                name,
+                description,
+                mode: mode_str,
+                scope: root.scope().as_str().to_string(),
+                source_path: disk_path,
+            });
         }
-
-        let name = profile
-            .name
-            .clone()
-            .unwrap_or_else(|| path_stem(&disk_path));
-        let description = profile.description.clone().unwrap_or_default();
-
-        entries.push(AgentEntry {
-            name,
-            description,
-            mode: mode_str,
-        });
     }
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -135,11 +155,20 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .max()
                 .unwrap_or(4)
                 .max(4);
-            println!("{:<name_w$}  {:<mode_w$}  DESCRIPTION", "NAME", "MODE");
+            let scope_w = entries
+                .iter()
+                .map(|e| e.scope.len())
+                .max()
+                .unwrap_or(5)
+                .max(5);
+            println!(
+                "{:<name_w$}  {:<mode_w$}  {:<scope_w$}  DESCRIPTION",
+                "NAME", "MODE", "SCOPE"
+            );
             for e in &entries {
                 println!(
-                    "{:<name_w$}  {:<mode_w$}  {}",
-                    e.name, e.mode, e.description
+                    "{:<name_w$}  {:<mode_w$}  {:<scope_w$}  {}",
+                    e.name, e.mode, e.scope, e.description
                 );
             }
         }
@@ -148,98 +177,115 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     Ok(0)
 }
 
-fn run_show(name: &str, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
+fn run_show(
+    name: &str,
+    ctx: &super::MarsContext,
+    json: bool,
+    fallback_root: Option<&std::path::Path>,
+) -> Result<i32, MarsError> {
+    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
 
-    for (dest_path, item) in lock.canonical_flat_items() {
-        if item.kind != ItemKind::Agent {
-            continue;
-        }
-
-        let disk_path = dest_path.resolve(&mars_dir);
-        let content = match std::fs::read_to_string(&disk_path) {
-            Ok(c) => c,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+    for root in roots.layers() {
+        let lock = crate::lock::load(root.project_root())?;
+        let mars_dir = root.mars_dir();
+        for (dest_path, item) in lock.canonical_flat_items() {
+            if item.kind != ItemKind::Agent {
                 continue;
             }
-        };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+            let disk_path = dest_path.resolve(&mars_dir);
+            let stem = path_stem(&disk_path);
+            if roots.agent_file_path(&stem) != disk_path {
                 continue;
             }
-        };
 
-        let stem = path_stem(&disk_path);
-        let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
-        if !agent_name.eq_ignore_ascii_case(name) {
-            continue;
+            let content = match std::fs::read_to_string(&disk_path) {
+                Ok(c) => c,
+                Err(err) => {
+                    eprintln!("warning: skipping {}: {err}", disk_path.display());
+                    continue;
+                }
+            };
+
+            let mut diags = Vec::new();
+            let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
+                Ok(p) => p,
+                Err(err) => {
+                    eprintln!("warning: skipping {}: {err}", disk_path.display());
+                    continue;
+                }
+            };
+
+            let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
+            if !stem.eq_ignore_ascii_case(name) && !agent_name.eq_ignore_ascii_case(name) {
+                continue;
+            }
+
+            let mode_str = profile.mode.as_ref().map(|m| m.as_str()).unwrap_or("");
+            let harness_str = profile
+                .harness
+                .as_ref()
+                .map(|h| h.to_harness_id().as_str())
+                .unwrap_or("");
+            let model_str = profile.model.as_deref().unwrap_or("");
+            let approval_str = profile
+                .approval
+                .as_ref()
+                .map(|a| a.as_str())
+                .unwrap_or_default();
+            let sandbox_str = profile
+                .sandbox
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or_default();
+            let effort_str = profile
+                .effort
+                .as_ref()
+                .map(|e| e.as_str())
+                .unwrap_or_default();
+            let description_str = profile.description.as_deref().unwrap_or("");
+            let scope = root.scope().as_str();
+
+            if json {
+                output::print_json(&serde_json::json!({
+                    "name": agent_name,
+                    "description": description_str,
+                    "mode": mode_str,
+                    "harness": harness_str,
+                    "model": model_str,
+                    "skills": profile.skills.all(),
+                    "skills_structured": profile.skills,
+                    "subagents": profile.subagents,
+                    "approval": approval_str,
+                    "sandbox": sandbox_str,
+                    "effort": effort_str,
+                    "tools": profile.tools,
+                    "disallowed-tools": profile.disallowed_tools,
+                    "tools-denied": profile.tools_denied,
+                    "scope": scope,
+                    "source_path": disk_path,
+                }));
+            } else {
+                println!("name:        {agent_name}");
+                println!("description: {description_str}");
+                println!("mode:        {mode_str}");
+                println!("harness:     {harness_str}");
+                println!("model:       {model_str}");
+                println!("approval:    {approval_str}");
+                println!("sandbox:     {sandbox_str}");
+                println!("effort:      {effort_str}");
+                println!("scope:       {scope}");
+                println!("source_path: {}", disk_path.display());
+                print_str_list("skills.load", &profile.skills.load);
+                print_str_list("skills.available", &profile.skills.available);
+                print_str_list("subagents", &profile.subagents);
+                print_str_list("tools", &profile.tools);
+                print_str_list("disallowed-tools", &profile.disallowed_tools);
+                print_str_list("tools-denied", &profile.tools_denied);
+            }
+
+            return Ok(0);
         }
-
-        let mode_str = profile.mode.as_ref().map(|m| m.as_str()).unwrap_or("");
-        let harness_str = profile
-            .harness
-            .as_ref()
-            .map(|h| h.to_harness_id().as_str())
-            .unwrap_or("");
-        let model_str = profile.model.as_deref().unwrap_or("");
-        let approval_str = profile
-            .approval
-            .as_ref()
-            .map(|a| a.as_str())
-            .unwrap_or_default();
-        let sandbox_str = profile
-            .sandbox
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or_default();
-        let effort_str = profile
-            .effort
-            .as_ref()
-            .map(|e| e.as_str())
-            .unwrap_or_default();
-        let description_str = profile.description.as_deref().unwrap_or("");
-
-        if json {
-            output::print_json(&serde_json::json!({
-                "name": agent_name,
-                "description": description_str,
-                "mode": mode_str,
-                "harness": harness_str,
-                "model": model_str,
-                "skills": profile.skills.all(),
-                "skills_structured": profile.skills,
-                "subagents": profile.subagents,
-                "approval": approval_str,
-                "sandbox": sandbox_str,
-                "effort": effort_str,
-                "tools": profile.tools,
-                "disallowed-tools": profile.disallowed_tools,
-                "tools-denied": profile.tools_denied,
-            }));
-        } else {
-            println!("name:        {agent_name}");
-            println!("description: {description_str}");
-            println!("mode:        {mode_str}");
-            println!("harness:     {harness_str}");
-            println!("model:       {model_str}");
-            println!("approval:    {approval_str}");
-            println!("sandbox:     {sandbox_str}");
-            println!("effort:      {effort_str}");
-            print_str_list("skills.load", &profile.skills.load);
-            print_str_list("skills.available", &profile.skills.available);
-            print_str_list("subagents", &profile.subagents);
-            print_str_list("tools", &profile.tools);
-            print_str_list("disallowed-tools", &profile.disallowed_tools);
-            print_str_list("tools-denied", &profile.tools_denied);
-        }
-
-        return Ok(0);
     }
 
     eprintln!("error: agent `{name}` not found");

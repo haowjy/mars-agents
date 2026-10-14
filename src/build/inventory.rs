@@ -4,6 +4,7 @@ use crate::compiler::agents::{AgentMode, HarnessKind, ModelPolicyMatchType, pars
 use crate::compiler::native_agent_manifest::{
     agent_is_native_for_harness, read_native_agent_manifest,
 };
+use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,35 +16,41 @@ struct ParsedAgentInventory {
     mode: AgentMode,
 }
 
-pub fn build_inventory_prompt(
-    mars_dir: &Path,
+pub(crate) fn build_inventory_prompt(
+    content_roots: &ContentRoots,
     subagents_filter: &[String],
     harness: &str,
     fanout_agents: &[String],
     warnings: &mut Vec<String>,
 ) -> Result<String, MarsError> {
-    let agents_dir = mars_dir.join("agents");
-    if !agents_dir.is_dir() {
-        return Ok(String::new());
-    }
-
-    let read_dir = match std::fs::read_dir(&agents_dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            warnings.push(format!(
-                "failed to read agent inventory from {}: {err}",
-                agents_dir.display()
-            ));
-            return Ok(String::new());
+    let mut agent_paths = Vec::new();
+    for root in content_roots.layers() {
+        let agents_dir = root.mars_dir().join("agents");
+        if !agents_dir.is_dir() {
+            continue;
         }
-    };
-
-    let mut agent_paths: Vec<PathBuf> = read_dir
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .collect();
-    agent_paths.sort();
+        let read_dir = match std::fs::read_dir(&agents_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed to read agent inventory from {}: {err}",
+                    agents_dir.display()
+                ));
+                continue;
+            }
+        };
+        let mut layer_paths: Vec<PathBuf> = read_dir
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+            .collect();
+        layer_paths.sort();
+        agent_paths.extend(layer_paths.into_iter().filter(|path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|name| content_roots.agent_file_path(name) == *path)
+        }));
+    }
 
     let mut primary_agents = Vec::new();
     let mut subagent_agents = Vec::new();
@@ -85,7 +92,7 @@ pub fn build_inventory_prompt(
     primary_agents.sort_by(|left, right| left.name.cmp(&right.name));
     subagent_agents.sort_by(|left, right| left.name.cmp(&right.name));
 
-    let manifest = read_native_agent_manifest(mars_dir);
+    let manifest = read_native_agent_manifest(&content_roots.primary_mars_dir());
     let is_native_for_harness = |agent: &ParsedAgentInventory| -> bool {
         agent_is_native_for_harness(&manifest, &agent.name, harness)
     };
@@ -304,6 +311,15 @@ mod tests {
         fs::write(agents_dir.join(format!("{name}.md")), content).unwrap();
     }
 
+    fn content_roots(mars_dir: &Path) -> ContentRoots {
+        ContentRoots::new(
+            mars_dir
+                .parent()
+                .expect("test .mars directory has a project root"),
+            None,
+        )
+    }
+
     fn sample_agent_content(name: &str, mode: &str, description: &str) -> String {
         format!(
             "---\nname: {name}\ndescription: {description}\nmode: {mode}\nmodel: test-model\n---\nBody."
@@ -379,7 +395,8 @@ Implement changes.
         );
         let mut warnings = Vec::new();
         let inventory =
-            build_inventory_prompt(&mars_dir, &[], "codex", &[], &mut warnings).unwrap();
+            build_inventory_prompt(&content_roots(&mars_dir), &[], "codex", &[], &mut warnings)
+                .unwrap();
 
         assert!(inventory.contains("| Declared backups: shared, shared (model ID), later"));
         assert!(!inventory.contains("excluded"));
@@ -403,7 +420,8 @@ Implement changes.
 
         let mut warnings = Vec::new();
         let inventory =
-            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
+            build_inventory_prompt(&content_roots(&mars_dir), &[], "claude", &[], &mut warnings)
+                .unwrap();
 
         assert!(inventory.contains("Write prompts to `$(meridian work path prompts/<name>.md)`."));
         assert!(inventory.contains("## Subagent"));
@@ -450,7 +468,8 @@ Implement changes.
 
         let mut warnings = Vec::new();
         let inventory =
-            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
+            build_inventory_prompt(&content_roots(&mars_dir), &[], "claude", &[], &mut warnings)
+                .unwrap();
 
         assert!(
             inventory.contains(
@@ -492,7 +511,8 @@ Implement changes.
 
         let mut warnings = Vec::new();
         let inventory =
-            build_inventory_prompt(&mars_dir, &[], "claude", &[], &mut warnings).unwrap();
+            build_inventory_prompt(&content_roots(&mars_dir), &[], "claude", &[], &mut warnings)
+                .unwrap();
 
         assert!(
             inventory.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
@@ -520,7 +540,8 @@ Implement changes.
 
         let mut warnings = Vec::new();
         let inventory =
-            build_inventory_prompt(&mars_dir, &[], "codex", &[], &mut warnings).unwrap();
+            build_inventory_prompt(&content_roots(&mars_dir), &[], "codex", &[], &mut warnings)
+                .unwrap();
 
         assert!(inventory.contains(
             "- `meridian spawn -a frontend-coder`: Frontend implementation | Model: test-model"
@@ -548,8 +569,14 @@ Implement changes.
 
         let fanout = vec!["reviewer".to_string()];
         let mut warnings = Vec::new();
-        let inventory =
-            build_inventory_prompt(&mars_dir, &[], "claude", &fanout, &mut warnings).unwrap();
+        let inventory = build_inventory_prompt(
+            &content_roots(&mars_dir),
+            &[],
+            "claude",
+            &fanout,
+            &mut warnings,
+        )
+        .unwrap();
 
         assert!(inventory.contains("## Subagent"));
         assert!(

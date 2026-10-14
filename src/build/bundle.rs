@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -8,6 +9,8 @@ pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 pub struct LaunchBundle {
     pub version: u32,
     pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_source_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_body: Option<String>,
     pub routing: Routing,
@@ -113,6 +116,7 @@ pub struct Skills {
 pub struct LoadedSkill {
     pub name: String,
     pub skill_type: String,
+    pub source_path: PathBuf,
     /// Raw skill body without heading. Consumers render headings themselves.
     pub body: String,
 }
@@ -122,4 +126,5 @@ pub struct AvailableSkill {
     pub name: String,
     pub skill_type: String,
     pub description: String,
+    pub source_path: PathBuf,
 }

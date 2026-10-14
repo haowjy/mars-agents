@@ -5,9 +5,9 @@ Generates serializable launch bundles for harness runtimes. 6 files + `.context/
 ## Mental Model
 
 ```
-LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_skills}
+LaunchBundleRequest {agent, fallback_root, model, harness, effort, approval, sandbox, extra_skills}
     ↓
-[agent mode] read .mars/agents/<name>.md → AgentProfile + body
+[agent mode] read root then fallback .mars/agents/<name>.md → AgentProfile + body
 [ad-hoc mode] empty_agent_profile() + "" body
     ↓
 resolve_policy() → Routing + ExecutionPolicy + Provenance
@@ -27,7 +27,10 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 - No skills loaded, no tools resolved (empty sets)
 
 ### Agent/Profile Mode (`--agent <name>`)
-- Reads `.mars/agents/<name>.md` from `ctx.project_root`
+- Reads `.mars/agents/<name>.md` from `ctx.project_root` first
+- With `fallback_root`, missing agents and skills come from that root's `.mars/`
+  store; project config, aliases, caches, targets, and native manifests remain
+  primary-root-only
 - Requires synced project (`mars.toml` present, `mars sync` already run)
 - Full profile parsing + skill loading + tool resolution
 

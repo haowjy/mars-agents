@@ -5,6 +5,7 @@ use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::build::inventory::build_inventory_prompt;
 use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
+use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 
@@ -25,11 +26,13 @@ struct LoadedSkillDocument {
     document: SupplementalDoc,
     /// Raw body without `# Skill: name` heading.
     body: String,
+    source_path: std::path::PathBuf,
 }
 
 struct LoadedSkillData {
     document: SupplementalDoc,
     body: String,
+    source_path: std::path::PathBuf,
 }
 
 enum SkillLoadOutcome {
@@ -44,8 +47,8 @@ enum AvailableSkillOutcome {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn compile_prompt_surface(
-    mars_dir: &Path,
+pub(crate) fn compile_prompt_surface(
+    content_roots: &ContentRoots,
     agent_body: &str,
     profile_skills: &SkillsSpec,
     extra_skills: &[String],
@@ -68,12 +71,13 @@ pub fn compile_prompt_surface(
     let mut warnings = Vec::new();
 
     for (requested_index, skill) in requested_load_skills.iter().enumerate() {
-        match load_skill_document(mars_dir, skill, harness_id, &mut warnings) {
+        match load_skill_document(content_roots, skill, harness_id, &mut warnings) {
             Ok(SkillLoadOutcome::Loaded(data)) => {
                 loaded_documents.push(LoadedSkillDocument {
                     requested_index,
                     document: data.document,
                     body: data.body,
+                    source_path: data.source_path,
                 });
             }
             Ok(SkillLoadOutcome::Missing) => missing_skills.push(skill.clone()),
@@ -107,13 +111,14 @@ pub fn compile_prompt_surface(
         .map(|loaded| LoadedSkill {
             name: loaded.document.name.clone(),
             skill_type: loaded.document.skill_type.clone(),
+            source_path: loaded.source_path.clone(),
             body: loaded.body.clone(),
         })
         .collect::<Vec<_>>();
 
     let mut available_skills = Vec::new();
     for skill in &requested_available_skills {
-        match resolve_available_skill(mars_dir, skill, &mut warnings) {
+        match resolve_available_skill(content_roots, skill, &mut warnings) {
             Ok(AvailableSkillOutcome::Available(skill)) => available_skills.push(skill),
             Ok(AvailableSkillOutcome::Missing) => missing_skills.push(skill.clone()),
 
@@ -125,7 +130,7 @@ pub fn compile_prompt_surface(
     }
 
     let inventory_prompt = build_inventory_prompt(
-        mars_dir,
+        content_roots,
         subagents_filter,
         harness_id,
         fanout_agents,
@@ -200,23 +205,25 @@ fn skill_type_priority(skill_type: &str) -> u8 {
 }
 
 fn load_skill_document(
-    mars_dir: &Path,
+    content_roots: &ContentRoots,
     skill_name: &str,
     harness_id: &str,
     warnings: &mut Vec<String>,
 ) -> Result<SkillLoadOutcome, String> {
-    let skill_dir = mars_dir.join("skills").join(skill_name);
-    let base_skill_path = skill_dir.join("SKILL.md");
+    let base_skill_path = content_roots.skill_file_path(skill_name);
     if !base_skill_path.is_file() {
         return Ok(SkillLoadOutcome::Missing);
     }
+    let skill_dir = base_skill_path
+        .parent()
+        .expect("skill file lookup always includes a parent directory");
 
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile lists a skill, it loads regardless.
     let (_base_profile, base_frontmatter) =
         parse_skill_file(skill_name, &base_skill_path, warnings)?;
 
-    let selected_skill_path = harness_skill_variant_path(&skill_dir, harness_id)
+    let selected_skill_path = harness_skill_variant_path(skill_dir, harness_id)
         .unwrap_or_else(|| base_skill_path.clone());
     let selected_body = if selected_skill_path == base_skill_path {
         base_frontmatter.body().trim().to_string()
@@ -237,16 +244,16 @@ fn load_skill_document(
             skill_type,
         },
         body: selected_body,
+        source_path: base_skill_path,
     }))
 }
 
 fn resolve_available_skill(
-    mars_dir: &Path,
+    content_roots: &ContentRoots,
     skill_name: &str,
     warnings: &mut Vec<String>,
 ) -> Result<AvailableSkillOutcome, String> {
-    let skill_dir = mars_dir.join("skills").join(skill_name);
-    let base_skill_path = skill_dir.join("SKILL.md");
+    let base_skill_path = content_roots.skill_file_path(skill_name);
     if !base_skill_path.is_file() {
         return Ok(AvailableSkillOutcome::Missing);
     }
@@ -263,6 +270,7 @@ fn resolve_available_skill(
         name: skill_name.to_string(),
         skill_type,
         description,
+        source_path: base_skill_path,
     }))
 }
 

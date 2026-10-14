@@ -2,9 +2,124 @@ use super::common::{
     install_fake_harnesses, replace_path_with, setup_bundle_project,
     setup_bundle_project_with_agents,
 };
-use crate::test_common::{API_PATH, mars_cmd};
+use crate::test_common::{API_PATH, create_source, mars_cmd, portable_path};
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use serde_json::Value;
+use std::path::Path;
+
+fn json_path(value: &Value) -> &Path {
+    Path::new(value.as_str().expect("source path should be a string"))
+}
+
+#[test]
+fn build_launch_bundle_layers_fallback_content_and_reports_source_paths() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
+    let primary_agent = "---\nname: primary\nmodel: gpt-5\n---\nPrimary agent.";
+    let primary_shared =
+        "---\nname: shared\ndescription: Primary skill\n---\nPrimary shared content.";
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "primary-source",
+        primary_agent,
+        &[("shared", primary_shared)],
+        r#"[models.bundlealias]
+model = "openai/gpt-5"
+harness = "codex""#,
+    );
+
+    let fallback_agent = r#"---
+name: fallback-reviewer
+model: bundlealias
+skills:
+  load: [shared, fallback-only]
+  available: [fallback-available]
+---
+Fallback agent body."#;
+    let fallback_shared =
+        "---\nname: shared\ndescription: Fallback skill\n---\nFallback shared content.";
+    let fallback_only =
+        "---\nname: fallback-only\ndescription: Fallback only\n---\nFallback-only content.";
+    let fallback_available = "---\nname: fallback-available\ndescription: Available fallback\n---\nAvailable fallback content.";
+    let fallback_source = create_source(
+        &temp,
+        "fallback-source",
+        &[("fallback-reviewer", fallback_agent)],
+        &[
+            ("shared", fallback_shared),
+            ("fallback-only", fallback_only),
+            ("fallback-available", fallback_available),
+        ],
+    );
+    let fallback_root = temp.child("fallback-project");
+    fallback_root.create_dir_all().unwrap();
+    fallback_root
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies]\nfallback-source = {{ path = \"{}\" }}\n\
+             \n[models.bundlealias]\nmodel = \"claude-opus-4-6\"\nharness = \"claude\"\n",
+            portable_path(&fallback_source)
+        ))
+        .unwrap();
+    mars_cmd(fallback_root.path(), temp.path(), &server.url(API_PATH))
+        .arg("sync")
+        .assert()
+        .success();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "fallback-reviewer",
+        "--fallback-root",
+        fallback_root.path().to_str().unwrap(),
+    ]);
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(bundle["routing"]["model_token"], "bundlealias");
+    assert_eq!(bundle["routing"]["model"], "openai/gpt-5");
+    assert_eq!(bundle["routing"]["harness"], "codex");
+    assert_eq!(
+        json_path(&bundle["agent_source_path"]),
+        fallback_root
+            .path()
+            .join(".mars/agents/fallback-reviewer.md")
+    );
+    let loaded = bundle["skills"]["loaded"].as_array().unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded[0]["name"], "shared");
+    assert_eq!(
+        json_path(&loaded[0]["source_path"]),
+        project_root.join(".mars/skills/shared/SKILL.md")
+    );
+    assert_eq!(loaded[1]["name"], "fallback-only");
+    assert_eq!(
+        json_path(&loaded[1]["source_path"]),
+        fallback_root
+            .path()
+            .join(".mars/skills/fallback-only/SKILL.md")
+    );
+    let available = bundle["skills"]["available"].as_array().unwrap();
+    assert_eq!(available.len(), 1);
+    assert_eq!(available[0]["name"], "fallback-available");
+    assert_eq!(
+        json_path(&available[0]["source_path"]),
+        fallback_root
+            .path()
+            .join(".mars/skills/fallback-available/SKILL.md")
+    );
+    let system_instruction = bundle["prompt_surface"]["system_instruction"]
+        .as_str()
+        .unwrap();
+    assert!(system_instruction.contains("Primary shared content."));
+    assert!(!system_instruction.contains("Fallback shared content."));
+    assert!(system_instruction.contains("Fallback-only content."));
+}
 
 #[test]
 fn build_launch_bundle_includes_skill_documents_and_system_instruction() {

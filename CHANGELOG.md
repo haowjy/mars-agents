@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `.cursor` target unmaintained. Support stays; no longer tested or extended.
+
 ## [0.16.0] - 2026-10-14
 
 ### Added

@@ -41,7 +41,8 @@ residue in the primary checkout is how drift starts.
 
 ## Target Support Status
 
-- `.claude`, `.codex`, `.opencode`, `.cursor` are first-class targets.
+- `.claude`, `.codex`, `.opencode` are first-class targets.
+- `.cursor` is unmaintained: existing support stays, but it isn't tested or extended.
 - `.pi` is under active design/development.
 
 ## Critical Invariants

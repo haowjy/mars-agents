@@ -11,7 +11,7 @@ Mars materializes harness-native artifacts for multiple targets:
 | `.claude` | First-class | Claude Code agents, skills, MCP, hooks, and settings surfaces. |
 | `.codex` | First-class | Codex project instruction and agent-facing surfaces. |
 | `.opencode` | First-class | OpenCode agent and permission surfaces. |
-| `.cursor` | Experimental | Cursor CLI/config support exists, but semantics can change as Cursor's agent surface evolves. |
+| `.cursor` | Unmaintained | Cursor CLI/config support still ships but is no longer tested or extended; it may break without notice. |
 | `.pi` | Future first-class | Meridian-owned Pi flavor and extension surface; under active design/development. |
 
 ## Install

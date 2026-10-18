@@ -266,14 +266,27 @@ autocompact_pct: 80
 
 | | |
 |---|---|
-| Type | string[] |
+| Type | string[] or `{ load: string[], available: string[] }` |
 | Required | no |
 | Default | empty |
 
-Skill names this agent loads. Skill files are read from the `skills/` directory in the agent's resolved package tree. Mars installs transitive skill dependencies automatically during sync.
+Skills this agent gets. A flat list means every skill is loaded. The mapping form separates:
+
+- `load`: the [launch bundle](../cli/commands.md#mars-build-launch-bundle) carries the skill's full body in `skills.loaded`, and Meridian composes it into the agent's system prompt.
+- `available`: the bundle lists the skill in `skills.available` (name, type, description) for the agent to load itself through its harness's skill list.
+
+A name in both lists counts as loaded. `--skill` on `mars build launch-bundle` adds to `load`. Neither list is filtered by the skill's `model-invocable`: a non-invocable skill under `load` still arrives in full, which is how one agent gets a skill no model finds by itself. See [`model-invocable`](skill-compilation.md#model-invocable).
+
+Skill files are read from the `skills/` directory in the agent's resolved package tree. Mars installs transitive skill dependencies automatically during sync.
 
 ```yaml
 skills: [dev-principles, shared-workspace]
+```
+
+```yaml
+skills:
+  load: [dev-principles, solo-dev]
+  available: [diagnose]
 ```
 
 ---

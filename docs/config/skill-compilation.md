@@ -82,11 +82,13 @@ type: principle
 | Type | boolean |
 | Default | `true` |
 
-Controls whether the model can see and self-load this skill.
+Controls whether the skill appears in the harness's skill list, where a model can find and load it by itself.
 
 ```yaml
-model-invocable: false   # model cannot self-invoke
+model-invocable: false   # not in the harness skill list; no model self-loads it
 ```
+
+It gates discovery only. A skill an agent profile lists under `skills` (or `skills.load`), or that a launch adds with `--skill`, is loaded into that agent's launch bundle in full whatever this field says, so `model-invocable: false` plus a profile `load` gives one agent a skill no model finds on its own. A skill under `skills.available` is also listed whatever this field says, but the harness won't let the model load a non-invocable one, so avoid that pairing.
 
 ---
 
@@ -234,8 +236,8 @@ Mars compiles universal frontmatter fields to each target's native field names d
 |---|---|---|---|---|---|---|
 | `name` | preserved | `name` | `name` | `name` | `name` | `name` |
 | `description` | preserved | `description` | `description` | `description` | `description` | `description` |
-| `model-invocable: false` | preserved | `disable-model-invocation: true` | `allow_implicit_invocation: false`¹ | dropped | `disable-model-invocation: true` | `disable-model-invocation: true` |
-| `model-invocable: true` | preserved | (omit) | (omit or `allow_implicit_invocation: true`)¹ | (omit) | (omit) | (omit) |
+| `model-invocable: false` | preserved | `disable-model-invocation: true` | sibling `openai.yaml`: `policy.allow_implicit_invocation: false`¹ | dropped | `disable-model-invocation: true` | `alwaysApply: false`, `description` removed² |
+| `model-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | `alwaysApply: false`, `description` kept |
 | `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
 | `tools` | preserved | `allowed-tools` (+ projected MCP grants) | dropped | dropped | `allowed-tools` | dropped |
@@ -244,7 +246,9 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
 
-¹ Codex only emits `allow_implicit_invocation` when the source skill explicitly set `model-invocable`. Skills with no `model-invocable` field do not gain an `allow_implicit_invocation` field in the Codex artifact.
+¹ Codex gets `openai.yaml` beside the skill's `SKILL.md` (`policy:` with `allow_implicit_invocation: false`) only when the source skill explicitly sets `model-invocable: false`. An absent or `true` value writes nothing, because Codex allows implicit invocation by default. The field never appears in the Codex `SKILL.md`.
+
+² Cursor rules have no invocation flag. A rule without a description is a Manual rule that Cursor's agent won't select by itself; a rule with one is selected when the description fits.
 
 `skill-field-dropped` entries follow the same lossiness metadata model as agent compilation. They are returned by lowering functions for tooling such as `mars validate --verbose`, but are not guaranteed to surface as user-visible warnings. The variant projection caller currently silences `Dropped` entries; only `Approximate` entries produce warnings.
 
@@ -252,7 +256,7 @@ Mars compiles universal frontmatter fields to each target's native field names d
 
 ## Skill Variants
 
-A skill can provide harness-specific or model-specific body overrides in a `variants/` subdirectory. Variants replace only the **instruction body** — the base `SKILL.md` frontmatter is always authoritative for metadata.
+A skill can provide harness-specific body overrides in a `variants/` subdirectory. Variants replace only the **instruction body** — the base `SKILL.md` frontmatter is always authoritative for metadata.
 
 ### Layout
 
@@ -270,7 +274,7 @@ skills/<name>/
 
 Recognized harness keys: `claude`, `codex`, `opencode`, `pi`, `cursor`.
 
-Model keys are directory names — they are matched exactly against the resolved model alias or canonical model ID at runtime.
+Model-level directories (`variants/<harness>/<model>/`) are indexed and validated but never selected: neither sync nor the launch bundle chooses a body by model.
 
 ### Compile-time projection (Mars)
 
@@ -284,16 +288,9 @@ The compiled native `SKILL.md` has: base frontmatter (lowered for target) + vari
 
 Variant frontmatter is **not** used for metadata — it is ignored. Only the body of a variant file matters.
 
-### Runtime selection (Meridian)
+### Launch-time selection (launch bundle)
 
-At launch time, Meridian reads from `.mars/skills/` and selects a variant body using a 4-step specificity ladder:
-
-1. `variants/<harness>/<selected-model-alias>/SKILL.md` — model alias + harness
-2. `variants/<harness>/<canonical-model-id>/SKILL.md` — canonical model ID + harness
-3. `variants/<harness>/SKILL.md` — harness only
-4. Base `SKILL.md` — default
-
-Matching is exact-only at each step. The base skill's frontmatter is always used for metadata regardless of which body wins.
+`mars build launch-bundle` makes the same choice for each loaded skill: the body of `variants/<harness>/SKILL.md` when it exists, otherwise the base body. The bundle's `skills.loaded[].body` carries the selected body; `source_path` points at the base `SKILL.md`. Meridian composes that body into the agent's system prompt and does no variant selection of its own.
 
 ### Example
 
@@ -315,7 +312,7 @@ After `mars sync`:
 - `.claude/skills/my-skill/SKILL.md` — Claude lowering of base frontmatter + claude variant body
 - `.codex/skills/my-skill/SKILL.md` — Codex lowering of base frontmatter + codex variant body
 
-Meridian at runtime: if resolving `claude+opus`, checks for `variants/claude/opus/SKILL.md` (not present) → falls back to `variants/claude/SKILL.md` → uses Claude variant body with base frontmatter.
+A launch bundle for a Claude agent that loads `my-skill` carries the Claude variant body, with `type` and other metadata from the base frontmatter.
 
 ---
 
@@ -323,7 +320,7 @@ Meridian at runtime: if resolving `claude+opus`, checks for `variants/claude/opu
 
 `.mars/skills/` retains the universal schema — no lowering is applied here. Only native harness surfaces (`.claude/`, `.codex/`, etc.) receive harness-compiled frontmatter.
 
-Meridian always reads from `.mars/skills/`. Skill compilation is transparent to the runtime; Meridian handles variant selection itself without re-compiling. Skill presence at boot is determined by the agent profile `skills:` list; skills do not define a `presence` field.
+The launch bundle reads skills from `.mars/skills/`; Meridian gets skill content only through the bundle and never reads `.mars/skills/` itself on the launch path. Which skills an agent loads is decided by the agent profile's `skills:` and `--skill`, never by skill frontmatter; skills do not define a `presence` field.
 
 ---
 

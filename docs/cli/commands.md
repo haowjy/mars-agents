@@ -629,7 +629,11 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
   "tools": { "..." },
-  "skills_metadata": { "loaded": ["..."], "missing": ["..."] },
+  "skills": {
+    "loaded": [{ "name": "...", "skill_type": "...", "source_path": "...", "body": "..." }],
+    "available": [{ "name": "...", "skill_type": "...", "description": "...", "source_path": "..." }],
+    "missing": ["..."]
+  },
   "provenance": {
     "model_source": "cli|profile|project",
     "harness_source": "...",

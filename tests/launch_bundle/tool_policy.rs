@@ -69,11 +69,22 @@ Review code changes."#;
     let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
     assert_eq!(
         override_bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command"])
+        serde_json::json!(["exec_command", "write_stdin"])
     );
     assert_eq!(
         override_bundle["tools"]["disallowed"],
-        serde_json::json!(["spawn_agent", "apply_patch"])
+        serde_json::json!([
+            "spawn_agent",
+            "send_input",
+            "resume_agent",
+            "wait_agent",
+            "close_agent",
+            "send_message",
+            "followup_task",
+            "interrupt_agent",
+            "list_agents",
+            "apply_patch"
+        ])
     );
     assert_eq!(override_bundle["tools"]["mcp"], serde_json::json!([]));
     assert!(
@@ -257,7 +268,7 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_skill_deny_projects_without_unknown_warning() {
+fn build_launch_bundle_skill_deny_is_a_gap_on_harnesses_that_load_skills_by_file() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
@@ -325,17 +336,29 @@ Review code changes."#;
     let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
     assert_eq!(
         codex_bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command", "web_search"])
+        serde_json::json!(["exec_command", "write_stdin", "web_search"])
     );
-    // Codex has no skill or workflow tool, so those denies have nothing to name.
+    // Codex has no workflow tool, so that deny is satisfied. It loads skills by reading files, so
+    // `skill(init)` has no tool to switch: a reported gap, not a satisfied rule.
     assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
     let codex_warnings = codex_bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
     assert!(!codex_warnings.iter().any(|warning| {
         let text = warning.as_str().unwrap_or_default();
-        text.contains("skill(init)") || text.contains("workflow") || text.contains("'web'")
+        text.contains("workflow") || text.contains("'web'")
     }));
+    assert!(codex_warnings.iter().any(|warning| {
+        let text = warning.as_str().unwrap_or_default();
+        text.contains("skill(init)") && text.contains("no known codex name")
+    }));
+    let skill_rule = codex_bundle["tools"]["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["capability"] == "skill")
+        .expect("skill rule");
+    assert_eq!(skill_rule["native_status"], "unknown");
     assert!(codex_warnings.iter().any(|warning| {
         warning
             .as_str()

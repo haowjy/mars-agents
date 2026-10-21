@@ -124,8 +124,10 @@ aliases and native spellings (`Bash`, `shell`, `AskUserQuestion` → `bash`, `as
 vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` is
 `web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
 capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`). A row is a list
-of real tools, `Absent` (the harness lacks the tool), or missing (`unknown`, a reported gap);
-there is no fallback that builds a name. Add a tool by adding it to the harness's real-tool list
+of real tools, `Absent` (the harness cannot do the thing), or missing (`unknown`, a reported
+gap). A harness that can do the thing with no tool to switch it (Codex and Pi skills) is
+missing, not `Absent`: `Absent` would report an unenforced deny as met. There is no fallback
+that builds a name. Add a tool by adding it to the harness's real-tool list
 in the test first, with its source.
 
 ## Skill Compilation (`skills/`)

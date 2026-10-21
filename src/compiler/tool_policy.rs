@@ -164,7 +164,7 @@ pub(crate) fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRu
         };
     }
 
-    let natives = native_names(&rule.capability, harness);
+    let natives = native_names(&rule.capability, harness, rule.pattern.is_some());
     ProjectedRule {
         native: natives
             .names

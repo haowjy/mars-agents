@@ -117,8 +117,9 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
         name: "agent",
         aliases: &["subagent", "spawn_agent"],
     },
-    // Task-list tools (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`/`todoread`,
-    // Codex `update_plan`). One capability: a profile gates the list, not each verb.
+    // Task-list tools (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex
+    // `update_plan`). One capability: a profile gates the list, not each verb. `todoread` stays
+    // as an input spelling only; OpenCode has no such tool.
     CanonicalTool {
         name: "task",
         aliases: &[
@@ -297,10 +298,12 @@ fn normalize_pattern(pattern: &str) -> String {
 
 /// Native names for `capability` on `harness`, from the explicit tables in
 /// [`crate::compiler::tool_natives`]. Never derived: a capability without a row is
-/// [`NativeStatus::Unknown`] with no names.
+/// [`NativeStatus::Unknown`] with no names. `scoped` says the rule carries a pattern, which a
+/// [`Native::ToolsScopedToFirst`] row applies to its first tool only.
 pub(crate) fn native_names(
     capability: &str,
     harness: crate::compiler::agents::HarnessKind,
+    scoped: bool,
 ) -> CapabilityNatives {
     if is_mcp_shaped(capability) {
         // Reserved MCP wire token: passed through verbatim, casing included.
@@ -313,6 +316,14 @@ pub(crate) fn native_names(
     match crate::compiler::tool_natives::lookup(capability, harness) {
         Some(Native::Tools(names)) => CapabilityNatives {
             names: names.iter().map(|name| name.to_string()).collect(),
+            status: NativeStatus::Known,
+        },
+        Some(Native::ToolsScopedToFirst(names)) => CapabilityNatives {
+            names: names
+                .iter()
+                .take(if scoped { 1 } else { names.len() })
+                .map(|name| name.to_string())
+                .collect(),
             status: NativeStatus::Known,
         },
         Some(Native::Absent) => CapabilityNatives {
@@ -474,7 +485,7 @@ mod tests {
             .expect("test harness exists")
             .kind;
         let capability = parse(raw).capability;
-        let natives = native_names(&capability, harness);
+        let natives = native_names(&capability, harness, false);
         (natives.names, natives.status)
     }
 
@@ -543,7 +554,10 @@ mod tests {
                 NativeStatus::Known,
             )
         };
-        assert_eq!(natives("Bash", "codex"), known(&["exec_command"]));
+        assert_eq!(
+            natives("Bash", "codex"),
+            known(&["exec_command", "write_stdin"])
+        );
         assert_eq!(natives("shell", "claude"), known(&["Bash"]));
         assert_eq!(natives("exec_command", "claude"), known(&["Bash"]));
         assert_eq!(natives("WebSearch", "opencode"), known(&["websearch"]));
@@ -568,10 +582,32 @@ mod tests {
     fn a_tool_the_harness_lacks_is_absent_not_guessed() {
         assert_eq!(natives("read", "codex"), (vec![], NativeStatus::Absent));
         assert_eq!(natives("ask_user", "pi"), (vec![], NativeStatus::Absent));
+    }
+
+    #[test]
+    fn a_command_pattern_scopes_only_the_tool_that_starts_the_command() {
+        use crate::compiler::agents::HarnessKind;
+        // `write_stdin` carries input to a session `exec_command` opened, not a command.
         assert_eq!(
-            natives("web_fetch", "codex"),
-            (vec![], NativeStatus::Absent)
+            native_names("bash", HarnessKind::Codex, true).names,
+            ["exec_command"]
         );
+        assert_eq!(
+            native_names("bash", HarnessKind::Codex, false).names,
+            ["exec_command", "write_stdin"]
+        );
+    }
+
+    #[test]
+    fn a_thing_the_harness_can_do_without_a_tool_to_switch_is_unknown_not_absent() {
+        // Codex fetches pages through `web_search`; Codex and Pi load skills by reading files.
+        for (capability, harness) in [("web_fetch", "codex"), ("skill", "codex"), ("skill", "pi")] {
+            assert_eq!(
+                natives(capability, harness),
+                (vec![], NativeStatus::Unknown),
+                "{harness} {capability}"
+            );
+        }
     }
 
     #[test]

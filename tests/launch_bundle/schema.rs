@@ -83,11 +83,21 @@ Review code changes.
     assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command", "apply_patch"])
+        serde_json::json!(["exec_command", "write_stdin", "apply_patch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["spawn_agent"])
+        serde_json::json!([
+            "spawn_agent",
+            "send_input",
+            "resume_agent",
+            "wait_agent",
+            "close_agent",
+            "send_message",
+            "followup_task",
+            "interrupt_agent",
+            "list_agents"
+        ])
     );
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
     assert!(

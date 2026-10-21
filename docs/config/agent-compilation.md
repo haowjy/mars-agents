@@ -121,30 +121,33 @@ harness's real tool names through one explicit table per harness
 several native tools, and the launch bundle reports one of three outcomes per rule:
 
 - `known`: the table names it.
-- `absent`: the harness has no such tool, so there is nothing to allow or deny.
-- `unknown`: Mars has no entry for it (including names it does not recognize). The tool is left
-  out of native output with a warning, and the bundle rule carries an empty `native`. This is a
-  gap to report, not something to guess around.
+- `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
+- `unknown`: Mars has no entry for it (including names it does not recognize), or the harness
+  can do the thing but has no tool to switch it. Codex and Pi load skills by reading `SKILL.md`,
+  and Codex fetches pages through its `web_search` tool, so `skill` (Codex, Pi) and `web_fetch`
+  (Codex) are `unknown`: a deny there is not enforced, and `absent` would report it as met. The
+  tool is left out of native output with a warning, and the bundle rule carries an empty
+  `native`. This is a gap to report, not something to guess around.
 
 | Capability | Claude | Codex | OpenCode | Pi |
 |---|---|---|---|---|
-| `bash` | `Bash` | `exec_command` | `bash` | `bash` |
+| `bash` | `Bash` | `exec_command`, `write_stdin` | `bash` | `bash` |
 | `read` | `Read` | absent | `read` | `read` |
 | `write` | `Write` | `apply_patch` | `edit` | `write` |
 | `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
 | `notebook` | `NotebookEdit` | absent | absent | absent |
-| `agent` | `Agent` | `spawn_agent` | `task` | absent |
+| `agent` | `Agent` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent |
 | `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
-| `skill` | `Skill` | absent | `skill` | absent |
+| `skill` | `Skill` | unknown | `skill` | unknown |
 | `glob` / `grep` | `Glob` / `Grep` | absent | `glob` / `grep` | `find` / `grep` |
-| `web` | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent |
+| `web` | `WebSearch`, `WebFetch` | `web_search` (`web_fetch` alone: unknown) | `websearch`, `webfetch` | absent |
 | `ask_user` | `AskUserQuestion` | `request_user_input` | `question` | absent |
 | `plan_mode` | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent |
 
 The rest of the vocabulary is in `tool_natives.rs`. OpenCode names are the v1 permission
 vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings
 (`bash` → `shell`, `task` → `subagent`). OpenCode has one `edit` permission for `edit`,
-`write` and patch, so `write` and `edit` share a name there. Each row is pinned by a test
+`write` and patch, so `write` and `edit` share a name there. A command pattern on Codex `bash` (`bash(git push *)`) scopes `exec_command` only: `write_stdin` carries input to a session, not a command. Each row is pinned by a test
 against the harness's real tool list, with the source (docs, binary, probe) written beside the
 table. Cursor rows are carried over from earlier releases and not re-verified.
 

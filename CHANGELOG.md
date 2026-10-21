@@ -16,7 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `.cursor` target unmaintained. Support stays; no longer tested or extended.
 - Tool vocabulary: `task` now means the task-list tools (Claude `TaskCreate`…,
-  OpenCode `todowrite`/`todoread`, Codex `update_plan`), no longer an alias of `agent`
+  OpenCode `todowrite`, Codex `update_plan`), no longer an alias of `agent`
   (sub-agents). `web` is its own capability (`web_search` + `web_fetch`), no longer an
   alias of `web_search`. `todo_read`/`todo_write` fold into `task`. Claude-dialect
   packages keep working: staging renames Claude's `Task` tool to `agent`.
@@ -35,9 +35,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one capability to one or more real tools: Claude `edit` is `Edit`, `Write` and
   `NotebookEdit`; `web` is `WebSearch` + `WebFetch` (OpenCode `websearch` + `webfetch`);
   `ask_user` is `AskUserQuestion` (OpenCode `question`); Codex `read` is absent rather
-  than an alias of the shell. A capability a harness lacks is `absent`; a name Mars has
-  no row for is left out with a warning instead of guessed (the PascalCase / lowercase
-  naming convention is gone). Fixes Claude `Websearch` / `Askuser`, and OpenCode
+  than an alias of the shell. A capability a harness cannot do is `absent`; one it can do
+  with no tool to switch it (Codex and Pi `skill`, Codex `web_fetch`) is `unknown`, so an
+  unenforced deny is reported instead of counted as met. A name Mars has no row for is
+  left out with a warning instead of guessed (the PascalCase / lowercase naming convention
+  is gone). Codex `bash` covers `exec_command` and `write_stdin`; Codex `agent` covers the
+  whole sub-agent tool family of both multi-agent versions. Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
 - A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation
   error instead of passing through verbatim to the harness.

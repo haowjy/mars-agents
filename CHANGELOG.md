@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Launch bundle `tools.rules[]` (additive in bundle schema 4): one entry per profile
+  statement, `{capability, pattern, action, native, native_status, origin?}`. Consumers read
+  meaning from `capability` and emission from `native` instead of re-reading native names as
+  capabilities. `native_status` is `known`, `absent` (the harness has no such tool) or
+  `unknown` (Mars cannot name it: a gap to report). `tools.allowed` / `tools.disallowed` /
+  `tools.mcp` stay, derived from the rules, for one release; they cannot carry `ask`, `*`
+  or the capability behind a name.
+
 ### Changed
 - `.cursor` target unmaintained. Support stays; no longer tested or extended.
 - Tool vocabulary: `task` now means the task-list tools (Claude `TaskCreate`…,
@@ -30,6 +39,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no row for is left out with a warning instead of guessed (the PascalCase / lowercase
   naming convention is gone). Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
+- A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation
+  error instead of passing through verbatim to the harness.
 - `X:*` patterns normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`), the
   one spelling OpenCode reads correctly.
 - `mars agents show` / `mars skills show` add `tools-ask` (and `tools-list-form` for

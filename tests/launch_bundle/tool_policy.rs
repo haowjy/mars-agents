@@ -538,3 +538,216 @@ Review code changes."#;
         )
     }));
 }
+
+/// Launch bundle for `agent_content` on `harness`.
+fn bundle_for(agent_content: &str, harness: &str) -> Value {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &[harness]);
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        harness,
+    ]);
+    if harness == "codex" {
+        cmd.args(["--model", "gpt-5"]);
+    }
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn rule<'a>(bundle: &'a Value, capability: &str, pattern: Option<&str>) -> &'a Value {
+    bundle["tools"]["rules"]
+        .as_array()
+        .expect("tools.rules")
+        .iter()
+        .find(|rule| {
+            rule["capability"] == capability && rule["pattern"] == serde_json::json!(pattern)
+        })
+        .unwrap_or_else(|| panic!("no rule {capability} {pattern:?} in {}", bundle["tools"]))
+}
+
+const TYPED_RULES_AGENT: &str = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  'bash(rg *)': allow
+  'bash(git push:*)': ask
+  edit: deny
+  web: deny
+  ask_user: deny
+  task: deny
+  agent: deny
+  notebook: deny
+  lsp: deny
+  mcp(github/delete_repo): deny
+  mystery_tool: deny
+---
+Review code changes."#;
+
+#[test]
+fn bundle_tools_rules_carry_capability_and_native_names_apart() {
+    let bundle = bundle_for(TYPED_RULES_AGENT, "claude");
+    assert_eq!(bundle["version"], 4, "rules are additive in schema 4");
+
+    assert_eq!(
+        *rule(&bundle, "edit", None),
+        serde_json::json!({
+            "capability": "edit", "pattern": null, "action": "deny",
+            "native": ["Edit", "Write", "NotebookEdit"], "native_status": "known"
+        })
+    );
+    assert_eq!(
+        *rule(&bundle, "bash", Some("rg *")),
+        serde_json::json!({
+            "capability": "bash", "pattern": "rg *", "action": "allow",
+            "native": ["Bash(rg *)"], "native_status": "known"
+        })
+    );
+    assert_eq!(
+        rule(&bundle, "web", None)["native"],
+        serde_json::json!(["WebSearch", "WebFetch"])
+    );
+    assert_eq!(
+        rule(&bundle, "ask_user", None)["native"],
+        serde_json::json!(["AskUserQuestion"])
+    );
+    // `task` (task list) and `agent` (sub-agents) stay two rules.
+    assert_eq!(
+        rule(&bundle, "agent", None)["native"],
+        serde_json::json!(["Agent"])
+    );
+    assert_eq!(
+        rule(&bundle, "task", None)["native"],
+        serde_json::json!([
+            "TaskCreate",
+            "TaskGet",
+            "TaskList",
+            "TaskUpdate",
+            "TaskStop",
+            "TodoWrite"
+        ])
+    );
+    assert_eq!(
+        *rule(&bundle, "mcp", Some("github/delete_repo")),
+        serde_json::json!({
+            "capability": "mcp", "pattern": "github/delete_repo", "action": "deny",
+            "native": ["mcp__github__delete_repo"], "native_status": "known"
+        })
+    );
+    // A name Mars cannot map is a reported gap, never a guess.
+    assert_eq!(
+        *rule(&bundle, "mystery_tool", None),
+        serde_json::json!({
+            "capability": "mystery_tool", "pattern": null, "action": "deny",
+            "native": [], "native_status": "unknown"
+        })
+    );
+}
+
+#[test]
+fn bundle_accepts_ask_and_normalizes_colon_star() {
+    let bundle = bundle_for(TYPED_RULES_AGENT, "claude");
+    let ask = rule(&bundle, "bash", Some("git push *"));
+    assert_eq!(ask["action"], "ask");
+    assert_eq!(ask["native"], serde_json::json!(["Bash(git push *)"]));
+    assert!(
+        !bundle["tools"]["rules"].to_string().contains(":*"),
+        "{}",
+        bundle["tools"]["rules"]
+    );
+}
+
+#[test]
+fn bundle_flat_lists_derive_from_rules_and_cannot_hold_ask() {
+    let bundle = bundle_for(TYPED_RULES_AGENT, "claude");
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Bash(rg *)"])
+    );
+    let disallowed = bundle["tools"]["disallowed"].as_array().unwrap();
+    assert!(disallowed.contains(&serde_json::json!("AskUserQuestion")));
+    assert!(disallowed.contains(&serde_json::json!("mcp__github__delete_repo")));
+    assert!(
+        !disallowed
+            .iter()
+            .any(|name| name.as_str().unwrap().contains("git push")),
+        "an ask rule is neither allowed nor disallowed: {disallowed:?}"
+    );
+}
+
+#[test]
+fn bundle_marks_tools_a_harness_lacks_as_absent() {
+    let codex = bundle_for(TYPED_RULES_AGENT, "codex");
+    // Codex has no notebook or lsp tool, and the model reads files through the shell.
+    for capability in ["notebook", "lsp"] {
+        let absent = rule(&codex, capability, None);
+        assert_eq!(absent["native_status"], "absent", "{capability}");
+        assert_eq!(absent["native"], serde_json::json!([]));
+    }
+    assert_eq!(
+        rule(&codex, "edit", None)["native"],
+        serde_json::json!(["apply_patch"])
+    );
+    assert_eq!(
+        rule(&codex, "web", None)["native"],
+        serde_json::json!(["web_search"])
+    );
+    assert_eq!(
+        rule(&codex, "mcp", Some("github/delete_repo"))["native_status"],
+        "unknown"
+    );
+
+    let opencode = bundle_for(TYPED_RULES_AGENT, "opencode");
+    assert_eq!(
+        rule(&opencode, "ask_user", None)["native"],
+        serde_json::json!(["question"])
+    );
+    assert_eq!(
+        rule(&opencode, "agent", None)["native"],
+        serde_json::json!(["task"])
+    );
+    assert_eq!(
+        rule(&opencode, "task", None)["native"],
+        serde_json::json!(["todowrite"])
+    );
+    assert_eq!(
+        rule(&opencode, "web", None)["native"],
+        serde_json::json!(["websearch", "webfetch"])
+    );
+}
+
+#[test]
+fn bundle_list_form_tools_is_an_allowlist_with_an_explicit_wildcard_deny() {
+    let agent = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools: [read, grep]
+---
+Review code changes."#;
+    let bundle = bundle_for(agent, "claude");
+    assert_eq!(
+        bundle["tools"]["rules"],
+        serde_json::json!([
+            {"capability": "*", "pattern": null, "action": "deny",
+             "native": [], "native_status": "known", "origin": "list-form"},
+            {"capability": "read", "pattern": null, "action": "allow",
+             "native": ["Read"], "native_status": "known"},
+            {"capability": "grep", "pattern": null, "action": "allow",
+             "native": ["Grep"], "native_status": "known"},
+        ])
+    );
+    // The flat lists never carried an allowlist, and still do not.
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Read", "Grep"])
+    );
+    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
+}

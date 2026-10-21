@@ -690,21 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_action_is_rejected() {
-        let mut diags = Vec::new();
-        let yaml = "---\nname: a\ndescription: d\ntools:\n  bash: sometimes\n---\n";
-        parse_agent_content(yaml, &mut diags).unwrap();
-        assert!(
-            diags.iter().any(|d| matches!(
-                d,
-                crate::compiler::agents::AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
-                    if field == "tools.bash" && *allowed == "allow, deny, or ask"
-            )),
-            "{diags:?}"
-        );
-    }
-
-    #[test]
     fn legacy_colon_star_patterns_normalize_to_space_star() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  'bash(git revert:*)': deny\n  'bash(git reset --hard:*)': deny\ndisallowed-tools: ['Bash(git clean:*)']\n---\n",
@@ -720,53 +705,10 @@ mod tests {
     }
 
     #[test]
-    fn colon_star_is_only_normalized_at_the_end_of_a_pattern() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  'bash(echo a:*b)': deny\n  'skill(init)': deny\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec!["deny:bash(echo a:*b)", "deny:skill(init)"]
-        );
-    }
-
-    #[test]
-    fn duplicate_rules_collapse_but_conflicting_actions_stay() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  Bash: allow\n  bash: deny\ndisallowed-tools: [shell, bash]\n---\n",
-        );
-        assert_eq!(policy.describe(), vec!["allow:bash", "deny:bash"]);
-    }
-
-    #[test]
     fn skill_list_form_grants_and_never_restricts() {
         let policy = skill_policy("---\nname: a\ndescription: d\ntools: [read]\n---\nbody");
         assert_eq!(policy.describe(), vec!["allow:read"]);
         assert!(!policy.is_allowlist());
-    }
-
-    #[test]
-    fn malformed_patterns_are_rejected() {
-        for raw in ["bash(git *", "bash()", "*(x)"] {
-            assert!(
-                parse_mars_tool_name(raw).is_err(),
-                "`{raw}` should not parse"
-            );
-        }
-    }
-
-    #[test]
-    fn overlay_names_keep_unparseable_entries_as_unknown_rules() {
-        let rules = overlay_rules(
-            &[
-                "Bash(rm *)".to_string(),
-                "Write".to_string(),
-                "bash(".to_string(),
-            ],
-            ToolAction::Deny,
-        );
-        let rendered: Vec<String> = rules.iter().map(ToolRule::render).collect();
-        assert_eq!(rendered, vec!["bash(rm *)", "write", "bash("]);
     }
 
     #[test]

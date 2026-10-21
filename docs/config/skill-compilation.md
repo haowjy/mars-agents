@@ -116,9 +116,12 @@ user-invocable: false   # user cannot trigger via /name
 | Type | string[] **or** map of `tool-pattern: allow\|deny` |
 | Default | empty |
 
-Tool allowlist and inline denials for this skill — identical schema to agent profiles. Uses Mars canonical semantic snake_case tool names (`bash`, `ask_user`, `web_search`) and supports scoped patterns. Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized.
+Tools this skill pre-approves while it runs, and inline denials — the same rule grammar as agent profiles (see [agent-profiles.md](agent-profiles.md#tools)): Mars capability names (`bash`, `ask_user`, `web_search`), scoped patterns, readable aliases and native spellings such as `Bash`, `shell`, and `askuser`.
 
-List form is allowlist-only:
+Unlike an agent, a skill's `tools:` never restricts anything. A list or a map both grant, and
+`ask` has no skill field, so it is reported as dropped lossiness.
+
+List form grants the listed tools:
 
 ```yaml
 tools: [bash(git *), read]

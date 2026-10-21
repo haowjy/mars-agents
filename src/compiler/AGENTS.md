@@ -32,11 +32,12 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into `EffectiveToolPolicy`. Used by **both** `agents/` and `skills/` modules for unified frontmatter-to-native lowering.
+- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into typed `ToolRule`s (`EffectiveToolPolicy`), and `project_rule`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
-- `tool_names.rs` — canonical snake_case tool name recognition + per-target projection (PascalCase for Claude/Cursor/Pi, snake_case for Codex, lowercase-without-underscores for OpenCode)
+- `tool_names.rs` — the capability vocabulary (canonical names + aliases) and the `tool(pattern)` grammar; asks `tool_natives.rs` what a harness calls a capability
+- `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
@@ -95,21 +96,37 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the unified tool-gating schema used by **both** `agents/` and `skills/`. It merges three canonical fields from frontmatter:
+`EffectiveToolPolicy` is the unified tool-gating model used by **agents**, **skills** and the
+**launch bundle**. It is a list of `ToolRule { capability, pattern, action, origin }`:
 
-| Field | Form | Merged into |
-|---|---|---|
-| `tools:` | List (all allowed) or map (`tool_name: allow\|deny`) | `allowed` / `disallowed` |
-| `disallowed-tools:` | Flat string list | `disallowed` |
-| `mcp(...)` in `tools:` / `disallowed-tools:` | Inline MCP grant/deny | `mcp_allowed` / `mcp_disallowed` |
+| Source | Rules |
+|---|---|
+| `tools:` list | `allow` per entry, plus a leading `*: deny` with `origin: list-form` (agents only: an agent list is an allowlist, a skill list only grants) |
+| `tools:` map | `allow` / `deny` / `ask` per entry; `'*'` is a capability, so `'*': deny` makes a map an allowlist |
+| `disallowed-tools:` | `deny` per entry |
+| `mcp(...)` entries | capability `mcp`, pattern = canonical `server/tool` |
 
-`agents/mod.rs::AgentProfile::effective_tool_policy()` and `skills/mod.rs::SkillProfile::effective_tool_policy()` both delegate to `tool_policy::effective_tool_policy()` with field-level dedup and canonical name normalization.
+`AgentProfile::effective_tool_policy()` and `SkillProfile::effective_tool_policy()` build it
+(`agent_tool_policy` / `skill_tool_policy`). Patterns are normalized at parse (`X:*` → `X *`).
+Rules carry no order: precedence between a broad and a scoped rule belongs to the harness.
+
+`project_rule(rule, harness)` returns the native names plus a `NativeStatus`
+(`known` / `absent` / `unknown`). The bundle serializes it as `tools.rules`; native agent and
+skill lowering emit the `known` names and record lossiness for what a file cannot hold (`ask`,
+an allowlist with nothing allowed) and for `unknown` rules. Never add a second projection path.
 
 MCP grammar and per-harness projection: `.context/CONTEXT.md`.
 
 ## Tool Name Projection
 
-Mars canonical tool names are snake_case. `tool_names.rs` recognizes canonical names plus aliases/native spellings, then projects by target convention: Claude/Cursor/Pi PascalCase, Codex snake_case, OpenCode lowercase-without-underscores. Only true semantic exceptions live in the override table (for example Codex `bash` → `shell`, OpenCode `read` → `view`). Harness support for a specific known tool is separate from name recognition.
+Mars owns native tool names. `tool_names.rs` recognizes a capability from canonical names,
+aliases and native spellings (`Bash`, `shell`, `AskUserQuestion` → `bash`, `ask_user`). The
+vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` is
+`web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
+capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`). A row is a list
+of real tools, `Absent` (the harness lacks the tool), or missing (`unknown`, a reported gap);
+there is no fallback that builds a name. Add a tool by adding it to the harness's real-tool list
+in the test first, with its source.
 
 ## Skill Compilation (`skills/`)
 

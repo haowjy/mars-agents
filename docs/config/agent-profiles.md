@@ -313,24 +313,72 @@ subagents: [explorer, reviewer, coder]
 
 | | |
 |---|---|
-| Type | string[] or mapping (`tool-name: allow|deny`) |
+| Type | string[] or mapping (`tool-name: allow\|deny\|ask`) |
 | Required | no |
 | Default | empty (harness default tool set) |
 
-Tool allowlist. Only these tools are available to the agent. Tool names use Mars canonical semantic snake_case (`bash`, `ask_user`, `web_search`). Scoped patterns keep the canonical head and put the native payload in parentheses. Mars maps canonical names to target-native names while lowering.
+Tool policy for the agent, written as rules: a capability, an optional scope, and an action
+(`allow`, `deny` or `ask`). Capability names are Mars's snake_case vocabulary (below); a
+scope goes in parentheses, `tool(pattern)`. Mars maps each capability to the harness's real
+tool names while it builds the launch bundle and lowers agent files; the author never writes
+a harness spelling.
 
-Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case.
+Two forms:
+
+- **List form is an allowlist.** `tools: [read, grep]` means exactly those tools. Mars
+  compiles it to an explicit `*: deny` (marked `origin: list-form`) plus the allows. An empty
+  list names no tools and stays "no policy".
+- **Map form states rules.** `tools: {read: allow, edit: deny}` grants and denies those
+  entries and leaves everything else to the harness. Add `'*': deny` to make a map an
+  allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
+  commands.
+
+`ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
+for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian
+enforces them from the launch bundle.
+
+A scope written with the legacy prefix suffix, `bash(git revert:*)`, is normalized to
+`bash(git revert *)`, the one spelling every harness reads.
 
 ```yaml
-tools: [bash, write, edit]
-tools: [bash(git status), write, read]   # scoped pattern
+tools: [bash, write, edit]               # allowlist: exactly these
+tools: [bash(git status *), write, read] # scoped pattern
 tools: [mcp(context7), mcp(plugin:demo/query-docs)]   # MCP grants — see below
-tools:
+tools:                                   # map form: rules, not an allowlist
   bash: allow
   "bash(meridian spawn *)": allow
+  "bash(git push *)": ask
   agent: deny
   edit: deny
+tools:                                   # explicit allowlist in map form
+  "*": deny
+  "bash(rg *)": allow
 ```
+
+Readable aliases and native spellings (`Bash`, `shell`, `exec_command`, `AskUserQuestion`,
+`websearch`) resolve to the same capability. A name Mars does not recognize is kept as
+written and reported as `unknown` in the launch bundle; Mars never guesses a native spelling
+for it. `tools: allow` / `tools: deny` (a scalar) is a validation error.
+
+**Capabilities.** One name per kind of tool. Where a capability covers several native tools,
+a rule covers all of them.
+
+| Capability | Meaning |
+|---|---|
+| `bash` | Shell commands |
+| `read`, `write`, `edit` | Read files; create files; modify files (`edit` covers writes and notebook edits on harnesses where they are separate tools) |
+| `notebook` | Jupyter notebook editing |
+| `glob`, `grep` | File and content search |
+| `agent` | Sub-agents (Claude `Agent`, OpenCode `task`) |
+| `task` | The task list (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex `update_plan`). Not sub-agents. |
+| `skill`, `workflow` | Loading a skill; running a workflow |
+| `web` | `web_search` and `web_fetch` together |
+| `web_search`, `web_fetch` | One of the two |
+| `ask_user` | Asking the user a question |
+| `plan_mode`, `worktree`, `lsp`, `cron`, `monitor`, `notifications`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Harness features that exist on some harnesses only |
+
+Per-harness native names and the loss rules are in
+[agent-compilation.md](agent-compilation.md#tool-name-projection).
 
 **MCP grants** — inline `mcp(...)` entries in `tools:` or `disallowed-tools:` gate MCP
 server/tool access. Server and tool segments are preserved **verbatim** (case-sensitive).

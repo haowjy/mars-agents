@@ -98,11 +98,40 @@ pub struct SupplementalDoc {
     pub skill_type: String,
 }
 
+/// The agent's tool policy for the resolved harness.
+///
+/// `rules` is the contract: one entry per policy statement, carrying the canonical
+/// capability for meaning and the harness-native names for emission. `allowed`,
+/// `disallowed` and `mcp` are flat native-name lists derived from `rules` for consumers that
+/// predate it; they cannot express `ask`, `*`, or which capability a name came from.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
+    pub rules: Vec<ToolRuleSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
+}
+
+/// One tool-policy statement as the resolved harness spells it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolRuleSpec {
+    /// Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool", `mcp`
+    /// for MCP refs, or the author's spelling when Mars does not recognize the name.
+    pub capability: String,
+    /// Scope inside `capability(...)`; for `mcp` the `server/tool` reference.
+    pub pattern: Option<String>,
+    /// `allow`, `deny` or `ask`.
+    pub action: &'static str,
+    /// The harness's names for this rule: one per native tool the capability covers, with the
+    /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`.
+    pub native: Vec<String>,
+    /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
+    /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report.
+    pub native_status: &'static str,
+    /// `list-form` for the `*: deny` Mars adds to a `tools: [..]` list; omitted when the
+    /// author wrote the rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]

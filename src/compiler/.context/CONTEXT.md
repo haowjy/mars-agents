@@ -49,8 +49,9 @@ the reason as lossiness or a bundle warning and never broaden permissions.
   `disallowed-tools:` frontmatter.
 - **Claude skills** (`skills/lower_policy.rs`) — merge allowed MCP into `allowed-tools:`
   (grant semantics; always approximate lossiness note).
-- **Launch bundle** (`build/mod.rs`) — `ToolsSpec.mcp` = projected allowed tokens;
-  disallowed MCP folds into `tools.disallowed`.
+- **Launch bundle** (`build/mod.rs`) — `tools.rules` carries every MCP rule (capability `mcp`);
+  the flat lists derive from it: `tools.mcp` = projected allowed tokens, disallowed MCP folds
+  into `tools.disallowed`.
 
 Non-Claude native agent artifacts do not emit tool lists; MCP lossiness is recorded at
 lower time. Launch bundle is authoritative for spawn-time MCP policy.

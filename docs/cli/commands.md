@@ -628,7 +628,17 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   },
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
-  "tools": { "..." },
+  "tools": {
+    "rules": [
+      { "capability": "edit", "pattern": null, "action": "deny",
+        "native": ["Edit", "Write", "NotebookEdit"], "native_status": "known" },
+      { "capability": "bash", "pattern": "rg *", "action": "allow",
+        "native": ["Bash(rg *)"], "native_status": "known" }
+    ],
+    "allowed": ["Bash(rg *)"],
+    "disallowed": ["Edit", "Write", "NotebookEdit"],
+    "mcp": []
+  },
   "skills": {
     "loaded": [{ "name": "...", "skill_type": "...", "source_path": "...", "body": "..." }],
     "available": [{ "name": "...", "skill_type": "...", "description": "...", "source_path": "..." }],
@@ -647,6 +657,23 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
+
+**`tools.rules`** is the tool-policy contract: one entry per statement in the profile, in
+profile order, for the resolved harness. Read meaning from `capability` and emission from
+`native`; do not derive one from the other.
+
+| Field | Meaning |
+|---|---|
+| `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
+| `pattern` | Scope inside `capability(...)`, or `null`. Normalized: `X:*` is `X *`. For `mcp`, the `server/tool` reference |
+| `action` | `allow`, `deny` or `ask` |
+| `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known` |
+| `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars has no name for it, a gap to report |
+| `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
+
+`tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
+`rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
+a name; `allowed` never reflects an allowlist. Prefer `rules`.
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

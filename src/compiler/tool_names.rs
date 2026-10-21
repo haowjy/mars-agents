@@ -73,6 +73,16 @@ pub(crate) enum NativeStatus {
     Unknown,
 }
 
+impl NativeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Known => "known",
+            Self::Absent => "absent",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Native tool names for one capability on one harness.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CapabilityNatives {

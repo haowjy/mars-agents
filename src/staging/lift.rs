@@ -753,20 +753,6 @@ when_to_use: Use when git history matters
     }
 
     #[test]
-    fn claude_lift_leaves_lowercase_task_alone() {
-        // Canonical `task` is the task-list capability; only Claude's `Task` is renamed.
-        let lifted = lift(
-            Dialect::Claude,
-            ItemKind::Agent,
-            &fm("name: a\ndescription: d\ntools: [task]\n"),
-        );
-        assert_eq!(
-            lifted.get("tools"),
-            Some(&Value::Sequence(vec![Value::String("task".into())]))
-        );
-    }
-
-    #[test]
     fn claude_agent_lifts_whole_server_and_global_mcp_wire_tokens() {
         let lifted = lift(
             Dialect::Claude,

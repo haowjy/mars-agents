@@ -98,8 +98,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
-| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens) | allow rules projected to Claude's tool names; `ask` rules and an allowlist with nothing allowed are dropped |
+| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
@@ -115,7 +115,46 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 ### Tool name projection
 
-Mars stores recognized tool names in snake_case (`bash`, `read`, `web_search`). Native output is convention-based: Claude, Cursor, and Pi use PascalCase; Codex uses snake_case; OpenCode uses lowercase without underscores. Semantic exceptions are table-driven, for example `bash` → `shell` for Codex, `read` → `view` for OpenCode, and `web_search` → `browser` for OpenCode. Unknown tool names pass through to the target harness and are reported as approximate.
+Mars owns the native names. A profile's capability (`edit`, `web`, `ask_user`, …) becomes a
+harness's real tool names through one explicit table per harness
+(`src/compiler/tool_natives.rs`); no name is derived by convention. A capability can cover
+several native tools, and the launch bundle reports one of three outcomes per rule:
+
+- `known`: the table names it.
+- `absent`: the harness has no such tool, so there is nothing to allow or deny.
+- `unknown`: Mars has no entry for it (including names it does not recognize). The tool is left
+  out of native output with a warning, and the bundle rule carries an empty `native`. This is a
+  gap to report, not something to guess around.
+
+| Capability | Claude | Codex | OpenCode | Pi |
+|---|---|---|---|---|
+| `bash` | `Bash` | `exec_command` | `bash` | `bash` |
+| `read` | `Read` | absent | `read` | `read` |
+| `write` | `Write` | `apply_patch` | `edit` | `write` |
+| `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
+| `notebook` | `NotebookEdit` | absent | absent | absent |
+| `agent` | `Agent` | `spawn_agent` | `task` | absent |
+| `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
+| `skill` | `Skill` | absent | `skill` | absent |
+| `glob` / `grep` | `Glob` / `Grep` | absent | `glob` / `grep` | `find` / `grep` |
+| `web` | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent |
+| `ask_user` | `AskUserQuestion` | `request_user_input` | `question` | absent |
+| `plan_mode` | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent |
+
+The rest of the vocabulary is in `tool_natives.rs`. OpenCode names are the v1 permission
+vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings
+(`bash` → `shell`, `task` → `subagent`). OpenCode has one `edit` permission for `edit`,
+`write` and patch, so `write` and `edit` share a name there. Each row is pinned by a test
+against the harness's real tool list, with the source (docs, binary, probe) written beside the
+table. Cursor rows are carried over from earlier releases and not re-verified.
+
+MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
+
+**Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
+and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).
+Mars records both as dropped lossiness and never drops them silently; Meridian enforces them
+from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
+allow, ask or deny rule is recorded as dropped there too.
 
 ### `.codex/agents/<name>.toml`
 

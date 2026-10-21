@@ -448,16 +448,18 @@ impl<'a> LoweringCtx<'a> {
                             field: "tools".into(),
                             target: policy.target_name.into(),
                             classification: Lossiness::Approximate {
-                                note: "unknown tool projected via harness naming convention",
+                                note: "no native name known for this tool on this harness; left out",
                             },
                         });
                     }
                     push_unique(&mut tools, projected.native);
                 }
-                self.yaml.insert(
-                    yk("allowed-tools"),
-                    Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-                );
+                if !tools.is_empty() {
+                    self.yaml.insert(
+                        yk("allowed-tools"),
+                        Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
+                    );
+                }
             }
             AllowedToolsPolicy::DropWhenNonEmpty => {
                 if !allowed.is_empty() {
@@ -483,17 +485,19 @@ impl<'a> LoweringCtx<'a> {
                             target: policy.target_name.into(),
                             classification: Lossiness::Approximate {
                                 note: projected.note.unwrap_or(
-                                    "unknown tool projected via harness naming convention",
+                                    "no native name known for this tool on this harness; left out",
                                 ),
                             },
                         });
                     }
                     push_unique(&mut tools, projected.native);
                 }
-                self.yaml.insert(
-                    yk("disallowed-tools"),
-                    Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-                );
+                if !tools.is_empty() {
+                    self.yaml.insert(
+                        yk("disallowed-tools"),
+                        Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
+                    );
+                }
             }
             DisallowedToolsPolicy::Drop => {
                 self.lossy_fields

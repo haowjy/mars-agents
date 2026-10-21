@@ -22,6 +22,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   capability (`'*': deny` plus allows is an explicit allowlist). Native agent files
   cannot hold `ask`, or an allowlist with nothing allowed; both are reported as
   dropped lossiness.
+- Native tool names come from explicit per-harness tables (`compiler/tool_natives.rs`),
+  one capability to one or more real tools: Claude `edit` is `Edit`, `Write` and
+  `NotebookEdit`; `web` is `WebSearch` + `WebFetch` (OpenCode `websearch` + `webfetch`);
+  `ask_user` is `AskUserQuestion` (OpenCode `question`); Codex `read` is absent rather
+  than an alias of the shell. A capability a harness lacks is `absent`; a name Mars has
+  no row for is left out with a warning instead of guessed (the PascalCase / lowercase
+  naming convention is gone). Fixes Claude `Websearch` / `Askuser`, and OpenCode
+  `browser`, which matched no tool. Cursor rows are carried over unchanged.
 - `X:*` patterns normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`), the
   one spelling OpenCode reads correctly.
 - `mars agents show` / `mars skills show` add `tools-ask` (and `tools-list-form` for

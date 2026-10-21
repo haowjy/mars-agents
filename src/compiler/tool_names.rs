@@ -5,6 +5,7 @@
 //! normalizes the pattern; [`native_names`] answers what a harness calls it.
 
 use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, try_parse_mcp_tool_name};
+use crate::compiler::tool_natives::Native;
 
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
@@ -214,105 +215,6 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
 ];
 
-struct SemanticOverride {
-    canonical: &'static str,
-    harness: crate::compiler::agents::HarnessKind,
-    native: &'static str,
-}
-
-const SEMANTIC_OVERRIDES: &[SemanticOverride] = &[
-    // Codex — tool names verified from codex-rs source (openai/codex), 2026-06-22
-    // exec_command = shell execution, apply_patch = file edits/writes,
-    // spawn_agent = sub-agents. No separate file_read/file_write tools exist.
-    SemanticOverride {
-        canonical: "bash",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "exec_command",
-    },
-    SemanticOverride {
-        canonical: "read",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "exec_command",
-    },
-    SemanticOverride {
-        canonical: "write",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "apply_patch",
-    },
-    SemanticOverride {
-        canonical: "edit",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "apply_patch",
-    },
-    SemanticOverride {
-        canonical: "agent",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "spawn_agent",
-    },
-    SemanticOverride {
-        canonical: "ask_user",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "request_user_input",
-    },
-    SemanticOverride {
-        canonical: "todo_write",
-        harness: crate::compiler::agents::HarnessKind::Codex,
-        native: "update_plan",
-    },
-    SemanticOverride {
-        canonical: "read",
-        harness: crate::compiler::agents::HarnessKind::OpenCode,
-        native: "view",
-    },
-    SemanticOverride {
-        canonical: "web_search",
-        harness: crate::compiler::agents::HarnessKind::OpenCode,
-        native: "browser",
-    },
-    SemanticOverride {
-        canonical: "web_fetch",
-        harness: crate::compiler::agents::HarnessKind::OpenCode,
-        native: "fetch",
-    },
-    // Cursor — PascalCase convention covers most, but these names diverge
-    SemanticOverride {
-        canonical: "bash",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "Shell",
-    },
-    SemanticOverride {
-        canonical: "edit",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "StrReplace",
-    },
-    SemanticOverride {
-        canonical: "agent",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "Task",
-    },
-    SemanticOverride {
-        canonical: "ask_user",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "AskQuestion",
-    },
-    SemanticOverride {
-        canonical: "plan_mode",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "SwitchMode",
-    },
-    SemanticOverride {
-        canonical: "notebook",
-        harness: crate::compiler::agents::HarnessKind::Cursor,
-        native: "EditNotebook",
-    },
-    // Pi — lowercase convention covers most, but glob is called find
-    SemanticOverride {
-        canonical: "glob",
-        harness: crate::compiler::agents::HarnessKind::Pi,
-        native: "find",
-    },
-];
-
 pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolNameParseError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -383,7 +285,9 @@ fn normalize_pattern(pattern: &str) -> String {
     }
 }
 
-/// Native names for `capability` on `harness`.
+/// Native names for `capability` on `harness`, from the explicit tables in
+/// [`crate::compiler::tool_natives`]. Never derived: a capability without a row is
+/// [`NativeStatus::Unknown`] with no names.
 pub(crate) fn native_names(
     capability: &str,
     harness: crate::compiler::agents::HarnessKind,
@@ -396,49 +300,30 @@ pub(crate) fn native_names(
         };
     }
 
-    let known = canonical_tool_name(capability).is_some();
-    // Interim: `web` and `task` project like the single names they replaced
-    // (`web_search`, `todo_write`) until per-harness one-to-many tables land.
-    let capability = match capability {
-        "web" => "web_search",
-        "task" => "todo_write",
-        other => other,
-    };
-    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
-
-    if !known {
-        let name = match descriptor.tool_naming {
-            crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
-                snake_to_pascal(capability)
-            }
-            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase
-            | crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
-                capability.to_string()
-            }
-        };
-        return CapabilityNatives {
-            names: vec![name],
+    match crate::compiler::tool_natives::lookup(capability, harness) {
+        Some(Native::Tools(names)) => CapabilityNatives {
+            names: names.iter().map(|name| name.to_string()).collect(),
+            status: NativeStatus::Known,
+        },
+        Some(Native::Absent) => CapabilityNatives {
+            names: Vec::new(),
+            status: NativeStatus::Absent,
+        },
+        None => CapabilityNatives {
+            names: Vec::new(),
             status: NativeStatus::Unknown,
-        };
+        },
     }
+}
 
-    let name = semantic_override(capability, descriptor.kind)
-        .map(str::to_string)
-        .unwrap_or_else(|| match descriptor.tool_naming {
-            crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
-                snake_to_pascal(capability)
-            }
-            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase => {
-                capability.to_string()
-            }
-            crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
-                strip_underscores(capability)
-            }
-        });
-    CapabilityNatives {
-        names: vec![name],
-        status: NativeStatus::Known,
-    }
+#[cfg(test)]
+pub(crate) fn is_canonical_capability(name: &str) -> bool {
+    canonical_tool_name(name).is_some()
+}
+
+#[cfg(test)]
+pub(crate) fn canonical_capabilities() -> impl Iterator<Item = &'static str> {
+    CANONICAL_TOOLS.iter().map(|tool| tool.name)
 }
 
 struct CanonicalizedHead {
@@ -535,18 +420,6 @@ fn canonical_alias(alias: &str) -> Option<&'static str> {
         .map(|tool| tool.name)
 }
 
-fn semantic_override(
-    canonical: &str,
-    harness: crate::compiler::agents::HarnessKind,
-) -> Option<&'static str> {
-    SEMANTIC_OVERRIDES
-        .iter()
-        .find(|override_entry| {
-            override_entry.canonical == canonical && override_entry.harness == harness
-        })
-        .map(|override_entry| override_entry.native)
-}
-
 fn is_all_caps(s: &str) -> bool {
     let mut has_upper = false;
     for ch in s.chars().filter(|ch| ch.is_ascii_alphabetic()) {
@@ -577,26 +450,6 @@ fn pascal_to_snake(s: &str) -> String {
     out
 }
 
-fn snake_to_pascal(s: &str) -> String {
-    if s == "lsp" {
-        return "LSP".to_string();
-    }
-
-    let mut out = String::new();
-    for part in s.split('_') {
-        let mut chars = part.chars();
-        if let Some(first) = chars.next() {
-            out.push(first.to_ascii_uppercase());
-            out.extend(chars);
-        }
-    }
-    out
-}
-
-fn strip_underscores(s: &str) -> String {
-    s.replace('_', "")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,33 +458,14 @@ mod tests {
         parse_mars_tool_name(raw).unwrap()
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum ToolProjectionStatus {
-        Known,
-        UnknownProjected,
-        McpVerbatim,
-    }
-
-    struct ProjectedToolName {
-        name: String,
-        status: ToolProjectionStatus,
-    }
-
-    fn project(raw: &str, harness: &str) -> ProjectedToolName {
+    /// Native names and status of a raw tool entry on a harness, via parse then table.
+    fn natives(raw: &str, harness: &str) -> (Vec<String>, NativeStatus) {
         let harness = crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
             .expect("test harness exists")
             .kind;
-        let parsed = parse(raw);
-        let natives = native_names(&parsed.capability, harness);
-        let status = match natives.status {
-            _ if is_mcp_shaped(&parsed.capability) => ToolProjectionStatus::McpVerbatim,
-            NativeStatus::Known => ToolProjectionStatus::Known,
-            NativeStatus::Absent | NativeStatus::Unknown => ToolProjectionStatus::UnknownProjected,
-        };
-        ProjectedToolName {
-            name: render_scoped(&natives.names[0], parsed.pattern.as_deref()),
-            status,
-        }
+        let capability = parse(raw).capability;
+        let natives = native_names(&capability, harness);
+        (natives.names, natives.status)
     }
 
     #[test]
@@ -692,309 +526,82 @@ mod tests {
     }
 
     #[test]
-    fn target_projection_maps_canonical_to_native_by_convention_and_override() {
-        let cases = [
-            ("bash", "claude", "Bash", ToolProjectionStatus::Known),
-            ("bash", "codex", "exec_command", ToolProjectionStatus::Known),
-            ("bash", "opencode", "bash", ToolProjectionStatus::Known),
-            ("read", "opencode", "view", ToolProjectionStatus::Known),
-            ("read", "codex", "exec_command", ToolProjectionStatus::Known),
+    fn aliases_and_native_spellings_reach_the_same_native_tools() {
+        let known = |names: &[&str]| {
             (
-                "web_search",
-                "claude",
-                "WebSearch",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "web_search",
-                "codex",
-                "web_search",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "web_search",
-                "opencode",
-                "browser",
-                ToolProjectionStatus::Known,
-            ),
-            ("ask_user", "claude", "AskUser", ToolProjectionStatus::Known),
-            (
-                "ask_user",
-                "codex",
-                "request_user_input",
-                ToolProjectionStatus::Known,
-            ),
-            ("lsp", "claude", "LSP", ToolProjectionStatus::Known),
-            (
-                "CustomTool",
-                "claude",
-                "CustomTool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "bash(git *)",
-                "claude",
-                "Bash(git *)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "bash(git *)",
-                "codex",
-                "exec_command(git *)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(init)",
-                "claude",
-                "Skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(deep-research)",
-                "codex",
-                "skill(deep-research)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(init)",
-                "cursor",
-                "Skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(init)",
-                "opencode",
-                "skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(init)",
-                "pi",
-                "skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "workflow",
-                "claude",
-                "Workflow",
-                ToolProjectionStatus::Known,
-            ),
-            ("workflow", "codex", "workflow", ToolProjectionStatus::Known),
-            ("web", "claude", "WebSearch", ToolProjectionStatus::Known),
-            ("web", "codex", "web_search", ToolProjectionStatus::Known),
-            ("web", "opencode", "browser", ToolProjectionStatus::Known),
-        ];
+                names.iter().map(|n| n.to_string()).collect::<Vec<_>>(),
+                NativeStatus::Known,
+            )
+        };
+        assert_eq!(natives("Bash", "codex"), known(&["exec_command"]));
+        assert_eq!(natives("shell", "claude"), known(&["Bash"]));
+        assert_eq!(natives("exec_command", "claude"), known(&["Bash"]));
+        assert_eq!(natives("WebSearch", "opencode"), known(&["websearch"]));
+        assert_eq!(
+            natives("web", "opencode"),
+            known(&["websearch", "webfetch"])
+        );
+        assert_eq!(
+            natives("AskUserQuestion", "claude"),
+            known(&["AskUserQuestion"])
+        );
+        assert_eq!(natives("AskUser", "claude"), known(&["AskUserQuestion"]));
+        assert_eq!(natives("askuser", "opencode"), known(&["question"]));
+        assert_eq!(
+            natives("edit", "claude"),
+            known(&["Edit", "Write", "NotebookEdit"])
+        );
+        assert_eq!(natives("todowrite", "claude").0.len(), 6);
+    }
 
-        for (raw, harness, expected_name, expected_status) in cases {
-            let projected = project(raw, harness);
+    #[test]
+    fn a_tool_the_harness_lacks_is_absent_not_guessed() {
+        assert_eq!(natives("read", "codex"), (vec![], NativeStatus::Absent));
+        assert_eq!(natives("ask_user", "pi"), (vec![], NativeStatus::Absent));
+        assert_eq!(
+            natives("web_fetch", "codex"),
+            (vec![], NativeStatus::Absent)
+        );
+    }
+
+    #[test]
+    fn a_name_without_a_table_row_is_unknown_with_no_native_name() {
+        // Known capability, no Cursor row: no convention fallback fills it in.
+        assert_eq!(natives("lsp", "cursor"), (vec![], NativeStatus::Unknown));
+        // Not a capability at all.
+        for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
             assert_eq!(
-                projected.name, expected_name,
-                "raw: {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "raw: {raw}, harness: {harness}"
+                natives("my_custom_tool", harness),
+                (vec![], NativeStatus::Unknown),
+                "{harness}"
             );
         }
     }
 
     #[test]
-    fn projection_accepts_input_aliases_and_pascal_case() {
-        assert_eq!(project("Bash", "codex").name, "exec_command");
-        assert_eq!(project("shell", "claude").name, "Bash");
-        assert_eq!(project("WebSearch", "opencode").name, "browser");
-        assert_eq!(project("BASH(git *)", "codex").name, "exec_command(git *)");
-    }
-
-    #[test]
-    fn cursor_projection_uses_semantic_overrides() {
-        let cases = [
-            ("bash", "cursor", "Shell", ToolProjectionStatus::Known),
-            ("edit", "cursor", "StrReplace", ToolProjectionStatus::Known),
-            ("agent", "cursor", "Task", ToolProjectionStatus::Known),
-            (
-                "ask_user",
-                "cursor",
-                "AskQuestion",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "plan_mode",
-                "cursor",
-                "SwitchMode",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "notebook",
-                "cursor",
-                "EditNotebook",
-                ToolProjectionStatus::Known,
-            ),
-            // Convention handles the rest
-            ("read", "cursor", "Read", ToolProjectionStatus::Known),
-            ("write", "cursor", "Write", ToolProjectionStatus::Known),
-            ("grep", "cursor", "Grep", ToolProjectionStatus::Known),
-            ("glob", "cursor", "Glob", ToolProjectionStatus::Known),
-            (
-                "web_search",
-                "cursor",
-                "WebSearch",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "web_fetch",
-                "cursor",
-                "WebFetch",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "todo_write",
-                "cursor",
-                "TodoWrite",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "skill(init)",
-                "cursor",
-                "Skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            (
-                "workflow",
-                "cursor",
-                "Workflow",
-                ToolProjectionStatus::Known,
-            ),
-            ("web", "cursor", "WebSearch", ToolProjectionStatus::Known),
-        ];
-
-        for (raw, harness, expected_name, expected_status) in cases {
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "raw: {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "raw: {raw}, harness: {harness}"
-            );
+    fn non_ascii_unknown_tools_do_not_panic() {
+        for raw in ["café_tool", "🎉🎉tool", "🚀tool"] {
+            let parsed = parse_mars_tool_name(raw).expect("parse should not panic");
+            assert_eq!(parsed.render(), raw);
+            assert!(!parsed.known);
+            assert_eq!(natives(raw, "claude"), (vec![], NativeStatus::Unknown));
         }
     }
 
     #[test]
-    fn pi_projection_uses_lowercase_convention_and_overrides() {
-        let cases = [
-            ("bash", "pi", "bash", ToolProjectionStatus::Known),
-            ("read", "pi", "read", ToolProjectionStatus::Known),
-            ("write", "pi", "write", ToolProjectionStatus::Known),
-            ("edit", "pi", "edit", ToolProjectionStatus::Known),
-            ("grep", "pi", "grep", ToolProjectionStatus::Known),
-            ("glob", "pi", "find", ToolProjectionStatus::Known), // semantic override
-            ("ask_user", "pi", "askuser", ToolProjectionStatus::Known), // convention strips _
-            (
-                "skill(init)",
-                "pi",
-                "skill(init)",
-                ToolProjectionStatus::Known,
-            ),
-            ("workflow", "pi", "workflow", ToolProjectionStatus::Known),
-            ("web", "pi", "websearch", ToolProjectionStatus::Known),
-        ];
-
-        for (raw, harness, expected_name, expected_status) in cases {
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "raw: {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "raw: {raw}, harness: {harness}"
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_plain_tools_project_via_harness_convention() {
-        let cases = [
-            (
-                "my_custom_tool",
-                "claude",
-                "MyCustomTool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "my_custom_tool",
-                "cursor",
-                "MyCustomTool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "my_custom_tool",
-                "codex",
-                "my_custom_tool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "my_custom_tool",
-                "opencode",
-                "my_custom_tool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "my_custom_tool",
-                "pi",
-                "my_custom_tool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-        ];
-
-        for (raw, harness, expected_name, expected_status) in cases {
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "raw: {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "raw: {raw}, harness: {harness}"
-            );
-        }
-    }
-
-    #[test]
-    fn mcp_shaped_tools_preserve_verbatim_casing() {
-        let cases = [
-            (
-                "mcp__github__CreateIssue",
-                "claude",
-                "mcp__github__CreateIssue",
-                ToolProjectionStatus::McpVerbatim,
-            ),
-            (
-                "mcp__github__CreateIssue",
-                "codex",
-                "mcp__github__CreateIssue",
-                ToolProjectionStatus::McpVerbatim,
-            ),
-            (
-                "MCP__Server__Tool(scope)",
-                "claude",
-                "MCP__Server__Tool(scope)",
-                ToolProjectionStatus::McpVerbatim,
-            ),
-        ];
-
-        for (raw, harness, expected_name, expected_status) in cases {
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "raw: {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "raw: {raw}, harness: {harness}"
-            );
+    fn mcp_wire_tokens_are_verbatim_on_every_harness() {
+        for (raw, expected) in [
+            ("mcp__github__CreateIssue", "mcp__github__CreateIssue"),
+            ("MCP__Server__Tool", "MCP__Server__Tool"),
+            ("mcp__github__create_issue", "mcp__github__create_issue"),
+        ] {
+            for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
+                assert_eq!(
+                    natives(raw, harness),
+                    (vec![expected.to_string()], NativeStatus::Known),
+                    "{raw} on {harness}"
+                );
+            }
         }
     }
 
@@ -1045,57 +652,5 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].0, "disallowed-tools[0]");
         assert_eq!(diags[0].1, "mcp()");
-    }
-
-    #[test]
-    fn mcp_wire_form_projects_as_verbatim() {
-        let wire = project("mcp__github__create_issue", "claude");
-        assert_eq!(wire.name, "mcp__github__create_issue");
-        assert_eq!(wire.status, ToolProjectionStatus::McpVerbatim);
-    }
-
-    #[test]
-    fn non_ascii_unknown_tools_do_not_panic_and_stay_convention_projected() {
-        let cases = [
-            (
-                "café_tool",
-                "claude",
-                "CaféTool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "🎉🎉tool",
-                "claude",
-                "🎉🎉tool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-            (
-                "🚀tool",
-                "codex",
-                "🚀tool",
-                ToolProjectionStatus::UnknownProjected,
-            ),
-        ];
-
-        for (raw, harness, expected_name, expected_status) in cases {
-            let parsed = parse_mars_tool_name(raw).expect("parse should not panic");
-            assert_eq!(parsed.render(), raw, "parse name for {raw}");
-            assert!(!parsed.known, "parse known flag for {raw}");
-
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "projected name for {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status, expected_status,
-                "projected status for {raw}, harness: {harness}"
-            );
-            assert_ne!(
-                projected.status,
-                ToolProjectionStatus::McpVerbatim,
-                "{raw} must not be treated as MCP verbatim"
-            );
-        }
     }
 }

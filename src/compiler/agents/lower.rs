@@ -62,7 +62,10 @@ mod tests {
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(text.contains("- Bash"), "Bash not projected: {text}");
-        assert!(text.contains("- AskUser"), "AskUser not projected: {text}");
+        assert!(
+            text.contains("- AskUserQuestion"),
+            "ask_user not projected to Claude's AskUserQuestion: {text}"
+        );
         assert!(
             text.contains("- Bash(git reset *)"),
             "scoped Bash not projected while preserving payload: {text}"
@@ -70,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_lowering_projects_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
+    fn claude_lowering_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
         let content = "---\nname: coder\nharness: claude\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
         let (profile, fm, diags) = profile_from(content);
         assert!(diags.is_empty());
@@ -78,8 +81,8 @@ mod tests {
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(
-            text.contains("- MyCustomTool"),
-            "unknown custom tool should be convention-projected: {text}"
+            !text.to_lowercase().contains("custom"),
+            "an unrecognized tool must not be guessed into a native name: {text}"
         );
         assert!(
             text.contains("- mcp__server__Tool"),
@@ -91,7 +94,7 @@ mod tests {
                 && matches!(
                     field.classification,
                     Lossiness::Approximate {
-                        note: "unknown tool projected via harness naming convention"
+                        note: "no native name known for this tool on this harness; left out"
                     }
                 )
         }));

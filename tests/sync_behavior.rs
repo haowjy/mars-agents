@@ -2620,7 +2620,7 @@ dialect = "mars-native"
 }
 
 #[test]
-fn sync_claude_native_agent_projects_unknown_custom_tool_in_emitted_tools() {
+fn sync_claude_native_agent_omits_unrecognized_tool_and_keeps_mcp_wire_identifier() {
     let dir = TempDir::new().unwrap();
     let agent = r#"---
 name: custom-tools-agent
@@ -2679,8 +2679,8 @@ dialect = "mars-native"
     )
     .unwrap();
     assert!(
-        claude_native.contains("- MyCustomTool"),
-        "claude native agent should convention-project unknown custom tool: {claude_native}"
+        !claude_native.contains("MyCustomTool") && !claude_native.contains("my_custom_tool"),
+        "claude native agent must not guess a name for an unrecognized tool: {claude_native}"
     );
     assert!(
         claude_native.contains("- mcp__server__Tool"),

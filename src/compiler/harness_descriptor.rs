@@ -1,7 +1,7 @@
 //! Typed compiler harness descriptors used by native agent and skill lowering.
 //!
 //! This module is the compiler-side owner for facts that used to be duplicated
-//! across lowerers: canonical ids, skill variant keys, tool-name conventions,
+//! across lowerers: canonical ids, skill variant keys,
 //! MCP projection policy, and lowering-policy selection hooks. The
 //! descriptor is keyed by [`HarnessKind`] so compiler code does not re-match raw
 //! `"claude"`/`"codex"` strings at each call site.
@@ -9,13 +9,6 @@
 use crate::compiler::agents::HarnessKind;
 use crate::config::Settings;
 use crate::harness::registry::HarnessId;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ToolNamingConvention {
-    PascalCase,
-    SnakeCase,
-    Lowercase,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum McpProjectionPolicy {
@@ -49,7 +42,6 @@ pub(crate) struct CompilerHarnessDescriptor {
     pub canonical_id: &'static str,
     pub variant_key: &'static str,
     pub target_dir: &'static str,
-    pub tool_naming: ToolNamingConvention,
     pub mcp_projection: McpProjectionPolicy,
     pub agent_policy: AgentLoweringPolicyKind,
     pub skill_policy: SkillLoweringPolicyKind,
@@ -62,7 +54,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         canonical_id: "claude",
         variant_key: "claude",
         target_dir: ".claude",
-        tool_naming: ToolNamingConvention::PascalCase,
         mcp_projection: McpProjectionPolicy::ClaudeToolList,
         agent_policy: AgentLoweringPolicyKind::Claude,
         skill_policy: SkillLoweringPolicyKind::Claude,
@@ -73,7 +64,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         canonical_id: "codex",
         variant_key: "codex",
         target_dir: ".codex",
-        tool_naming: ToolNamingConvention::SnakeCase,
         mcp_projection: McpProjectionPolicy::CodexServerConfig,
         agent_policy: AgentLoweringPolicyKind::Codex,
         skill_policy: SkillLoweringPolicyKind::Codex,
@@ -84,7 +74,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         canonical_id: "pi",
         variant_key: "pi",
         target_dir: ".pi",
-        tool_naming: ToolNamingConvention::Lowercase,
         mcp_projection: McpProjectionPolicy::Unsupported,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::Pi,
@@ -95,7 +84,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         canonical_id: "opencode",
         variant_key: "opencode",
         target_dir: ".opencode",
-        tool_naming: ToolNamingConvention::Lowercase,
         mcp_projection: McpProjectionPolicy::OpenCodeToolList,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::OpenCode,
@@ -106,7 +94,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         canonical_id: "cursor",
         variant_key: "cursor",
         target_dir: ".cursor",
-        tool_naming: ToolNamingConvention::PascalCase,
         mcp_projection: McpProjectionPolicy::CursorToolList,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::Cursor,

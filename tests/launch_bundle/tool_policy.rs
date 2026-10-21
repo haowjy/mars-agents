@@ -46,7 +46,7 @@ Review code changes."#;
     assert_eq!(root_bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
     assert_eq!(
         root_bundle["tools"]["disallowed"],
-        serde_json::json!(["Agent", "Edit", "Write"])
+        serde_json::json!(["Agent", "Edit", "Write", "NotebookEdit"])
     );
     assert_eq!(
         root_bundle["tools"]["mcp"],
@@ -159,13 +159,15 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
+    // `CustomTool` / `CustomDeny` are not capabilities: Mars leaves them out and says so
+    // instead of guessing a Claude spelling.
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["CustomTool", "Notebook"])
+        serde_json::json!(["NotebookEdit"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["PlanMode", "CustomDeny"])
+        serde_json::json!(["EnterPlanMode", "ExitPlanMode"])
     );
     assert_eq!(
         bundle["tools"]["mcp"],
@@ -178,24 +180,23 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'custom_tool' is not a known claude tool")
+            .contains("tool 'custom_tool' has no known claude name")
     }));
-    assert!(!warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("tool 'PlanMode' is not a known claude tool")
-    }));
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| { warning.as_str().unwrap_or_default().contains("plan_mode") })
+    );
     assert!(warnings.iter().any(|warning| {
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("disallowed tool 'custom_deny' is not a known claude tool")
+            .contains("disallowed tool 'custom_deny' has no known claude name")
     }));
 }
 
 #[test]
-fn build_launch_bundle_opencode_tool_normalization_maps_web_aliases_and_warns_unknown() {
+fn build_launch_bundle_opencode_tool_normalization_maps_to_opencode_permission_names() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
@@ -232,11 +233,11 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["bash", "view", "write", "custom_tool", "browser", "fetch"])
+        serde_json::json!(["bash", "read", "edit", "websearch", "webfetch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["edit", "agent", "planmode"])
+        serde_json::json!(["edit", "task", "plan_enter", "plan_exit"])
     );
 
     let warnings = bundle["warnings"]
@@ -246,14 +247,13 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'custom_tool' is not a known opencode tool")
+            .contains("tool 'custom_tool' has no known opencode name")
     }));
-    assert!(!warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("disallowed tool 'plan_mode' is not a known opencode tool")
-    }));
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| { warning.as_str().unwrap_or_default().contains("plan_mode") })
+    );
 }
 
 #[test]
@@ -289,11 +289,11 @@ Review code changes."#;
     let claude_bundle: Value = serde_json::from_slice(&claude_output.stdout).unwrap();
     assert_eq!(
         claude_bundle["tools"]["allowed"],
-        serde_json::json!(["Bash", "WebSearch"])
+        serde_json::json!(["Bash", "WebSearch", "WebFetch"])
     );
     assert_eq!(
         claude_bundle["tools"]["disallowed"],
-        serde_json::json!(["Skill(init)", "Workflow", "Definitely-not-a-tool"])
+        serde_json::json!(["Skill(init)", "Workflow"])
     );
     let claude_warnings = claude_bundle["warnings"]
         .as_array()
@@ -306,7 +306,7 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("disallowed tool 'definitely-not-a-tool' is not a known claude tool")
+            .contains("disallowed tool 'definitely-not-a-tool' has no known claude name")
     }));
 
     let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
@@ -327,10 +327,8 @@ Review code changes."#;
         codex_bundle["tools"]["allowed"],
         serde_json::json!(["exec_command", "web_search"])
     );
-    assert_eq!(
-        codex_bundle["tools"]["disallowed"],
-        serde_json::json!(["skill(init)", "workflow", "definitely-not-a-tool"])
-    );
+    // Codex has no skill or workflow tool, so those denies have nothing to name.
+    assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
     let codex_warnings = codex_bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
@@ -342,12 +340,12 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("disallowed tool 'definitely-not-a-tool' is not a known codex tool")
+            .contains("disallowed tool 'definitely-not-a-tool' has no known codex name")
     }));
 }
 
 #[test]
-fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_pass_through() {
+fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_are_left_out() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
     let agent_content = r#"---
@@ -373,10 +371,7 @@ Review code changes."#;
     cursor_cmd.env("PATH", replace_path_with(&bin_dir));
     let cursor_output = cursor_cmd.assert().success().get_output().clone();
     let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
-    assert_eq!(
-        cursor_bundle["tools"]["allowed"],
-        serde_json::json!(["CustomTool"])
-    );
+    assert_eq!(cursor_bundle["tools"]["allowed"], serde_json::json!([]));
     let cursor_warnings = cursor_bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
@@ -384,7 +379,7 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'custom_tool' is not a known")
+            .contains("tool 'custom_tool' has no known cursor name")
     }));
 
     let mut pi_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
@@ -399,10 +394,7 @@ Review code changes."#;
     pi_cmd.env("PATH", replace_path_with(&bin_dir));
     let pi_output = pi_cmd.assert().success().get_output().clone();
     let pi_bundle: Value = serde_json::from_slice(&pi_output.stdout).unwrap();
-    assert_eq!(
-        pi_bundle["tools"]["allowed"],
-        serde_json::json!(["custom_tool"])
-    );
+    assert_eq!(pi_bundle["tools"]["allowed"], serde_json::json!([]));
     let pi_warnings = pi_bundle["warnings"]
         .as_array()
         .expect("warnings should be an array");
@@ -410,7 +402,7 @@ Review code changes."#;
         warning
             .as_str()
             .unwrap_or_default()
-            .contains("tool 'custom_tool' is not a known")
+            .contains("tool 'custom_tool' has no known pi name")
     }));
 }
 

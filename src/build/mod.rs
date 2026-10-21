@@ -246,11 +246,11 @@ fn resolve_bundle_tools(
                         projected.note.unwrap_or("unsupported")
                     ),
                     (false, false) => format!(
-                        "tool '{}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)",
+                        "tool '{}' has no known {harness} name; Mars left it out (native_status: unknown)",
                         rule.render()
                     ),
                     (false, true) => format!(
-                        "disallowed tool '{}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)",
+                        "disallowed tool '{}' has no known {harness} name; Mars left it out (native_status: unknown)",
                         rule.render()
                     ),
                 });

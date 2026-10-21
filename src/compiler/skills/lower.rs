@@ -116,7 +116,9 @@ mod tests {
         let lowered = lower_skill_to_pi(&disallowed_tools_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(out.contains("disallowed-tools:"));
-        assert!(out.contains("- agent"));
+        // Pi has no sub-agent tool, so `agent` has nothing to deny there.
+        assert!(!out.contains("- agent"), "{out}");
+        assert!(out.contains("- bash(git *)"), "{out}");
         assert!(!has_dropped(
             &lowered.lossy_fields,
             "disallowed-tools",
@@ -178,7 +180,10 @@ mod tests {
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
 
-        assert!(out.contains("- AskUser"), "AskUser not projected: {out}");
+        assert!(
+            out.contains("- AskUserQuestion"),
+            "ask_user not projected to Claude's AskUserQuestion: {out}"
+        );
         assert!(
             out.contains("- Bash(git *)"),
             "scoped Bash not projected while preserving payload: {out}"
@@ -186,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_lowers_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
+    fn claude_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
         let profile = parse_profile(
             "---\nname: skill\ndescription: desc\ntools: [my_custom_tool, mcp__server__Tool]\n---\nBody\n",
         );
@@ -194,8 +199,8 @@ mod tests {
         let out = String::from_utf8(lowered.bytes).unwrap();
 
         assert!(
-            out.contains("- MyCustomTool"),
-            "unknown custom tool should be convention-projected: {out}"
+            !out.to_lowercase().contains("custom"),
+            "an unrecognized tool must not be guessed into a native name: {out}"
         );
         assert!(
             out.contains("- mcp__server__Tool"),
@@ -207,7 +212,7 @@ mod tests {
                 && matches!(
                     field.classification,
                     Lossiness::Approximate {
-                        note: "unknown tool projected via harness naming convention"
+                        note: "no native name known for this tool on this harness; left out"
                     }
                 )
         }));

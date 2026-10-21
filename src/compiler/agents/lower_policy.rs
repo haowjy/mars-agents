@@ -114,7 +114,7 @@ fn native_tools_for_action(
                 classification: Lossiness::Approximate {
                     note: projected
                         .note
-                        .unwrap_or("unknown tool projected via harness naming convention"),
+                        .unwrap_or("no native name known for this tool on this harness; left out"),
                 },
             });
         }

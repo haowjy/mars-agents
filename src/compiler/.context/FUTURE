@@ -1,0 +1,6 @@
+# src/compiler follow-ups
+
+- Pi MCP projection is stale. `project_mcp_ref` treats Pi as having no MCP surface
+  (`HarnessDropsMcp`, so every MCP rule on Pi is `unknown`), but Pi 1.2.0 ships MCP
+  (`pi mcp`, `--no-mcp`, `mcp__` tool filtering). Re-check the token shape against the
+  installed Pi.

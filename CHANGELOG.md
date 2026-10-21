@@ -6,6 +6,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `.cursor` target unmaintained. Support stays; no longer tested or extended.
+- Tool vocabulary: `task` now means the task-list tools (Claude `TaskCreate`…,
+  OpenCode `todowrite`/`todoread`, Codex `update_plan`), no longer an alias of `agent`
+  (sub-agents). `web` is its own capability (`web_search` + `web_fetch`), no longer an
+  alias of `web_search`. `todo_read`/`todo_write` fold into `task`. Claude-dialect
+  packages keep working: staging renames Claude's `Task` tool to `agent`.
+- `tools: allow` / `tools: deny` (scalar) is a validation error instead of being read as
+  a tool named `allow`/`deny`.
 
 ## [0.16.0] - 2026-10-14
 

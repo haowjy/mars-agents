@@ -239,6 +239,19 @@ pub(crate) fn parse_tools_field(
                 denied: dedupe_ordered(denied),
             }
         }
+        // `tools: allow` / `tools: deny` was a Meridian-side shorthand that never worked
+        // here: it read as a tool named `allow`. Say so instead of guessing.
+        Value::String(raw)
+            if raw.trim().eq_ignore_ascii_case("allow")
+                || raw.trim().eq_ignore_ascii_case("deny") =>
+        {
+            on_invalid(
+                field,
+                raw,
+                "list of tool names or mapping of tool to allow|deny",
+            );
+            ParsedToolsField::default()
+        }
         _ => ParsedToolsField {
             allowed: yaml_tool_list(field, val, on_invalid),
             denied: vec![],

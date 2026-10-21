@@ -345,6 +345,22 @@ fn separator_tool_aliases_canonicalize() {
 }
 
 #[test]
+fn tools_allow_deny_shorthand_is_rejected_not_read_as_a_tool_name() {
+    for shorthand in ["allow", "deny"] {
+        let (p, diags) = parse(&format!("---\ntools: {shorthand}\n---\n"));
+        assert!(p.tools.is_empty(), "{shorthand} must not become a tool");
+        assert!(
+            diags.iter().any(|d| matches!(
+                d,
+                AgentDiagnostic::InvalidFieldValue { field, value, .. }
+                    if field == "tools" && value == shorthand
+            )),
+            "expected an invalid-value diagnostic for `tools: {shorthand}`: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn unknown_pascal_case_tool_names_convert_to_snake_case() {
     let content = "---
 tools: [customtool, CustomTool]

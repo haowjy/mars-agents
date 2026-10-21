@@ -63,9 +63,30 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
         name: "edit",
         aliases: &["sed", "str_replace"],
     },
+    // Sub-agents (Claude `Agent`, OpenCode `task`). Not the task-list tools: see `task`.
     CanonicalTool {
         name: "agent",
-        aliases: &["subagent", "spawn_agent", "task"],
+        aliases: &["subagent", "spawn_agent"],
+    },
+    // Task-list tools (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`/`todoread`,
+    // Codex `update_plan`). One capability: a profile gates the list, not each verb.
+    CanonicalTool {
+        name: "task",
+        aliases: &[
+            "todo_read",
+            "todoread",
+            "todo_write",
+            "todowrite",
+            "task_create",
+            "taskcreate",
+            "task_get",
+            "taskget",
+            "task_list",
+            "tasklist",
+            "task_update",
+            "taskupdate",
+            "update_plan",
+        ],
     },
     // Scoped payloads like skill(init) gate a specific skill via the harness skill tool.
     // Recognition here only affects name normalization/projection — not whether a harness
@@ -88,12 +109,16 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "notebook",
-        aliases: &["jupyter"],
+        aliases: &["jupyter", "notebook_edit", "notebookedit"],
+    },
+    // `web` = `web_search` + `web_fetch`: the capability profiles write for "reach the web".
+    CanonicalTool {
+        name: "web",
+        aliases: &[],
     },
     CanonicalTool {
         name: "web_search",
-        // `web` is package shorthand for web search (Codex native: web_search, not `web`).
-        aliases: &["websearch", "web"],
+        aliases: &["websearch"],
     },
     CanonicalTool {
         name: "web_fetch",
@@ -101,15 +126,13 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "ask_user",
-        aliases: &["askuser", "request_user_input", "ask_question"],
-    },
-    CanonicalTool {
-        name: "todo_read",
-        aliases: &["todoread"],
-    },
-    CanonicalTool {
-        name: "todo_write",
-        aliases: &["todowrite"],
+        aliases: &[
+            "askuser",
+            "request_user_input",
+            "ask_question",
+            "ask_user_question",
+            "askuserquestion",
+        ],
     },
     CanonicalTool {
         name: "cron",
@@ -121,7 +144,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     CanonicalTool {
         name: "plan_mode",
-        aliases: &["planmode", "update_plan", "switch_mode"],
+        aliases: &["planmode", "switch_mode"],
     },
     CanonicalTool {
         name: "worktree",
@@ -194,7 +217,7 @@ const SEMANTIC_OVERRIDES: &[SemanticOverride] = &[
         native: "request_user_input",
     },
     SemanticOverride {
-        canonical: "plan_mode",
+        canonical: "todo_write",
         harness: crate::compiler::agents::HarnessKind::Codex,
         native: "update_plan",
     },
@@ -313,7 +336,14 @@ pub(crate) fn project_tool_for_harness(
         };
     }
 
-    let canonical = canonicalize_head(head);
+    let mut canonical = canonicalize_head(head);
+    // Interim: `web` and `task` project like the single names they replaced
+    // (`web_search`, `todo_write`) until per-harness one-to-many tables land.
+    match canonical.name.as_str() {
+        "web" if canonical.known => canonical.name = "web_search".to_string(),
+        "task" if canonical.known => canonical.name = "todo_write".to_string(),
+        _ => {}
+    }
     if !canonical.known {
         let descriptor = crate::compiler::harness_descriptor::descriptor(target_harness);
         let native = match descriptor.tool_naming {
@@ -545,7 +575,15 @@ mod tests {
             ("skill(init)", "skill(init)", true),
             ("Skill(deep-research)", "skill(deep-research)", true),
             ("workflow", "workflow", true),
-            ("web", "web_search", true),
+            ("web", "web", true),
+            ("websearch", "web_search", true),
+            ("webfetch", "web_fetch", true),
+            ("AskUserQuestion", "ask_user", true),
+            ("NotebookEdit", "notebook", true),
+            ("TaskCreate", "task", true),
+            ("TodoWrite", "task", true),
+            ("update_plan", "task", true),
+            ("subagent", "agent", true),
         ];
 
         for (raw, expected_name, expected_known) in cases {
@@ -553,6 +591,16 @@ mod tests {
             assert_eq!(parsed.name, expected_name, "raw: {raw}");
             assert_eq!(parsed.known, expected_known, "raw: {raw}");
         }
+    }
+
+    #[test]
+    fn task_means_task_list_not_sub_agents() {
+        // `task` was an alias of `agent`. Shipped profiles write both `agent: deny` and
+        // `task: deny`, and they name different tools.
+        assert_eq!(parse("task").name, "task");
+        assert_eq!(parse("Task").name, "task");
+        assert_eq!(parse("agent").name, "agent");
+        assert_ne!(parse("task").name, parse("agent").name);
     }
 
     #[test]

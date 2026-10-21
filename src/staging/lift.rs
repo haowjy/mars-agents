@@ -74,6 +74,65 @@ fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Di
     changed
 }
 
+/// Claude's pre-`Agent` name for the sub-agent tool. In canonical Mars `task` means the
+/// task-list tools, so a Claude-dialect `Task` entry must be renamed on the way in.
+fn claude_task_to_agent(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let (head, payload) = match trimmed.find('(') {
+        Some(index) => trimmed.split_at(index),
+        None => (trimmed, ""),
+    };
+    (head.trim() == "Task").then(|| format!("agent{payload}"))
+}
+
+fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
+    let Some(value) = fm.get(key).cloned() else {
+        return false;
+    };
+    let lifted = match &value {
+        Value::String(raw) => claude_task_to_agent(raw).map(Value::String),
+        Value::Sequence(seq) => {
+            let mut changed = false;
+            let entries: Vec<Value> = seq
+                .iter()
+                .map(
+                    |entry| match entry.as_str().and_then(claude_task_to_agent) {
+                        Some(renamed) => {
+                            changed = true;
+                            Value::String(renamed)
+                        }
+                        None => entry.clone(),
+                    },
+                )
+                .collect();
+            changed.then_some(Value::Sequence(entries))
+        }
+        Value::Mapping(map) => {
+            let mut changed = false;
+            let mut entries = serde_yaml::Mapping::new();
+            for (name, entry) in map {
+                let name = match name.as_str().and_then(claude_task_to_agent) {
+                    Some(renamed) => {
+                        changed = true;
+                        Value::String(renamed)
+                    }
+                    None => name.clone(),
+                };
+                entries.insert(name, entry.clone());
+            }
+            changed.then_some(Value::Mapping(entries))
+        }
+        _ => None,
+    };
+    match lifted {
+        Some(lifted) => {
+            fm.insert(key, lifted);
+            true
+        }
+        None => false,
+    }
+}
+
 fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool {
     let mut changed = false;
     if fm.get("tools").is_none() {
@@ -92,6 +151,9 @@ fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool 
         }
     }
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
+    if dialect == Dialect::Claude {
+        changed |= lift_claude_task_entries(fm, "tools");
+    }
     changed
 }
 
@@ -183,6 +245,7 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
     }
 
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
+    changed |= lift_claude_task_entries(fm, "disallowed-tools");
     changed
 }
 
@@ -648,6 +711,43 @@ when_to_use: Use when git history matters
             vec!["read", "mcp(github/create_issue)", "mcp(context7/*)"]
         );
         assert_eq!(profile.disallowed_tools, vec!["mcp(github/delete_repo)"]);
+    }
+
+    #[test]
+    fn claude_agent_lifts_task_tool_to_agent_in_every_tool_field() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools: [Read, Task, 'Task(Explore)']\ndisallowedTools: [Task]\n",
+            ),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("agent".into()),
+                Value::String("agent(Explore)".into()),
+            ]))
+        );
+        assert_eq!(
+            lifted.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![Value::String("agent".into())]))
+        );
+    }
+
+    #[test]
+    fn claude_lift_leaves_lowercase_task_alone() {
+        // Canonical `task` is the task-list capability; only Claude's `Task` is renamed.
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ntools: [task]\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&Value::Sequence(vec![Value::String("task".into())]))
+        );
     }
 
     #[test]

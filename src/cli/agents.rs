@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
+use crate::compiler::tool_policy::{ToolAction, render_rules};
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -237,9 +238,11 @@ fn run_show(
                 "approval": approval_str,
                 "sandbox": sandbox_str,
                 "effort": effort_str,
-                "tools": profile.tools,
-                "disallowed-tools": profile.disallowed_tools,
-                "tools-denied": profile.tools_denied,
+                "tools": profile.tools.rendered(ToolAction::Allow),
+                "tools-list-form": profile.tools.list_form,
+                "disallowed-tools": render_rules(&profile.disallowed_tools, ToolAction::Deny),
+                "tools-denied": profile.tools.rendered(ToolAction::Deny),
+                "tools-ask": profile.tools.rendered(ToolAction::Ask),
                 "scope": scope,
                 "source_path": disk_path,
             }));
@@ -257,9 +260,13 @@ fn run_show(
             print_str_list("skills.load", &profile.skills.load);
             print_str_list("skills.available", &profile.skills.available);
             print_str_list("subagents", &profile.subagents);
-            print_str_list("tools", &profile.tools);
-            print_str_list("disallowed-tools", &profile.disallowed_tools);
-            print_str_list("tools-denied", &profile.tools_denied);
+            print_str_list("tools", &profile.tools.rendered(ToolAction::Allow));
+            print_str_list(
+                "disallowed-tools",
+                &render_rules(&profile.disallowed_tools, ToolAction::Deny),
+            );
+            print_str_list("tools-denied", &profile.tools.rendered(ToolAction::Deny));
+            print_str_list("tools-ask", &profile.tools.rendered(ToolAction::Ask));
         }
 
         return Ok(0);

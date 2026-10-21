@@ -1,20 +1,53 @@
-//! Mars tool-name grammar and target-native projection.
+//! Mars tool-name grammar and target-native names.
+//!
+//! A tool entry is a *capability* (`bash`, `web`, …) with an optional *pattern*
+//! (`bash(git status *)`). [`parse_mars_tool_name`] canonicalizes the capability and
+//! normalizes the pattern; [`native_names`] answers what a harness calls it.
 
 use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, try_parse_mcp_tool_name};
 
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
+const TOOL_PATTERN_ALLOWED: &str =
+    "scoped payload written as tool(pattern) with a non-empty pattern";
+const WILDCARD_ALLOWED: &str = "`*` stands alone; it takes no pattern";
+
+/// Capability of the rule that applies to every tool not otherwise named (allowlists).
+pub(crate) const ANY_CAPABILITY: &str = "*";
+/// Capability of MCP rules; the pattern is the canonical `server/tool` reference.
+pub(crate) const MCP_CAPABILITY: &str = "mcp";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedToolName {
-    pub name: String,
+    /// Canonical snake_case capability, `*`, `mcp`, or the author's spelling when unknown.
+    pub capability: String,
+    /// Scope inside `capability(...)`, already normalized (`X:*` → `X *`).
+    pub pattern: Option<String>,
     pub known: bool,
+}
+
+impl ParsedToolName {
+    /// The canonical `capability` / `capability(pattern)` spelling.
+    #[cfg(test)]
+    pub fn render(&self) -> String {
+        render_scoped(&self.capability, self.pattern.as_deref())
+    }
+}
+
+pub(crate) fn render_scoped(name: &str, pattern: Option<&str>) -> String {
+    match pattern {
+        Some(pattern) => format!("{name}({pattern})"),
+        None => name.to_string(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ToolNameParseError {
     Empty,
     InvalidMcpRef,
+    UnbalancedPattern,
+    EmptyPattern,
+    WildcardPattern,
 }
 
 impl ToolNameParseError {
@@ -22,23 +55,28 @@ impl ToolNameParseError {
         match self {
             Self::Empty => TOOL_NAME_ALLOWED,
             Self::InvalidMcpRef => MCP_TOOL_NAME_GRAMMAR,
+            Self::UnbalancedPattern | Self::EmptyPattern => TOOL_PATTERN_ALLOWED,
+            Self::WildcardPattern => WILDCARD_ALLOWED,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ProjectedToolName {
-    pub name: String,
-    pub status: ToolProjectionStatus,
+/// Whether Mars can name a capability on a harness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeStatus {
+    /// Mars knows the native name(s).
+    Known,
+    /// The harness has no such tool, so there is nothing to allow or deny.
+    Absent,
+    /// Mars cannot name it for this harness. A reported gap, never a guess.
+    Unknown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ToolProjectionStatus {
-    Known,
-    UnknownProjected,
-    /// Reserved MCP wire token (`mcp__…`) passed through verbatim. Canonical `mcp(...)`
-    /// refs are extracted upstream in [`tool_policy`] and projected via [`mcp_ref`].
-    McpVerbatim,
+/// Native tool names for one capability on one harness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CapabilityNatives {
+    pub names: Vec<String>,
+    pub status: NativeStatus,
 }
 
 struct CanonicalTool {
@@ -287,100 +325,119 @@ pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolName
         return Err(ToolNameParseError::Empty);
     }
 
-    if try_parse_mcp_tool_name(trimmed).is_some() {
+    if let Some(mcp_ref) = try_parse_mcp_tool_name(trimmed) {
         return Ok(ParsedToolName {
-            name: trimmed.to_string(),
+            capability: MCP_CAPABILITY.to_string(),
+            pattern: Some(mcp_ref.to_pattern()),
             known: true,
         });
     }
 
-    if head.trim().eq_ignore_ascii_case("mcp")
-        && !payload.is_empty()
-        && payload.trim().starts_with('(')
-    {
+    if head.eq_ignore_ascii_case("mcp") && payload.trim().starts_with('(') {
         return Err(ToolNameParseError::InvalidMcpRef);
+    }
+
+    let pattern = parse_pattern(payload)?;
+
+    if head == ANY_CAPABILITY {
+        if pattern.is_some() {
+            return Err(ToolNameParseError::WildcardPattern);
+        }
+        return Ok(ParsedToolName {
+            capability: ANY_CAPABILITY.to_string(),
+            pattern: None,
+            known: true,
+        });
     }
 
     let canonical = canonicalize_head(head);
     Ok(ParsedToolName {
-        name: format!("{}{payload}", canonical.name),
+        capability: canonical.name,
+        pattern,
         known: canonical.known,
     })
 }
 
-pub(crate) fn project_tool_for_harness(
-    raw: &str,
-    target_harness: crate::compiler::agents::HarnessKind,
-) -> ProjectedToolName {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return ProjectedToolName {
-            name: String::new(),
-            status: ToolProjectionStatus::UnknownProjected,
+fn parse_pattern(payload: &str) -> Result<Option<String>, ToolNameParseError> {
+    let payload = payload.trim();
+    if payload.is_empty() {
+        return Ok(None);
+    }
+    let inner = payload
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .ok_or(ToolNameParseError::UnbalancedPattern)?
+        .trim();
+    if inner.is_empty() {
+        return Err(ToolNameParseError::EmptyPattern);
+    }
+    Ok(Some(normalize_pattern(inner)))
+}
+
+/// Claude's legacy prefix form `git revert:*` and the current `git revert *` mean the same
+/// thing, but OpenCode reads `:` literally. Mars writes only the space form.
+fn normalize_pattern(pattern: &str) -> String {
+    match pattern.strip_suffix(":*") {
+        Some(prefix) => format!("{prefix} *"),
+        None => pattern.to_string(),
+    }
+}
+
+/// Native names for `capability` on `harness`.
+pub(crate) fn native_names(
+    capability: &str,
+    harness: crate::compiler::agents::HarnessKind,
+) -> CapabilityNatives {
+    if is_mcp_shaped(capability) {
+        // Reserved MCP wire token: passed through verbatim, casing included.
+        return CapabilityNatives {
+            names: vec![capability.to_string()],
+            status: NativeStatus::Known,
         };
     }
 
-    let (head, payload) = split_tool_name(trimmed);
-    let head = head.trim();
-    if head.is_empty() {
-        return ProjectedToolName {
-            name: trimmed.to_string(),
-            status: ToolProjectionStatus::UnknownProjected,
-        };
-    }
-
-    if is_mcp_shaped(head) {
-        return ProjectedToolName {
-            name: trimmed.to_string(),
-            status: ToolProjectionStatus::McpVerbatim,
-        };
-    }
-
-    let mut canonical = canonicalize_head(head);
+    let known = canonical_tool_name(capability).is_some();
     // Interim: `web` and `task` project like the single names they replaced
     // (`web_search`, `todo_write`) until per-harness one-to-many tables land.
-    match canonical.name.as_str() {
-        "web" if canonical.known => canonical.name = "web_search".to_string(),
-        "task" if canonical.known => canonical.name = "todo_write".to_string(),
-        _ => {}
-    }
-    if !canonical.known {
-        let descriptor = crate::compiler::harness_descriptor::descriptor(target_harness);
-        let native = match descriptor.tool_naming {
+    let capability = match capability {
+        "web" => "web_search",
+        "task" => "todo_write",
+        other => other,
+    };
+    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
+
+    if !known {
+        let name = match descriptor.tool_naming {
             crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
-                snake_to_pascal(&canonical.name)
+                snake_to_pascal(capability)
             }
-            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase => {
-                canonical.name.clone()
-            }
-            crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
-                canonical.name.clone()
+            crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase
+            | crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
+                capability.to_string()
             }
         };
-        return ProjectedToolName {
-            name: format!("{native}{payload}"),
-            status: ToolProjectionStatus::UnknownProjected,
+        return CapabilityNatives {
+            names: vec![name],
+            status: NativeStatus::Unknown,
         };
     }
 
-    let descriptor = crate::compiler::harness_descriptor::descriptor(target_harness);
-    let native = semantic_override(canonical.name.as_str(), descriptor.kind)
+    let name = semantic_override(capability, descriptor.kind)
         .map(str::to_string)
         .unwrap_or_else(|| match descriptor.tool_naming {
             crate::compiler::harness_descriptor::ToolNamingConvention::PascalCase => {
-                snake_to_pascal(&canonical.name)
+                snake_to_pascal(capability)
             }
             crate::compiler::harness_descriptor::ToolNamingConvention::SnakeCase => {
-                canonical.name.clone()
+                capability.to_string()
             }
             crate::compiler::harness_descriptor::ToolNamingConvention::Lowercase => {
-                strip_underscores(&canonical.name)
+                strip_underscores(capability)
             }
         });
-
-    ProjectedToolName {
-        name: format!("{native}{payload}"),
-        status: ToolProjectionStatus::Known,
+    CapabilityNatives {
+        names: vec![name],
+        status: NativeStatus::Known,
     }
 }
 
@@ -548,11 +605,33 @@ mod tests {
         parse_mars_tool_name(raw).unwrap()
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ToolProjectionStatus {
+        Known,
+        UnknownProjected,
+        McpVerbatim,
+    }
+
+    struct ProjectedToolName {
+        name: String,
+        status: ToolProjectionStatus,
+    }
+
     fn project(raw: &str, harness: &str) -> ProjectedToolName {
         let harness = crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
             .expect("test harness exists")
             .kind;
-        project_tool_for_harness(raw, harness)
+        let parsed = parse(raw);
+        let natives = native_names(&parsed.capability, harness);
+        let status = match natives.status {
+            _ if is_mcp_shaped(&parsed.capability) => ToolProjectionStatus::McpVerbatim,
+            NativeStatus::Known => ToolProjectionStatus::Known,
+            NativeStatus::Absent | NativeStatus::Unknown => ToolProjectionStatus::UnknownProjected,
+        };
+        ProjectedToolName {
+            name: render_scoped(&natives.names[0], parsed.pattern.as_deref()),
+            status,
+        }
     }
 
     #[test]
@@ -588,7 +667,7 @@ mod tests {
 
         for (raw, expected_name, expected_known) in cases {
             let parsed = parse(raw);
-            assert_eq!(parsed.name, expected_name, "raw: {raw}");
+            assert_eq!(parsed.render(), expected_name, "raw: {raw}");
             assert_eq!(parsed.known, expected_known, "raw: {raw}");
         }
     }
@@ -597,10 +676,10 @@ mod tests {
     fn task_means_task_list_not_sub_agents() {
         // `task` was an alias of `agent`. Shipped profiles write both `agent: deny` and
         // `task: deny`, and they name different tools.
-        assert_eq!(parse("task").name, "task");
-        assert_eq!(parse("Task").name, "task");
-        assert_eq!(parse("agent").name, "agent");
-        assert_ne!(parse("task").name, parse("agent").name);
+        assert_eq!(parse("task").capability, "task");
+        assert_eq!(parse("Task").capability, "task");
+        assert_eq!(parse("agent").capability, "agent");
+        assert_ne!(parse("task").capability, parse("agent").capability);
     }
 
     #[test]
@@ -922,18 +1001,19 @@ mod tests {
     #[test]
     fn parse_preserves_mcp_tool_segment_casing() {
         let parsed = parse("mcp__github__CreateIssue");
-        assert_eq!(parsed.name, "mcp__github__CreateIssue");
+        assert_eq!(parsed.render(), "mcp__github__CreateIssue");
         assert!(!parsed.known);
     }
 
     #[test]
     fn parse_recognizes_valid_mcp_scoped_refs() {
         let parsed = parse("mcp(GitHub/CreateIssue)");
-        assert_eq!(parsed.name, "mcp(GitHub/CreateIssue)");
+        assert_eq!(parsed.capability, "mcp");
+        assert_eq!(parsed.pattern.as_deref(), Some("GitHub/CreateIssue"));
         assert!(parsed.known);
 
         let parsed = parse("mcp(github)");
-        assert_eq!(parsed.name, "mcp(github)");
+        assert_eq!(parsed.pattern.as_deref(), Some("github/*"));
         assert!(parsed.known);
     }
 
@@ -968,34 +1048,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_mcp_scoped_refs_do_not_project_as_mcp_verbatim() {
-        let cases = [
-            ("mcp()", "claude", "Mcp()"),
-            ("mcp(/x)", "claude", "Mcp(/x)"),
-            ("mcp(x/)", "claude", "Mcp(x/)"),
-            ("mcp(a/b/c)", "claude", "Mcp(a/b/c)"),
-        ];
-
-        for (raw, harness, expected_name) in cases {
-            let projected = project(raw, harness);
-            assert_eq!(
-                projected.name, expected_name,
-                "projected name for {raw}, harness: {harness}"
-            );
-            assert_eq!(
-                projected.status,
-                ToolProjectionStatus::UnknownProjected,
-                "projected status for {raw}, harness: {harness}"
-            );
-            assert_ne!(
-                projected.status,
-                ToolProjectionStatus::McpVerbatim,
-                "{raw} must not be treated as MCP verbatim"
-            );
-        }
-    }
-
-    #[test]
     fn mcp_wire_form_projects_as_verbatim() {
         let wire = project("mcp__github__create_issue", "claude");
         assert_eq!(wire.name, "mcp__github__create_issue");
@@ -1027,7 +1079,7 @@ mod tests {
 
         for (raw, harness, expected_name, expected_status) in cases {
             let parsed = parse_mars_tool_name(raw).expect("parse should not panic");
-            assert_eq!(parsed.name, raw, "parse name for {raw}");
+            assert_eq!(parsed.render(), raw, "parse name for {raw}");
             assert!(!parsed.known, "parse known flag for {raw}");
 
             let projected = project(raw, harness);

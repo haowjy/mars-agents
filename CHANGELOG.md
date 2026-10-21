@@ -13,6 +13,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   packages keep working: staging renames Claude's `Task` tool to `agent`.
 - `tools: allow` / `tools: deny` (scalar) is a validation error instead of being read as
   a tool named `allow`/`deny`.
+- List-form `tools: [read, grep]` is now an allowlist: exactly the listed tools, as an
+  explicit `*: deny` plus the allows. Map-form `tools:` entries stay grants. An empty
+  list stays "no policy". Packages that relied on a list only pre-approving tools must
+  switch to the map form. Staging a Claude agent's `mcpServers` into a missing `tools:`
+  now writes the map form, so it keeps inheriting every tool.
+- `tools:` maps accept `ask` as an action next to `allow` and `deny`, and `'*'` as a
+  capability (`'*': deny` plus allows is an explicit allowlist). Native agent files
+  cannot hold `ask`, or an allowlist with nothing allowed; both are reported as
+  dropped lossiness.
+- `X:*` patterns normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`), the
+  one spelling OpenCode reads correctly.
+- `mars agents show` / `mars skills show` add `tools-ask` (and `tools-list-form` for
+  agents) and render `mcp(server)` as `mcp(server/*)`.
 
 ## [0.16.0] - 2026-10-14
 

@@ -5,9 +5,9 @@ use serde_yaml::{Mapping, Value};
 use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
-use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
 use crate::compiler::skills::SkillProfile;
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
+use crate::compiler::tool_names::NativeStatus;
+use crate::compiler::tool_policy::{ProjectedRule, ToolAction, ToolRule};
 
 // ---------------------------------------------------------------------------
 // Policy axes
@@ -228,6 +228,14 @@ fn policy_for(harness: HarnessKind) -> &'static SkillLoweringPolicy {
 // Shared pipeline
 // ---------------------------------------------------------------------------
 
+fn push_unique(into: &mut Vec<String>, natives: Vec<String>) {
+    for native in natives {
+        if !into.contains(&native) {
+            into.push(native);
+        }
+    }
+}
+
 fn yk(s: &str) -> Value {
     Value::String(s.to_string())
 }
@@ -394,22 +402,48 @@ impl<'a> LoweringCtx<'a> {
         }
     }
 
+    /// Projected `action` rules, split into built-in tools and MCP refs.
+    fn projected_rules(&self, action: ToolAction) -> (Vec<ProjectedRule>, Vec<ProjectedRule>) {
+        let policy = self.profile.effective_tool_policy();
+        let (mcp, builtin): (Vec<_>, Vec<_>) = policy
+            .projected(action, self.harness_kind)
+            .into_iter()
+            .filter(|(rule, _)| !rule.is_wildcard())
+            .map(|(rule, projected): (&ToolRule, ProjectedRule)| (rule.is_mcp(), projected))
+            .partition(|(is_mcp, _)| *is_mcp);
+        (
+            builtin
+                .into_iter()
+                .map(|(_, projected)| projected)
+                .collect(),
+            mcp.into_iter().map(|(_, projected)| projected).collect(),
+        )
+    }
+
     fn apply_allowed_tools(&mut self) {
-        let tool_policy = self.profile.effective_tool_policy();
         let policy = self.policy;
+        // A skill's `allowed-tools` pre-approves tools; it has no way to say "ask".
+        if self
+            .profile
+            .effective_tool_policy()
+            .with_action(ToolAction::Ask)
+            .next()
+            .is_some()
+        {
+            self.lossy_fields
+                .push(dropped("tools (ask)", policy.target_name));
+        }
+        let (allowed, _) = self.projected_rules(ToolAction::Allow);
         match policy.allowed_tools {
             AllowedToolsPolicy::Emit {
                 track_unknown_tool_lossiness,
             } => {
-                if tool_policy.allowed.is_empty() {
+                if allowed.is_empty() {
                     return;
                 }
-                let mut tools = Vec::new();
-                for tool in &tool_policy.allowed {
-                    let projected = project_tool_for_harness(tool, self.harness_kind);
-                    if track_unknown_tool_lossiness
-                        && projected.status == ToolProjectionStatus::UnknownProjected
-                    {
+                let mut tools: Vec<String> = Vec::new();
+                for projected in allowed {
+                    if track_unknown_tool_lossiness && projected.status == NativeStatus::Unknown {
                         self.lossy_fields.push(LossyField {
                             field: "tools".into(),
                             target: policy.target_name.into(),
@@ -418,7 +452,7 @@ impl<'a> LoweringCtx<'a> {
                             },
                         });
                     }
-                    tools.push(projected.name);
+                    push_unique(&mut tools, projected.native);
                 }
                 self.yaml.insert(
                     yk("allowed-tools"),
@@ -426,7 +460,7 @@ impl<'a> LoweringCtx<'a> {
                 );
             }
             AllowedToolsPolicy::DropWhenNonEmpty => {
-                if !tool_policy.allowed.is_empty() {
+                if !allowed.is_empty() {
                     self.lossy_fields.push(dropped("tools", policy.target_name));
                 }
             }
@@ -434,41 +468,28 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn apply_disallowed_tools(&mut self) {
-        let tool_policy = self.profile.effective_tool_policy();
-        if tool_policy.disallowed.is_empty() && tool_policy.mcp_disallowed.is_empty() {
+        let (builtin, mcp) = self.projected_rules(ToolAction::Deny);
+        if builtin.is_empty() && mcp.is_empty() {
             return;
         }
         let policy = self.policy;
         match policy.disallowed_tools {
             DisallowedToolsPolicy::Emit => {
-                let mut tools = Vec::new();
-                for tool in &tool_policy.disallowed {
-                    let projected = project_tool_for_harness(tool, self.harness_kind);
-                    if projected.status == ToolProjectionStatus::UnknownProjected {
+                let mut tools: Vec<String> = Vec::new();
+                for projected in builtin.into_iter().chain(mcp) {
+                    if projected.status == NativeStatus::Unknown {
                         self.lossy_fields.push(LossyField {
                             field: "disallowed-tools".into(),
                             target: policy.target_name.into(),
                             classification: Lossiness::Approximate {
-                                note: "unknown tool projected via harness naming convention",
+                                note: projected.note.unwrap_or(
+                                    "unknown tool projected via harness naming convention",
+                                ),
                             },
                         });
                     }
-                    tools.push(projected.name);
+                    push_unique(&mut tools, projected.native);
                 }
-                let mcp_tokens = project_mcp_refs_for_emission(
-                    &tool_policy.mcp_disallowed,
-                    self.harness_kind,
-                    |_, reason| {
-                        self.lossy_fields.push(LossyField {
-                            field: "disallowed-tools".into(),
-                            target: policy.target_name.into(),
-                            classification: Lossiness::Approximate {
-                                note: reason.message(),
-                            },
-                        });
-                    },
-                );
-                tools.extend(mcp_tokens);
                 self.yaml.insert(
                     yk("disallowed-tools"),
                     Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
@@ -482,26 +503,24 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn apply_mcp(&mut self) {
-        let tool_policy = self.profile.effective_tool_policy();
-        if tool_policy.mcp_allowed.is_empty() {
+        let (_, mcp) = self.projected_rules(ToolAction::Allow);
+        if mcp.is_empty() {
             return;
         }
         let policy = self.policy;
         match policy.mcp {
             McpToolsPolicy::Emit => {
-                let mcp_tokens = project_mcp_refs_for_emission(
-                    &tool_policy.mcp_allowed,
-                    self.harness_kind,
-                    |_, reason| {
+                let mut mcp_tokens: Vec<String> = Vec::new();
+                for projected in mcp {
+                    if let Some(note) = projected.note {
                         self.lossy_fields.push(LossyField {
                             field: "mcp".into(),
                             target: policy.target_name.into(),
-                            classification: Lossiness::Approximate {
-                                note: reason.message(),
-                            },
+                            classification: Lossiness::Approximate { note },
                         });
-                    },
-                );
+                    }
+                    push_unique(&mut mcp_tokens, projected.native);
+                }
                 if mcp_tokens.is_empty() {
                     return;
                 }

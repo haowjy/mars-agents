@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
-use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField, ToolRule};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
@@ -276,9 +276,10 @@ pub struct AgentProfile {
     // --- Tool fields ---
     pub skills: SkillsSpec,
     pub subagents: Vec<String>,
-    pub tools: Vec<String>,
-    pub tools_denied: Vec<String>,
-    pub disallowed_tools: Vec<String>,
+    /// `tools:`: allow rules for a list, allow/deny/ask rules for a map.
+    pub tools: ParsedToolsField,
+    /// `disallowed-tools:` as deny rules.
+    pub disallowed_tools: Vec<ToolRule>,
 
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
@@ -301,7 +302,7 @@ impl AgentProfile {
     }
 
     pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
-        tool_policy::effective_tool_policy(&self.tools, &self.tools_denied, &self.disallowed_tools)
+        tool_policy::agent_tool_policy(&self.tools, &self.disallowed_tools)
     }
 }
 // ---------------------------------------------------------------------------
@@ -391,7 +392,7 @@ fn push_agent_tool_invalid(
     });
 }
 
-fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<String> {
+fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ToolRule> {
     let mut push = |field: &str, value: &str, allowed: &'static str| {
         push_agent_tool_invalid(diags, field, value, allowed);
     };
@@ -850,12 +851,10 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("subagents")
         .map(tool_policy::yaml_str_list)
         .unwrap_or_default();
-    let parsed_tools = fm
+    let tools = fm
         .get("tools")
         .map(|value| parse_tools_field("tools", value, diags))
         .unwrap_or_default();
-    let tools = parsed_tools.allowed;
-    let tools_denied = parsed_tools.denied;
     let disallowed_tools = fm
         .get("disallowed-tools")
         .map(|value| yaml_tool_list("disallowed-tools", value, diags))
@@ -907,7 +906,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         skills,
         subagents,
         tools,
-        tools_denied,
         disallowed_tools,
         harness_overrides,
         model_policies,

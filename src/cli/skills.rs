@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
+use crate::compiler::tool_policy::{ToolAction, render_rules};
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -219,9 +220,10 @@ fn run_show(
                 "type": type_str,
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
-                "tools": profile.tools,
-                "disallowed-tools": profile.disallowed_tools,
-                "tools-denied": profile.tools_denied,
+                "tools": profile.tools.rendered(ToolAction::Allow),
+                "disallowed-tools": render_rules(&profile.disallowed_tools, ToolAction::Deny),
+                "tools-denied": profile.tools.rendered(ToolAction::Deny),
+                "tools-ask": profile.tools.rendered(ToolAction::Ask),
                 "scope": scope,
                 "source_path": skill_md,
             }));
@@ -233,9 +235,13 @@ fn run_show(
             println!("user-invocable:  {}", profile.user_invocable);
             println!("scope:         {scope}");
             println!("source_path:   {}", skill_md.display());
-            print_str_list("tools", &profile.tools);
-            print_str_list("disallowed-tools", &profile.disallowed_tools);
-            print_str_list("tools-denied", &profile.tools_denied);
+            print_str_list("tools", &profile.tools.rendered(ToolAction::Allow));
+            print_str_list(
+                "disallowed-tools",
+                &render_rules(&profile.disallowed_tools, ToolAction::Deny),
+            );
+            print_str_list("tools-denied", &profile.tools.rendered(ToolAction::Deny));
+            print_str_list("tools-ask", &profile.tools.rendered(ToolAction::Ask));
         }
 
         return Ok(0);

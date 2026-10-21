@@ -5,7 +5,8 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
+use crate::compiler::tool_names::NativeStatus;
+use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
@@ -195,8 +196,7 @@ fn empty_agent_profile() -> AgentProfile {
         autocompact_pct: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
-        tools: Vec::new(),
-        tools_denied: Vec::new(),
+        tools: Default::default(),
         disallowed_tools: Vec::new(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
@@ -220,102 +220,62 @@ fn resolve_bundle_tools(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
 ) -> Result<(ToolsSpec, Vec<String>), MarsError> {
-    use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
-
     let descriptor = parse_harness_descriptor(harness)?;
     let harness_kind = descriptor.kind;
     let harness = descriptor.canonical_id;
 
-    let effective_tools = profile.effective_tool_policy(&harness_kind);
+    let policy = profile.effective_tool_policy(&harness_kind);
     let mut warnings = Vec::new();
+    let mut allowed = Vec::new();
+    let mut disallowed = Vec::new();
+    let mut mcp = Vec::new();
 
-    let allowed = normalize_and_dedupe_tools(
-        &effective_tools.allowed,
-        descriptor,
-        ToolPolicyKind::Allowed,
-        &mut warnings,
-    );
-    let mut disallowed = normalize_and_dedupe_tools(
-        &effective_tools.disallowed,
-        descriptor,
-        ToolPolicyKind::Disallowed,
-        &mut warnings,
-    );
-
-    // Harness-native MCP tokens: allowed refs → `tools.mcp`; disallowed refs fold into
-    // `tools.disallowed` with the same per-harness projection (never broaden on unsupported).
-    let mcp_allowed = project_mcp_refs_for_emission(
-        &effective_tools.mcp_allowed,
-        harness_kind,
-        |canonical, reason| {
-            warnings.push(format!(
-                "MCP ref `{canonical}` cannot be represented for {harness}: {}",
-                reason.message()
-            ));
-        },
-    );
-
-    let mcp_disallowed = project_mcp_refs_for_emission(
-        &effective_tools.mcp_disallowed,
-        harness_kind,
-        |canonical, reason| {
-            warnings.push(format!(
-                "disallowed MCP ref `{canonical}` cannot be represented for {harness}: {}",
-                reason.message()
-            ));
-        },
-    );
-    disallowed.extend(mcp_disallowed);
+    for action in [ToolAction::Allow, ToolAction::Deny] {
+        for (rule, projected) in policy.projected(action, harness_kind) {
+            if projected.status == NativeStatus::Unknown {
+                let denied = action == ToolAction::Deny;
+                warnings.push(match (rule.is_mcp(), denied) {
+                    (true, false) => format!(
+                        "MCP ref `mcp({})` cannot be represented for {harness}: {}",
+                        rule.pattern.as_deref().unwrap_or_default(),
+                        projected.note.unwrap_or("unsupported")
+                    ),
+                    (true, true) => format!(
+                        "disallowed MCP ref `mcp({})` cannot be represented for {harness}: {}",
+                        rule.pattern.as_deref().unwrap_or_default(),
+                        projected.note.unwrap_or("unsupported")
+                    ),
+                    (false, false) => format!(
+                        "tool '{}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)",
+                        rule.render()
+                    ),
+                    (false, true) => format!(
+                        "disallowed tool '{}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)",
+                        rule.render()
+                    ),
+                });
+            }
+            let list = match (action, rule.is_mcp()) {
+                (ToolAction::Allow, false) => &mut allowed,
+                (ToolAction::Allow, true) => &mut mcp,
+                _ => &mut disallowed,
+            };
+            for native in projected.native {
+                if !list.contains(&native) {
+                    list.push(native);
+                }
+            }
+        }
+    }
 
     Ok((
         ToolsSpec {
             allowed,
             disallowed,
-            mcp: mcp_allowed,
+            mcp,
         },
         warnings,
     ))
-}
-
-fn normalize_and_dedupe_tools(
-    tools: &[String],
-    descriptor: &CompilerHarnessDescriptor,
-    kind: ToolPolicyKind,
-    warnings: &mut Vec<String>,
-) -> Vec<String> {
-    let harness = descriptor.canonical_id;
-    let mut seen = std::collections::HashSet::new();
-    let mut projected = Vec::new();
-
-    for tool in tools {
-        let normalized = project_tool_for_harness(tool, descriptor.kind);
-        if normalized.status == ToolProjectionStatus::UnknownProjected {
-            match kind {
-                ToolPolicyKind::Allowed => warnings.push(format!(
-                    "tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
-                )),
-                ToolPolicyKind::Disallowed => warnings.push(format!(
-                    "disallowed tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
-                )),
-            }
-        }
-
-        let trimmed = normalized.name.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if seen.insert(trimmed.to_string()) {
-            projected.push(trimmed.to_string());
-        }
-    }
-
-    projected
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ToolPolicyKind {
-    Allowed,
-    Disallowed,
 }
 
 fn resolve_effective_skills(

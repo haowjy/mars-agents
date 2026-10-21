@@ -371,6 +371,7 @@ mod tests {
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
     use crate::compiler::skills::parse_skill_content;
+    use crate::compiler::tool_policy::{ToolAction, render_rules};
     use crate::frontmatter::Frontmatter;
 
     fn fm(yaml: &str) -> Frontmatter {
@@ -570,8 +571,14 @@ when_to_use: Use when git history matters
         assert!(diags.is_empty(), "{diags:?}");
         assert!(!profile.model_invocable);
         assert!(!profile.user_invocable);
-        assert_eq!(profile.tools, vec!["bash(git *)"]);
-        assert_eq!(profile.disallowed_tools, vec!["agent"]);
+        assert_eq!(
+            profile.tools.rendered(ToolAction::Allow),
+            vec!["bash(git *)"]
+        );
+        assert_eq!(
+            render_rules(&profile.disallowed_tools, ToolAction::Deny),
+            vec!["agent"]
+        );
         assert_eq!(
             profile.when_to_use.as_deref(),
             Some("Use when git history matters")
@@ -649,7 +656,10 @@ when_to_use: Use when git history matters
         let mut diags = Vec::new();
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
-        assert_eq!(profile.tools, vec!["bash(git *)"]);
+        assert_eq!(
+            profile.tools.rendered(ToolAction::Allow),
+            vec!["bash(git *)"]
+        );
     }
 
     #[test]
@@ -664,7 +674,10 @@ when_to_use: Use when git history matters
         let mut diags = Vec::new();
         let (profile, _) = parse_agent_content(&staged, &mut diags).unwrap();
         assert!(diags.is_empty());
-        assert_eq!(profile.disallowed_tools, vec!["web_search"]);
+        assert_eq!(
+            render_rules(&profile.disallowed_tools, ToolAction::Deny),
+            vec!["web_search"]
+        );
     }
 
     #[test]
@@ -707,10 +720,13 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
+            profile.tools.rendered(ToolAction::Allow),
             vec!["read", "mcp(github/create_issue)", "mcp(context7/*)"]
         );
-        assert_eq!(profile.disallowed_tools, vec!["mcp(github/delete_repo)"]);
+        assert_eq!(
+            render_rules(&profile.disallowed_tools, ToolAction::Deny),
+            vec!["mcp(github/delete_repo)"]
+        );
     }
 
     #[test]
@@ -788,7 +804,7 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
+            profile.tools.rendered(ToolAction::Allow),
             vec!["mcp(GitHub/CreateIssue)", "mcp(context7/*)"]
         );
     }
@@ -910,8 +926,8 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
-            vec!["read", "bash(git *)", "mcp(context7)", "mcp(github)"]
+            profile.tools.rendered(ToolAction::Allow),
+            vec!["read", "bash(git *)", "mcp(context7/*)", "mcp(github/*)"]
         );
     }
 
@@ -967,6 +983,6 @@ when_to_use: Use when git history matters
             "stripped field must not re-trigger diagnostic: {staged_diags:?}"
         );
         assert!(fm.get("mcp-tools").is_none());
-        assert!(profile.tools.is_empty());
+        assert!(profile.tools.rules.is_empty());
     }
 }

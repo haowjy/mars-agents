@@ -888,11 +888,24 @@ fn effective_native_profile(
     }
 
     if !overlay.tools.allowed.is_empty() {
-        effective.tools = overlay.tools.allowed.clone();
+        effective.tools = crate::compiler::tool_policy::ParsedToolsField {
+            rules: crate::compiler::tool_policy::overlay_rules(
+                &overlay.tools.allowed,
+                crate::compiler::tool_policy::ToolAction::Allow,
+            ),
+            list_form: true,
+        };
     }
     if !overlay.tools.disallowed.is_empty() {
-        effective.disallowed_tools = overlay.tools.disallowed.clone();
-        effective.tools_denied.clear();
+        effective.disallowed_tools = crate::compiler::tool_policy::overlay_rules(
+            &overlay.tools.disallowed,
+            crate::compiler::tool_policy::ToolAction::Deny,
+        );
+        // The overlay's denylist replaces map-form denials the profile wrote itself.
+        effective
+            .tools
+            .rules
+            .retain(|rule| rule.action != crate::compiler::tool_policy::ToolAction::Deny);
     }
     effective
 }

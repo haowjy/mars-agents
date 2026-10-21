@@ -66,8 +66,13 @@ impl std::fmt::Display for McpRef {
 impl McpRef {
     /// Canonical `mcp(server/tool)` spelling. Shorthand `mcp(server)` normalizes to `mcp(server/*)`.
     pub fn to_canonical(&self) -> String {
+        format!("mcp({})", self.to_pattern())
+    }
+
+    /// The `server/tool` payload inside `mcp(...)`, as carried by an MCP tool rule.
+    pub fn to_pattern(&self) -> String {
         format!(
-            "mcp({}/{})",
+            "{}/{}",
             segment_display(&self.server),
             segment_display(&self.tool)
         )
@@ -293,49 +298,6 @@ fn project_opencode(r: &McpRef) -> McpProjection {
         segment_display(&r.server),
         segment_display(&r.tool)
     ))
-}
-
-/// Project canonical MCP refs to harness-native tokens for emission.
-///
-/// Unsupported refs are omitted from `tokens` (never broaden permissions) and returned
-/// in `unsupported` for lossiness reporting.
-pub(crate) fn project_mcp_ref_tokens(
-    refs: &[McpRef],
-    harness: crate::compiler::agents::HarnessKind,
-) -> (Vec<String>, Vec<(String, McpUnsupportedReason)>) {
-    let mut seen = std::collections::HashSet::new();
-    let mut tokens = Vec::new();
-    let mut unsupported = Vec::new();
-
-    for mcp_ref in refs {
-        match project_mcp_ref(mcp_ref, harness) {
-            McpProjection::Token(token) => {
-                if seen.insert(token.clone()) {
-                    tokens.push(token);
-                }
-            }
-            McpProjection::Unsupported(reason) => {
-                unsupported.push((mcp_ref.to_canonical(), reason));
-            }
-        }
-    }
-
-    (tokens, unsupported)
-}
-
-/// Project MCP refs for harness emission and report each unsupported ref.
-///
-/// Unsupported refs are omitted from the returned tokens (never broaden permissions).
-pub(crate) fn project_mcp_refs_for_emission(
-    refs: &[McpRef],
-    harness: crate::compiler::agents::HarnessKind,
-    mut on_unsupported: impl FnMut(&str, McpUnsupportedReason),
-) -> Vec<String> {
-    let (tokens, unsupported) = project_mcp_ref_tokens(refs, harness);
-    for (canonical, reason) in unsupported {
-        on_unsupported(&canonical, reason);
-    }
-    tokens
 }
 
 /// Parse the inner payload of `mcp(...)`, without the surrounding parentheses.

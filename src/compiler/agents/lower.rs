@@ -87,7 +87,7 @@ mod tests {
         );
         assert!(out.lossy_fields.iter().any(|field| {
             field.field == "tools"
-                && field.target == "claude"
+                && field.target == "Claude"
                 && matches!(
                     field.classification,
                     Lossiness::Approximate {

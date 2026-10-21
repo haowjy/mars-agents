@@ -6,10 +6,11 @@ User-facing summary: [docs/config/agent-compilation.md](../../../docs/config/age
 ## Module
 
 `mcp_ref.rs` — `McpRef`, `parse_mcp_ref`, `try_parse_mcp_tool_name`, `parse_foreign_mcp_token`,
-`project_mcp_ref`, `project_mcp_ref_tokens`.
+`project_mcp_ref`.
 
-`tool_policy.rs` — splits `tools:` / `disallowed-tools:` into builtin tool names and
-`mcp_allowed` / `mcp_disallowed` [`McpRef`] vectors (`EffectiveToolPolicy`).
+`tool_policy.rs` — turns `tools:` / `disallowed-tools:` into typed [`ToolRule`]s
+(`EffectiveToolPolicy`); an MCP entry is a rule with capability `mcp` and the canonical
+`server/tool` as its pattern. `project_rule` is the one place a rule becomes native names.
 
 ## Canonical grammar
 
@@ -39,8 +40,8 @@ return `McpProjection::Unsupported` — callers omit the token and record lossin
 | Codex | — | all refs → `PerToolNeedsServerConfig` |
 | Pi | — | all refs → `HarnessDropsMcp` |
 
-`project_mcp_ref_tokens` dedupes emitted tokens and collects `(canonical, reason)` pairs
-for unsupported refs.
+An unsupported ref projects to no native token and `native_status: unknown`; callers record
+the reason as lossiness or a bundle warning and never broaden permissions.
 
 ## Emission call sites
 

@@ -11,92 +11,294 @@
 
 use serde_yaml::Value;
 
-use crate::compiler::mcp_ref::{McpRef, try_parse_mcp_tool_name};
-use crate::compiler::tool_names::{ParsedToolName, parse_mars_tool_name};
+use crate::compiler::agents::HarnessKind;
+use crate::compiler::mcp_ref::{
+    McpProjection, McpUnsupportedReason, parse_mcp_ref, project_mcp_ref,
+};
+use crate::compiler::tool_names::{
+    ANY_CAPABILITY, MCP_CAPABILITY, NativeStatus, ParsedToolName, native_names,
+    parse_mars_tool_name, render_scoped,
+};
 use crate::frontmatter::Frontmatter;
 
-/// Portable tool policy from top-level Mars fields.
+/// What a rule does when its capability (and pattern) match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolAction {
+    Allow,
+    Deny,
+    Ask,
+}
+
+impl ToolAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Ask => "ask",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "allow" => Some(Self::Allow),
+            "deny" => Some(Self::Deny),
+            "ask" => Some(Self::Ask),
+            _ => None,
+        }
+    }
+}
+
+/// Why a rule exists when the author did not write it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleOrigin {
+    /// The `*: deny` Mars adds for a list-form `tools: [read, grep]`, which means
+    /// "exactly these tools".
+    ListForm,
+}
+
+impl RuleOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ListForm => "list-form",
+        }
+    }
+}
+
+/// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
+///
+/// Rules carry no order: precedence between a broad and a scoped rule is the consuming
+/// harness's, not Mars's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRule {
+    /// Canonical capability, `*` (everything else), `mcp`, or the author's spelling when
+    /// Mars does not know the name.
+    pub capability: String,
+    /// Scope inside `capability(...)`. For `mcp` the canonical `server/tool` reference.
+    pub pattern: Option<String>,
+    pub action: ToolAction,
+    pub origin: Option<RuleOrigin>,
+}
+
+impl ToolRule {
+    fn from_parsed(parsed: ParsedToolName, action: ToolAction) -> Self {
+        Self {
+            capability: parsed.capability,
+            pattern: parsed.pattern,
+            action,
+            origin: None,
+        }
+    }
+
+    /// The `*: deny` that turns a list into an allowlist.
+    fn list_form_allowlist() -> Self {
+        Self {
+            capability: ANY_CAPABILITY.to_string(),
+            pattern: None,
+            action: ToolAction::Deny,
+            origin: Some(RuleOrigin::ListForm),
+        }
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        self.capability == ANY_CAPABILITY
+    }
+
+    pub fn is_mcp(&self) -> bool {
+        self.capability == MCP_CAPABILITY
+    }
+
+    /// Canonical `capability(pattern)` spelling, for diagnostics.
+    pub fn render(&self) -> String {
+        render_scoped(&self.capability, self.pattern.as_deref())
+    }
+
+    fn mcp_ref(&self) -> Option<crate::compiler::mcp_ref::McpRef> {
+        if !self.is_mcp() {
+            return None;
+        }
+        parse_mcp_ref(self.pattern.as_deref()?).ok()
+    }
+}
+
+/// A rule as one harness spells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectedRule {
+    /// Native names, one per native tool the capability covers (`edit` → `Edit`, `Write`, …),
+    /// with the pattern appended when the rule is scoped.
+    pub native: Vec<String>,
+    pub status: NativeStatus,
+    /// Why Mars cannot express an MCP rule on this harness.
+    pub note: Option<&'static str>,
+}
+
+/// Project `rule` onto `harness`. The one place a capability becomes native names.
+pub(crate) fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
+    if rule.is_wildcard() {
+        return ProjectedRule {
+            native: Vec::new(),
+            status: NativeStatus::Known,
+            note: None,
+        };
+    }
+
+    if rule.is_mcp() {
+        let projection = rule
+            .mcp_ref()
+            .map(|mcp_ref| project_mcp_ref(&mcp_ref, harness));
+        return match projection {
+            Some(McpProjection::Token(token)) => ProjectedRule {
+                native: vec![token],
+                status: NativeStatus::Known,
+                note: None,
+            },
+            Some(McpProjection::Unsupported(reason)) => ProjectedRule {
+                native: Vec::new(),
+                status: NativeStatus::Unknown,
+                note: Some(McpUnsupportedReason::message(reason)),
+            },
+            None => ProjectedRule {
+                native: Vec::new(),
+                status: NativeStatus::Unknown,
+                note: Some("MCP reference could not be read"),
+            },
+        };
+    }
+
+    let natives = native_names(&rule.capability, harness);
+    ProjectedRule {
+        native: natives
+            .names
+            .iter()
+            .map(|name| render_scoped(name, rule.pattern.as_deref()))
+            .collect(),
+        status: natives.status,
+        note: None,
+    }
+}
+
+/// The merged tool rules both compilers lower to harnesses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveToolPolicy {
-    pub allowed: Vec<String>,
-    pub disallowed: Vec<String>,
-    pub(crate) mcp_allowed: Vec<McpRef>,
-    pub(crate) mcp_disallowed: Vec<McpRef>,
+    pub rules: Vec<ToolRule>,
 }
 
-/// Parsed `tools:` field — allowlist entries and map-form denials before merge.
+impl EffectiveToolPolicy {
+    pub fn with_action(&self, action: ToolAction) -> impl Iterator<Item = &ToolRule> {
+        self.rules.iter().filter(move |rule| rule.action == action)
+    }
+
+    /// Rules with `action` and their spelling on `harness`: built-in tools first, then
+    /// MCP refs. This is the one projection both lowerers and the launch bundle use.
+    pub(crate) fn projected(
+        &self,
+        action: ToolAction,
+        harness: HarnessKind,
+    ) -> Vec<(&ToolRule, ProjectedRule)> {
+        let (mcp, builtin): (Vec<&ToolRule>, Vec<&ToolRule>) =
+            self.with_action(action).partition(|rule| rule.is_mcp());
+        builtin
+            .into_iter()
+            .chain(mcp)
+            .map(|rule| (rule, project_rule(rule, harness)))
+            .collect()
+    }
+
+    /// Compact `action:capability(pattern)` spellings, for assertions.
+    #[cfg(test)]
+    pub(crate) fn describe(&self) -> Vec<String> {
+        self.rules
+            .iter()
+            .map(|rule| format!("{}:{}", rule.action.as_str(), rule.render()))
+            .collect()
+    }
+
+    /// Whether a `*: deny` limits the agent to the tools its allow rules name.
+    pub fn is_allowlist(&self) -> bool {
+        self.rules
+            .iter()
+            .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
+    }
+}
+
+/// Parsed `tools:` field: rules plus the shape the author wrote them in.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ParsedToolsField {
-    pub allowed: Vec<String>,
-    pub denied: Vec<String>,
+    pub rules: Vec<ToolRule>,
+    /// `tools: [read, grep]`. A map (`tools: {read: allow}`) is not an allowlist.
+    pub list_form: bool,
 }
 
-/// Merge top-level tool fields into one effective policy.
+impl ParsedToolsField {
+    /// Canonical spellings of this field's rules with `action`, for inspection output.
+    pub fn rendered(&self, action: ToolAction) -> Vec<String> {
+        render_rules(&self.rules, action)
+    }
+}
+
+/// Canonical spellings of the rules in `rules` with `action`.
+pub fn render_rules(rules: &[ToolRule], action: ToolAction) -> Vec<String> {
+    rules
+        .iter()
+        .filter(|rule| rule.action == action)
+        .map(ToolRule::render)
+        .collect()
+}
+
+/// Rules for the tool names in a `mars.toml` agent overlay (`[agents.x.tools]`).
 ///
-/// Allowed MCP refs appear in `allowed` as `mcp(...)` tool-list entries. Disallowed MCP
-/// refs appear in `denied` / `disallowed` as canonical `mcp(...)` strings. Harness
-/// emission projects structured [`McpRef`] values per target via
-/// [`crate::compiler::mcp_ref::project_mcp_ref`].
-pub fn effective_tool_policy(
-    allowed: &[String],
-    denied: &[String],
-    disallowed: &[String],
+/// A name Mars cannot parse is kept as an unknown capability rather than dropped: losing a
+/// `disallowed` entry would widen the agent.
+pub(crate) fn overlay_rules(names: &[String], action: ToolAction) -> Vec<ToolRule> {
+    names
+        .iter()
+        .map(|name| match parse_mars_tool_name(name) {
+            Ok(parsed) => ToolRule::from_parsed(parsed, action),
+            Err(_) => ToolRule {
+                capability: name.trim().to_string(),
+                pattern: None,
+                action,
+                origin: None,
+            },
+        })
+        .collect()
+}
+
+/// Merge the `tools:` and `disallowed-tools:` fields of an agent into one rule set.
+///
+/// A list-form `tools:` is an allowlist: Mars adds the `*: deny` the author implied.
+/// An empty list names no tools, so it stays "no policy" rather than "deny everything".
+pub fn agent_tool_policy(tools: &ParsedToolsField, disallowed: &[ToolRule]) -> EffectiveToolPolicy {
+    merge_rules(tools, disallowed, tools.list_form)
+}
+
+/// Same merge for a skill, where `tools:` pre-approves tools while the skill runs and
+/// never restricts the rest.
+pub fn skill_tool_policy(tools: &ParsedToolsField, disallowed: &[ToolRule]) -> EffectiveToolPolicy {
+    merge_rules(tools, disallowed, false)
+}
+
+fn merge_rules(
+    tools: &ParsedToolsField,
+    disallowed: &[ToolRule],
+    allowlist: bool,
 ) -> EffectiveToolPolicy {
-    let mut allowed_tools = Vec::new();
-    let mut mcp_allowed = Vec::new();
-
-    for tool in allowed {
-        if let Some(mcp_ref) = try_parse_mcp_tool_name(tool) {
-            mcp_allowed.push(mcp_ref);
-        } else {
-            allowed_tools.push(tool.clone());
-        }
+    let mut rules = Vec::new();
+    if allowlist && !tools.rules.is_empty() {
+        rules.push(ToolRule::list_form_allowlist());
     }
-
-    let mut disallowed_tools = Vec::new();
-    let mut mcp_disallowed = Vec::new();
-    for tool in denied.iter().chain(disallowed.iter()) {
-        if let Some(mcp_ref) = try_parse_mcp_tool_name(tool) {
-            mcp_disallowed.push(mcp_ref);
-        } else {
-            disallowed_tools.push(tool.clone());
-        }
-    }
-
+    rules.extend(tools.rules.iter().cloned());
+    rules.extend(disallowed.iter().cloned());
     EffectiveToolPolicy {
-        allowed: dedupe_ordered(allowed_tools),
-        disallowed: dedupe_ordered(disallowed_tools),
-        mcp_allowed: dedupe_mcp_refs(mcp_allowed),
-        mcp_disallowed: dedupe_mcp_refs(mcp_disallowed),
+        rules: dedupe_rules(rules),
     }
 }
 
-pub(crate) fn dedupe_ordered(values: Vec<String>) -> Vec<String> {
+fn dedupe_rules(rules: Vec<ToolRule>) -> Vec<ToolRule> {
     let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let key = trimmed.to_string();
-        if seen.insert(key.clone()) {
-            out.push(key);
-        }
-    }
-    out
-}
-
-fn dedupe_mcp_refs(refs: Vec<McpRef>) -> Vec<McpRef> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for mcp_ref in refs {
-        let key = mcp_ref.to_canonical();
-        if seen.insert(key) {
-            out.push(mcp_ref);
-        }
-    }
-    out
+    rules
+        .into_iter()
+        .filter(|rule| seen.insert((rule.capability.clone(), rule.pattern.clone(), rule.action)))
+        .collect()
 }
 
 /// Append whole-server `mcp(server)` entries to the frontmatter `tools:` list or map.
@@ -112,10 +314,13 @@ pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: 
     }
 
     let Some(existing) = fm.get("tools").cloned() else {
-        fm.insert(
-            "tools",
-            Value::Sequence(entries.into_iter().map(Value::String).collect()),
-        );
+        // Map form: an absent `tools:` inherits every tool, and a list here would read as an
+        // allowlist of only these MCP servers.
+        let grants = entries
+            .into_iter()
+            .map(|entry| (Value::String(entry), Value::String("allow".into())))
+            .collect::<serde_yaml::Mapping>();
+        fm.insert("tools", Value::Mapping(grants));
         return true;
     };
 
@@ -166,13 +371,14 @@ pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
     }
 }
 
-fn parse_tool_name_field(
+fn parse_tool_rule(
     field: &str,
     raw: &str,
+    action: ToolAction,
     on_invalid: &mut dyn FnMut(&str, &str, &'static str),
-) -> Option<String> {
+) -> Option<ToolRule> {
     match parse_mars_tool_name(raw) {
-        Ok(ParsedToolName { name, .. }) => Some(name),
+        Ok(parsed) => Some(ToolRule::from_parsed(parsed, action)),
         Err(err) => {
             on_invalid(field, raw, err.allowed());
             None
@@ -180,22 +386,27 @@ fn parse_tool_name_field(
     }
 }
 
+/// Parse a `disallowed-tools:` list into deny rules.
 pub(crate) fn yaml_tool_list(
     field: &str,
     val: &Value,
     on_invalid: &mut dyn FnMut(&str, &str, &'static str),
-) -> Vec<String> {
-    dedupe_ordered(
-        yaml_str_list(val)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, tool)| {
-                parse_tool_name_field(&format!("{field}[{idx}]"), &tool, on_invalid)
-            })
-            .collect(),
-    )
+) -> Vec<ToolRule> {
+    yaml_str_list(val)
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, tool)| {
+            parse_tool_rule(
+                &format!("{field}[{idx}]"),
+                tool,
+                ToolAction::Deny,
+                on_invalid,
+            )
+        })
+        .collect()
 }
 
+/// Parse `tools:`: a list of tools to allow, or a map of tool to `allow` / `deny` / `ask`.
 pub(crate) fn parse_tools_field(
     field: &str,
     val: &Value,
@@ -203,40 +414,29 @@ pub(crate) fn parse_tools_field(
 ) -> ParsedToolsField {
     match val {
         Value::Mapping(mapping) => {
-            let mut allowed = Vec::new();
-            let mut denied = Vec::new();
+            let mut rules = Vec::new();
             for (key, value) in mapping {
                 let Some(tool_name) = key.as_str() else {
                     on_invalid(field, &format!("{key:?}"), "string tool keys");
                     continue;
                 };
 
+                let entry_field = format!("{field}.{tool_name}");
                 let Some(policy) = value.as_str() else {
-                    on_invalid(
-                        &format!("{field}.{tool_name}"),
-                        &format!("{value:?}"),
-                        "allow or deny",
-                    );
+                    on_invalid(&entry_field, &format!("{value:?}"), ACTIONS_ALLOWED);
                     continue;
                 };
-
-                let normalized_tool =
-                    parse_tool_name_field(&format!("{field}.{tool_name}"), tool_name, on_invalid);
-                if policy.eq_ignore_ascii_case("allow") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        allowed.push(normalized_tool);
-                    }
-                } else if policy.eq_ignore_ascii_case("deny") {
-                    if let Some(normalized_tool) = normalized_tool {
-                        denied.push(normalized_tool);
-                    }
-                } else {
-                    on_invalid(&format!("{field}.{tool_name}"), policy, "allow or deny");
+                let Some(action) = ToolAction::parse(policy) else {
+                    on_invalid(&entry_field, policy, ACTIONS_ALLOWED);
+                    continue;
+                };
+                if let Some(rule) = parse_tool_rule(&entry_field, tool_name, action, on_invalid) {
+                    rules.push(rule);
                 }
             }
             ParsedToolsField {
-                allowed: dedupe_ordered(allowed),
-                denied: dedupe_ordered(denied),
+                rules,
+                list_form: false,
             }
         }
         // `tools: allow` / `tools: deny` was a Meridian-side shorthand that never worked
@@ -248,16 +448,29 @@ pub(crate) fn parse_tools_field(
             on_invalid(
                 field,
                 raw,
-                "list of tool names or mapping of tool to allow|deny",
+                "list of tool names or mapping of tool to allow|deny|ask",
             );
             ParsedToolsField::default()
         }
         _ => ParsedToolsField {
-            allowed: yaml_tool_list(field, val, on_invalid),
-            denied: vec![],
+            rules: yaml_str_list(val)
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, tool)| {
+                    parse_tool_rule(
+                        &format!("{field}[{idx}]"),
+                        tool,
+                        ToolAction::Allow,
+                        on_invalid,
+                    )
+                })
+                .collect(),
+            list_form: true,
         },
     }
 }
+
+const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
 
 /// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
 pub const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
@@ -302,7 +515,6 @@ pub(crate) fn non_canonical_aliases_for(canonical_key: &str) -> Vec<&'static str
 mod tests {
     use super::*;
     use crate::compiler::agents::parse_agent_content;
-    use crate::compiler::mcp_ref::{McpSegment, parse_mcp_ref};
     use crate::compiler::skills::parse_skill_content;
     use crate::frontmatter::Frontmatter;
 
@@ -339,13 +551,9 @@ mod tests {
     #[test]
     fn tools_mcp_entry_grants_whole_server() {
         let policy = agent_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\n");
-        assert!(policy.allowed.is_empty());
         assert_eq!(
-            policy.mcp_allowed,
-            vec![McpRef {
-                server: McpSegment::Named("context7".into()),
-                tool: McpSegment::Any,
-            }]
+            policy.describe(),
+            vec!["deny:*".to_string(), "allow:mcp(context7/*)".to_string()]
         );
     }
 
@@ -353,7 +561,7 @@ mod tests {
     fn skill_tools_mcp_entry_grants_whole_server() {
         let policy =
             skill_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\nbody");
-        assert_eq!(policy.mcp_allowed.len(), 1);
+        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
     }
 
     #[test]
@@ -412,12 +620,13 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ndisallowed-tools: [mcp(github/delete_repo)]\n---\n",
         );
-        assert!(policy.allowed.is_empty());
-        assert!(policy.mcp_allowed.is_empty());
-        assert!(policy.disallowed.is_empty());
-        assert_eq!(policy.mcp_disallowed.len(), 1);
         assert_eq!(
-            policy.mcp_disallowed[0].to_canonical(),
+            policy.describe(),
+            vec!["deny:mcp(github/delete_repo)".to_string()]
+        );
+        assert!(policy.rules[0].is_mcp());
+        assert_eq!(
+            policy.rules[0].mcp_ref().unwrap().to_canonical(),
             "mcp(github/delete_repo)"
         );
     }
@@ -427,10 +636,152 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools: [mcp(plugin:context7:context7)]\n---\n",
         );
-        assert_eq!(policy.mcp_allowed.len(), 1);
+        let mcp = policy.with_action(ToolAction::Allow).next().unwrap();
         assert_eq!(
-            policy.mcp_allowed[0],
-            parse_mcp_ref("plugin:context7:context7").unwrap()
+            mcp.mcp_ref().unwrap(),
+            crate::compiler::mcp_ref::parse_mcp_ref("plugin:context7:context7").unwrap()
         );
+    }
+
+    #[test]
+    fn list_form_is_an_allowlist() {
+        let policy = agent_policy("---\nname: a\ndescription: d\ntools: [read, grep]\n---\n");
+        assert_eq!(
+            policy.describe(),
+            vec!["deny:*", "allow:read", "allow:grep"]
+        );
+        assert!(policy.is_allowlist());
+        assert_eq!(policy.rules[0].origin, Some(RuleOrigin::ListForm));
+        assert_eq!(policy.rules[1].origin, None);
+    }
+
+    #[test]
+    fn map_form_allows_are_grants_not_an_allowlist() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  read: allow\n  edit: deny\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["allow:read", "deny:edit"]);
+        assert!(!policy.is_allowlist());
+    }
+
+    #[test]
+    fn explicit_wildcard_deny_makes_a_map_an_allowlist() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  '*': deny\n  'bash(rg *)': allow\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["deny:*", "allow:bash(rg *)"]);
+        assert!(policy.is_allowlist());
+        assert_eq!(policy.rules[0].origin, None, "authored, not list-form");
+    }
+
+    #[test]
+    fn empty_list_names_no_tools_and_is_no_policy() {
+        let policy = agent_policy("---\nname: a\ndescription: d\ntools: []\n---\n");
+        assert!(policy.rules.is_empty());
+        assert!(!policy.is_allowlist());
+    }
+
+    #[test]
+    fn ask_is_an_action() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  'bash(git push *)': ask\n  edit: Ask\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["ask:bash(git push *)", "ask:edit"]);
+    }
+
+    #[test]
+    fn invalid_action_is_rejected() {
+        let mut diags = Vec::new();
+        let yaml = "---\nname: a\ndescription: d\ntools:\n  bash: sometimes\n---\n";
+        parse_agent_content(yaml, &mut diags).unwrap();
+        assert!(
+            diags.iter().any(|d| matches!(
+                d,
+                crate::compiler::agents::AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+                    if field == "tools.bash" && *allowed == "allow, deny, or ask"
+            )),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_colon_star_patterns_normalize_to_space_star() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  'bash(git revert:*)': deny\n  'bash(git reset --hard:*)': deny\ndisallowed-tools: ['Bash(git clean:*)']\n---\n",
+        );
+        assert_eq!(
+            policy.describe(),
+            vec![
+                "deny:bash(git revert *)",
+                "deny:bash(git reset --hard *)",
+                "deny:bash(git clean *)",
+            ]
+        );
+    }
+
+    #[test]
+    fn colon_star_is_only_normalized_at_the_end_of_a_pattern() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  'bash(echo a:*b)': deny\n  'skill(init)': deny\n---\n",
+        );
+        assert_eq!(
+            policy.describe(),
+            vec!["deny:bash(echo a:*b)", "deny:skill(init)"]
+        );
+    }
+
+    #[test]
+    fn duplicate_rules_collapse_but_conflicting_actions_stay() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  Bash: allow\n  bash: deny\ndisallowed-tools: [shell, bash]\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["allow:bash", "deny:bash"]);
+    }
+
+    #[test]
+    fn skill_list_form_grants_and_never_restricts() {
+        let policy = skill_policy("---\nname: a\ndescription: d\ntools: [read]\n---\nbody");
+        assert_eq!(policy.describe(), vec!["allow:read"]);
+        assert!(!policy.is_allowlist());
+    }
+
+    #[test]
+    fn malformed_patterns_are_rejected() {
+        for raw in ["bash(git *", "bash()", "*(x)"] {
+            assert!(
+                parse_mars_tool_name(raw).is_err(),
+                "`{raw}` should not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn overlay_names_keep_unparseable_entries_as_unknown_rules() {
+        let rules = overlay_rules(
+            &[
+                "Bash(rm *)".to_string(),
+                "Write".to_string(),
+                "bash(".to_string(),
+            ],
+            ToolAction::Deny,
+        );
+        let rendered: Vec<String> = rules.iter().map(ToolRule::render).collect();
+        assert_eq!(rendered, vec!["bash(rm *)", "write", "bash("]);
+    }
+
+    #[test]
+    fn mcp_server_entries_appended_to_absent_tools_do_not_create_an_allowlist() {
+        // A Claude agent with `mcpServers` and no `tools:` inherits every tool. The
+        // synthesized `mcp(server)` grant must not turn that into "MCP only".
+        let mut fm = Frontmatter::parse("---\nname: a\n---\n").unwrap();
+        assert!(append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string()]
+        ));
+        let mut diags = Vec::new();
+        let profile = crate::compiler::agents::parse_agent_profile(&fm, &mut diags);
+        let policy = profile.effective_tool_policy(&crate::compiler::agents::HarnessKind::Claude);
+        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
+        assert!(!policy.is_allowlist());
     }
 }

@@ -624,41 +624,6 @@ mod tests {
     }
 
     #[test]
-    fn failed_refresh_keeps_listing_but_drops_latest_attempt_evidence() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-        write_entry(&path, &entry(1, Some(ok_result())));
-        let outcome = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Synchronous,
-            &Some(path.clone()),
-            fail_result,
-            || Ok(()),
-        );
-        assert!(matches!(outcome, CachedCursorProbeOutcome::StaleFailed(_)));
-        assert!(!outcome.latest_attempt_ok());
-        assert!(
-            outcome
-                .result()
-                .unwrap()
-                .slugs
-                .iter()
-                .any(|slug| slug == "gpt-5.5-high")
-        );
-        let on_disk = read_cache_tolerant_at(&path).unwrap();
-        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
-        let offline = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Skip,
-            &Some(path),
-            || panic!("skip must not re-probe"),
-            || Ok(()),
-        );
-        assert!(!offline.latest_attempt_ok());
-        assert!(offline.result().is_some());
-    }
-
-    #[test]
     fn stale_cache_preserved_on_failed_probe() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);

@@ -134,7 +134,8 @@ pub struct ToolRuleSpec {
     #[serde(flatten)]
     pub rule: ToolRule,
     /// The harness's names for this rule: one per native tool the capability covers, with the
-    /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`.
+    /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`, and
+    /// possibly empty for a known rule shadowed by a stricter or more specific rule.
     pub native: Vec<String>,
     /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
     /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted
@@ -144,8 +145,8 @@ pub struct ToolRuleSpec {
     /// Why a consumer cannot rely on this rule alone, and the only channel for a permission
     /// gap: Mars adds nothing to `warnings[]`. Present when `native_status` is `unknown` (the
     /// reason Mars could not name the rule, for example "codex loads skills by reading files;
-    /// no switch") and on a `known` rule that shares a native tool with a rule of the opposite
-    /// action, where the harness decides which wins.
+    /// no switch") and on a `known` rule whose projection has broader effects or whose native
+    /// permission is shared with another rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<&'static str>,
 }

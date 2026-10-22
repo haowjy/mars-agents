@@ -679,9 +679,9 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` is empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
-| `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known`. Already resolved: a rule on a narrower capability wins its tools from a broader one (`edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed), so emit `native` as given |
-| `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
-| `note` | Why a consumer cannot rely on the rule alone. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, that another rule of the opposite action names the same native tool and the harness decides which wins. Show it in a gap report. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
+| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule can also be empty when a stricter or more specific rule owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed, so emit `native` as given |
+| `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
+| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, why a stricter rule shadowed it, or why the harness must decide an unresolved overlap. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
 | `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
@@ -689,6 +689,12 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 a name; `allowed` never reflects an allowlist. Prefer `rules`. A tool that an allow and a deny
 rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
 puts a `note` on both rules.
+
+Claude path scopes use its permission categories, not every bare tool name:
+`write(path)`, `edit(path)` and `notebook(path)` become `Edit(path)`, while `read(path)`,
+`glob(path)` and `grep(path)` become `Read(path)`. If two scoped capabilities become the same
+permission, Mars keeps the strictest action (`deny`, then `ask`, then `allow`) and notes the
+shadowed rule. `WebFetch(domain:...)` is already the native scoped form.
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

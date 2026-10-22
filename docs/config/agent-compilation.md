@@ -163,6 +163,14 @@ alone: `write_stdin` only feeds a session `exec_command` opened. Each row is pin
 against the harness's real tool list, with the source (docs, binary, probe) written beside the
 table. Cursor rows are carried over from earlier releases and not re-verified.
 
+The table shows bare Claude tool rules. Claude uses permission categories for scoped file
+rules instead: `write(path)`, `edit(path)` and `notebook(path)` project to `Edit(path)`;
+`read(path)`, `glob(path)` and `grep(path)` project to `Read(path)`. Claude accepts
+`Write(path)`, `NotebookEdit(path)`, `Glob(path)` and `Grep(path)` spellings but does not
+consult them. The bundle adds a `note` to a scoped rule when the valid category spelling also
+covers sibling built-in tools. Bare rules keep the table's names. `WebFetch(domain:...)` is
+already Claude's valid scoped spelling and stays unchanged.
+
 MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
 
 **A narrower capability wins.** `edit: deny` with `write: allow` means "no edits, but writing is
@@ -175,6 +183,9 @@ and Claude agent files all carry the resolved names. A harness that cannot tell 
 capabilities apart (Codex and OpenCode name one tool for both `write` and `edit`) stays in
 conflict: the agent file records a lossiness entry naming the tool that is both allowed and
 denied, and the bundle gives each of the two rules a `note` saying the harness decides.
+Scoped Claude rules that collapse to the exact same category permission are resolved by
+Claude's documented action order instead: `deny` beats `ask`, which beats `allow`; the losing
+rule has no surviving native name and its `note` says why.
 
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).

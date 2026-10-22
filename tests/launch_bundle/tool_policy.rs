@@ -627,6 +627,34 @@ fn bundle_accepts_ask_and_normalizes_colon_star() {
 }
 
 #[test]
+fn bundle_scopes_claude_write_with_edit_and_explains_the_effect() {
+    let agent = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  'write(src/**)': allow
+---
+Review code changes."#;
+    let bundle = bundle_for(agent, "claude");
+    let scoped_write = rule(&bundle, "write", Some("src/**"));
+    assert_eq!(scoped_write["native"], serde_json::json!(["Edit(src/**)"]));
+    assert_eq!(scoped_write["native_status"], "known");
+    let note = scoped_write["note"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("allow adds no practical write power"),
+        "{note}"
+    );
+    assert!(
+        note.contains("deny also refuses other built-in file edits"),
+        "{note}"
+    );
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Edit(src/**)"])
+    );
+}
+
+#[test]
 fn bundle_flat_lists_derive_from_rules_and_cannot_hold_ask() {
     let bundle = bundle_for(TYPED_RULES_AGENT, "claude");
     assert_eq!(

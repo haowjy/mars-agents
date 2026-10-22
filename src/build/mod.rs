@@ -246,7 +246,7 @@ fn resolve_bundle_tools(
                 rule: (*rule).clone(),
                 native: projected.native.clone(),
                 native_status: projected.status.map(NativeStatus::as_str),
-                note: projected.gap().or(shares_a_tool.then_some(OVERLAP_NOTE)),
+                note: projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
             }
         })
         .collect();

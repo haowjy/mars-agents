@@ -19,6 +19,14 @@ use crate::compiler::agents::HarnessKind;
 pub(crate) enum Native {
     /// The harness's tools for this capability. A deny or allow covers all of them.
     Tools(&'static [&'static str]),
+    /// A harness uses different permission names once a rule has a scope. Claude's file tools
+    /// are the motivating case: bare `Write` gates that tool, but only `Edit(path)` gates a
+    /// path for every built-in file editor.
+    ScopedTools {
+        unscoped: &'static [&'static str],
+        scoped: &'static [&'static str],
+        note: &'static str,
+    },
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
     /// The harness can do the thing but offers no tool to switch it off (Codex and Pi load
@@ -27,7 +35,7 @@ pub(crate) enum Native {
     NoSwitch(&'static str),
 }
 
-use Native::{Absent, NoSwitch, Tools};
+use Native::{Absent, NoSwitch, ScopedTools, Tools};
 
 type Table = &'static [(&'static str, Native)];
 
@@ -49,26 +57,65 @@ fn table(harness: HarnessKind) -> Table {
     }
 }
 
-/// Claude Code 2.1.307.
+/// Claude Code 2.1.308.
 ///
-/// Source: the tools reference (code.claude.com/docs/en/tools-reference) and the 2.1.307
+/// Source: the tools and permissions references (code.claude.com/docs/en/tools-reference and
+/// code.claude.com/docs/en/permissions) and the 2.1.308
 /// binary. Probed live with `claude -p --disallowedTools`: `Agent` and `Task` both remove the
 /// sub-agent tool, `Edit` alone leaves `Write` and `NotebookEdit` available, and a misspelled
-/// name (`Websearch`) is silently ignored. So `edit` names all three file-editing tools.
+/// name (`Websearch`) is silently ignored. Bare `edit` therefore names all three file-editing
+/// tools. Scoped file rules are different: Claude consults only `Edit(path)` and `Read(path)`,
+/// not `Write(path)`, `NotebookEdit(path)`, `Glob(path)`, or `Grep(path)`. Direct 2.1.308 probes
+/// confirmed the documented behavior. `WebFetch(domain:...)` is a valid scoped rule.
 /// `agent` is the sub-agent family, as it is on Codex: `Agent` spawns, `SendMessage` and
 /// `ListAgents` reach the agents it spawned, and an `agent: deny` that left them available would
 /// still let the agent steer sub-agents.
 const CLAUDE: Table = &[
     ("bash", Tools(&["Bash"])),
     ("read", Tools(&["Read"])),
-    ("write", Tools(&["Write"])),
-    ("edit", Tools(&["Edit", "Write", "NotebookEdit"])),
-    ("notebook", Tools(&["NotebookEdit"])),
+    (
+        "write",
+        ScopedTools {
+            unscoped: &["Write"],
+            scoped: &["Edit"],
+            note: "Claude scopes Write through Edit(path): an allow adds no practical write power because Write can replace the whole file, while a deny also refuses other built-in file edits at that path",
+        },
+    ),
+    (
+        "edit",
+        ScopedTools {
+            unscoped: &["Edit", "Write", "NotebookEdit"],
+            scoped: &["Edit"],
+            note: "Claude uses Edit(path) to scope every built-in file-editing tool",
+        },
+    ),
+    (
+        "notebook",
+        ScopedTools {
+            unscoped: &["NotebookEdit"],
+            scoped: &["Edit"],
+            note: "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path",
+        },
+    ),
     ("agent", Tools(&["Agent", "SendMessage", "ListAgents"])),
     ("skill", Tools(&["Skill"])),
     ("workflow", Tools(&["Workflow"])),
-    ("glob", Tools(&["Glob"])),
-    ("grep", Tools(&["Grep"])),
+    (
+        "glob",
+        ScopedTools {
+            unscoped: &["Glob"],
+            scoped: &["Read"],
+            note: "Claude scopes Glob paths through Read(path), which also covers other built-in file readers at that path",
+        },
+    ),
+    (
+        "grep",
+        ScopedTools {
+            unscoped: &["Grep"],
+            scoped: &["Read"],
+            note: "Claude scopes Grep paths through Read(path), which also covers other built-in file readers at that path",
+        },
+    ),
     ("web", Tools(&["WebSearch", "WebFetch"])),
     ("web_search", Tools(&["WebSearch"])),
     ("web_fetch", Tools(&["WebFetch"])),
@@ -414,7 +461,14 @@ mod tests {
         for &harness in HarnessKind::all() {
             let real = real_tools(harness);
             for (capability, native) in table(harness) {
-                if let Tools(names) = native {
+                let lists: &[&[&str]] = match native {
+                    Tools(names) => &[names],
+                    ScopedTools {
+                        unscoped, scoped, ..
+                    } => &[unscoped, scoped],
+                    Absent | NoSwitch(_) => &[],
+                };
+                for names in lists {
                     assert!(
                         !names.is_empty(),
                         "{harness:?} `{capability}` names no tool"
@@ -428,6 +482,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn claude_scoped_file_rules_use_permission_category_names() {
+        for (capability, unscoped, scoped) in [
+            ("write", &["Write"][..], &["Edit"][..]),
+            (
+                "edit",
+                &["Edit", "Write", "NotebookEdit"][..],
+                &["Edit"][..],
+            ),
+            ("notebook", &["NotebookEdit"][..], &["Edit"][..]),
+            ("glob", &["Glob"][..], &["Read"][..]),
+            ("grep", &["Grep"][..], &["Read"][..]),
+        ] {
+            let Some(ScopedTools {
+                unscoped: actual_unscoped,
+                scoped: actual_scoped,
+                note,
+            }) = lookup(capability, HarnessKind::Claude)
+            else {
+                panic!("Claude `{capability}` must distinguish bare and scoped rules");
+            };
+            assert_eq!(actual_unscoped, unscoped, "{capability} bare rule");
+            assert_eq!(actual_scoped, scoped, "{capability} scoped rule");
+            assert!(
+                !note.is_empty(),
+                "{capability} must explain the wider category"
+            );
+        }
+
+        assert_eq!(
+            lookup("web_fetch", HarnessKind::Claude),
+            Some(Tools(&["WebFetch"]))
+        );
     }
 
     #[test]

@@ -125,7 +125,10 @@ spelling), never a string with reserved values.
   ref the harness cannot represent. The bundle prints it as `unknown` with the reason as
   `note` and adds no `warnings[]` entry: Meridian prints those at every launch, so a gap is
   report-only there. `mars sync` is where an author hears about a typo or an MCP ref.
-  Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it.
+  A known rule can also carry a `note` when the valid harness permission has broader effects.
+  Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it; when
+  scoped Claude capabilities collapse to the same `Edit(path)` or `Read(path)` permission,
+  Claude's documented `deny` → `ask` → `allow` order leaves only the strictest action.
 
 What the bundle's `tools.rules` mean and what a status says: `docs/cli/commands.md`.
 MCP grammar and per-harness projection: `.context/CONTEXT.md`.
@@ -136,7 +139,9 @@ Mars owns native tool names. `tool_names.rs` recognizes a capability from canoni
 aliases and native spellings (`Bash`, `shell`, `AskUserQuestion` → `bash`, `ask_user`). The
 vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` is
 `web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
-capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`), and says why
+capability, each one-to-many (Claude bare `edit` → `Edit`, `Write`, `NotebookEdit`) with an
+explicit scoped spelling where the permission engine differs (Claude scoped file edits use
+`Edit(path)`, reads use `Read(path)`), and says why
 an unknown is unknown (`Absent`, `NoSwitch`, or no row yet). Nothing is derived by naming
 convention. Add a tool by adding it to the harness's real-tool list in the test first, with
 its source.

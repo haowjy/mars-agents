@@ -42,7 +42,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cannot hold `ask`, or an allowlist with nothing allowed; both are reported as
   dropped lossiness.
 - Native tool names come from explicit per-harness tables (`compiler/tool_natives.rs`),
-  one capability to one or more real tools: Claude `edit` is `Edit`, `Write` and
+  one capability to one or more real tools: bare Claude `edit` is `Edit`, `Write` and
   `NotebookEdit`; `web` is `WebSearch` + `WebFetch` (OpenCode `websearch` + `webfetch`);
   `ask_user` is `AskUserQuestion` (OpenCode `question`). A capability a harness cannot do
   is `absent`; one it can do with no tool to switch it (Codex and Pi `skill`, Codex
@@ -58,6 +58,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
   (both multi-agent versions). Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
+- Claude scoped file rules now use the permission categories Claude actually consults:
+  `write(path)`, `edit(path)` and `notebook(path)` emit `Edit(path)`, while `read(path)`,
+  `glob(path)` and `grep(path)` emit `Read(path)`. Bare rules keep their tool names, and
+  `WebFetch(domain:...)` was already correct. Known scoped rules carry a `note` when the
+  category covers sibling tools; when two scoped capabilities collapse to one permission,
+  `deny` beats `ask`, which beats `allow`.
 - A rule on a narrower capability wins over a broader one for the tools they share, so
   `edit: deny` with `write: allow` leaves Claude's `Write` allowed (the `edit` deny covers
   `Edit` and `NotebookEdit`) instead of denying it. The bundle's `native` lists, the flat

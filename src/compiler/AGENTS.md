@@ -32,11 +32,12 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into `EffectiveToolPolicy`. Used by **both** `agents/` and `skills/` modules for unified frontmatter-to-native lowering.
+- `tool_policy.rs` — tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into one typed `EffectiveToolPolicy` of `ToolRule`s, the `mars.toml` overlay edit, and `EffectiveToolPolicy::project`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
-- `tool_names.rs` — canonical snake_case tool name recognition + per-target projection (PascalCase for Claude/Cursor/Pi, snake_case for Codex, lowercase-without-underscores for OpenCode)
+- `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
+- `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — MCP servers and hooks from packages → target config files
@@ -95,21 +96,60 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the unified tool-gating schema used by **both** `agents/` and `skills/`. It merges three canonical fields from frontmatter:
+`EffectiveToolPolicy` is the one tool-gating model of **agents**, **skills** and the **launch
+bundle**: a list of `ToolRule { capability, pattern, action }`, parsed once into
+`AgentProfile.tools` / `SkillProfile.tools` by `parse_tool_policy`. `capability` is a
+`Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
+spelling), never a string with reserved values.
 
-| Field | Form | Merged into |
-|---|---|---|
-| `tools:` | List (all allowed) or map (`tool_name: allow\|deny`) | `allowed` / `disallowed` |
-| `disallowed-tools:` | Flat string list | `disallowed` |
-| `mcp(...)` in `tools:` / `disallowed-tools:` | Inline MCP grant/deny | `mcp_allowed` / `mcp_disallowed` |
+- **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
+  `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
+  skills. An allowlist is a map with an explicit `'*': deny`. A `bash` pattern `X:*` becomes
+  `X *`.
+- **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
+  `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
+  lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
+  the rules back, since sync lowers skills from the staged file. `tools.allowed` replaces grant
+  rules without making an allowlist; an explicit `'*': deny` in the profile map is the
+  allowlist marker and survives the overlay. Overlay names are `OverlayToolName`s: parsed with
+  the profile grammar as `mars.toml` loads, so `apply_overlay`
+  never meets a name a profile would reject. Staging writes a skill back only when its own
+  `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
+  drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
+- **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
+  permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
+  bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a
+  consumer that re-derives either fact. A projected rule keeps permission→tool bindings so
+  conflict resolution removes `native_tools` with the `native` permission it removes.
+  The bundle's profile-independent `agent` / `task` capability metadata calls
+  `project_platform_capability`, which shares the builtin row translation with rule projection
+  rather than interpreting `tool_natives` itself.
+  A rule's `NativeStatus::Unknown(reason)` covers every permission gap: a harness with no
+  switch for the tool (a `Native::NoSwitch` row), no row at all, an unrecognized name, an MCP
+  ref the harness cannot represent. The bundle prints it as `unknown` with the reason as
+  `note` and adds no `warnings[]` entry: Meridian prints those at every launch, so a gap is
+  report-only there. `mars sync` is where an author hears about a typo or an MCP ref.
+  A known rule can also carry a `note` when the valid harness permission has broader effects.
+  Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it; when
+  scoped Claude capabilities collapse to the same `Edit(path)` or `Read(path)` permission,
+  Claude's documented `deny` → `ask` → `allow` order leaves only the strictest action.
 
-`agents/mod.rs::AgentProfile::effective_tool_policy()` and `skills/mod.rs::SkillProfile::effective_tool_policy()` both delegate to `tool_policy::effective_tool_policy()` with field-level dedup and canonical name normalization.
-
+What the bundle's `tools.rules` mean and what a status says: `docs/cli/commands.md`.
 MCP grammar and per-harness projection: `.context/CONTEXT.md`.
 
 ## Tool Name Projection
 
-Mars canonical tool names are snake_case. `tool_names.rs` recognizes canonical names plus aliases/native spellings, then projects by target convention: Claude/Cursor/Pi PascalCase, Codex snake_case, OpenCode lowercase-without-underscores. Only true semantic exceptions live in the override table (for example Codex `bash` → `shell`, OpenCode `read` → `view`). Harness support for a specific known tool is separate from name recognition.
+Mars owns native tool names. `tool_names.rs` recognizes a capability from canonical names,
+aliases and native spellings (`Bash`, `shell`, `AskUserQuestion` → `bash`, `ask_user`). The
+vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` is
+`web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
+capability, each one-to-many (Claude bare `edit` → `Edit`, `Write`, `NotebookEdit`) with an
+explicit scoped spelling where the permission engine differs (Claude scoped file edits use
+`Edit(path)`, reads use `Read(path)`). The unscoped set is also the authoritative
+`native_tools` availability list, even when a scoped permission uses a category name. Each row
+also says why an unknown is unknown (`Absent`, `NoSwitch`, or no row yet). Nothing is derived
+by naming convention. Add a tool by adding it to the harness's real-tool list in the test
+first, with its source.
 
 ## Skill Compilation (`skills/`)
 

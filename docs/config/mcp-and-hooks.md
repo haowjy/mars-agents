@@ -23,7 +23,7 @@ Two lanes work together but serve different purposes:
 | Lane | Authoring | What it does |
 |---|---|---|
 | **Server definitions** | `mcp/<name>/mcp.toml` in a package | Registers how to launch an MCP server in target config (`.mcp.json`, etc.) |
-| **Tool-policy refs** | `tools: [mcp(server/tool)]` on agents/skills | Grants or denies MCP tool access in the agent/skill tool policy |
+| **Tool-policy refs** | `tools: {mcp(server/tool): allow}` on agents/skills | Grants or denies MCP tool access in the agent/skill tool policy |
 
 Whole-server **enablement** on Codex is governed by the server-definition lane (and
 `mcp_servers.enabled_tools` in harness config), not by per-tool entries in `tools:`.
@@ -32,8 +32,9 @@ MCP gating there is server-config based, not a tool-list form.
 
 Claude agents emit projected `mcp__…` tokens in `tools:` / `disallowed-tools:`; Claude
 skills grant allowed MCP into `allowed-tools:`. Non-Claude native agent files do not
-emit tool lists today — the launch bundle (`ToolsSpec.mcp`) carries the real per-harness
-projection at spawn time.
+emit tool lists today. Launchers gate MCP tools from launch-bundle `tools.rules`; its
+legacy flat `tools.mcp` list contains permission names only, never the server definitions
+installed by this sync lane.
 
 ## Declaring MCP Servers in a Package
 

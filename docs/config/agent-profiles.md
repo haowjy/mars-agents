@@ -14,7 +14,11 @@ effort: high
 autocompact: 200000
 autocompact_pct: 80
 skills: [dev-principles, shared-workspace]
-tools: [bash, write, edit, read]
+tools:
+  bash: allow
+  write: allow
+  edit: allow
+  read: allow
 disallowed-tools: [agent, bash(git revert:*)]
 harness-overrides:
   codex:
@@ -55,7 +59,10 @@ description: Implementation agent for code changes
 model: gpt55
 harness: claude
 skills: [dev-principles, shared-workspace]
-tools: [bash, write, edit]
+tools:
+  bash: allow
+  write: allow
+  edit: allow
 ---
 
 # Coder
@@ -237,7 +244,9 @@ effort: high
 | Range | 0–4294967295 |
 | Default | none |
 
-Context window compaction threshold in tokens. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this many tokens.
+Context window compaction threshold in tokens. It is preserved in the launch bundle rather
+than native agent files. Meridian maps it to Claude's token-window flag and Codex's token
+limit; harnesses without a matching control report it unsupported.
 
 ```yaml
 autocompact: 200000
@@ -254,7 +263,10 @@ autocompact: 200000
 | Range | 1–100 |
 | Default | none |
 
-Context window compaction threshold as a percentage of the context window. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this percentage of the available window.
+Context window compaction threshold as a percentage of the context window. It is preserved
+in the launch bundle rather than native agent files. Meridian maps it to Claude's percentage
+environment variable and Codex's percentage config; harnesses without a matching control
+report it unsupported.
 
 ```yaml
 autocompact_pct: 80
@@ -273,7 +285,9 @@ autocompact_pct: 80
 Skills this agent gets. A flat list means every skill is loaded. The mapping form separates:
 
 - `load`: the [launch bundle](../cli/commands.md#mars-build-launch-bundle) carries the skill's full body in `skills.loaded`, and Meridian composes it into the agent's system prompt.
-- `available`: the bundle lists the skill in `skills.available` (name, type, description) for the agent to load itself through its harness's skill list.
+- `available`: the bundle lists the skill in `skills.available` (name, type, description).
+  Meridian includes the name and description in its composed available-skill inventory;
+  the harness's own skill mechanism performs the eventual load.
 
 A name in both lists counts as loaded. `--skill` on `mars build launch-bundle` adds to `load`. Neither list is filtered by the skill's `model-invocable`: a non-invocable skill under `load` still arrives in full, which is how one agent gets a skill no model finds by itself. See [`model-invocable`](skill-compilation.md#model-invocable).
 
@@ -313,24 +327,75 @@ subagents: [explorer, reviewer, coder]
 
 | | |
 |---|---|
-| Type | string[] or mapping (`tool-name: allow|deny`) |
+| Type | string[] or mapping (`tool-name: allow\|deny\|ask`) |
 | Required | no |
 | Default | empty (harness default tool set) |
 
-Tool allowlist. Only these tools are available to the agent. Tool names use Mars canonical semantic snake_case (`bash`, `ask_user`, `web_search`). Scoped patterns keep the canonical head and put the native payload in parentheses. Mars maps canonical names to target-native names while lowering.
+Tool policy for the agent, written as rules: a capability, an optional scope, and an action
+(`allow`, `deny` or `ask`). Capability names are Mars's snake_case vocabulary (below); a
+scope goes in parentheses, `tool(pattern)`. Mars maps each capability to the harness's real
+tool names while it builds the launch bundle and lowers agent files; the author never writes
+a harness spelling.
 
-Readable aliases and native spellings such as `Bash`, `shell`, and `askuser` are accepted and canonicalized. Unknown lowercase spellings without word separators are preserved exactly and left to the target harness; unknown PascalCase spellings are normalized to snake_case.
+Two forms:
+
+- **List form is deprecated.** `tools: [read, grep]` still only grants those entries and
+  restricts nothing. A non-empty list emits a deprecation warning. An empty list names no tools
+  and stays "no policy".
+- **Map form states rules.** `tools: {read: allow, edit: deny}` grants and denies those
+  entries and leaves everything else to the harness. Add `'*': deny` to make a map an
+  allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
+  commands.
+
+`ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
+for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian
+enforces them from the launch bundle.
+
+A scope written with the legacy prefix suffix, `bash(git revert:*)`, is normalized to
+`bash(git revert *)`, the one spelling every harness reads.
 
 ```yaml
-tools: [bash, write, edit]
-tools: [bash(git status), write, read]   # scoped pattern
-tools: [mcp(context7), mcp(plugin:demo/query-docs)]   # MCP grants — see below
-tools:
+tools:                                   # grants and denials
   bash: allow
   "bash(meridian spawn *)": allow
+  "bash(git push *)": ask
   agent: deny
   edit: deny
+  "bash(git status *)": allow           # scoped pattern
+  mcp(context7): allow                   # MCP grants — see below
+  mcp(plugin:demo/query-docs): allow
+tools:                                   # explicit allowlist in map form
+  "*": deny
+  "bash(rg *)": allow
 ```
+
+Readable aliases and native spellings (`Bash`, `shell`, `exec_command`, `AskUserQuestion`,
+`websearch`) resolve to the same capability. A name Mars does not recognize is kept as
+written and reported as `unknown` in the launch bundle; Mars never guesses a native spelling
+for it. `tools: allow` / `tools: deny` (a scalar) is a validation error. Any other scalar is
+Claude's own comma-separated spelling, `tools: Read, Grep`, and reads as the list
+`[Read, Grep]`, granting both entries (commas inside a scope, `bash(rg a,b)`, stay with their
+entry).
+
+**Capabilities.** One name per kind of tool. Where a capability covers several native tools,
+a rule covers all of them.
+
+| Capability | Meaning |
+|---|---|
+| `bash` | Shell commands |
+| `read`, `write`, `edit` | Read files; create files; modify files (`edit` covers writes and notebook edits on harnesses where they are separate tools) |
+| `notebook` | Jupyter notebook editing |
+| `glob`, `grep` | File and content search |
+| `agent` | Sub-agents (Claude `Agent` with `SendMessage` and `ListAgents`, OpenCode `task`) |
+| `task` | The task list (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex `update_plan`). Not sub-agents. Names are case-insensitive here, so `Task` is the task list in a `dialect = "mars-native"` package; in any other package staging reads `Task` as Claude's old sub-agent tool and lifts it to `agent` |
+| `skill`, `workflow` | Loading a skill; running a workflow |
+| `web` | `web_search` and `web_fetch` together |
+| `web_search`, `web_fetch` | One of the two |
+| `ask_user` | Asking the user a question |
+| `plan_mode`, `worktree`, `lsp`, `cron`, `monitor`, `notifications`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Harness features that exist on some harnesses only |
+
+Per-harness native names and the loss rules are in
+[agent-compilation.md](agent-compilation.md#tool-name-projection).
 
 **MCP grants** — inline `mcp(...)` entries in `tools:` or `disallowed-tools:` gate MCP
 server/tool access. Server and tool segments are preserved **verbatim** (case-sensitive).
@@ -345,13 +410,17 @@ server/tool access. Server and tool segments are preserved **verbatim** (case-se
 | `mcp(*/*)` | All MCP tools |
 
 ```yaml
-tools: [mcp(context7), mcp(memory-bank/store)]
+tools:
+  mcp(context7): allow
+  mcp(memory-bank/store): allow
 disallowed-tools: [mcp(github/delete_repo)]
 ```
 
 The legacy `mcp-tools:` / `mcp_tools` frontmatter field is **removed** — use
-`tools: [mcp(server)]` instead. Per-harness projection and lossiness are documented in
+`tools: {mcp(server): allow}` instead. Per-harness projection and lossiness are documented in
 [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+These entries govern tool permissions, not server registration. Server definitions come
+from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
 
 ---
 
@@ -385,11 +454,11 @@ harness-overrides:
     customClaudeKey: true
     tools: [ask_user, askuser]  # preserved exactly in passthrough
   codex:
-    sandbox_workspace_write:
+    sandbox_workspace_write:  # Codex config keys, carried as written
       network_access: true
-    native-config:            # preserved as a target-native key, not parsed by Mars
-      sandbox_workspace_write.network_access: true
 ```
+
+The selected block reaches the launch bundle as `execution_policy.native_config`; the launcher decides how to apply it. For Meridian, Codex applies it as `-c` overrides.
 
 Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting.
 

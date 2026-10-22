@@ -67,6 +67,7 @@ cli → sync → compiler → target adapters
 | Catalog refresh | `models/catalog_cache.rs`, `platform/process.rs` |
 | Possible/Curated display | `models/possible.rs`, `curation/` |
 | Routing logic | `routing/mod.rs` only — single evaluator invariant |
+| Tool capability / native tool name | `compiler/tool_names.rs` (vocabulary), `compiler/tool_natives.rs` (per-harness tables + real-tool pin); profile rules and both lowerers follow via `EffectiveToolPolicy::project`, while bundle platform metadata uses the same builtin projection via `project_platform_capability` |
 
 ## Anti-Patterns
 

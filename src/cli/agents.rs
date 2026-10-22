@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
+use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -237,9 +238,10 @@ fn run_show(
                 "approval": approval_str,
                 "sandbox": sandbox_str,
                 "effort": effort_str,
-                "tools": profile.tools,
-                "disallowed-tools": profile.disallowed_tools,
-                "tools-denied": profile.tools_denied,
+                "rules": profile.tools.rules,
+                // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
+                "tools": profile.tools.rendered(ToolAction::Allow),
+                "disallowed-tools": profile.tools.rendered(ToolAction::Deny),
                 "scope": scope,
                 "source_path": disk_path,
             }));
@@ -257,9 +259,7 @@ fn run_show(
             print_str_list("skills.load", &profile.skills.load);
             print_str_list("skills.available", &profile.skills.available);
             print_str_list("subagents", &profile.subagents);
-            print_str_list("tools", &profile.tools);
-            print_str_list("disallowed-tools", &profile.disallowed_tools);
-            print_str_list("tools-denied", &profile.tools_denied);
+            print_str_list("tool-rules", &profile.tools.describe());
         }
 
         return Ok(0);

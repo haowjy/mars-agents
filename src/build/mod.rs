@@ -5,9 +5,11 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
+use crate::compiler::tool_policy::{
+    NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction, project_platform_capability,
+};
 use crate::content::ContentRoots;
-use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolsSpec};
+use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -43,7 +45,7 @@ pub fn build_launch_bundle(
         .excluded_harnesses
         .retain(|harness| seen.insert(*harness));
     let mut warnings: Vec<String> = Vec::new();
-    let profile: AgentProfile;
+    let mut profile: AgentProfile;
     let agent_body: Option<String>;
     let agent_source_path: Option<PathBuf>;
     let content_roots = ContentRoots::new(&ctx.project_root, request.fallback_root.as_deref());
@@ -93,6 +95,13 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    if let Some(overlay) = request
+        .agent
+        .as_deref()
+        .and_then(|agent| effective_project_config.agents.get(agent))
+    {
+        profile.tools.apply_overlay(&overlay.tools);
+    }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
     ) {
@@ -149,9 +158,8 @@ pub fn build_launch_bundle(
     .map_err(with_selection_report)?;
 
     warnings.extend(prompt.warnings);
-    let (resolved_tools, tool_warnings) =
+    let resolved_tools =
         resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
-    warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
@@ -195,9 +203,7 @@ fn empty_agent_profile() -> AgentProfile {
         autocompact_pct: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
-        tools: Vec::new(),
-        tools_denied: Vec::new(),
-        disallowed_tools: Vec::new(),
+        tools: Default::default(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),
@@ -216,106 +222,60 @@ fn load_effective_project_config_or_default(
     }
 }
 
+/// The agent's tool rules for `harness`. A permission gap is never a warning: Meridian prints
+/// `warnings[]` at every launch, so a rule Mars cannot name or enforce goes out with
+/// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
+/// author hears about a typo.
 fn resolve_bundle_tools(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
-) -> Result<(ToolsSpec, Vec<String>), MarsError> {
-    use crate::compiler::mcp_ref::project_mcp_refs_for_emission;
-
+) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
-    let harness_kind = descriptor.kind;
-    let harness = descriptor.canonical_id;
+    let projection = profile.tools.project(descriptor.kind);
+    let overlaps = projection.overlaps();
 
-    let effective_tools = profile.effective_tool_policy(&harness_kind);
-    let mut warnings = Vec::new();
-
-    let allowed = normalize_and_dedupe_tools(
-        &effective_tools.allowed,
-        descriptor,
-        ToolPolicyKind::Allowed,
-        &mut warnings,
-    );
-    let mut disallowed = normalize_and_dedupe_tools(
-        &effective_tools.disallowed,
-        descriptor,
-        ToolPolicyKind::Disallowed,
-        &mut warnings,
-    );
-
-    // Harness-native MCP tokens: allowed refs → `tools.mcp`; disallowed refs fold into
-    // `tools.disallowed` with the same per-harness projection (never broaden on unsupported).
-    let mcp_allowed = project_mcp_refs_for_emission(
-        &effective_tools.mcp_allowed,
-        harness_kind,
-        |canonical, reason| {
-            warnings.push(format!(
-                "MCP ref `{canonical}` cannot be represented for {harness}: {}",
-                reason.message()
-            ));
-        },
-    );
-
-    let mcp_disallowed = project_mcp_refs_for_emission(
-        &effective_tools.mcp_disallowed,
-        harness_kind,
-        |canonical, reason| {
-            warnings.push(format!(
-                "disallowed MCP ref `{canonical}` cannot be represented for {harness}: {}",
-                reason.message()
-            ));
-        },
-    );
-    disallowed.extend(mcp_disallowed);
-
-    Ok((
-        ToolsSpec {
-            allowed,
-            disallowed,
-            mcp: mcp_allowed,
-        },
-        warnings,
-    ))
-}
-
-fn normalize_and_dedupe_tools(
-    tools: &[String],
-    descriptor: &CompilerHarnessDescriptor,
-    kind: ToolPolicyKind,
-    warnings: &mut Vec<String>,
-) -> Vec<String> {
-    let harness = descriptor.canonical_id;
-    let mut seen = std::collections::HashSet::new();
-    let mut projected = Vec::new();
-
-    for tool in tools {
-        let normalized = project_tool_for_harness(tool, descriptor.kind);
-        if normalized.status == ToolProjectionStatus::UnknownProjected {
-            match kind {
-                ToolPolicyKind::Allowed => warnings.push(format!(
-                    "tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
-                )),
-                ToolPolicyKind::Disallowed => warnings.push(format!(
-                    "disallowed tool '{tool}' is not a known {harness} tool; projected via {harness} naming convention (verify it exists)"
-                )),
+    let rules = projection
+        .rules()
+        .iter()
+        .map(|(rule, projected)| {
+            let native = projected.native();
+            let shares_a_tool = native.iter().any(|native| overlaps.contains(native));
+            ToolRuleSpec {
+                rule: (*rule).clone(),
+                native,
+                native_tools: projected.native_tools(),
+                native_status: projected.status.map(NativeStatus::as_str),
+                note: projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
             }
-        }
+        })
+        .collect();
 
-        let trimmed = normalized.name.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if seen.insert(trimmed.to_string()) {
-            projected.push(trimmed.to_string());
-        }
-    }
+    let capability_natives = ["agent", "task"]
+        .into_iter()
+        .map(|capability| {
+            let projected = project_platform_capability(capability, descriptor.kind);
+            let status = projected
+                .status
+                .expect("a builtin capability always has a native status");
+            (
+                capability.to_string(),
+                CapabilityNativeSpec {
+                    native: projected.native(),
+                    native_status: status.as_str(),
+                    note: status.note(),
+                },
+            )
+        })
+        .collect();
 
-    projected
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ToolPolicyKind {
-    Allowed,
-    Disallowed,
+    Ok(ToolsSpec {
+        rules,
+        capability_natives,
+        // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
+        allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
+        disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
+        mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
+    })
 }
 
 fn resolve_effective_skills(

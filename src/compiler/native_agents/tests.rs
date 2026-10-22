@@ -28,9 +28,7 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         autocompact_pct: None,
         skills: crate::frontmatter::SkillsSpec::default(),
         subagents: Vec::new(),
-        tools: Vec::new(),
-        tools_denied: Vec::new(),
-        disallowed_tools: Vec::new(),
+        tools: Default::default(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),
@@ -1186,7 +1184,7 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
     );
 
     let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
         "worker",
     );
     compile_emit_all_with_overlays(
@@ -1228,7 +1226,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
     );
 
     let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
         "worker",
     );
     let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
@@ -1237,7 +1235,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         crate::config::AgentOverlay {
             description: Some("Overlay description".to_string()),
             tools: crate::config::AgentOverlayTools {
-                disallowed: vec!["Write".to_string()],
+                disallowed: vec!["Write".to_string().try_into().unwrap()],
                 ..Default::default()
             },
             ..Default::default()

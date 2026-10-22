@@ -4,83 +4,123 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
 use crate::compiler::mcp_ref::parse_foreign_mcp_token;
+use crate::compiler::tool_names::split_tool_name;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 
-fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, bool) {
-    match value {
-        Value::String(raw) => {
-            let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
-                return (value.clone(), false);
-            };
-            (Value::String(mcp_ref.to_canonical()), true)
-        }
-        Value::Sequence(seq) => {
-            let mut changed = false;
-            let lifted: Vec<Value> = seq
-                .iter()
-                .map(|entry| {
-                    let Some(raw) = entry.as_str() else {
-                        return entry.clone();
-                    };
-                    let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
-                        return entry.clone();
-                    };
-                    changed = true;
-                    Value::String(mcp_ref.to_canonical())
-                })
-                .collect();
-            (Value::Sequence(lifted), changed)
-        }
-        Value::Mapping(map) => {
-            // Map-form `tools:` (e.g. `{ mcp__server__tool: deny }`) carries the
-            // MCP token in the mapping KEY, not the value, so the String/Sequence
-            // arms above never see it. Rewrite MCP-shaped keys through the same
-            // foreign-token parser; preserve each entry's allow/deny value and the
-            // original key order. Without this, foreign wire tokens leak into
-            // canonical `.mars/` unchanged (or get reparsed as whole-server refs),
-            // silently changing per-tool allow/deny semantics.
-            let mut changed = false;
-            let mut lifted = serde_yaml::Mapping::new();
-            for (key, entry) in map {
-                let new_key = match key
-                    .as_str()
-                    .and_then(|raw| parse_foreign_mcp_token(raw, dialect))
-                {
-                    Some(mcp_ref) => {
-                        changed = true;
-                        Value::String(mcp_ref.to_canonical())
-                    }
-                    None => key.clone(),
-                };
-                lifted.insert(new_key, entry.clone());
-            }
-            (Value::Mapping(lifted), changed)
-        }
-        other => (other.clone(), false),
-    }
-}
-
-fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
-    let Some(value) = fm.get(key).cloned() else {
+/// Rewrite the tool names in `fm[key]` with `rewrite`, which returns the new spelling of a name
+/// it changes. The field is a scalar, a list, or a map keyed by tool name (`tools: {mcp__s__t:
+/// deny}` carries the name in the KEY, so a rewrite that skipped keys would leak foreign names
+/// into canonical `.mars/` unchanged). Map values and key order are preserved.
+fn rewrite_tool_entries(
+    fm: &mut Frontmatter,
+    key: &str,
+    rewrite: impl Fn(&str) -> Option<String>,
+) -> bool {
+    let Some(value) = fm.get(key) else {
         return false;
     };
-    let (lifted, changed) = lift_foreign_mcp_tokens_in_value(&value, dialect);
+    let mut changed = false;
+    let mut swap = |entry: &Value| match entry.as_str().and_then(&rewrite) {
+        Some(renamed) => {
+            changed = true;
+            Value::String(renamed)
+        }
+        None => entry.clone(),
+    };
+    let lifted = match value {
+        Value::String(_) => swap(value),
+        Value::Sequence(seq) => Value::Sequence(seq.iter().map(&mut swap).collect()),
+        Value::Mapping(map) => Value::Mapping(
+            map.iter()
+                .map(|(name, entry)| (swap(name), entry.clone()))
+                .collect(),
+        ),
+        _ => return false,
+    };
     if changed {
         fm.insert(key, lifted);
     }
     changed
 }
 
-fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool {
+/// A comma-separated scalar (`tools: Read, Task`, Claude's own agent-file spelling) is a list.
+/// Split it first so the per-entry lifts below see each entry, not one string.
+fn split_scalar_tool_list(fm: &mut Frontmatter, key: &str) -> bool {
+    let Some(value @ Value::String(_)) = fm.get(key) else {
+        return false;
+    };
+    let entries = tool_policy::tool_entries(value);
+    if entries.len() < 2 {
+        return false;
+    }
+    fm.insert(
+        key,
+        Value::Sequence(entries.into_iter().map(Value::String).collect()),
+    );
+    true
+}
+
+/// Rewrite a foreign scalar/list of tool names as canonical policy entries. Foreign formats use
+/// list-shaped fields for two different meanings: Claude agent `tools:` restricts the agent to
+/// the list, while skill `allowed-tools` and the other skill dialects only grant their entries.
+/// Map-form input is already a canonical policy and must keep its authored actions.
+fn lift_tool_list_to_policy_map(fm: &mut Frontmatter, restricts: bool) -> bool {
+    let Some(value) = fm.get("tools") else {
+        return false;
+    };
+    let entries = match value {
+        Value::String(_) => tool_policy::tool_entries(value),
+        Value::Sequence(entries) if entries.iter().all(|entry| entry.as_str().is_some()) => {
+            tool_policy::yaml_str_list(value)
+        }
+        Value::Sequence(_)
+        | Value::Mapping(_)
+        | Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::Tagged(_) => return false,
+    };
+
+    let mut policy = serde_yaml::Mapping::new();
+    if restricts {
+        policy.insert(Value::String("*".into()), Value::String("deny".into()));
+    }
+    for entry in entries {
+        policy.insert(Value::String(entry), Value::String("allow".into()));
+    }
+    fm.insert("tools", Value::Mapping(policy));
+    true
+}
+
+fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
+    rewrite_tool_entries(fm, key, |raw| {
+        parse_foreign_mcp_token(raw, dialect).map(|mcp_ref| mcp_ref.to_canonical())
+    })
+}
+
+/// Claude's pre-`Agent` name for the sub-agent tool. In canonical Mars `task` means the
+/// task-list tools, so a Claude-dialect `Task` entry must be renamed on the way in.
+fn claude_task_to_agent(raw: &str) -> Option<String> {
+    let (head, payload) = split_tool_name(raw.trim());
+    (head.trim() == "Task").then(|| format!("agent{payload}"))
+}
+
+fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
+    rewrite_tool_entries(fm, key, claude_task_to_agent)
+}
+
+fn lift_foreign_tools(fm: &mut Frontmatter, dialect: Dialect, native_tools_restrict: bool) -> bool {
     let mut changed = false;
+    let mut came_from_native_tools = fm.get("tools").is_some();
     if fm.get("tools").is_none() {
-        for key in ["allowed-tools", "allowed_tools", "tools"] {
+        for key in ["allowed-tools", "allowed_tools"] {
             if let Some(value) = fm.remove(key) {
                 fm.insert("tools", value);
                 changed = true;
+                came_from_native_tools = false;
                 break;
             }
         }
@@ -91,7 +131,11 @@ fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool 
             }
         }
     }
+    changed |= lift_tool_list_to_policy_map(fm, native_tools_restrict && came_from_native_tools);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
+    if dialect == Dialect::Claude {
+        changed |= lift_claude_task_entries(fm, "tools");
+    }
     changed
 }
 
@@ -162,7 +206,7 @@ fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
             changed = true;
         }
     }
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+    changed |= lift_foreign_tools(fm, Dialect::Claude, false);
     changed
 }
 
@@ -175,14 +219,16 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
         changed = true;
     }
 
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+    changed |= lift_foreign_tools(fm, Dialect::Claude, true);
 
     if let Some(mcp) = fm.remove("mcpServers") {
         changed |=
             tool_policy::append_mcp_server_entries_to_tools(fm, &tool_policy::yaml_str_list(&mcp));
     }
 
+    changed |= split_scalar_tool_list(fm, "disallowed-tools");
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
+    changed |= lift_claude_task_entries(fm, "disallowed-tools");
     changed
 }
 
@@ -202,7 +248,7 @@ fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
                     "user_invocable",
                 ],
             );
-            changed |= lift_foreign_tools_allowlist(fm, Dialect::Codex);
+            changed |= lift_foreign_tools(fm, Dialect::Codex, false);
         }
         ItemKind::Agent => {
             changed |= strip_foreign_keys(
@@ -256,7 +302,7 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     if fm.remove("globs").is_some() {
         changed = true;
     }
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Cursor);
+    changed |= lift_foreign_tools(fm, Dialect::Cursor, false);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Cursor);
     changed
 }
@@ -267,7 +313,7 @@ fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
         ItemKind::Skill | ItemKind::BootstrapDoc => {
             let mut changed = false;
             changed |= strip_foreign_keys(fm, &["mode"]);
-            changed |= lift_foreign_tools_allowlist(fm, Dialect::OpenCode);
+            changed |= lift_foreign_tools(fm, Dialect::OpenCode, false);
             if let Some(tools) = fm.remove("disallowedTools") {
                 if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
                     fm.insert("disallowed-tools", tools);
@@ -304,6 +350,7 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 mod tests {
     use super::*;
     use crate::compiler::agents::AgentDiagnostic;
+    use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
     use crate::compiler::agents::parse_agent_content;
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
@@ -316,6 +363,20 @@ mod tests {
 
     fn lift(dialect: Dialect, item_kind: ItemKind, frontmatter: &Frontmatter) -> Frontmatter {
         lift_frontmatter_with_change(dialect, item_kind, frontmatter).0
+    }
+
+    fn tool_map(entries: &[(&str, &str)]) -> Value {
+        Value::Mapping(
+            entries
+                .iter()
+                .map(|(name, action)| {
+                    (
+                        Value::String((*name).into()),
+                        Value::String((*action).into()),
+                    )
+                })
+                .collect(),
+        )
     }
 
     #[test]
@@ -353,9 +414,10 @@ mod tests {
         assert!(lifted.get("disallowedTools").is_none());
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(server)".into()),
-                Value::String("mcp(other)".into())
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("mcp(server)", "allow"),
+                ("mcp(other)", "allow"),
             ]))
         );
         assert!(lifted.get("mcpServers").is_none());
@@ -507,8 +569,10 @@ when_to_use: Use when git history matters
         assert!(diags.is_empty(), "{diags:?}");
         assert!(!profile.model_invocable);
         assert!(!profile.user_invocable);
-        assert_eq!(profile.tools, vec!["bash(git *)"]);
-        assert_eq!(profile.disallowed_tools, vec!["agent"]);
+        assert_eq!(
+            profile.tools.describe(),
+            ["allow:bash(git *)", "deny:agent"]
+        );
         assert_eq!(
             profile.when_to_use.as_deref(),
             Some("Use when git history matters")
@@ -579,14 +643,39 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![Value::String("Bash(git *)".into())]))
+            Some(&tool_map(&[("Bash(git *)", "allow")]))
         );
         assert!(lifted.get("allowed-tools").is_none());
 
         let mut diags = Vec::new();
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
-        assert_eq!(profile.tools, vec!["bash(git *)"]);
+        assert_eq!(profile.tools.describe(), ["allow:bash(git *)"]);
+    }
+
+    #[test]
+    fn codex_tool_fields_follow_the_existing_skill_and_agent_meanings() {
+        let skill = lift(
+            Dialect::Codex,
+            ItemKind::Skill,
+            &fm("name: s\ndescription: d\nallowed-tools: [Read]\n"),
+        );
+        assert_eq!(skill.get("tools"), Some(&tool_map(&[("Read", "allow")])));
+        let mut diags = Vec::new();
+        let (profile, _) = parse_skill_content(&skill.render(), &mut diags).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(profile.tools.describe(), ["allow:read"]);
+        assert!(!profile.tools.is_allowlist());
+
+        let agent = lift(
+            Dialect::Codex,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ntools: [Read]\n"),
+        );
+        assert!(
+            agent.get("tools").is_none(),
+            "Codex native agents have no tool-policy field"
+        );
     }
 
     #[test]
@@ -601,7 +690,7 @@ when_to_use: Use when git history matters
         let mut diags = Vec::new();
         let (profile, _) = parse_agent_content(&staged, &mut diags).unwrap();
         assert!(diags.is_empty());
-        assert_eq!(profile.disallowed_tools, vec!["web_search"]);
+        assert_eq!(profile.tools.describe(), ["deny:web_search"]);
     }
 
     #[test]
@@ -617,10 +706,10 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("mcp(github/create_issue)".into()),
-                Value::String("mcp(context7/*)".into()),
+            Some(&tool_map(&[
+                ("Read", "allow"),
+                ("mcp(github/create_issue)", "allow"),
+                ("mcp(context7/*)", "allow"),
             ]))
         );
         assert_eq!(
@@ -644,10 +733,100 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
-            vec!["read", "mcp(github/create_issue)", "mcp(context7/*)"]
+            profile.tools.describe(),
+            [
+                "allow:read",
+                "allow:mcp(github/create_issue)",
+                "allow:mcp(context7/*)",
+                "deny:mcp(github/delete_repo)"
+            ]
         );
-        assert_eq!(profile.disallowed_tools, vec!["mcp(github/delete_repo)"]);
+    }
+
+    #[test]
+    fn claude_agent_lifts_task_tool_to_agent_in_every_tool_field() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools: [Read, Task, 'Task(Explore)']\ndisallowedTools: [Task]\n",
+            ),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("agent", "allow"),
+                ("agent(Explore)", "allow"),
+            ]))
+        );
+        assert_eq!(
+            lifted.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![Value::String("agent".into())]))
+        );
+
+        // Claude's own agent files spell lists as one comma-separated scalar.
+        let scalar = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools: Read, Task, mcp__github__get_issue\ndisallowedTools: Task, Edit\n",
+            ),
+        );
+        assert_eq!(
+            scalar.get("tools"),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("agent", "allow"),
+                ("mcp(github/get_issue)", "allow"),
+            ]))
+        );
+        assert_eq!(
+            scalar.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("agent".into()),
+                Value::String("Edit".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn claude_agent_tool_list_round_trips_as_a_restriction_without_deprecation() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ntools: Read, Grep\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("Grep", "allow"),
+            ]))
+        );
+
+        let mut diags = Vec::new();
+        let (profile, canonical) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+
+        let output = lower_to_claude(
+            &profile,
+            &canonical,
+            canonical.body(),
+            &NativeModel::Inherit,
+        );
+        assert!(output.lossy_fields.is_empty(), "{:?}", output.lossy_fields);
+        let lowered = Frontmatter::parse(&String::from_utf8(output.bytes).unwrap()).unwrap();
+        assert_eq!(
+            lowered.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("Grep".into()),
+            ]))
+        );
     }
 
     #[test]
@@ -659,9 +838,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(*/*)".into()),
-                Value::String("mcp(github/*)".into()),
+            Some(&tool_map(&[
+                ("mcp(*/*)", "allow"),
+                ("mcp(github/*)", "allow"),
             ]))
         );
     }
@@ -677,9 +856,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(GitHub/CreateIssue)".into()),
-                Value::String("mcp(context7/*)".into()),
+            Some(&tool_map(&[
+                ("mcp(GitHub/CreateIssue)", "allow"),
+                ("mcp(context7/*)", "allow"),
             ]))
         );
         assert!(lifted.get("allowed-tools").is_none());
@@ -688,8 +867,8 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
-            vec!["mcp(GitHub/CreateIssue)", "mcp(context7/*)"]
+            profile.tools.describe(),
+            ["allow:mcp(GitHub/CreateIssue)", "allow:mcp(context7/*)"]
         );
     }
 
@@ -737,9 +916,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(github/create_issue)".into()),
-                Value::String("Read".into()),
+            Some(&tool_map(&[
+                ("mcp(github/create_issue)", "allow"),
+                ("Read", "allow"),
             ]))
         );
     }
@@ -753,8 +932,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![Value::String(
-                "mcp(plugin:context7:context7/create_issue)".into()
+            Some(&tool_map(&[(
+                "mcp(plugin:context7:context7/create_issue)",
+                "allow",
             )]))
         );
     }
@@ -768,7 +948,7 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::String("mcp(github/create_issue)".into()))
+            Some(&tool_map(&[("mcp(github/create_issue)", "allow")]))
         );
     }
 
@@ -798,11 +978,11 @@ when_to_use: Use when git history matters
         assert!(lifted.get("mcpServers").is_none());
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("Bash(git *)".into()),
-                Value::String("mcp(context7)".into()),
-                Value::String("mcp(github)".into()),
+            Some(&tool_map(&[
+                ("Read", "allow"),
+                ("Bash(git *)", "allow"),
+                ("mcp(context7)", "allow"),
+                ("mcp(github)", "allow"),
             ]))
         );
 
@@ -810,8 +990,13 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
-            profile.tools,
-            vec!["read", "bash(git *)", "mcp(context7)", "mcp(github)"]
+            profile.tools.describe(),
+            [
+                "allow:read",
+                "allow:bash(git *)",
+                "allow:mcp(context7/*)",
+                "allow:mcp(github/*)"
+            ]
         );
     }
 
@@ -867,6 +1052,6 @@ when_to_use: Use when git history matters
             "stripped field must not re-trigger diagnostic: {staged_diags:?}"
         );
         assert!(fm.get("mcp-tools").is_none());
-        assert!(profile.tools.is_empty());
+        assert!(profile.tools.rules.is_empty());
     }
 }

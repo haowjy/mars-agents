@@ -887,13 +887,7 @@ fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    if !overlay.tools.allowed.is_empty() {
-        effective.tools = overlay.tools.allowed.clone();
-    }
-    if !overlay.tools.disallowed.is_empty() {
-        effective.disallowed_tools = overlay.tools.disallowed.clone();
-        effective.tools_denied.clear();
-    }
+    effective.tools.apply_overlay(&overlay.tools);
     effective
 }
 

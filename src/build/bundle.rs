@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::compiler::tool_policy::ToolRule;
+
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,12 +43,6 @@ pub struct Routing {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct CodexRule {
-    pub name: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct ExecutionPolicy {
     pub effort: Option<String>,
     pub approval: Option<String>,
@@ -56,8 +52,6 @@ pub struct ExecutionPolicy {
     pub timeout: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codex_rules: Option<Vec<CodexRule>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,11 +92,62 @@ pub struct SupplementalDoc {
     pub skill_type: String,
 }
 
+/// The agent's tool policy for the resolved harness.
+///
+/// `rules` is the contract: one entry per policy statement, carrying the canonical
+/// capability for meaning, the harness-native permission names for emission and the unscoped
+/// harness tool names for availability projection. `allowed`,
+/// `disallowed` and `mcp` are flat native-name lists derived from `rules` for consumers that
+/// predate it; they cannot express `ask`, `*`, or which capability a name came from.
+/// In particular, `mcp` contains permission names, never MCP server definitions or commands.
+/// `capability_natives` is independent of the profile and always names the capabilities a
+/// launcher may deny as platform policy.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
+    pub rules: Vec<ToolRuleSpec>,
+    pub capability_natives: BTreeMap<String, CapabilityNativeSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
+}
+
+/// How the resolved harness spells one capability that a launcher may gate independently of
+/// the profile's tool rules.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityNativeSpec {
+    pub native: Vec<String>,
+    pub native_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
+}
+
+/// One tool-policy statement as the resolved harness spells it: the rule's own
+/// `{capability, pattern, action}` (see [`ToolRule`]'s serialization) plus the names.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolRuleSpec {
+    #[serde(flatten)]
+    pub rule: ToolRule,
+    /// The harness's names for this rule: one per native tool the capability covers, with the
+    /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`, and
+    /// possibly empty for a known rule shadowed by a stricter or more specific rule.
+    pub native: Vec<String>,
+    /// The unscoped harness tool names this rule concerns. Permission engines can
+    /// name a scoped category rather than the tool being made available (for example Claude
+    /// `write(path)` uses `Edit(path)` but concerns the `Write` tool). Empty whenever `native`
+    /// is empty, with the same `native_status` applying to both fields.
+    pub native_tools: Vec<String>,
+    /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
+    /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted
+    /// for `*`, which names no tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_status: Option<&'static str>,
+    /// Why a consumer cannot rely on this rule alone, and the only channel for a permission
+    /// gap: Mars adds nothing to `warnings[]`. Present when `native_status` is `unknown` (the
+    /// reason Mars could not name the rule, for example "codex loads skills by reading files;
+    /// no switch") and on a `known` rule whose projection has broader effects or whose native
+    /// permission is shared with another rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]

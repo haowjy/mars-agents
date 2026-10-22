@@ -6,10 +6,14 @@ User-facing summary: [docs/config/agent-compilation.md](../../../docs/config/age
 ## Module
 
 `mcp_ref.rs` — `McpRef`, `parse_mcp_ref`, `try_parse_mcp_tool_name`, `parse_foreign_mcp_token`,
-`project_mcp_ref`, `project_mcp_ref_tokens`.
+`project_mcp_ref`.
 
-`tool_policy.rs` — splits `tools:` / `disallowed-tools:` into builtin tool names and
-`mcp_allowed` / `mcp_disallowed` [`McpRef`] vectors (`EffectiveToolPolicy`).
+`tool_policy.rs` — turns `tools:` / `disallowed-tools:` into typed [`ToolRule`]s
+(`EffectiveToolPolicy`); an MCP entry is a rule whose `Capability::Mcp` holds the parsed
+[`McpRef`] (the bundle spells it capability `mcp`, pattern `server/tool`).
+`EffectiveToolPolicy::project` is the one place a rule becomes native permission names and
+unscoped harness tool names. It retains permission→tool bindings through conflict
+resolution; bundle consumers read `native` and `native_tools` instead of deriving either.
 
 ## Canonical grammar
 
@@ -39,8 +43,8 @@ return `McpProjection::Unsupported` — callers omit the token and record lossin
 | Codex | — | all refs → `PerToolNeedsServerConfig` |
 | Pi | — | all refs → `HarnessDropsMcp` |
 
-`project_mcp_ref_tokens` dedupes emitted tokens and collects `(canonical, reason)` pairs
-for unsupported refs.
+An unsupported ref projects to no native token and `native_status: unknown`; callers record
+the reason as lossiness or a bundle rule `note` and never broaden permissions.
 
 ## Emission call sites
 
@@ -48,11 +52,12 @@ for unsupported refs.
   `disallowed-tools:` frontmatter.
 - **Claude skills** (`skills/lower_policy.rs`) — merge allowed MCP into `allowed-tools:`
   (grant semantics; always approximate lossiness note).
-- **Launch bundle** (`build/mod.rs`) — `ToolsSpec.mcp` = projected allowed tokens;
-  disallowed MCP folds into `tools.disallowed`.
+- **Launch bundle** (`build/mod.rs`) — `tools.rules` is the contract for every tool rule,
+  including MCP. `tools.mcp` is a legacy flat list of allowed MCP permission names derived
+  from the rules, never MCP server config; denied MCP names appear in `tools.disallowed`.
 
 Non-Claude native agent artifacts do not emit tool lists; MCP lossiness is recorded at
-lower time. Launch bundle is authoritative for spawn-time MCP policy.
+lower time. The launch bundle's `tools.rules` is authoritative for spawn-time tool policy.
 
 ## Inbound lift
 

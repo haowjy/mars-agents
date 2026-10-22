@@ -14,8 +14,10 @@ launch an agent with resolved routing, execution policy, tools, and prompt surfa
    - Works from a plain directory with **no `mars.toml`** — `can_run_without_project()`
      in `src/cli/mod.rs:248` supplies a synthetic `MarsContext` when project
      discovery fails and the exact ad-hoc condition is met
-   - `empty_agent_profile()` is used (no agent file read, no skills, no tools)
-   - Skills loading skipped (no `.mars/` store needed); tool resolution yields empty sets
+   - `empty_agent_profile()` is used (no agent file read, no skills, no profile tool rules)
+   - Skills loading skipped (no `.mars/` store needed); profile tool resolution yields empty
+     rules and flat lists, while `tools.capability_natives` still names the target harness's
+     `agent` and `task` tools for platform rules
 
 2. **Agent/profile mode** (`--agent <name>`):
    - Reads `.mars/agents/<name>.md` from `ctx.project_root`
@@ -32,7 +34,8 @@ they are expected route metadata, not problems a user can fix.
 
 Route facts are recorded in `routing.harness_model_source` and
 `routing.harness_model_confidence`. Build policy owns warnings for selected model
-fallbacks; tool normalization warns about unknown tool names. Exhausted routing
+fallbacks. Tool permission gaps are never warnings: they ride `tools.rules[].native_status`
+and `note`. Exhausted routing
 is an error, never a warning followed by an unassessed replacement route.
 
 Examples that are NOT warnings (they go to routing/provenance fields):
@@ -69,7 +72,6 @@ ancestor directory.
 parse_diags           ← frontmatter parse warnings (agent mode only)
 policy.warnings       ← catalog refresh issues, selected model fallback
 prompt.warnings       ← missing skills
-tool_warnings         ← unknown tool names on first-class harnesses
 ```
 
 All warning vectors are `extend()`-ed into a single `LaunchBundle.warnings` field.
@@ -162,7 +164,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)
        ├─ compile_prompt_surface()    (system instruction + supplemental docs + inventory)
-       └─ resolve_bundle_tools()      (tool normalization per harness)
+       └─ resolve_bundle_tools()      (profile rules + platform capability natives per harness)
            │
            └─ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata, provenance, warnings}
 ```

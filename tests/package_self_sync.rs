@@ -46,7 +46,7 @@ fn declared_package_preserves_native_metadata_resources_and_catalog_across_syncs
         dir.child("mars.toml")
             .write_str(&format!("{PACKAGE}{SETTINGS}"))
             .unwrap();
-        let agent = "---\nname: muse\ndescription: Muse\nskills: [craft]\ntools: [Read, Write]\n---\n# Muse\n";
+        let agent = "---\nname: muse\ndescription: Muse\nskills: [craft]\ntools:\n  '*': deny\n  Read: allow\n  Write: allow\n---\n# Muse\n";
         let skill = "---\nname: craft\ndescription: Craft\nuser-invocable: false\nmodel-invocable: false\n---\n# Craft\n";
         dir.child("agents/muse.md").write_str(agent).unwrap();
         dir.child("skills/craft/SKILL.md").write_str(skill).unwrap();

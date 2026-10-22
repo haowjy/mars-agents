@@ -98,8 +98,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
-| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | projected from Mars snake_case canonical names to Claude PascalCase native names |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for a map-form `'*': deny` allowlist | Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
+| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
@@ -115,7 +115,115 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 ### Tool name projection
 
-Mars stores recognized tool names in snake_case (`bash`, `read`, `web_search`). Native output is convention-based: Claude, Cursor, and Pi use PascalCase; Codex uses snake_case; OpenCode uses lowercase without underscores. Semantic exceptions are table-driven, for example `bash` → `shell` for Codex, `read` → `view` for OpenCode, and `web_search` → `browser` for OpenCode. Unknown tool names pass through to the target harness and are reported as approximate.
+Mars owns both permission-rule names and unscoped harness tool names. A profile's capability
+(`edit`, `web`, `ask_user`, …) becomes both facts through one explicit table per harness
+(`src/compiler/tool_natives.rs`, which is authoritative; the table below is a reading copy);
+no name is derived by convention. The launch bundle puts permission spellings (including
+patterns) in `native` and unscoped availability names in `native_tools`. A capability can cover
+several native tools, and the launch bundle reports one of three outcomes per rule:
+
+- `known`: the table names it.
+- `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
+- `unknown`: Mars cannot name it for this harness. A deny there is not enforced, and `absent`
+  would report it as met. The tool is left out of native output, the bundle rule carries an
+  empty `native` and a `note` with the reason, and Meridian reports the gap rather than
+  guessing around it. The `note` says which of three it is: the harness can do the thing but
+  has no tool to switch it (Codex reads, globs and greps through its shell; Codex and Pi load
+  skills by reading `SKILL.md`; "codex loads skills by reading files; no switch"), Mars has no
+  entry for the tool on this harness, or Mars does not recognize the name (a typo, most
+  likely). The bundle adds no warning for any of them: Meridian prints `warnings[]` at every
+  launch, so a permission gap travels in `native_status` and `note` alone, and `mars sync`
+  is where an author hears about a typo.
+
+The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has empty `native`
+and `native_tools` lists and no `native_status`. Absent, unknown and fully shadowed rules also
+have an empty `native_tools`; it follows the same `native_status` semantics as `native`.
+For a `*: deny` allowlist, consumers build the availability set from known `allow` and `ask`
+rules' `native_tools`; `deny` rules name what they concern but grant no availability.
+
+These are all the capabilities a profile can name, besides `*` (every tool no other rule
+names) and `mcp(server)` / `mcp(server/tool)` (MCP tools, below). Each cell is what the
+bundle's `native` carries for a bare rule; "(scoped: ...)" is the spelling once the rule has
+a pattern. *absent*: the harness has no such tool, so a deny is already met. *no switch*: the
+harness can do it but has no tool to turn off (`native_status: unknown`, with a `note`).
+*unknown*: Mars has no entry for that harness. The table follows
+`src/compiler/tool_natives.rs`, which is the source of truth; change both together.
+
+| Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor |
+|---|---|---|---|---|---|---|
+| `bash` | shell commands | `Bash` | `exec_command` | `bash` | `bash` | `Shell` |
+| `read` | read a file | `Read` | no switch | `read` | `read` | `Read` |
+| `write` | create or overwrite a file | `Write` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `write` | `Write` |
+| `edit` | change a file (on Claude and Pi this also covers writing) | `Edit`, `Write`, `NotebookEdit` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `edit`, `write` | `StrReplace` |
+| `agent` | start or message sub-agents | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent | `Task` |
+| `task` | the task list (todo tools) | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent | `TodoWrite` |
+| `skill` | load a skill on demand | `Skill` | no switch | `skill` | no switch | `Skill` |
+| `workflow` | Claude's multi-agent workflow tool | `Workflow` | absent | absent | absent | unknown |
+| `glob` | find files by name | `Glob` (scoped: `Read(path)`) | no switch | `glob` | `find` | `Glob` |
+| `grep` | search file contents | `Grep` (scoped: `Read(path)`) | no switch | `grep` | `grep` | `Grep` |
+| `notebook` | edit a Jupyter notebook | `NotebookEdit` (scoped: `Edit(path)`) | absent | absent | absent | `EditNotebook` |
+| `web` | `web_search` and `web_fetch` together | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent | `WebSearch`, `WebFetch` |
+| `web_search` | search the web | `WebSearch` | `web_search` | `websearch` | absent | `WebSearch` |
+| `web_fetch` | fetch a URL | `WebFetch` | no switch | `webfetch` | absent | `WebFetch` |
+| `ask_user` | ask the human a question | `AskUserQuestion` | `request_user_input` | `question` | absent | `AskQuestion` |
+| `cron` | scheduled jobs | `CronCreate`, `CronDelete`, `CronList` | absent | absent | absent | unknown |
+| `notifications` | push notifications | `PushNotification` | absent | absent | absent | unknown |
+| `plan_mode` | enter or leave plan mode | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent | `SwitchMode` |
+| `worktree` | enter or leave a git worktree | `EnterWorktree`, `ExitWorktree` | absent | absent | absent | unknown |
+| `lsp` | language-server queries | `LSP` | absent | `lsp` | absent | unknown |
+| `monitor` | watch a background process | `Monitor` | absent | absent | absent | unknown |
+| `send_user_file` | send the user a file | `SendUserFile` | absent | absent | absent | unknown |
+| `schedule_wakeup` | schedule its own wake-up | `ScheduleWakeup` | absent | absent | absent | unknown |
+| `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | unknown |
+| `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | unknown |
+| `image` | view an image file | no switch | `view_image` | no switch | no switch | unknown |
+
+¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
+older builds offer it and Meridian denies it with the task list.
+
+OpenCode names are the v1 permission
+vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings
+(`bash` → `shell`, `task` → `subagent`). OpenCode has one `edit` permission for `edit`,
+`write` and patch, so `write` and `edit` share a name there. Codex `bash` names `exec_command`
+alone: `write_stdin` only feeds a session `exec_command` opened. Each row is pinned by a test
+against the harness's real tool list, with the source (docs, binary, probe) written beside the
+table. Cursor rows are carried over from earlier releases and not re-verified.
+
+The table shows bare Claude tool rules. Claude uses permission categories for scoped file
+rules instead: `write(path)`, `edit(path)` and `notebook(path)` project to `Edit(path)`;
+`read(path)`, `glob(path)` and `grep(path)` project to `Read(path)`. Claude accepts
+`Write(path)`, `NotebookEdit(path)`, `Glob(path)` and `Grep(path)` spellings but does not
+consult them. The separate `native_tools` list still names the callable tools: scoped `write`
+names `Write`, scoped `edit` names `Edit`, `Write` and `NotebookEdit`, and scoped `grep` names
+`Grep`. The bundle adds a `note` to a scoped rule when the valid category spelling also covers
+sibling built-in tools. Bare rules keep the table's names. `WebFetch(domain:...)` is already
+Claude's valid scoped spelling and stays unchanged.
+
+MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
+
+**A narrower capability wins.** `edit: deny` with `write: allow` means "no edits, but writing is
+fine". On Claude `edit` covers `Write`, so projecting both rules as written would put `Write` in
+the allow and the deny list, and a deny beats an allow. Mars resolves this per native name,
+before anything is emitted: when two rules with different actions name the same unscoped tool,
+the rule whose capability covers fewer tools wins it. Claude's `edit` deny becomes
+`Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` and `native_tools`
+lists, the flat lists and Claude agent files all carry the resolved names. A harness that
+cannot tell two capabilities apart (Codex and OpenCode name one tool for both `write` and
+`edit`) stays in conflict: the agent file records a lossiness entry naming the tool that is
+both allowed and denied, and the bundle gives each of the two rules a `note` saying the harness
+decides.
+Scoped Claude rules that collapse to the exact same category permission are resolved by
+Claude's documented action order instead: `deny` beats `ask`, which beats `allow`; the losing
+rule has empty `native` and `native_tools` lists, and its `note` says why.
+
+**Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
+and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).
+A map-form `allow` is a grant, not an allowlist, so it writes no `tools:` field: Claude
+would read `tools: [Bash]` as "only Bash". Omitting `tools:` inherits every tool, so the
+grant loses nothing and Mars records no lossiness for it.
+Mars records an `ask` rule and an empty allowlist as dropped lossiness and never drops them
+silently; Meridian enforces them from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
+allow, ask or deny rule is recorded as dropped there too.
 
 ### `.codex/agents/<name>.toml`
 
@@ -275,9 +383,10 @@ or projection. `*` is the only wildcard. Five canonical forms:
 ### Per-harness projection
 
 Mars projects canonical `mcp(...)` refs to harness-native permission tokens during native
-lowering (Claude agents/skills) and in the **launch bundle** (`ToolsSpec.mcp` carries the
-projected tokens for every harness). Unsupported refs are **omitted** from native output
-(never broaden permissions) and recorded as approximate lossiness.
+lowering (Claude agents/skills) and in the **launch bundle** (`tools.rules[].native` is the
+contract; `ToolsSpec.mcp` duplicates allowed names for older consumers). Neither field
+contains MCP server definitions. Unsupported refs are **omitted** from native output (never
+broaden permissions) and recorded as approximate lossiness.
 
 | Canonical example | Claude | Cursor | OpenCode | Codex | Pi |
 |---|---|---|---|---|---|
@@ -300,7 +409,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 | Claude agent native | Projected `mcp__…` tokens merged into `tools:` / `disallowed-tools:` (no `mcp-tools:` field) |
 | Claude skill native | Allowed MCP projected into `allowed-tools:` (grant semantics; approximate lossiness) |
 | Codex / OpenCode / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
-| Launch bundle | `ToolsSpec.mcp` = per-harness projected tokens for all harnesses |
+| Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
 Implementation: [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`parse_mcp_ref`,
 `project_mcp_ref`). Inbound lift: [`src/staging/.context/CONTEXT.md`](../../src/staging/.context/CONTEXT.md).
@@ -325,7 +434,7 @@ warning[agent-field-approximate]: agent `reviewer`: field `mode` approximately m
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like `tools: [bash, write]` targeting Codex, which cannot honor the allowlist.
+Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like a `tools:` map with `'*': deny`, `bash: allow`, and `write: allow` targeting Codex, which cannot honor the allowlist.
 
 ## Lossiness Matrix
 

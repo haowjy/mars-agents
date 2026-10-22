@@ -774,7 +774,7 @@ fn sync_frozen_returns_exit_code_two() {
 #[test]
 fn sync_keeps_canonical_skill_bytes_while_native_target_lowers_invocability_fields() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\ntools: [Bash(git *)]\n---\n# Base\n";
+    let source_skill = "---\nname: planning\ndescription: base skill\nmodel-invocable: false\nuser-invocable: false\ntools:\n  Bash(git *): allow\n---\n# Base\n";
     let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
 
     let project = dir.child("project");
@@ -1043,7 +1043,10 @@ harness: codex
 model: gpt-5.3-codex
 approval: never
 sandbox: workspace-write
-tools: [Bash, Write, Edit]
+tools:
+  Bash: allow
+  Write: allow
+  Edit: allow
 ---
 # Explorer
 Use "quotes" and backslashes \\
@@ -1054,7 +1057,10 @@ name: integration-tester
 description: Runs integration tests
 harness: opencode
 model: kimi-k2
-tools: [Bash, Write, Edit]
+tools:
+  Bash: allow
+  Write: allow
+  Edit: allow
 disallowed-tools: [Agent]
 ---
 # Integration tester
@@ -1341,7 +1347,8 @@ name: cursor-worker
 description: Cursor worker
 harness: cursor
 model: gpt55
-tools: [mcp(plugin:cursor)]
+tools:
+  mcp(plugin:cursor): allow
 harness-overrides:
   opencode:
     mcp-tools: []
@@ -2558,7 +2565,8 @@ dialect = "mars-native"
 #[test]
 fn sync_mars_native_canonical_tools_skill_lowers_without_non_canonical_warning() {
     let dir = TempDir::new().unwrap();
-    let source_skill = "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n";
+    let source_skill =
+        "---\nname: good-tools\ndescription: d\ntools:\n  Bash: allow\n---\n# Body\n";
     let source = create_source(&dir, "base", &[], &[("good-tools", source_skill)]);
 
     let project = dir.child("project");
@@ -2620,13 +2628,16 @@ dialect = "mars-native"
 }
 
 #[test]
-fn sync_claude_native_agent_projects_unknown_custom_tool_in_emitted_tools() {
+fn sync_claude_native_agent_omits_unrecognized_tool_and_keeps_mcp_wire_identifier() {
     let dir = TempDir::new().unwrap();
     let agent = r#"---
 name: custom-tools-agent
 description: Agent with unknown custom tools
 harness: claude
-tools: [my_custom_tool, mcp__server__Tool]
+tools:
+  '*': deny
+  my_custom_tool: allow
+  mcp__server__Tool: allow
 ---
 # Custom tools agent
 "#;
@@ -2679,8 +2690,8 @@ dialect = "mars-native"
     )
     .unwrap();
     assert!(
-        claude_native.contains("- MyCustomTool"),
-        "claude native agent should convention-project unknown custom tool: {claude_native}"
+        !claude_native.contains("MyCustomTool") && !claude_native.contains("my_custom_tool"),
+        "claude native agent must not guess a name for an unrecognized tool: {claude_native}"
     );
     assert!(
         claude_native.contains("- mcp__server__Tool"),

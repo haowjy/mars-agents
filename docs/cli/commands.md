@@ -628,7 +628,22 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   },
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
-  "tools": { "..." },
+  "tools": {
+    "capability_natives": {
+      "agent": { "native": ["Agent", "SendMessage", "ListAgents"], "native_status": "known" },
+      "task": { "native": ["TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskUpdate", "TaskStop", "TodoWrite"], "native_status": "known" }
+    },
+    "rules": [
+      { "capability": "edit", "pattern": null, "action": "deny",
+        "native": ["Edit", "Write", "NotebookEdit"],
+        "native_tools": ["Edit", "Write", "NotebookEdit"], "native_status": "known" },
+      { "capability": "bash", "pattern": "rg *", "action": "allow",
+        "native": ["Bash(rg *)"], "native_tools": ["Bash"], "native_status": "known" }
+    ],
+    "allowed": ["Bash(rg *)"],
+    "disallowed": ["Edit", "Write", "NotebookEdit"],
+    "mcp": []
+  },
   "skills": {
     "loaded": [{ "name": "...", "skill_type": "...", "source_path": "...", "body": "..." }],
     "available": [{ "name": "...", "skill_type": "...", "description": "...", "source_path": "..." }],
@@ -647,6 +662,53 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
+
+**`tools.capability_natives`** is always present, independent of the profile's tool policy. It
+maps the `agent` (sub-agent) and `task` (task-list) capabilities to the resolved harness's
+native tools so a launcher can enforce platform rules without maintaining its own name table.
+Each entry has `native` and `native_status` with the same meaning and projection source as a
+`tools.rules[]` entry, plus `note` when the status is `unknown`. `absent` means the harness has
+no such tool. The native list deliberately includes names retained for supported older harness
+builds, such as Claude's `TaskOutput`.
+
+**`tools.rules`** is the tool-policy contract: one entry per statement in the profile, in
+profile order, for the resolved harness. Read meaning from `capability` and emission from
+`native`, and tool availability from `native_tools`; do not derive any one from another.
+
+| Field | Meaning |
+|---|---|
+| `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` and `native_tools` are empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
+| `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
+| `action` | `allow`, `deny` or `ask` |
+| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule can also be empty when a stricter or more specific rule owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed, so emit `native` as given |
+| `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
+| `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
+| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, why a stricter rule shadowed it, or why the harness must decide an unresolved overlap. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
+
+`tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
+`rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
+a name; `allowed` never reflects an allowlist, and `mcp` never contains server definitions or
+commands. Prefer `rules`. A tool that an allow and a deny
+rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
+puts a `note` on both rules.
+
+Claude path scopes use its permission categories, not every bare tool name:
+`write(path)`, `edit(path)` and `notebook(path)` become `Edit(path)`, while `read(path)`,
+`glob(path)` and `grep(path)` become `Read(path)`. If two scoped capabilities become the same
+permission, Mars keeps the strictest action (`deny`, then `ask`, then `allow`) and notes the
+shadowed rule. `native_tools` separately keeps the callable tools: scoped `write` names
+`["Write"]`, scoped `edit` names `["Edit", "Write", "NotebookEdit"]`, and scoped `grep`
+names `["Grep"]`. `WebFetch(domain:...)` is already the native scoped form.
+
+The two fields stay distinct on every harness:
+
+| Harness | Canonical rule | `native` permission | `native_tools` availability |
+|---|---|---|---|
+| Claude | `write(src/**)` | `Edit(src/**)` | `Write` |
+| Codex | `bash(git *)` | `exec_command(git *)` | `exec_command` |
+| OpenCode | `web` | `websearch`, `webfetch` | `websearch`, `webfetch` |
+| Pi | `edit(src/**)` | `edit(src/**)`, `write(src/**)` | `edit`, `write` |
+| Cursor | `notebook(file.ipynb)` | `EditNotebook(file.ipynb)` | `EditNotebook` |
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

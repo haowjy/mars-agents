@@ -18,9 +18,8 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-use crate::compiler::mcp_ref::{McpRef, McpUnsupportedReason, project_mcp_refs_for_emission};
-use crate::compiler::tool_names::{ToolProjectionStatus, project_tool_for_harness};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -31,16 +30,15 @@ use crate::frontmatter::Frontmatter;
 struct Effective<'a> {
     harness: HarnessKind,
     profile: &'a AgentProfile,
-    tools: EffectiveToolPolicy,
+    tools: &'a EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
     fn new(profile: &'a AgentProfile, harness: HarnessKind) -> Self {
-        let tools = profile.effective_tool_policy(&harness);
         Self {
             harness,
             profile,
-            tools,
+            tools: &profile.tools,
         }
     }
 
@@ -60,20 +58,24 @@ impl<'a> Effective<'a> {
         self.profile.effective_skills(&self.harness).all()
     }
 
-    fn tools(&self) -> &[String] {
-        &self.tools.allowed
+    /// Whether the policy grants or asks about built-in tools, which only an allowlist
+    /// or a native `tools:` field can carry.
+    fn has_tool_allowance(&self) -> bool {
+        self.tools.is_allowlist()
+            || self.tools.has_rule(ToolAction::Allow, RuleKind::Builtin)
+            || self.has_ask()
     }
 
-    fn disallowed_tools(&self) -> &[String] {
-        &self.tools.disallowed
+    fn has_tool_denial(&self) -> bool {
+        self.tools.has_rule(ToolAction::Deny, RuleKind::Builtin)
     }
 
-    fn mcp_allowed(&self) -> &[McpRef] {
-        &self.tools.mcp_allowed
+    fn has_ask(&self) -> bool {
+        self.tools.with_action(ToolAction::Ask).next().is_some()
     }
 
-    fn mcp_disallowed(&self) -> &[McpRef] {
-        &self.tools.mcp_disallowed
+    fn has_mcp_policy(&self) -> bool {
+        self.tools.rules.iter().any(|rule| rule.is_mcp())
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
@@ -85,49 +87,23 @@ impl<'a> Effective<'a> {
     }
 }
 
-fn normalize_tools_for_harness(
-    tools: &[String],
-    harness: HarnessKind,
+/// Native spellings of every `action` rule, recording a lossiness entry for each rule the
+/// harness cannot name.
+fn native_tools_for_action(
+    projection: &PolicyProjection<'_>,
+    action: ToolAction,
     field: &'static str,
+    target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> Vec<String> {
-    tools
-        .iter()
-        .map(|tool| {
-            let projected = project_tool_for_harness(tool, harness);
-            if projected.status == ToolProjectionStatus::UnknownProjected {
-                lossy.push(LossyField {
-                    field: field.into(),
-                    target: crate::compiler::harness_descriptor::descriptor(harness)
-                        .canonical_id
-                        .into(),
-                    classification: Lossiness::Approximate {
-                        note: "unknown tool projected via harness naming convention",
-                    },
-                });
-            }
-            projected.name
-        })
-        .collect()
-}
-
-fn record_mcp_projection_lossiness(
-    field: &str,
-    target: &str,
-    reason: McpUnsupportedReason,
-    lossy: &mut Vec<LossyField>,
-) {
-    lossy.push(LossyField {
-        field: field.into(),
-        target: target.into(),
-        classification: Lossiness::Approximate {
-            note: reason.message(),
-        },
-    });
-}
-
-fn has_mcp_policy(eff: &Effective<'_>) -> bool {
-    !eff.mcp_allowed().is_empty() || !eff.mcp_disallowed().is_empty()
+    for note in projection.gaps(action, RuleKind::All) {
+        lossy.push(LossyField {
+            field: field.into(),
+            target: target.into(),
+            classification: Lossiness::Approximate { note },
+        });
+    }
+    projection.natives(action, RuleKind::All)
 }
 
 fn record_native_mcp_lossiness(
@@ -136,7 +112,7 @@ fn record_native_mcp_lossiness(
     note: &'static str,
     lossy: &mut Vec<LossyField>,
 ) {
-    if has_mcp_policy(eff) {
+    if eff.has_mcp_policy() {
         lossy.push(LossyField {
             field: "mcp".into(),
             target: target.into(),
@@ -410,46 +386,59 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_tools(&mut self) {
-        let mut tools =
-            normalize_tools_for_harness(self.eff.tools(), self.harness, "tools", &mut self.lossy);
-        let mcp_allowed =
-            project_mcp_refs_for_emission(self.eff.mcp_allowed(), self.harness, |_, reason| {
-                record_mcp_projection_lossiness(
-                    "tools",
-                    self.policy.target_name,
-                    reason,
-                    &mut self.lossy,
-                );
-            });
-        tools.extend(mcp_allowed);
-        if !tools.is_empty() {
-            self.yaml.insert(
-                yk("tools"),
-                serde_yaml::Value::Sequence(tools.iter().map(|tool| yv(tool)).collect()),
-            );
-        }
-
-        let mut disallowed = normalize_tools_for_harness(
-            self.eff.disallowed_tools(),
-            self.harness,
-            "disallowed-tools",
+        let target = self.policy.target_name;
+        let projection = self.eff.tools.project(self.harness);
+        let allowed = native_tools_for_action(
+            &projection,
+            ToolAction::Allow,
+            "tools",
+            target,
             &mut self.lossy,
         );
-        let mcp_disallowed =
-            project_mcp_refs_for_emission(self.eff.mcp_disallowed(), self.harness, |_, reason| {
-                record_mcp_projection_lossiness(
-                    "disallowed-tools",
-                    self.policy.target_name,
-                    reason,
-                    &mut self.lossy,
-                );
-            });
-        disallowed.extend(mcp_disallowed);
+        let disallowed = native_tools_for_action(
+            &projection,
+            ToolAction::Deny,
+            "disallowed-tools",
+            target,
+            &mut self.lossy,
+        );
+        let overlaps = projection.overlaps();
+
+        // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
+        // inherits every tool. So only an allowlist can lower to it: a map-form grant
+        // (`tools: {bash: allow}`) says "allow this", not "only this", and emitting it would
+        // strip the agent of every tool the map did not name.
+        let allowlist = self.eff.tools.is_allowlist();
+        if allowlist && !allowed.is_empty() {
+            self.yaml.insert(
+                yk("tools"),
+                serde_yaml::Value::Sequence(allowed.iter().map(|tool| yv(tool)).collect()),
+            );
+        }
         if !disallowed.is_empty() {
             self.yaml.insert(
                 yk("disallowed-tools"),
                 serde_yaml::Value::Sequence(disallowed.iter().map(|tool| yv(tool)).collect()),
             );
+        }
+
+        // What the file cannot hold: `ask`, and a deny-all allowlist with nothing allowed (an
+        // omitted `tools:` inherits every tool). A map-form grant is not lossy: omitting
+        // `tools:` already leaves the granted tool available.
+        if self.eff.has_ask() {
+            self.record_if_present("tools (ask)", true, Lossiness::Dropped);
+        }
+        if allowlist && allowed.is_empty() {
+            self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
+        }
+        if !overlaps.is_empty() {
+            self.lossy.push(LossyField {
+                field: format!("tools ({} both allowed and denied)", overlaps.join(", ")),
+                target: target.into(),
+                classification: Lossiness::Approximate {
+                    note: "Claude applies the deny",
+                },
+            });
         }
     }
 
@@ -480,11 +469,11 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.record_if_present("mode", self.profile.mode.is_some(), Lossiness::MeridianOnly)
             }
             AgentLossinessStep::ToolsDropped => {
-                self.record_if_present("tools", !self.eff.tools().is_empty(), Lossiness::Dropped)
+                self.record_if_present("tools", self.eff.has_tool_allowance(), Lossiness::Dropped)
             }
             AgentLossinessStep::DisallowedToolsDropped => self.record_if_present(
                 "disallowed-tools",
-                !self.eff.disallowed_tools().is_empty(),
+                self.eff.has_tool_denial(),
                 Lossiness::Dropped,
             ),
             AgentLossinessStep::EffortApproximate(note) => {
@@ -503,7 +492,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 &mut self.lossy,
             ),
             AgentLossinessStep::McpDropped => {
-                if has_mcp_policy(&self.eff) {
+                if self.eff.has_mcp_policy() {
                     self.lossy.push(LossyField {
                         field: "mcp".into(),
                         target: self.policy.target_name.into(),
@@ -708,16 +697,14 @@ pub fn lower_to_codex(
             classification: Lossiness::Dropped,
         });
     }
-    let tools = eff.tools();
-    if !tools.is_empty() {
+    if eff.has_tool_allowance() {
         lossy.push(LossyField {
             field: "tools".into(),
             target: target.into(),
             classification: Lossiness::Dropped,
         });
     }
-    let dt = eff.disallowed_tools();
-    if !dt.is_empty() {
+    if eff.has_tool_denial() {
         lossy.push(LossyField {
             field: "disallowed-tools".into(),
             target: target.into(),

@@ -21,7 +21,10 @@ fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write, mcp(plugin:context7:context7)]
+tools:
+  Bash: allow
+  Write: allow
+  mcp(plugin:context7:context7): allow
 disallowed-tools: [Agent]
 ---
 
@@ -80,26 +83,47 @@ Review code changes.
     assert!(bundle["provenance"]["selection_kind"].is_string());
     assert!(bundle["provenance"]["match_evidence"].is_string());
     assert!(bundle["provenance"]["candidates_tried"].is_string());
-    assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
         serde_json::json!(["exec_command", "apply_patch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
-        serde_json::json!(["spawn_agent"])
+        serde_json::json!([
+            "spawn_agent",
+            "send_input",
+            "resume_agent",
+            "wait_agent",
+            "close_agent",
+            "send_message",
+            "followup_task",
+            "interrupt_agent",
+            "list_agents"
+        ])
     );
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
-    assert!(
-        bundle["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning
-                .as_str()
-                .unwrap_or_default()
-                .contains("cannot be represented for codex"))
+    assert_eq!(
+        bundle["tools"]["capability_natives"],
+        serde_json::json!({
+            "agent": {
+                "native": [
+                    "spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent",
+                    "send_message", "followup_task", "interrupt_agent", "list_agents"
+                ],
+                "native_status": "known"
+            },
+            "task": { "native": ["update_plan"], "native_status": "known" }
+        })
     );
+    // The MCP ref Codex cannot represent is a gap in its rule, not a launch warning.
+    assert!(
+        bundle["tools"]["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .any(|rule| rule["capability"] == "mcp" && rule["native_status"] == "unknown")
+    );
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
     assert!(bundle["provenance"]["harness_stability"].is_null());
 
     for slot in [
@@ -122,7 +146,9 @@ fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write]
+tools:
+  Bash: allow
+  Write: allow
 ---
 Review code changes."#;
     let skill_content =
@@ -196,6 +222,13 @@ fn build_launch_bundle_ad_hoc_without_mars_toml() {
         Some("cached-probe")
     );
     assert_eq!(bundle["warnings"], serde_json::json!([]));
+    assert_eq!(
+        bundle["tools"]["capability_natives"],
+        serde_json::json!({
+            "agent": { "native": [], "native_status": "absent" },
+            "task": { "native": [], "native_status": "absent" }
+        })
+    );
 }
 
 #[test]

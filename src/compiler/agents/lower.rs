@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_preserves_name_description_model_skills_tools_body() {
-        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools: [Bash, Write]\n---\n# Coder\nYou write code.";
+        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools:\n  '*': deny\n  Bash: allow\n  Write: allow\n---\n# Coder\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
         let out = lower_to_claude(&profile, &fm, body, &NativeModel::Inherit);
@@ -55,14 +55,17 @@ mod tests {
 
     #[test]
     fn claude_lowering_projects_canonical_tool_names() {
-        let content = "---\nname: coder\nharness: claude\ntools: [Bash, AskUser]\ndisallowed-tools: [Bash(git reset *)]\n---\n# Body";
+        let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  Bash: allow\n  AskUser: allow\ndisallowed-tools: [Bash(git reset *)]\n---\n# Body";
         let (profile, fm, diags) = profile_from(content);
         assert!(diags.is_empty());
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(text.contains("- Bash"), "Bash not projected: {text}");
-        assert!(text.contains("- AskUser"), "AskUser not projected: {text}");
+        assert!(
+            text.contains("- AskUserQuestion"),
+            "ask_user not projected to Claude's AskUserQuestion: {text}"
+        );
         assert!(
             text.contains("- Bash(git reset *)"),
             "scoped Bash not projected while preserving payload: {text}"
@@ -70,16 +73,16 @@ mod tests {
     }
 
     #[test]
-    fn claude_lowering_projects_unknown_custom_tools_and_preserves_mcp_wire_identifiers() {
-        let content = "---\nname: coder\nharness: claude\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+    fn claude_lowering_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
+        let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\n# Body";
         let (profile, fm, diags) = profile_from(content);
         assert!(diags.is_empty());
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(
-            text.contains("- MyCustomTool"),
-            "unknown custom tool should be convention-projected: {text}"
+            !text.to_lowercase().contains("custom"),
+            "an unrecognized tool must not be guessed into a native name: {text}"
         );
         assert!(
             text.contains("- mcp__server__Tool"),
@@ -87,11 +90,11 @@ mod tests {
         );
         assert!(out.lossy_fields.iter().any(|field| {
             field.field == "tools"
-                && field.target == "claude"
+                && field.target == "Claude"
                 && matches!(
                     field.classification,
                     Lossiness::Approximate {
-                        note: "unknown tool projected via harness naming convention"
+                        note: "no native name known for this tool on this harness; left out"
                     }
                 )
         }));
@@ -99,7 +102,7 @@ mod tests {
 
     #[test]
     fn codex_and_cursor_agent_lowering_drops_tools_without_native_projection() {
-        let content = "---\nname: coder\nharness: codex\ntools: [my_custom_tool, mcp__server__Tool]\n---\n# Body";
+        let content = "---\nname: coder\nharness: codex\ntools:\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
 
         let codex = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
@@ -181,7 +184,7 @@ mod tests {
 
     #[test]
     fn claude_harness_override_does_not_replace_mcp() {
-        let content = "---\nname: r\nharness: claude\ntools: [mcp(plugin:base)]\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
@@ -201,7 +204,7 @@ mod tests {
 
     #[test]
     fn claude_agent_projects_mcp_refs_into_tools_and_disallowed() {
-        let content = "---\nname: r\nharness: claude\ntools: [mcp(github/create_issue), mcp(context7)]\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
+        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(github/create_issue): allow\n  mcp(context7): allow\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
@@ -234,7 +237,7 @@ mod tests {
 
     #[test]
     fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
-        let content = "---\nname: r\nharness: pi\ntools: [mcp(plugin:demo)]\n---\n# body";
+        let content = "---\nname: r\nharness: pi\ntools:\n  mcp(plugin:demo): allow\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
         assert!(out.lossy_fields.iter().any(|field| {
@@ -340,7 +343,7 @@ mod tests {
 
     #[test]
     fn codex_lowering_drops_skills_and_tools() {
-        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools: [Bash]\ndisallowed-tools: [Agent]\n---\n# body";
+        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let dropped: Vec<_> = out
@@ -372,7 +375,7 @@ mod tests {
 
     #[test]
     fn codex_mcp_lossiness_uses_top_level_policy() {
-        let content = "---\nname: r\nharness: codex\ntools: [mcp(plugin:base)]\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
+        let content = "---\nname: r\nharness: codex\ntools:\n  mcp(plugin:base): allow\nharness-overrides:\n  codex:\n    mcp-tools: []\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         assert!(
@@ -485,7 +488,7 @@ mod tests {
 
     #[test]
     fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
-        let content = "---\nname: r\nharness: cursor\ntools: [Read, mcp(plugin:base)]\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+        let content = "---\nname: r\nharness: cursor\ntools:\n  Read: allow\n  mcp(plugin:base): allow\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);

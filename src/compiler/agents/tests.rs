@@ -311,16 +311,20 @@ fn autocompact_pct_string_produces_diagnostic() {
 
 #[test]
 fn parses_skills_tools_disallowed_mcp() {
-    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write, mcp(server)]\ndisallowed-tools: [Agent]\n---\n";
+    let content = "---\nskills: [review, dev-principles]\ntools:\n  Bash: allow\n  Write: allow\n  mcp(server): allow\ndisallowed-tools: [Agent]\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
     assert!(p.skills.available.is_empty());
-    assert_eq!(p.tools, vec!["bash", "write", "mcp(server)"]);
-    assert!(p.tools_denied.is_empty());
-    assert_eq!(p.disallowed_tools, vec!["agent"]);
-    let policy = p.effective_tool_policy(&HarnessKind::Claude);
-    assert_eq!(policy.mcp_allowed.len(), 1);
+    assert_eq!(
+        p.tools.describe(),
+        [
+            "allow:bash",
+            "allow:write",
+            "allow:mcp(server/*)",
+            "deny:agent"
+        ]
+    );
 }
 
 #[test]
@@ -329,8 +333,10 @@ fn parses_tools_map_allow_and_deny_with_canonical_names() {
         "---\ntools:\n  Bash: allow\n  \"Bash(meridian spawn *)\": allow\n  Agent: deny\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    assert_eq!(p.tools, vec!["bash", "bash(meridian spawn *)"]);
-    assert_eq!(p.tools_denied, vec!["agent"]);
+    assert_eq!(
+        p.tools.describe(),
+        ["allow:bash", "allow:bash(meridian spawn *)", "deny:agent"]
+    );
 }
 
 #[test]
@@ -338,21 +344,154 @@ fn separator_tool_aliases_canonicalize() {
     let content = "---\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\n";
     let (p, diags) = parse(content);
 
-    assert_eq!(p.tools, vec!["ask_user"]);
-    assert_eq!(p.tools_denied, vec!["bash(git *)"]);
-    assert_eq!(p.disallowed_tools, vec!["web_search"]);
+    assert_eq!(
+        p.tools.describe(),
+        ["allow:ask_user", "deny:bash(git *)", "deny:web_search"]
+    );
     assert!(diags.is_empty());
+}
+
+#[test]
+fn tools_allow_deny_shorthand_is_rejected_not_read_as_a_tool_name() {
+    for shorthand in ["allow", "deny"] {
+        let (p, diags) = parse(&format!("---\ntools: {shorthand}\n---\n"));
+        assert!(
+            p.tools.rules.is_empty(),
+            "{shorthand} must not become a tool"
+        );
+        assert!(
+            diags.iter().any(|d| matches!(
+                d,
+                AgentDiagnostic::InvalidFieldValue { field, value, .. }
+                    if field == "tools" && value == shorthand
+            )),
+            "expected an invalid-value diagnostic for `tools: {shorthand}`: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn claude_native_agent_records_ask_rules_as_dropped_not_silently_lost() {
+    let (_, out, diags) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  read: allow\n  'bash(git push *)': ask\n---\n",
+    );
+    assert!(diags.is_empty());
+    let text = String::from_utf8(out.bytes).unwrap();
+    assert!(
+        !text.contains("git push"),
+        "ask has no frontmatter field: {text}"
+    );
+    assert!(
+        out.lossy_fields
+            .iter()
+            .any(|f| f.field == "tools (ask)" && matches!(f.classification, Lossiness::Dropped)),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn claude_native_agent_lowers_explicit_allowlist_to_native_tools() {
+    let (_, out, diags) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  '*': deny\n  read: allow\n  grep: allow\n---\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    let text = String::from_utf8(out.bytes).unwrap();
+    assert!(text.contains("tools:") && text.contains("- Read") && text.contains("- Grep"));
+    assert!(
+        !out.lossy_fields
+            .iter()
+            .any(|f| f.field.starts_with("tools")),
+        "an explicit allowlist is exactly Claude's `tools:`: {:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
+    // `tools:` in an agent file restricts the agent to what it lists; a grant does not.
+    let (_, out, _) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  bash: allow\n  write: allow\n  agent: deny\n---\n",
+    );
+    let text = String::from_utf8(out.bytes).unwrap();
+    assert!(!text.contains("\ntools:"), "{text}");
+    assert!(
+        text.contains("disallowed-tools:") && text.contains("- Agent"),
+        "{text}"
+    );
+    // Omitting `tools:` inherits every tool, so a map-form grant loses nothing.
+    assert!(
+        !out.lossy_fields
+            .iter()
+            .any(|f| f.field.starts_with("tools")),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
+    let (_, out, _) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  '*': deny\n  read: allow\n  grep: allow\ndisallowed-tools: [grep]\n---\n",
+    );
+    assert!(
+        out.lossy_fields
+            .iter()
+            .any(|f| f.field == "tools (Grep both allowed and denied)"),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn claude_native_agent_cannot_hold_an_allowlist_with_nothing_allowed() {
+    // An omitted `tools:` inherits every tool, so deny-all has no frontmatter spelling.
+    let (_, out, _) = lower_claude("---\nname: a\nharness: claude\ntools:\n  '*': deny\n---\n");
+    assert!(
+        out.lossy_fields
+            .iter()
+            .any(|f| f.field == "tools (allowlist)"
+                && matches!(f.classification, Lossiness::Dropped)),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn non_claude_native_agents_drop_ask_and_allowlists_with_lossiness() {
+    let content = "---\nname: a\ntools:\n  'bash(git push *)': ask\n---\n";
+    let fm = Frontmatter::parse(content).unwrap();
+    let mut diags = Vec::new();
+    let profile = parse_agent_profile(&fm, &mut diags);
+    for out in [
+        lower::lower_to_codex(&profile, fm.body(), &NativeModel::Inherit),
+        lower::lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit),
+        lower::lower_to_pi(&profile, fm.body(), &NativeModel::Inherit),
+    ] {
+        assert!(
+            out.lossy_fields
+                .iter()
+                .any(|f| f.field == "tools" && matches!(f.classification, Lossiness::Dropped)),
+            "{:?}",
+            out.lossy_fields
+        );
+    }
 }
 
 #[test]
 fn unknown_pascal_case_tool_names_convert_to_snake_case() {
     let content = "---
-tools: [customtool, CustomTool]
+tools:
+  customtool: allow
+  CustomTool: allow
 ---
 ";
     let (p, diags) = parse(content);
 
-    assert_eq!(p.tools, vec!["customtool", "custom_tool"]);
+    assert_eq!(
+        p.tools.describe(),
+        ["allow:customtool", "allow:custom_tool"]
+    );
     assert!(diags.is_empty());
 }
 
@@ -374,13 +513,14 @@ harness-overrides:
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
 
-    let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
-    assert_eq!(codex_policy.allowed, vec!["bash"]);
-    assert_eq!(codex_policy.disallowed, vec!["read", "edit"]);
-    assert_eq!(codex_policy.mcp_allowed.len(), 1);
     assert_eq!(
-        codex_policy.mcp_allowed[0].to_canonical(),
-        "mcp(plugin:base/*)"
+        p.tools.describe(),
+        vec![
+            "allow:bash",
+            "deny:read",
+            "allow:mcp(plugin:base/*)",
+            "deny:edit"
+        ]
     );
     assert_eq!(
         p.harness_overrides.entries["codex"]["tools"],
@@ -620,7 +760,7 @@ fn subagents_absent_gives_empty_vec() {
 #[test]
 fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
     let (p, diags) = parse("---\nname: a\ndescription: d\nmcp-tools: [plugin:demo]\n---\n# body");
-    assert!(p.tools.is_empty());
+    assert!(p.tools.rules.is_empty());
     assert!(
         diags.iter().any(|d| matches!(
             d,
@@ -634,7 +774,7 @@ fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
 #[test]
 fn malformed_disallowed_mcp_ref_is_hard_validation_error() {
     let (p, diags) = parse("---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n# body");
-    assert!(p.disallowed_tools.is_empty());
+    assert!(p.tools.rules.is_empty());
     assert!(
         diags.iter().any(|d| matches!(
             d,

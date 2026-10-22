@@ -7,7 +7,7 @@ use serde_yaml::Value;
 use crate::compiler::invocability::{
     find_invocability_field, parse_invocability_axis, value_label,
 };
-use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
@@ -22,10 +22,9 @@ pub struct SkillProfile {
     pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
-    pub tools: Vec<String>,
-    pub tools_denied: Vec<String>,
-    /// Canonical tool denylist — lowered to harness-native denylist fields where supported.
-    pub disallowed_tools: Vec<String>,
+    /// `tools:` and `disallowed-tools:` as one rule list. A skill's `tools:` pre-approves tools
+    /// while the skill runs and never restricts the rest, so there is no `*: deny` here.
+    pub tools: EffectiveToolPolicy,
     pub license: Option<String>,
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
@@ -33,12 +32,6 @@ pub struct SkillProfile {
     pub has_frontmatter: bool,
     /// Frontmatter fields not recognized by mars — passed through to all targets.
     pub passthrough_fields: Vec<(String, Value)>,
-}
-
-impl SkillProfile {
-    pub fn effective_tool_policy(&self) -> EffectiveToolPolicy {
-        tool_policy::effective_tool_policy(&self.tools, &self.tools_denied, &self.disallowed_tools)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +53,8 @@ pub enum SkillDiagnostic {
         field: String,
         canonical: &'static str,
     },
+    /// Deprecated list-form `tools: [..]`; it only grants.
+    DeprecatedListFormTools,
     MalformedFrontmatter {
         message: String,
     },
@@ -104,6 +99,7 @@ impl SkillDiagnostic {
             Self::NonCanonicalField { field, canonical } => {
                 format!("skill field `{field}` is not canonical; use `{canonical}` instead")
             }
+            Self::DeprecatedListFormTools => "skill `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string(),
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
@@ -174,22 +170,20 @@ fn push_skill_tool_invalid(
     });
 }
 
-fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<SkillDiagnostic>) -> Vec<String> {
-    let mut push = |field: &str, value: &str, allowed: &'static str| {
-        push_skill_tool_invalid(diags, field, value, allowed);
-    };
-    tool_policy::yaml_tool_list(field, val, &mut push)
-}
-
-fn parse_tools_field(
-    field: &str,
-    val: &Value,
+/// Read a skill's `tools:` and `disallowed-tools:` (or its `disallowed_tools` spelling).
+pub(crate) fn parse_skill_tool_policy(
+    fm: &Frontmatter,
     diags: &mut Vec<SkillDiagnostic>,
-) -> ParsedToolsField {
-    let mut push = |field: &str, value: &str, allowed: &'static str| {
+) -> EffectiveToolPolicy {
+    let mut invalid = |field: &str, value: &str, allowed: &'static str| {
         push_skill_tool_invalid(diags, field, value, allowed);
     };
-    tool_policy::parse_tools_field(field, val, &mut push)
+    tool_policy::parse_tool_policy(
+        fm.get("tools"),
+        fm.get("disallowed-tools")
+            .or_else(|| fm.get("disallowed_tools")),
+        &mut invalid,
+    )
 }
 
 fn validate_required_string(field: &str, val: Option<&Value>, diags: &mut Vec<SkillDiagnostic>) {
@@ -252,19 +246,12 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         validate_required_string("name", name_raw, diags);
     }
     consumed_keys.push("tools".to_string());
-    let parsed_tools = fm
-        .get("tools")
-        .map(|v| parse_tools_field("tools", v, diags))
-        .unwrap_or_default();
-    let tools = parsed_tools.allowed;
-    let tools_denied = parsed_tools.denied;
     consumed_keys.push("disallowed-tools".to_string());
     consumed_keys.push("disallowed_tools".to_string());
-    let disallowed_tools = fm
-        .get("disallowed-tools")
-        .or_else(|| fm.get("disallowed_tools"))
-        .map(|v| yaml_tool_list("disallowed-tools", v, diags))
-        .unwrap_or_default();
+    if tool_policy::is_list_form(fm.get("tools")) {
+        diags.push(SkillDiagnostic::DeprecatedListFormTools);
+    }
+    let tools = parse_skill_tool_policy(fm, diags);
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
     let license = license_raw.and_then(Value::as_str).map(str::to_owned);
@@ -353,8 +340,6 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
         model_invocable,
         user_invocable,
         tools,
-        tools_denied,
-        disallowed_tools,
         license,
         metadata,
         had_model_invocable_field,
@@ -379,6 +364,7 @@ pub fn parse_skill_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn parse(content: &str) -> (SkillProfile, Vec<SkillDiagnostic>, Frontmatter) {
         let mut diags = Vec::new();
         let (profile, fm) = parse_skill_content(content, &mut diags).unwrap();
@@ -603,8 +589,9 @@ body",
 
     #[test]
     fn warns_for_filtered_non_string_fields() {
-        let (_, d, _) =
-            parse("---\nname: a\ndescription: b\ntools: [Bash(git *)]\nlicense: false\n---\nbody");
+        let (_, d, _) = parse(
+            "---\nname: a\ndescription: b\ntools:\n  Bash(git *): allow\nlicense: false\n---\nbody",
+        );
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, .. } if field == "license"
@@ -613,10 +600,11 @@ body",
 
     #[test]
     fn separator_tool_aliases_canonicalize() {
-        let (p, d, _) =
-            parse("---\nname: a\ndescription: b\ntools: [ask_user, bash(git *)]\n---\nbody");
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  bash(git *): allow\n---\nbody",
+        );
 
-        assert_eq!(p.tools, vec!["ask_user", "bash(git *)"]);
+        assert_eq!(p.tools.describe(), ["allow:ask_user", "allow:bash(git *)"]);
         assert!(d.is_empty());
     }
 
@@ -626,11 +614,10 @@ body",
             "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\nbody",
         );
         assert!(d.is_empty());
-        assert_eq!(p.tools, vec!["ask_user"]);
-        assert_eq!(p.tools_denied, vec!["bash(git *)"]);
-        let policy = p.effective_tool_policy();
-        assert_eq!(policy.allowed, vec!["ask_user"]);
-        assert_eq!(policy.disallowed, vec!["bash(git *)", "web_search"]);
+        assert_eq!(
+            p.tools.describe(),
+            ["allow:ask_user", "deny:bash(git *)", "deny:web_search"]
+        );
     }
 
     #[test]
@@ -639,12 +626,17 @@ body",
             "---
 name: a
 description: b
-tools: [customtool, CustomTool]
+tools:
+  customtool: allow
+  CustomTool: allow
 ---
 body",
         );
 
-        assert_eq!(p.tools, vec!["customtool", "custom_tool"]);
+        assert_eq!(
+            p.tools.describe(),
+            ["allow:customtool", "allow:custom_tool"]
+        );
         assert!(d.is_empty());
     }
 
@@ -677,7 +669,7 @@ body",
     fn disallowed_tools_defaults_empty() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\n---\nbody");
         assert!(d.is_empty());
-        assert!(p.disallowed_tools.is_empty());
+        assert!(p.tools.rules.is_empty());
     }
 
     #[test]
@@ -685,13 +677,13 @@ body",
         let (p, d, _) =
             parse("---\nname: a\ndescription: b\ndisallowed-tools: [Agent, web_search]\n---\nbody");
         assert!(d.is_empty());
-        assert_eq!(p.disallowed_tools, vec!["agent", "web_search"]);
+        assert_eq!(p.tools.describe(), ["deny:agent", "deny:web_search"]);
     }
 
     #[test]
     fn disallowed_tools_snake_key_parses_and_warns() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody");
-        assert_eq!(p.disallowed_tools, vec!["write"]);
+        assert_eq!(p.tools.describe(), ["deny:write"]);
         assert!(
             d.iter().any(|diag| matches!(
                 diag,
@@ -731,7 +723,7 @@ body",
             "expected non-canonical diagnostic: {d:?}"
         );
         assert!(!d.iter().any(SkillDiagnostic::is_error));
-        assert!(p.tools.is_empty());
+        assert!(p.tools.rules.is_empty());
         assert!(
             !p.passthrough_fields
                 .iter()

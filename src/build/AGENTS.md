@@ -24,7 +24,8 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 - `--model` is optional; when omitted, the selected harness receives an empty
   model field and uses its own default model
 - `can_run_without_project()` in `src/cli/mod.rs` supplies synthetic `MarsContext`
-- No skills loaded, no tools resolved (empty sets)
+- No skills loaded and no profile tools resolved (empty rules and flat lists). The target's
+  `agent` / `task` entries in `tools.capability_natives` are still present for platform rules.
 
 ### Agent/Profile Mode (`--agent <name>`)
 - Reads `.mars/agents/<name>.md` from `ctx.project_root` first
@@ -40,11 +41,19 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- Unknown tool name on first-class harness
 
-**NOT warnings** (go to routing/provenance fields):
+**NOT warnings** (go to routing/provenance fields, or to a `tools.rules[].note`):
+- Permission gaps: a tool name Mars does not recognize, a harness with no switch for a tool,
+  an MCP ref a harness cannot represent, an allow/deny overlap. Meridian prints `warnings[]`
+  at every launch; `native_status: unknown` plus `note` is the only channel, and `mars sync`
+  tells the author about a typo.
 - `harness_model_source: "passthrough"` — expected behavior
 - `harness_model_confidence: "unknown"` — correct answer for passthrough harnesses
+
+Each profile `tools.rules[]` entry keeps permission emission (`native`) separate from callable
+tool availability (`native_tools`). Both come from `EffectiveToolPolicy::project`; build code
+must not strip patterns or otherwise re-derive one from the other. Under a `*: deny` allowlist,
+a launcher derives availability from known `allow` and `ask` rules, never `deny` rules.
 
 Policy resolution emits warnings for model fallback. Model/harness conflicts never
 clear the requested model. Route facts go to `routing.harness_model_source` and
